@@ -17,13 +17,14 @@ function humanizeAuthError(e) {
 export const useAuthStore = create((set, get) => ({
   token: null,
   email: null,
+  hydrated: false,
   isLoading: false,
   error: null,
 
   hydrate: () => {
     const token = localStorage.getItem("ea_token");
     const email = localStorage.getItem("ea_email");
-    set({ token: token || null, email: email || null });
+    set({ token: token || null, email: email || null, hydrated: true });
   },
 
   register: async (email, password) => {
@@ -70,6 +71,6 @@ export const useAuthStore = create((set, get) => ({
   logout: () => {
     localStorage.removeItem("ea_token");
     localStorage.removeItem("ea_email");
-    set({ token: null, email: null });
+    set({ token: null, email: null, hydrated: true });
   }
 }));
