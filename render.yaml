@@ -2,6 +2,7 @@ services:
   - type: web
     name: enterprate-backend
     env: python
+    pythonVersion: 3.12.7
     rootDir: backend
     plan: starter
     buildCommand: pip install -r requirements.txt
