@@ -44,9 +44,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    # In development, Vite/React ports may change (5173, 5175, etc.). Accept localhost/127.0.0.1 on any port.
-    if settings.environment.lower() == "development":
-        cors_kwargs["allow_origin_regex"] = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+    # Always allow localhost/127.0.0.1 in dev to avoid CORS issues when running locally.
+    cors_kwargs["allow_origin_regex"] = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
     app.add_middleware(CORSMiddleware, **cors_kwargs)
 
     app.middleware("http")(request_logging_middleware)
