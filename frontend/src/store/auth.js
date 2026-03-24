@@ -1,0 +1,75 @@
+import { create } from "zustand";
+import { apiRequest } from "../api/client";
+
+function humanizeAuthError(e) {
+  const msg = e instanceof Error ? e.message : String(e || "");
+  if (msg === "NETWORK_ERROR") {
+    const base = import.meta.env.VITE_API_URL ?? import.meta.env.REACT_APP_BACKEND_URL ?? "http://localhost:8001";
+    return `Can't reach the server at ${base}. Start the backend and check your API URL.`;
+  }
+  if (msg.startsWith("HTTP 401:")) return "Invalid credentials. Try again or create an account.";
+  if (msg.startsWith("HTTP 409:")) return "Account already exists. Sign in instead.";
+  if (msg.startsWith("HTTP 422:")) return "Please enter a valid email and a password (8+ characters).";
+  if (msg.startsWith("HTTP 500:")) return "Server configuration error. Try again later.";
+  return msg;
+}
+
+export const useAuthStore = create((set, get) => ({
+  token: null,
+  email: null,
+  isLoading: false,
+  error: null,
+
+  hydrate: () => {
+    const token = localStorage.getItem("ea_token");
+    const email = localStorage.getItem("ea_email");
+    set({ token: token || null, email: email || null });
+  },
+
+  register: async (email, password) => {
+    set({ isLoading: true, error: null });
+    try {
+      await apiRequest("/auth/register", "POST", { email, password });
+      await get().login(email, password);
+    } catch (e) {
+      set({ error: humanizeAuthError(e) });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  login: async (email, password) => {
+    set({ isLoading: true, error: null });
+    try {
+      const tokenRes = await apiRequest("/auth/login", "POST", { email, password });
+      localStorage.setItem("ea_token", tokenRes.access_token);
+      localStorage.setItem("ea_email", email);
+      set({ token: tokenRes.access_token, email });
+    } catch (e) {
+      set({ error: humanizeAuthError(e) });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  googleLogin: async (credential) => {
+    set({ isLoading: true, error: null });
+    try {
+      const tokenRes = await apiRequest("/auth/google", "POST", { credential });
+      localStorage.setItem("ea_token", tokenRes.access_token);
+      const me = await apiRequest("/auth/me", "GET");
+      localStorage.setItem("ea_email", me.email);
+      set({ token: tokenRes.access_token, email: me.email });
+    } catch (e) {
+      set({ error: humanizeAuthError(e) });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  logout: () => {
+    localStorage.removeItem("ea_token");
+    localStorage.removeItem("ea_email");
+    set({ token: null, email: null });
+  }
+}));

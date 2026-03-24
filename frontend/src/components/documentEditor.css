@@ -1,0 +1,129 @@
+.ea-doc h1 {
+  text-align: center;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 14px;
+}
+
+.ea-doc h2 {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 800;
+  margin: 22px 0 10px;
+}
+
+.ea-doc h3 {
+  font-size: 14px;
+  font-weight: 800;
+  margin: 16px 0 6px;
+}
+
+.ea-doc p,
+.ea-doc li {
+  font-size: 13px;
+  line-height: 1.75;
+  color: #1f2937;
+}
+
+.ea-doc ul {
+  margin: 8px 0 0 18px;
+}
+
+.ea-doc li {
+  margin: 6px 0;
+}
+
+.ea-doc strong {
+  color: #0f172a;
+}
+
+.ea-doc {
+  min-height: 65vh;
+}
+
+.ea-doc table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0 6px;
+  font-size: 12.5px;
+}
+
+.ea-doc th,
+.ea-doc td {
+  border: 1px solid #e2e8f0;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.ea-doc th {
+  background: #f8fafc;
+  font-weight: 700;
+}
+
+.ea-doc .cover-page {
+  min-height: 65vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+.ea-doc .cover-page p {
+  margin: 6px 0;
+}
+
+.ea-doc .page-break {
+  height: 24px;
+  margin: 22px 0;
+  border-top: 2px dashed #e2e8f0;
+  position: relative;
+}
+
+.ea-doc .page-break::after {
+  content: "Page Break";
+  position: absolute;
+  top: -10px;
+  right: 0;
+  background: #fff;
+  padding: 0 6px;
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.ea-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #334155;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.ea-icon-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5f5;
+  color: #1e293b;
+}
+
+.ea-icon-btn.ea-icon-btn-active {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #1d4ed8;
+}
+
+.ea-icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ea-page-preview {
+  display: block;
+  border-radius: 14px;
+  background: #ffffff;
+}

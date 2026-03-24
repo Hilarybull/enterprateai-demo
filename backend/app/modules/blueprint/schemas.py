@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
+
+from app.shared.schemas.common import MongoModel, PyObjectId
+
+
+BlueprintType = Literal[
+    "business_plan",
+    "client_proposal",
+    "sales_letter",
+    "sales_quotation",
+    "invoice_template",
+    "cashflow_analysis",
+    "financial_projection",
+]
+
+
+class BlueprintGenerateRequest(BaseModel):
+    type: BlueprintType
+    company_name: str = Field(min_length=2, max_length=64)
+    workspace_id: Optional[str] = Field(default=None, description="Optional idea-validation workspace id to pull deterministic metrics.")
+    include_validation_snapshot: bool = Field(
+        default=True,
+        description="When workspace_id is provided, include a deterministic validation + financial snapshot in the document.",
+    )
+    industry: Optional[str] = Field(default=None, max_length=80)
+    pricing_model: Optional[str] = Field(default=None, max_length=40)
+
+    problem: Optional[str] = None
+    solution: Optional[str] = None
+    target_market: Optional[str] = None
+    value_proposition: Optional[str] = None
+    tone: str = Field(default="professional", max_length=32)
+    extra_notes: Optional[str] = None
+
+    bill_to: Optional[str] = None
+    items: Optional[str] = None
+    terms: Optional[str] = None
+
+    # Optional document-specific inputs (narrative only)
+    proposal_title: Optional[str] = None
+    contact_details: Optional[str] = None
+    timeline: Optional[str] = None
+    scope_exclusions: Optional[str] = None
+    assumptions: Optional[str] = None
+
+    headline: Optional[str] = None
+    proof: Optional[str] = None
+    offer: Optional[str] = None
+    cta: Optional[str] = None
+    urgency: Optional[str] = None
+    sender_name: Optional[str] = None
+    sender_position: Optional[str] = None
+    sender_phone: Optional[str] = None
+    sender_email: Optional[str] = None
+    sender_website: Optional[str] = None
+    subject_lines: Optional[str] = None
+    followup_sequence: Optional[str] = None
+
+
+class BlueprintGenerateResponse(BaseModel):
+    document_markdown: str
+    provider: str
+    model: str
+    warnings: list[str] = []
+    document_id: Optional[str] = None
+
+
+class BlueprintDocument(MongoModel):
+    id: PyObjectId = Field(alias="_id")
+    user_id: str
+    type: BlueprintType
+    title: str
+    company_name: str
+    industry: Optional[str] = None
+    pricing_model: Optional[str] = None
+    workspace_id: Optional[str] = None
+    document_markdown: str
+    document_html: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BlueprintDocumentListItem(BaseModel):
+    id: str
+    type: BlueprintType
+    title: str
+    company_name: str
+    updated_at: datetime
+
+
+class BlueprintDocumentUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    document_markdown: Optional[str] = None
+    document_html: Optional[str] = None

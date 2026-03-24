@@ -1,0 +1,264 @@
+SOURCE: Business Idea Validation User Journey v1.0 (2).pdf
+PAGES_EXTRACTED: 12
+
+
+--- page 1 ---
+Business Idea Validation User Journey v1.0
+
+
+--- page 2 ---
+Business Idea Validation User Journey v1.0 
+Goal 
+Help a pre-registration founder validate a business idea using structured inputs + 
+deterministic modelling + scenario simulation, then output: 
+• Validation Score (0–100) + reasons 
+• Baseline business metrics 
+• “What to change” recommendations 
+• Saved assumptions for Blueprint (Module 2) 
+ 
+Step 0: Entry Point 
+User action: 
+Clicks “Validate my Idea”. 
+System action: 
+Shows two options: 
+1. Business Idea (no registered business) ✅ 
+2. Product/Service Idea (existing business) 
+User selects Business Idea.
+
+
+--- page 3 ---
+Business Idea Validation  
+(no registered business)
+
+
+--- page 4 ---
+Step 1: Setup Business Context 
+UI: “Tell us what you’re building” 
+Inputs 
+• Business name (working name) 
+• Business type: Service micro-business 
+• Location (UK region/city) 
+• Founder availability: hours/week 
+• Stage: Idea 
+System actions 
+• Creates Business (draft) node 
+• Creates Founder node 
+• Sets defaults (currency GBP, UK assumptions) 
+Example 
+Cleaning: “SparklePro Cleaning”, London, 40 hrs/week 
+ IT: “ByteBridge IT”, Manchester, 35 hrs/week 
+ 
+Step 2: Problem + Target Customer 
+UI: “Who is it for and what problem do you solve?” 
+Inputs (structured, short) 
+• Customer segment (dropdown + free text) 
+• Problem type (cost / time / compliance / quality / reliability) 
+• Frequency (daily/weekly/monthly) 
+• Current alternatives used by customers (optional)
+
+
+--- page 5 ---
+System actions 
+• Creates Idea node 
+• Creates CustomerSegment node 
+• Links: Idea → CustomerSegment 
+Examples 
+Cleaning 
+• Customer: “Small offices (5–20 staff)” 
+• Problem: “Inconsistent hygiene / unreliable cleaners” 
+• Frequency: “3x weekly” 
+IT 
+• Customer: “SMEs 10–50 staff” 
+• Problem: “No internal IT support” 
+• Frequency: “Weekly incidents + ongoing maintenance” 
+ 
+Step 3: Offer Definition 
+UI: “Describe what you will sell” 
+Inputs 
+• Service type (e.g., cleaning, IT support, marketing) 
+• Pricing model: hourly / fixed job / retainer 
+• Price amount 
+• Deliverable unit (hours / job / month) 
+• Package tiers (optional: basic/standard/premium)
+
+
+--- page 6 ---
+System actions 
+• Creates ProductService node(s) 
+Examples 
+Cleaning 
+• Fixed job: £80 per office visit 
+• Unit: 1 clean 
+IT 
+• Retainer: £2,500 per month 
+• Unit: 1 client retainer 
+ 
+Step 4: Demand Assumptions 
+UI: “How many customers do you expect?” 
+Inputs 
+• Expected units per month (jobs/hours/retainers) 
+• Expected number of customers 
+• Sales cycle estimate (days) 
+• Payment terms (7/14/30/60) 
+System actions 
+• Creates RevenueStream node 
+• Stores assumption confidence = manual
+
+
+--- page 7 ---
+Examples 
+Cleaning 
+• 100 jobs/month (≈25 weekly clients) 
+• Sales cycle: 30 days 
+• Payment terms: 14 days 
+IT 
+• 3 retainer clients/month 
+• Sales cycle: 45 days 
+• Payment terms: 30 days 
+ 
+Step 5: Cost Inputs (Variable + Fixed) 
+UI: “What does it cost to deliver?” 
+Inputs 
+• Variable cost per unit (per job/hour/client) 
+• Fixed monthly costs (insurance, tools, software, marketing) 
+• Founder draw (optional) 
+• Contractor costs (optional) 
+System actions 
+• Creates CostStructure entries (fixed/variable) 
+• Links: CostStructure → ProductService/Business
+
+
+--- page 8 ---
+Examples 
+Cleaning 
+• Variable per job: 
+o Cleaner wage £35 
+o Travel £5 
+o Supplies £3 
+ Total variable = £43 
+• Fixed monthly = £2,500 
+IT 
+• Variable per retainer: 
+o subcontractor/support cost = £600 
+• Fixed monthly = £3,000 
+ 
+Step 6: Capacity & Delivery Feasibility 
+UI: “Can you actually deliver this volume?” 
+Inputs 
+• Founder hours/week 
+• Staff/contractors count (initially 0–2) 
+• Delivery capacity per unit (e.g., jobs per cleaner per day; hours per month) 
+System actions 
+• Creates Resource node(s) 
+• Computes CapacityFeasibility
+
+
+--- page 9 ---
+Examples 
+Cleaning 
+• 1 cleaner can do 3 jobs/day 
+• 20 workdays → 60 jobs/month per cleaner 
+• Sarah has 1 cleaner initially → capacity 60 jobs 
+• But demand assumption is 100 jobs → mismatch flagged 
+IT 
+• Founder capacity 80 hours/month 
+• Service requires 30 hours/client/month 
+• 3 clients → 90 hours → overload flagged 
+ 
+Step 7: Optional - Cash Buffer (Enables runway) 
+UI: “Do you have startup cash buffer?” 
+Inputs 
+• Cash buffer amount (GBP) 
+• Optional: expected upfront costs 
+System actions 
+• Creates initial CashflowSnapshot 
+• Enables runway and payment-delay stress tests 
+Example 
+Cleaning: £12,000 
+ IT: £8,000
+
+
+--- page 10 ---
+Step 8: External Market Context (Auto Enrichment) 
+UI: “Market context (UK benchmarks)” 
+System actions (no user burden) 
+• API Pulls: 
+o wage benchmarks (for realism checks) 
+o sector indicators (ONS category data) 
+o optional Google demand trend index 
+Rule: External context applies capped influence (±10%) and generates flags; does not 
+overwrite the founder’s business model. 
+Outputs shown to user 
+• “Your wage assumption is below typical market range” (if applicable) 
+• “Sector volatility suggests maintaining higher margin buffer” 
+ 
+Step 9: Baseline Metrics Generated (Deterministic) 
+UI: “Your Baseline Business Model” 
+EnterprateAI calculates and shows: 
+• Monthly revenue 
+• Monthly variable cost 
+• Monthly fixed cost 
+• Net surplus/deficit 
+• Contribution margin % 
+• Break-even revenue 
+• Capacity feasibility outcome 
+• Optional runway (if cash buffer given)
+
+
+--- page 11 ---
+Example outputs (illustrative) 
+Cleaning baseline 
+• Revenue: £8,000 
+• Variable: £4,300 
+• Fixed: £2,500 
+• Net: £1,200 
+• Margin: 46% 
+• Break-even: ~£5,405 
+• Capacity: ❌ (needs 100 jobs, capacity 60) 
+IT baseline 
+• Revenue: £7,500 
+• Variable: £1,800 
+• Fixed: £3,000 
+• Net: £2,700 
+• Margin: 76% 
+• Capacity: ❌ (needs 90 hrs, capacity 80) 
+ 
+Step 10: Validation Score + Reasons (Rubric v0.1) 
+UI: “Validation Result” 
+Outputs: 
+• Validation Score (0–100) 
+• Dimension breakdown 
+• Reason codes translated into plain English 
+• “Top 3 improvements” 
+Cleaning example result 
+Score: 72 (Moderate Viability) 
+ Reasons: 
+• Capacity mismatch (demand > delivery capacity)
+
+
+--- page 12 ---
+• Client concentration assumption missing (prompt to input) 
+Top actions: 
+• Start with contractors or lower initial demand assumption 
+• Raise prices or reduce variable costs 
+• Acquire first 3 anchor clients before hiring full-time 
+IT example result 
+Score: 65 (Moderate Viability) 
+ Reasons: 
+• Capacity overload risk 
+• Payment terms risk (Net 30 without buffer planning) 
+Top actions: 
+• Reduce support scope per retainer or increase retainer price 
+• Add contractor budget 
+• Offer Net-7 discount to improve cash timing 
+ 
+Step 11: Simulation (Core: “Before you commit, 
+simulate”) 
+UI: “What are you planning next?” 
+User runs preset scenarios: 
+• Hire (add staff cost + capacity) 
+• Revenue -20% 
+• Costs +10% 
+• Payment delay +14 days 
+• Price +10% 
+• Lose top client (if provided)
