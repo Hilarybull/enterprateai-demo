@@ -747,7 +747,7 @@ function ScoreRing({ score, color }) {
     capacity:       { label: "Delivery capacity", help: "Whether your team can meet expected demand." },
     unit_economics: { label: "Profit per sale", help: "How much profit you keep on each sale." },
     break_even:     { label: "Break-even time", help: "How long it takes to cover your fixed costs." },
-    market_fit:     { label: "Market signals",  help: "Demand, sector stability, and local competition combined." },
+    market_fit:     { label: "Market fit",  help: "Demand, sector stability, and local competition combined." },
     proof:          { label: "Customer proof",  help: "How much real-world demand evidence you have so far." },
     sales_cycle:    { label: "Sales speed",     help: "How long it takes to close a sale." },
     concentration:  { label: "Client reliance", help: "How dependent you are on a single customer." },
@@ -1155,15 +1155,6 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="ea-page-header-right">
-          {typeof score === "number" ? (
-            <div className="ea-score-pill" title="Overall validation score">
-              <div className="ea-score-pill-num">{Math.round(score)}</div>
-              <div className="ea-score-pill-sub">
-                <div className="label">Score</div>
-                <div className="cls">{risk.label}</div>
-              </div>
-            </div>
-          ) : null}
           {validation && workspaceId ? (
             <>
               <button className="ea-btn ea-btn-secondary" onClick={() => navigate(`/validation?workspace_id=${workspaceId}`)}>
@@ -1182,12 +1173,6 @@ export default function DashboardPage() {
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
             </svg>
             Run simulation
-          </button>
-          <button className="ea-btn ea-btn-primary" onClick={() => navigate("/validation")}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            New validation
           </button>
         </div>
       </div>
