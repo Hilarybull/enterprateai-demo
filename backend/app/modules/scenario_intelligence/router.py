@@ -23,6 +23,7 @@ from app.modules.scenario_intelligence.schemas import (
 )
 from app.modules.scenario_intelligence.service import (
     ENGINE_VERSION,
+    clear_history,
     create_scenario_run,
     detect_risks,
     do_nothing_projection,
@@ -203,3 +204,14 @@ async def scenario_history_list(
 ) -> ScenarioHistoryResponse:
     history = await scenario_history(db, tenant_id=tenant_id, business_id=business_id)
     return ScenarioHistoryResponse(history=history)
+
+
+@router.delete("/history")
+async def scenario_history_clear(
+    business_id: str,
+    tenant_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _user=Depends(get_current_user),
+) -> dict:
+    deleted = await clear_history(db, tenant_id=tenant_id, business_id=business_id)
+    return {"deleted_runs": deleted}

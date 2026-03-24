@@ -205,6 +205,22 @@ export default function SimulationPage() {
     }
   }
 
+  async function clearHistory() {
+    if (!canRun) return;
+    const ok = window.confirm("Clear scenario history for this workspace?");
+    if (!ok) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await apiRequest(`/v1/scenario-intelligence/history?business_id=${businessId}&tenant_id=${tenantId}`, "DELETE");
+      setHistory([]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to clear history.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const manualTemplate = templates.find((t) => t.scenario_template_id === manualTemplateId);
 
   useEffect(() => {
@@ -429,6 +445,11 @@ export default function SimulationPage() {
       {tab === "history" ? (
         <div className="mt-4">
           <SectionCard title="Scenario history" subtitle="Previous runs and decisions.">
+            <div className="mb-3 flex justify-end">
+              <Button variant="secondary" disabled={loading || !canRun} onClick={clearHistory}>
+                Clear history
+              </Button>
+            </div>
             <div className="space-y-2">
               {history.length ? (
                 history.map((h) => (

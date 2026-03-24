@@ -554,6 +554,25 @@ async def scenario_history(db: AsyncIOMotorDatabase, tenant_id: str, business_id
     return history
 
 
+async def clear_history(db: AsyncIOMotorDatabase, tenant_id: str, business_id: str) -> int:
+    run_ids = []
+    cursor = db.scenario_runs.find({"tenant_id": tenant_id, "business_id": business_id}, {"scenario_run_id": 1})
+    async for doc in cursor:
+        run_id = doc.get("scenario_run_id")
+        if run_id:
+            run_ids.append(run_id)
+
+    deleted_runs = await db.scenario_runs.delete_many({"tenant_id": tenant_id, "business_id": business_id})
+
+    if run_ids:
+        await db.scenario_timelines.delete_many({"scenario_run_id": {"$in": run_ids}})
+        await db.scenario_recommendations.delete_many({"scenario_run_id": {"$in": run_ids}})
+
+    await db.scenario_decisions.delete_many({"tenant_id": tenant_id, "business_id": business_id})
+    await db.scenario_risk_signals.delete_many({"tenant_id": tenant_id, "business_id": business_id})
+    return deleted_runs.deleted_count
+
+
 async def do_nothing_projection(
     tenant_id: str,
     business_id: str,
