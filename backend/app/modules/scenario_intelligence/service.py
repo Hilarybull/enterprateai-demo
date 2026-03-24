@@ -19,6 +19,19 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _clean(doc: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not doc:
+        return doc
+    if "_id" in doc:
+        doc = dict(doc)
+        doc.pop("_id", None)
+    return doc
+
+
+def _clean_many(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [d for d in (_clean(doc) for doc in docs) if d]
+
+
 def _clamp(val: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, val))
 
@@ -370,7 +383,7 @@ async def save_risk_signals(
             )
         )
     await db.scenario_risk_signals.insert_many(docs)
-    return docs
+    return _clean_many(docs)
 
 
 async def create_scenario_run(
@@ -474,17 +487,17 @@ def _recommendations_from_result(state_result: str) -> List[Dict[str, Any]]:
 
 
 async def get_scenario_run(db: AsyncIOMotorDatabase, run_id: str) -> Dict[str, Any] | None:
-    return await db.scenario_runs.find_one({"scenario_run_id": run_id})
+    return _clean(await db.scenario_runs.find_one({"scenario_run_id": run_id}))
 
 
 async def get_scenario_timeline(db: AsyncIOMotorDatabase, run_id: str) -> List[Dict[str, Any]]:
     cursor = db.scenario_timelines.find({"scenario_run_id": run_id}).sort("month_index", 1)
-    return [doc async for doc in cursor]
+    return _clean_many([doc async for doc in cursor])
 
 
 async def get_recommendations(db: AsyncIOMotorDatabase, run_id: str) -> List[Dict[str, Any]]:
     cursor = db.scenario_recommendations.find({"scenario_run_id": run_id}).sort("priority", 1)
-    return [doc async for doc in cursor]
+    return _clean_many([doc async for doc in cursor])
 
 
 async def save_decision(
@@ -510,20 +523,22 @@ async def save_decision(
         created_at=now,
     )
     await db.scenario_decisions.insert_one(doc)
-    return doc
+    return _clean(doc)
 
 
 async def scenario_history(db: AsyncIOMotorDatabase, tenant_id: str, business_id: str) -> List[Dict[str, Any]]:
     runs = db.scenario_runs.find(
         {"tenant_id": tenant_id, "business_id": business_id}
     ).sort("created_at", -1)
-    run_list = [doc async for doc in runs]
+    run_list = _clean_many([doc async for doc in runs])
     decisions = db.scenario_decisions.find(
         {"tenant_id": tenant_id, "business_id": business_id}
     )
     decision_map = {}
     async for d in decisions:
-        decision_map[d["scenario_run_id"]] = d.get("decision_status")
+        d = _clean(d) or {}
+        if d.get("scenario_run_id"):
+            decision_map[d["scenario_run_id"]] = d.get("decision_status")
     history = []
     for r in run_list:
         history.append(
