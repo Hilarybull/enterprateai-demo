@@ -1266,7 +1266,6 @@ export default function DashboardPage() {
                     <div className="ea-insight-panel">
                       <div className="ea-insight-header">
                         <span className="ea-insight-title">Key risks</span>
-                        <button className="ea-btn ea-btn-ghost" onClick={() => navigate("/results")}>View report →</button>
                       </div>
                       <div className="ea-insight-body" style={{ paddingTop: 8, paddingBottom: 8 }}>
                         {(reasons.length ? reasons : ["Run a validation to see risks."]).slice(0, 4).map((r) => (
@@ -1375,7 +1374,6 @@ export default function DashboardPage() {
                     </div>
 
                     <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 4 }}>
-                      <button className="ea-btn ea-btn-ghost" onClick={() => navigate("/results")}>View full report →</button>
                       <button className="ea-btn ea-btn-ghost" onClick={() => navigate("/validation")}>Update inputs →</button>
                     </div>
                       </div>
@@ -1447,7 +1445,6 @@ export default function DashboardPage() {
                     <div className="ea-section-sub">No breakdown available yet.</div>
                   )}
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
-                    <button className="ea-btn ea-btn-ghost" onClick={() => navigate("/results")}>Full report →</button>
                     <button className="ea-btn ea-btn-ghost" onClick={() => navigate("/validation")}>Update inputs →</button>
                   </div>
                 </div>
