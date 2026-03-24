@@ -799,7 +799,7 @@ function MarketFitSection({ marketFit, mfLoading, mfError, onRetry }) {
 
       {/* Dark hero header */}
       <div className="ea-mf-hero">
-        <div className="ea-mf-hero-label">Market Signals</div>
+        <div className="ea-mf-hero-label">Market Fit</div>
 
         {mfLoading ? (
           <div className="ea-mf-loading" style={{ padding: "20px 0", justifyContent: "flex-start", gap: 10 }}>
@@ -1131,7 +1131,7 @@ export default function DashboardPage() {
 
   const validationExplanation =
     String(validation?.validation_explanation || "").trim() ||
-    "Overall score blends profit per sale, break-even time, cash runway, delivery capacity, payment timing, customer proof, sales speed, client reliance, and market signals.";
+    "Overall score blends profit per sale, break-even time, cash runway, delivery capacity, payment timing, customer proof, sales speed, client reliance, and market fit.";
 
   function statValueClass(val, field) {
     if (field === "net" && val !== null) return val < 0 ? " negative" : val > 0 ? " positive" : "";

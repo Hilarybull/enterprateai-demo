@@ -353,12 +353,12 @@ export default function ResultsPage() {
           {viewMode === "detailed" ? (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <SectionCard
-                title="Market signals"
+                title="Market fit"
                 subtitle="Keyword trend and community signals."
                 headerRight={
                   <div className="w-full max-w-[260px]">
                     <SegmentedTabs
-                      ariaLabel="Market signals tabs"
+                      ariaLabel="Market fit tabs"
                       value={signalsTab}
                       onChange={setSignalsTab}
                       size="sm"
