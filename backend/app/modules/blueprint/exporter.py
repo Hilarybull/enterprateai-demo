@@ -4,7 +4,10 @@ from io import BytesIO
 import re
 
 from markdown import markdown as md
-from xhtml2pdf import pisa
+from html2text import HTML2Text
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas
 
 
 def markdown_to_html(markdown_text: str) -> str:
@@ -115,8 +118,53 @@ def render_pdf_html(title: str, body_html: str) -> str:
 
 
 def html_to_pdf(html: str) -> bytes:
-    output = BytesIO()
-    result = pisa.CreatePDF(html, dest=output, encoding="utf-8")
-    if result.err:
+    if not html:
         return b""
+
+    # Replace explicit page-break divs with a marker so we can paginate.
+    html = (html or "").replace('<div class="page-break"></div>', "<p>[[PAGE_BREAK]]</p>")
+
+    converter = HTML2Text()
+    converter.ignore_links = False
+    converter.body_width = 0
+    text = converter.handle(html)
+
+    output = BytesIO()
+    c = canvas.Canvas(output, pagesize=A4)
+    width, height = A4
+    left = 18 * mm
+    top = height - 18 * mm
+    bottom = 18 * mm
+    line_height = 12
+
+    c.setFont("Helvetica", 11)
+    y = top
+
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            y -= line_height
+        elif "[[PAGE_BREAK]]" in line:
+            c.showPage()
+            c.setFont("Helvetica", 11)
+            y = top
+            continue
+        else:
+            # Simple wrap based on page width.
+            max_chars = int((width - 2 * left) / 6.2)
+            parts = [line[i:i + max_chars] for i in range(0, len(line), max_chars)] or [""]
+            for part in parts:
+                if y <= bottom:
+                    c.showPage()
+                    c.setFont("Helvetica", 11)
+                    y = top
+                c.drawString(left, y, part)
+                y -= line_height
+
+        if y <= bottom:
+            c.showPage()
+            c.setFont("Helvetica", 11)
+            y = top
+
+    c.save()
     return output.getvalue()
