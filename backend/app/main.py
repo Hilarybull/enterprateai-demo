@@ -64,13 +64,13 @@ def create_app() -> FastAPI:
     app.include_router(blueprint_router)
     app.include_router(simulation_router)
 
-    @app.get("/")
-    async def root() -> dict:
-        return {"status": "ok", "service": settings.app_name}
-
     @app.get("/health")
     async def health() -> dict:
-        return {"status": "ok", "service": settings.app_name}
+        return {"status": "ok"}
+
+    @app.get("/")
+    async def root() -> dict:
+        return {"status": "ok"}
 
     return app
 
