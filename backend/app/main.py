@@ -72,6 +72,10 @@ def create_app() -> FastAPI:
     async def root() -> dict:
         return {"status": "ok"}
 
+    @app.head("/")
+    async def root_head() -> None:
+        return None
+
     return app
 
 
