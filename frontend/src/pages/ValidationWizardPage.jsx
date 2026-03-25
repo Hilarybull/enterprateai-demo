@@ -286,8 +286,14 @@ export default function ValidationWizardPage() {
             </svg>
           </div>
           <div>
-            <div className="text-2xl font-semibold tracking-tight text-slate-900">Idea Validation</div>
-            <div className="mt-1 text-sm text-slate-600 [@media(max-height:820px)]:hidden">Choose what to fill first, then generate a deterministic report.</div>
+            <div className="text-2xl font-semibold tracking-tight text-slate-900">
+              {fromOtherModule ? "Create Workspace" : "Idea Validation"}
+            </div>
+            <div className="mt-1 text-sm text-slate-600 [@media(max-height:820px)]:hidden">
+              {fromOtherModule
+                ? "Tell us about your business so we can create your workspace."
+                : "Choose what to fill first, then generate a deterministic report."}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -317,7 +323,10 @@ export default function ValidationWizardPage() {
 
         {mode === "select" ? (
           <>
-            <SectionCard title="What are you validating?" subtitle="Choose the option that best matches your idea.">
+            <SectionCard
+              title={fromOtherModule ? "Tell us about your business" : "What are you validating?"}
+              subtitle={fromOtherModule ? "Pick the option that best matches your business." : "Choose the option that best matches your idea."}
+            >
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <button
                   type="button"
@@ -345,7 +354,10 @@ export default function ValidationWizardPage() {
             </SectionCard>
 
             <div className="mt-4">
-              <SectionCard title="Choose the sections you want to fill" subtitle="You'll fill them in any order.">
+              <SectionCard
+                title={fromOtherModule ? "Select sections to build your workspace" : "Choose the sections you want to fill"}
+                subtitle={fromOtherModule ? "You'll fill them in any order." : "You'll fill them in any order."}
+              >
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   {formBlocks.map((b) => {
                     const checked = Boolean(enabledForms[b.key]);
@@ -379,7 +391,10 @@ export default function ValidationWizardPage() {
             </div>
           </>
         ) : (
-          <SectionCard title="Validation inputs" subtitle="Open any section and fill it in any order.">
+          <SectionCard
+            title={fromOtherModule ? "Workspace inputs" : "Validation inputs"}
+            subtitle={fromOtherModule ? "Open any section and fill it in any order." : "Open any section and fill it in any order."}
+          >
             <div className="space-y-3">
               {enabledForms.business ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
@@ -622,7 +637,7 @@ export default function ValidationWizardPage() {
                       }
                     >
                       {isLoading ? <Spinner size={16} /> : null}
-                      {isLoading ? "Running..." : fromOtherModule && !storedWorkspaceId && !editingWorkspaceId ? "Save workspace" : "Evaluate"}
+                      {isLoading ? "Running..." : fromOtherModule && !storedWorkspaceId && !editingWorkspaceId ? "Create workspace" : "Evaluate"}
                     </Button>
                   ) : (
                     <Button disabled={isLoading || isPrefilling || !canRun} onClick={() => saveWorkspace(false)}>

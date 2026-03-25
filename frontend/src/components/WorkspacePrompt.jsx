@@ -4,7 +4,7 @@ import Button from "./Button";
 
 export default function WorkspacePrompt({
   title = "Create your workspace",
-  subtitle = "Start with Idea Validation to save your workspace and unlock this module.",
+  subtitle = "Create a workspace to continue.",
   ctaLabel = "Create workspace",
   ctaTo = "/validation?from=module"
 }) {
