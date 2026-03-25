@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useEffect } from "react";
 import { useAuthStore } from "./store/auth";
+import { useWorkspaceStore } from "./store/workspace";
 import Layout from "./components/Layout";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -23,9 +24,16 @@ function Protected({ children }) {
 
 export default function App() {
   const hydrate = useAuthStore((s) => s.hydrate);
+  const authHydrated = useAuthStore((s) => s.hydrated);
+  const email = useAuthStore((s) => s.email);
+  const resetForUser = useWorkspaceStore((s) => s.resetForUser);
   useEffect(() => {
     hydrate();
   }, [hydrate]);
+  useEffect(() => {
+    if (!authHydrated) return;
+    resetForUser(email);
+  }, [authHydrated, email, resetForUser]);
 
   return (
     <Routes>

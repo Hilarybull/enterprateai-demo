@@ -89,10 +89,10 @@ def _templates() -> List[ScenarioTemplate]:
         ScenarioTemplate(
             scenario_template_id="tmpl_hire_staff",
             scenario_type="hire_staff",
-            title="Hire 1 Employee",
-            description="Simulate hiring an additional staff member.",
+            title="Hire Employees",
+            description="Simulate hiring additional staff members.",
             mode="adaptive_or_manual",
-            required_inputs=["employee_monthly_cost"],
+            required_inputs=["employee_count", "employee_monthly_cost"],
         ),
         ScenarioTemplate(
             scenario_template_id="tmpl_cost_increase",
@@ -252,7 +252,8 @@ def _apply_scenario(state: BusinessStateSnapshot, scenario_type: str, params: Di
         costs = max(0.0, costs * (1.0 + inc_pct / 100.0))
     elif scenario_type == "hire_staff":
         add_cost = float(params.get("employee_monthly_cost") or 0.0)
-        costs = max(0.0, costs + add_cost)
+        employee_count = int(params.get("employee_count") or 1)
+        costs = max(0.0, costs + (add_cost * max(1, employee_count)))
     elif scenario_type == "contractor_addition":
         add_cost = float(params.get("contractor_monthly_cost") or 0.0)
         costs = max(0.0, costs + add_cost)
@@ -280,7 +281,7 @@ def _timeline(
     params: Dict[str, Any],
     months: int,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    months = max(3, min(6, int(months)))
+    months = max(3, min(12, int(months)))
     base = state
     scenario_state = _apply_scenario(state, scenario_type, params)
 
@@ -581,7 +582,7 @@ async def do_nothing_projection(
     timeline_months: int,
 ) -> Dict[str, Any]:
     projection_id = str(uuid4())
-    months = max(1, min(6, int(timeline_months)))
+    months = max(1, min(12, int(timeline_months)))
     cash = float(state.starting_cash)
     forecast: List[Dict[str, Any]] = []
     for m in range(1, months + 1):

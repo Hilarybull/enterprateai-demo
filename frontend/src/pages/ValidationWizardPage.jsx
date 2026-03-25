@@ -36,6 +36,7 @@ export default function ValidationWizardPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const editingWorkspaceId = searchParams.get("workspace_id");
+  const fromOtherModule = searchParams.get("from") === "module";
   const storedWorkspaceId = useWorkspaceStore((s) => s.workspaceId);
 
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
@@ -50,6 +51,7 @@ export default function ValidationWizardPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isPrefilling, setIsPrefilling] = useState(false);
+  const [savedNotice, setSavedNotice] = useState(null);
 
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceNameTouched, setWorkspaceNameTouched] = useState(false);
@@ -191,9 +193,10 @@ export default function ValidationWizardPage() {
     setMode("fill");
   }
 
-  async function run() {
+  async function saveWorkspace(shouldEvaluate = false) {
     setIsLoading(true);
     setError(null);
+    setSavedNotice(null);
     try {
       const wsName = String(workspaceName || "").trim() || derivedWorkspaceName;
       const payload = structuredClone(form);
@@ -251,9 +254,17 @@ export default function ValidationWizardPage() {
         setDecisionStatus(null);
         setIdeaValidation(payload);
       }
-      const result = await apiRequest("/validation/evaluate", "POST", { workspace_id: wsId }, { timeoutMs: 120000 });
-      setValidation(result);
-      navigate("/dashboard");
+      if (shouldEvaluate) {
+        const result = await apiRequest("/validation/evaluate", "POST", { workspace_id: wsId }, { timeoutMs: 120000 });
+        setValidation(result);
+        navigate("/dashboard");
+      } else {
+        setValidation(null);
+        setSavedNotice("Workspace saved.");
+        if (fromOtherModule) {
+          navigate("/validation", { replace: true });
+        }
+      }
     } catch (e) {
       const msg = humanizeValidationError(e);
       console.error("Validation run failed:", e);
@@ -296,6 +307,11 @@ export default function ValidationWizardPage() {
         {error ? (
           <div className="mb-4">
             <InlineAlert kind="error" message={error} />
+          </div>
+        ) : null}
+        {savedNotice ? (
+          <div className="mb-4">
+            <InlineAlert message={savedNotice} />
           </div>
         ) : null}
 
@@ -594,10 +610,27 @@ export default function ValidationWizardPage() {
               {mode === "select" ? (
                 <Button disabled={!canEdit || !selectedCount} onClick={startFilling}>Continue</Button>
               ) : (
-                <Button disabled={isLoading || isPrefilling || !canRun} onClick={run}>
-                  {isLoading ? <Spinner size={16} /> : null}
-                  {isLoading ? "Running..." : editingWorkspaceId ? "Save & Recalculate" : "Create & Evaluate"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  {mode === "fill" ? (
+                    <Button
+                      variant="secondary"
+                      disabled={isLoading || isPrefilling || !canRun}
+                      onClick={() =>
+                        fromOtherModule && !storedWorkspaceId && !editingWorkspaceId
+                          ? saveWorkspace(false)
+                          : saveWorkspace(true)
+                      }
+                    >
+                      {isLoading ? <Spinner size={16} /> : null}
+                      {isLoading ? "Running..." : fromOtherModule && !storedWorkspaceId && !editingWorkspaceId ? "Save workspace" : "Evaluate"}
+                    </Button>
+                  ) : (
+                    <Button disabled={isLoading || isPrefilling || !canRun} onClick={() => saveWorkspace(false)}>
+                      {isLoading ? <Spinner size={16} /> : null}
+                      {isLoading ? "Saving..." : "Save workspace"}
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
           </div>

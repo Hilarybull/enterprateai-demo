@@ -1,15 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
+import WorkspacePrompt from "../components/WorkspacePrompt";
 import Spinner from "../components/Spinner";
-import SegmentedTabs from "../components/SegmentedTabs";
 import NumberInput, { parseNumber } from "../components/NumberInput";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
 import { formatCurrency, formatNumber } from "../lib/format";
+import InfoTip from "../components/InfoTip";
+
+const FieldLabel = ({ children, info }) => (
+  <div className="ea-label flex items-center gap-2">
+    <span>{children}</span>
+    {info ? <InfoTip text={info} /> : null}
+  </div>
+);
 
 export default function SimulationPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -37,7 +45,7 @@ export default function SimulationPage() {
     };
   }, [ideaValidation, inputs, validation]);
 
-  const [tab, setTab] = useState("adaptive"); // adaptive | manual | history | donothing
+  const [tab, setTab] = useState("adaptive"); // dashboard | manual
   const [templates, setTemplates] = useState([]);
   const [riskSignals, setRiskSignals] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
@@ -54,8 +62,12 @@ export default function SimulationPage() {
   const [activeRun, setActiveRun] = useState(null);
   const [activeRunKind, setActiveRunKind] = useState(null); // "scenario" | "projection"
   const [timeline, setTimeline] = useState([]);
+  const [projectionRun, setProjectionRun] = useState(null);
+  const [projectionTimeline, setProjectionTimeline] = useState([]);
   const [decisionSaving, setDecisionSaving] = useState(false);
   const [decisionNotice, setDecisionNotice] = useState(null);
+  const [autoProjectionDone, setAutoProjectionDone] = useState(false);
+  const [autoSignalsDone, setAutoSignalsDone] = useState(false);
 
   const canRun = Boolean(workspaceId);
 
@@ -79,6 +91,11 @@ export default function SimulationPage() {
     }
     bootstrap();
   }, [workspaceId, businessId, tenantId]);
+
+  useEffect(() => {
+    setAutoProjectionDone(false);
+    setAutoSignalsDone(false);
+  }, [workspaceId]);
 
   useEffect(() => {
     if (!templates.length) return;
@@ -154,7 +171,7 @@ export default function SimulationPage() {
     }
   }
 
-  async function runDoNothing() {
+  async function runDoNothing(monthsOverride, setAsActive = false) {
     if (!canRun) return;
     setLoading(true);
     setError(null);
@@ -163,27 +180,46 @@ export default function SimulationPage() {
         tenant_id: tenantId,
         business_id: businessId,
         state_version: stateVersion,
-        timeline_months: parseNumber(manualTimelineMonths, 3),
+        timeline_months: parseNumber(monthsOverride ?? manualTimelineMonths, 6),
         state: stateSnapshot
       });
-      setActiveRun({
+      const projectionPayload = {
         scenario_run_id: res?.projection_id,
-        scenario_name: "Do nothing projection",
+        scenario_name: "Baseline Continuity Projection",
         scenario_type: "do_nothing_projection",
         baseline_metrics: {},
         scenario_metrics: {},
         deltas: {},
         state_result: "neutral",
         timeline_summary: {}
-      });
-      setActiveRunKind("projection");
-      setTimeline(res?.forecast || []);
+      };
+      setProjectionRun(projectionPayload);
+      setProjectionTimeline(res?.forecast || []);
+      if (setAsActive) {
+        setActiveRun(projectionPayload);
+        setActiveRunKind("projection");
+        setTimeline(res?.forecast || []);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Projection failed.");
     } finally {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!canRun || tab !== "adaptive" || autoProjectionDone) return;
+    if (loading) return;
+    runDoNothing(6, false);
+    setAutoProjectionDone(true);
+  }, [tab, canRun, autoProjectionDone, loading]);
+
+  useEffect(() => {
+    if (!canRun || tab !== "adaptive" || autoSignalsDone) return;
+    if (loading) return;
+    loadSignals();
+    setAutoSignalsDone(true);
+  }, [tab, canRun, autoSignalsDone, loading]);
 
   async function saveDecision(status, recommendationId) {
     if (!activeRun?.scenario_run_id || !canRun) return;
@@ -224,10 +260,15 @@ export default function SimulationPage() {
   const manualTemplate = templates.find((t) => t.scenario_template_id === manualTemplateId);
 
   useEffect(() => {
+    if (manualTemplateId === "do_nothing_projection") {
+      setManualParams({});
+      setManualName("Baseline Continuity Projection");
+      return;
+    }
     if (!manualTemplate) return;
     setManualParams(buildDefaultParams(manualTemplate, stateSnapshot));
     setManualName(manualTemplate.title);
-  }, [manualTemplate, stateSnapshot]);
+  }, [manualTemplateId, manualTemplate, stateSnapshot]);
 
   return (
     <div>
@@ -239,7 +280,7 @@ export default function SimulationPage() {
 
       {!workspaceId ? (
         <div className="mt-4">
-          <InlineAlert message="Select a workspace by running Idea Validation first." />
+          <WorkspacePrompt />
         </div>
       ) : null}
 
@@ -249,102 +290,154 @@ export default function SimulationPage() {
         </div>
       ) : null}
 
-      <div className="mt-6">
-        <SegmentedTabs
-          ariaLabel="Scenario tabs"
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: "adaptive", label: "Adaptive" },
-            { value: "manual", label: "Manual" },
-            { value: "donothing", label: "Do nothing" },
-            { value: "history", label: "History" }
-          ]}
-        />
-      </div>
+      {workspaceId ? (
+        <div className="mt-6 flex justify-end">
+          <Button onClick={() => setTab("manual")}>Run a scenario</Button>
+        </div>
+      ) : null}
 
-      {tab === "adaptive" ? (
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <SectionCard title="Risk signals" subtitle="Detected structural risks.">
-            <div className="space-y-2">
-              {riskSignals.length ? (
-                riskSignals.map((r) => (
-                  <div key={r.risk_signal_id} className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{r.risk_type}</div>
-                    <div className="mt-1 text-sm text-slate-700">
-                      {r.reason_code} — {r.metric_name}: {String(r.metric_value)}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">Severity: {r.severity}</div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-slate-600">No risks detected yet.</div>
-              )}
-            </div>
-            <div className="mt-4 flex justify-end">
-              <Button disabled={loading || !canRun} onClick={loadSignals}>
-                {loading ? <Spinner size={16} /> : null}
-                Refresh risks
-              </Button>
-            </div>
-          </SectionCard>
-
-          <SectionCard title="Recommended scenarios" subtitle="Adaptive scenarios triggered by risks.">
-            <div className="space-y-3">
-              {recommendations.length ? (
-                recommendations.map((rec) => (
-                  <div key={rec.scenario_template_id} className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="text-sm font-semibold text-slate-900">{rec.title}</div>
-                    <div className="text-xs text-slate-500">Trigger: {rec.trigger_reason}</div>
-                    <div className="mt-2">
-                      <Button
-                        size="sm"
-                        onClick={() =>
-                          runScenario(
-                            rec.scenario_template_id,
-                            "adaptive",
-                            buildDefaultParams(
-                              templates.find((t) => t.scenario_template_id === rec.scenario_template_id),
-                              stateSnapshot
-                            ),
-                            rec.title
-                          )
-                        }
-                        disabled={loading || !canRun}
-                      >
-                        {loading ? <Spinner size={14} /> : null}
-                        Run scenario
-                      </Button>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-slate-600">No recommendations yet. Refresh risks to generate.</div>
-              )}
-            </div>
-          </SectionCard>
-
-          <SectionCard title="Scenario output" subtitle="Timeline and recommendations.">
+      {workspaceId && tab === "adaptive" ? (
+        <div className="mt-4 space-y-4">
+          <SectionCard
+            title={
+              <div className="flex items-center gap-2">
+                <span>Baseline Continuity (6 months)</span>
+                <InfoTip text="Current baseline projection if no action is taken." />
+              </div>
+            }
+          >
             <ScenarioOutput
-              activeRun={activeRun}
-              timeline={timeline}
+              activeRun={projectionRun}
+              timeline={projectionTimeline}
               currency={currency}
               decisionSaving={decisionSaving}
               decisionNotice={decisionNotice}
               onDecision={saveDecision}
-              hideDecision={isProjection(activeRun)}
+              hideDecision
+              maxTimelineRows={6}
             />
           </SectionCard>
+
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+            <SectionCard
+              title={
+                <div className="flex items-center gap-2">
+                  <span>Risk signals</span>
+                  <InfoTip text="Auto-detected risks based on validation inputs." />
+                </div>
+              }
+              subtitle="Detected structural risks."
+            >
+              <div className="space-y-2">
+                {riskSignals.length ? (
+                  riskSignals.map((r) => (
+                    <div key={r.risk_signal_id} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{r.risk_type}</div>
+                      <div className="mt-1 text-sm text-slate-700">
+                        {r.reason_code} – {r.metric_name}: {String(r.metric_value)}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">Severity: {r.severity}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-slate-600">No risks detected yet.</div>
+                )}
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              title={
+                <div className="flex items-center gap-2">
+                  <span>Recommended scenarios</span>
+                  <InfoTip text="Scenarios suggested based on detected risks." />
+                </div>
+              }
+              subtitle="Adaptive scenarios triggered by risks."
+            >
+              <div className="space-y-3">
+                {recommendations.length ? (
+                  recommendations.map((rec) => (
+                    <div key={rec.scenario_template_id} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-sm font-semibold text-slate-900">{rec.title}</div>
+                      <div className="text-xs text-slate-500">Trigger: {rec.trigger_reason}</div>
+                      <div className="mt-2">
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            runScenario(
+                              rec.scenario_template_id,
+                              "adaptive",
+                              buildDefaultParams(
+                                templates.find((t) => t.scenario_template_id === rec.scenario_template_id),
+                                stateSnapshot
+                              ),
+                              rec.title
+                            )
+                          }
+                          disabled={loading || !canRun}
+                        >
+                          {loading ? <Spinner size={14} /> : null}
+                          Run scenario
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-slate-600">No recommendations yet.</div>
+                )}
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              title={
+                <div className="flex items-center gap-2">
+                  <span>Recent history</span>
+                  <InfoTip text="Latest scenario runs and decision outcomes." />
+                </div>
+              }
+              subtitle="Last scenario runs and decisions."
+            >
+              <div className="space-y-2">
+                {history.length ? (
+                history.slice(0, 2).map((h) => (
+                    <div
+                      key={h.scenario_run_id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3"
+                    >
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">{h.scenario_name}</div>
+                        <div className="text-xs text-slate-500">{h.scenario_type}</div>
+                      </div>
+                      <div className="text-xs text-slate-500">{h.executed_at}</div>
+                      <div className="text-xs font-semibold text-slate-600">
+                        {h.decision_status ? h.decision_status.toUpperCase() : "PENDING"}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-slate-600">No scenario history yet.</div>
+                )}
+              </div>
+              <div className="mt-3 flex justify-end gap-2">
+                <Button variant="ghost" disabled={loading || !canRun} onClick={clearHistory}>
+                  Clear history
+                </Button>
+              </div>
+            </SectionCard>
+          </div>
+
+          
         </div>
       ) : null}
 
-      {tab === "manual" ? (
+      {workspaceId && tab === "manual" ? (
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <SectionCard title="Manual scenario" subtitle="Build a custom simulation.">
             <div className="space-y-3">
               <div>
-                <div className="ea-label">Scenario template</div>
+                <FieldLabel info="Choose a scenario template to simulate.">Scenario template</FieldLabel>
                 <select className="ea-input" value={manualTemplateId} onChange={(e) => setManualTemplateId(e.target.value)}>
+                  <option value="do_nothing_projection">Baseline Continuity Projection</option>
                   {templates
                     .filter((t) => t.mode !== "adaptive")
                     .map((t) => (
@@ -355,18 +448,23 @@ export default function SimulationPage() {
                 </select>
               </div>
               <div>
-                <div className="ea-label">Scenario name</div>
-                <input className="ea-input" value={manualName} onChange={(e) => setManualName(e.target.value)} />
+                <FieldLabel info="Give the run a name for tracking.">Scenario name</FieldLabel>
+                <input
+                  className="ea-input"
+                  value={manualName}
+                  onChange={(e) => setManualName(e.target.value)}
+                  disabled={manualTemplateId === "do_nothing_projection"}
+                />
               </div>
               <div>
-                <div className="ea-label">Timeline months (3–6)</div>
+                <FieldLabel info="How many months to project.">Timeline months</FieldLabel>
                 <NumberInput value={manualTimelineMonths} onChange={setManualTimelineMonths} placeholder="6" />
               </div>
 
-              {manualTemplate?.required_inputs?.length ? (
+              {manualTemplateId !== "do_nothing_projection" && manualTemplate?.required_inputs?.length ? (
                 manualTemplate.required_inputs.map((key) => (
                   <div key={key}>
-                    <div className="ea-label">{prettyLabel(key)}</div>
+                    <FieldLabel info={fieldHelp(key)}>{prettyLabel(key)}</FieldLabel>
                     <NumberInput
                       value={String(manualParams[key] ?? "")}
                       onChange={(v) => setManualParams((p) => ({ ...p, [key]: parseNumber(v, 0) }))}
@@ -374,6 +472,8 @@ export default function SimulationPage() {
                     />
                   </div>
                 ))
+              ) : manualTemplateId === "do_nothing_projection" ? (
+                <div className="text-sm text-slate-600">Uses current inputs. No additional inputs required.</div>
               ) : (
                 <div className="text-sm text-slate-600">No additional inputs required.</div>
               )}
@@ -382,17 +482,21 @@ export default function SimulationPage() {
             <div className="mt-4 flex justify-end">
               <Button
                 disabled={loading || !canRun}
-                onClick={() =>
+                onClick={() => {
+                  if (manualTemplateId === "do_nothing_projection") {
+                    runDoNothing(parseNumber(manualTimelineMonths, 6), true);
+                    return;
+                  }
                   runScenario(
                     manualTemplateId,
                     "manual",
                     { ...manualParams, timeline_months: parseNumber(manualTimelineMonths, 6) },
                     manualName
-                  )
-                }
+                  );
+                }}
               >
                 {loading ? <Spinner size={16} /> : null}
-                Run manual scenario
+                {manualTemplateId === "do_nothing_projection" ? "Run projection" : "Run manual scenario"}
               </Button>
             </div>
           </SectionCard>
@@ -410,68 +514,7 @@ export default function SimulationPage() {
           </SectionCard>
         </div>
       ) : null}
-
-      {tab === "donothing" ? (
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <SectionCard title="Do nothing projection" subtitle="See the likely path without action.">
-            <div className="space-y-3">
-              <div>
-                <div className="ea-label">Timeline months (3–6)</div>
-                <NumberInput value={manualTimelineMonths} onChange={setManualTimelineMonths} placeholder="3" />
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end">
-              <Button disabled={loading || !canRun} onClick={runDoNothing}>
-                {loading ? <Spinner size={16} /> : null}
-                Run projection
-              </Button>
-            </div>
-          </SectionCard>
-
-          <SectionCard title="Projection output" subtitle="Month-by-month view." className="lg:col-span-2">
-            <ScenarioOutput
-              activeRun={activeRun}
-              timeline={timeline}
-              currency={currency}
-              decisionSaving={decisionSaving}
-              decisionNotice={decisionNotice}
-              onDecision={saveDecision}
-              hideDecision
-            />
-          </SectionCard>
-        </div>
-      ) : null}
-
-      {tab === "history" ? (
-        <div className="mt-4">
-          <SectionCard title="Scenario history" subtitle="Previous runs and decisions.">
-            <div className="mb-3 flex justify-end">
-              <Button variant="secondary" disabled={loading || !canRun} onClick={clearHistory}>
-                Clear history
-              </Button>
-            </div>
-            <div className="space-y-2">
-              {history.length ? (
-                history.map((h) => (
-                  <div key={h.scenario_run_id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900">{h.scenario_name}</div>
-                      <div className="text-xs text-slate-500">{h.scenario_type}</div>
-                    </div>
-                    <div className="text-xs text-slate-500">{h.executed_at}</div>
-                    <div className="text-xs font-semibold text-slate-600">
-                      {h.decision_status ? h.decision_status.toUpperCase() : "PENDING"}
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-slate-600">No scenario history yet.</div>
-              )}
-            </div>
-          </SectionCard>
-        </div>
-      ) : null}
-    </div>
+</div>
   );
 }
 
@@ -481,6 +524,7 @@ function buildDefaultParams(template, stateSnapshot) {
     price_change_pct: 5,
     revenue_drop_pct: 10,
     cost_increase_pct: 10,
+    employee_count: 1,
     employee_monthly_cost: 1500,
     contractor_monthly_cost: 1200,
     delay_months: 1,
@@ -501,7 +545,32 @@ function prettyLabel(key) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function ScenarioOutput({ activeRun, timeline, currency, decisionSaving, decisionNotice, onDecision, hideDecision }) {
+function fieldHelp(key) {
+  const help = {
+    price_change_pct: "Percent change in price.",
+    revenue_drop_pct: "Percent drop in revenue.",
+    cost_increase_pct: "Percent increase in monthly costs.",
+    employee_count: "Number of employees to add.",
+    employee_monthly_cost: "Monthly cost per employee.",
+    contractor_monthly_cost: "Monthly cost per contractor.",
+    delay_months: "Months of delayed payments.",
+    revenue_uplift_pct: "Percent revenue uplift for new service.",
+    cost_uplift_pct: "Percent cost uplift for new service.",
+    client_loss_pct: "Percent of revenue lost from a client."
+  };
+  return help[key] || "";
+}
+
+function ScenarioOutput({
+  activeRun,
+  timeline,
+  currency,
+  decisionSaving,
+  decisionNotice,
+  onDecision,
+  hideDecision,
+  maxTimelineRows
+}) {
   if (!activeRun) {
     return <div className="text-sm text-slate-600">Run a scenario to view results.</div>;
   }
@@ -509,6 +578,9 @@ function ScenarioOutput({ activeRun, timeline, currency, decisionSaving, decisio
   const base = activeRun.baseline_metrics || {};
   const scenario = activeRun.scenario_metrics || {};
   const deltas = activeRun.deltas || {};
+
+  const timelineRows = maxTimelineRows ? timeline.slice(0, maxTimelineRows) : timeline;
+  const isTrimmed = maxTimelineRows && timeline.length > maxTimelineRows;
 
   return (
     <div className="space-y-3">
@@ -522,15 +594,32 @@ function ScenarioOutput({ activeRun, timeline, currency, decisionSaving, decisio
 
       {Object.keys(base).length ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <MetricCard title="Baseline" metrics={base} currency={currency} />
-          <MetricCard title="Scenario" metrics={scenario} currency={currency} />
-          <MetricCard title="Delta" metrics={deltas} currency={currency} isDelta />
+          <MetricCard
+            title="Baseline"
+            metrics={base}
+            currency={currency}
+            info="Your current metrics without any change."
+          />
+          <MetricCard
+            title="Scenario"
+            metrics={scenario}
+            currency={currency}
+            info="Projected metrics after applying the scenario."
+          />
+          <MetricCard
+            title="Delta"
+            metrics={deltas}
+            currency={currency}
+            isDelta
+            info="Difference between scenario and baseline."
+          />
         </div>
       ) : null}
 
       {timeline?.length ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Timeline</div>
+          {isTrimmed ? <div className="mt-1 text-xs text-slate-500">Showing first {maxTimelineRows} months.</div> : null}
           <div className="mt-3 overflow-auto">
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-slate-500">
@@ -545,7 +634,7 @@ function ScenarioOutput({ activeRun, timeline, currency, decisionSaving, decisio
                 </tr>
               </thead>
               <tbody>
-                {timeline.map((row) => (
+                {timelineRows.map((row) => (
                   <tr key={row.month_index} className="border-t">
                     <td className="px-2 py-2">{row.month_index}</td>
                     <td className="px-2 py-2">{formatCurrency(row.revenue, currency)}</td>
@@ -580,7 +669,7 @@ function ScenarioOutput({ activeRun, timeline, currency, decisionSaving, decisio
   );
 }
 
-function MetricCard({ title, metrics, currency, isDelta }) {
+function MetricCard({ title, metrics, currency, isDelta, info }) {
   const rows = [
     ["Monthly revenue", metrics.monthly_revenue],
     ["Monthly costs", metrics.monthly_costs],
@@ -590,7 +679,10 @@ function MetricCard({ title, metrics, currency, isDelta }) {
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <span>{title}</span>
+        {info ? <InfoTip text={info} /> : null}
+      </div>
       <div className="mt-3 space-y-2 text-sm">
         {rows.map(([label, value]) => (
           <div key={label} className="flex items-center justify-between gap-3">
@@ -622,3 +714,10 @@ function isProjection(run) {
   if (!run) return false;
   return run.scenario_type === "do_nothing_projection" || String(run.scenario_run_id || "").startsWith("proj_");
 }
+
+
+
+
+
+
+

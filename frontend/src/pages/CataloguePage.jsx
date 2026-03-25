@@ -1,7 +1,15 @@
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
+import WorkspacePrompt from "../components/WorkspacePrompt";
+import { useWorkspaceStore } from "../store/workspace";
 
 export default function CataloguePage() {
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+
+  if (!workspaceId) {
+    return <WorkspacePrompt />;
+  }
+
   return (
     <div>
       <PageHeader

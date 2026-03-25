@@ -12,6 +12,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import { formatCurrency, formatNumber, formatPercent } from "../lib/format";
 import { buildActionPlan, dedupeText } from "../lib/insights";
 import { pctWidth, shortExplanation, toneForScore } from "../lib/score";
+import WorkspacePrompt from "../components/WorkspacePrompt";
 
 function decisionBadge(status) {
   if (status === "accepted") return { text: "ACCEPTED", tone: "success" };
@@ -122,9 +123,11 @@ export default function ResultsPage() {
 
   if (!validation) {
     return (
-      <SectionCard title="No results yet" subtitle="Run Idea Validation to see results here.">
-        <p className="text-sm text-slate-700">Go to Idea Validation and click "Create & Evaluate".</p>
-      </SectionCard>
+      <WorkspacePrompt
+        title="No results yet"
+        subtitle="Save a workspace in Idea Validation, then run evaluation to see results here."
+        ctaLabel="Go to Idea Validation"
+      />
     );
   }
 

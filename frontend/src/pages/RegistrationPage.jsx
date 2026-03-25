@@ -1,7 +1,15 @@
 import PageHeader from "../components/PageHeader";
 import RegistrationWizard from "../modules/registration/RegistrationWizard";
+import WorkspacePrompt from "../components/WorkspacePrompt";
+import { useWorkspaceStore } from "../store/workspace";
 
 export default function RegistrationPage() {
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+
+  if (!workspaceId) {
+    return <WorkspacePrompt />;
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -17,4 +25,3 @@ export default function RegistrationPage() {
     </div>
   );
 }
-

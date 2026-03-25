@@ -7,6 +7,7 @@ import Spinner from "../components/Spinner";
 import { apiRequest, getApiBaseUrl } from "../api/client";
 import Button from "../components/Button";
 import { useWorkspaceStore } from "../store/workspace";
+import WorkspacePrompt from "../components/WorkspacePrompt";
 
 const DOCUMENTS = [
   {
@@ -444,6 +445,10 @@ export default function BlueprintPage() {
     } catch {
       return "";
     }
+  }
+
+  if (!workspaceIdStored) {
+    return <WorkspacePrompt />;
   }
 
   return (

@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import Badge from "../components/Badge";
 import Button from "../components/Button";
+import PageHeader from "../components/PageHeader";
 import InfoTip from "../components/InfoTip";
 import SectionCard from "../components/SectionCard";
 import SegmentedTabs from "../components/SegmentedTabs";
@@ -11,6 +12,7 @@ import { formatCurrency, formatNumber, formatPercent } from "../lib/format";
 import { buildActionPlan, dedupeText } from "../lib/insights";
 import { pctWidth, shortExplanation, toneForScore } from "../lib/score";
 import { apiRequest } from "../api/client";
+import WorkspacePrompt from "../components/WorkspacePrompt";
 
 /* ─── Inline styles: scoped CSS-in-JS using a style tag injected once ─── */
 const STYLES = `
@@ -54,9 +56,9 @@ const STYLES = `
 
   /* ── Typography ── */
   .ea-display {
-    font-family: 'DM Serif Display', Georgia, serif;
-    font-style: italic;
-    letter-spacing: -0.02em;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-style: normal;
+    letter-spacing: -0.01em;
   }
   .ea-mono {
     font-family: 'SF Mono', 'Fira Code', monospace;
@@ -118,18 +120,18 @@ const STYLES = `
     color: var(--ink);
   }
   .ea-page-title {
-    font-family: 'DM Serif Display', Georgia, serif;
-    font-size: 2rem;
-    font-weight: 400;
-    letter-spacing: -0.03em;
-    color: var(--ink);
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--brand);
     line-height: 1.1;
   }
   .ea-page-sub {
     font-size: 0.875rem;
     color: var(--ink-3);
-    margin-top: 2px;
-    font-weight: 300;
+    margin-top: 4px;
+    font-weight: 400;
   }
   .ea-page-sub strong { color: var(--ink-2); font-weight: 500; }
 
@@ -381,7 +383,7 @@ const STYLES = `
     justify-content: space-between;
     gap: 12px;
   }
-  .ea-section-title { font-size: 0.875rem; font-weight: 600; color: var(--ink); }
+  .ea-section-title { font-size: 0.875rem; font-weight: 600; color: var(--brand); }
   .ea-section-sub { font-size: 0.75rem; color: var(--ink-3); margin-top: 2px; font-weight: 300; }
   .ea-section-body { padding: 18px 22px; }
 
@@ -458,11 +460,11 @@ const STYLES = `
   /* ── Layout ── */
   .ea-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 340px;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
     gap: 24px;
     align-items: start;
   }
-  @media (max-width: 1024px) { .ea-layout { grid-template-columns: 1fr; } }
+  @media (max-width: 1200px) { .ea-layout { grid-template-columns: 1fr; } }
   .ea-sidebar { display: flex; flex-direction: column; gap: 20px; position: static; min-width: 0; }
   .ea-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 
@@ -1145,53 +1147,42 @@ export default function DashboardPage() {
       <div className="ea-container">
 
       {/* ── Page header ── */}
-      <div className="ea-page-header ea-anim">
-        <div>
-          <div className="ea-page-title">Dashboard</div>
-          <div className="ea-page-sub">
-            {businessName ? (
-              <><strong>{businessName}</strong> · Overview &amp; analytics</>
-            ) : "Overview and analytics across your workspace."}
+      <PageHeader
+        title="Dashboard"
+        description={
+          businessName
+            ? `${businessName} · Overview & analytics`
+            : "Overview and analytics across your workspace."
+        }
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {validation && workspaceId ? (
+              <>
+                <Button variant="secondary" onClick={() => navigate(`/validation?workspace_id=${workspaceId}`)}>
+                  Modify
+                </Button>
+                <Button variant="danger" disabled={decisionSaving || decisionStatus === "rejected"} onClick={() => handleDecision("rejected")}>
+                  {decisionStatus === "rejected" ? "Rejected" : "Reject"}
+                </Button>
+                <Button disabled={decisionSaving || decisionStatus === "accepted"} onClick={() => handleDecision("accepted")}>
+                  {decisionStatus === "accepted" ? "Accepted" : "Accept"}
+                </Button>
+              </>
+            ) : null}
+            <Button variant="secondary" onClick={() => navigate("/simulation")}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+              </svg>
+              Run simulation
+            </Button>
           </div>
-        </div>
-        <div className="ea-page-header-right">
-          {validation && workspaceId ? (
-            <>
-              <button className="ea-btn ea-btn-secondary" onClick={() => navigate(`/validation?workspace_id=${workspaceId}`)}>
-                Modify
-              </button>
-              <button className="ea-btn ea-btn-danger" disabled={decisionSaving || decisionStatus === "rejected"} onClick={() => handleDecision("rejected")}>
-                {decisionStatus === "rejected" ? "Rejected" : "Reject"}
-              </button>
-              <button className="ea-btn ea-btn-primary" disabled={decisionSaving || decisionStatus === "accepted"} onClick={() => handleDecision("accepted")}>
-                {decisionStatus === "accepted" ? "Accepted" : "Accept"}
-              </button>
-            </>
-          ) : null}
-          <button className="ea-btn ea-btn-secondary" onClick={() => navigate("/simulation")}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-            </svg>
-            Run simulation
-          </button>
-        </div>
-      </div>
+        }
+      />
 
       {/* ── Empty state ── */}
       {!validation && !isLoadingView ? (
-        <div className="ea-section ea-anim ea-anim-1">
-          <div className="ea-empty">
-            <div className="ea-empty-icon">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#2a6ff4" strokeWidth="1.8">
-                <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
-              </svg>
-            </div>
-            <div className="ea-empty-title">Start your first validation</div>
-            <div className="ea-empty-sub">Run Idea Validation to generate a baseline score, financial metrics, and actionable recommendations.</div>
-            <button className="ea-btn ea-btn-primary" onClick={() => navigate("/validation")}>
-              Go to Idea Validation
-            </button>
-          </div>
+        <div className="ea-anim ea-anim-1">
+          <WorkspacePrompt />
         </div>
       ) : isLoadingView ? (
         <div className="ea-layout">
