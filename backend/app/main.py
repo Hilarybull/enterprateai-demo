@@ -22,19 +22,20 @@ logger = logging.getLogger(__name__)
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.environment)
-    logger.info(
-        "Config loaded env=%s mongo_uri=%s mongo_db=%s cors_origins=%s",
-        settings.environment,
-        redact_uri(settings.mongo_uri),
-        settings.mongo_db,
-        settings.cors_origins,
-    )
-    logger.info(
-        "LLM providers configured claude=%s gemini=%s openai=%s",
-        bool(settings.claude_api_key),
-        bool(settings.gemini_api_key),
-        bool(settings.openai_api_key),
-    )
+    if settings.environment == "development":
+        logger.info(
+            "Config loaded env=%s mongo_uri=%s mongo_db=%s cors_origins=%s",
+            settings.environment,
+            redact_uri(settings.mongo_uri),
+            settings.mongo_db,
+            settings.cors_origins,
+        )
+        logger.info(
+            "LLM providers configured claude=%s gemini=%s openai=%s",
+            bool(settings.claude_api_key),
+            bool(settings.gemini_api_key),
+            bool(settings.openai_api_key),
+        )
 
     app = FastAPI(title=settings.app_name)
 
@@ -48,7 +49,8 @@ def create_app() -> FastAPI:
     cors_kwargs["allow_origin_regex"] = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
     app.add_middleware(CORSMiddleware, **cors_kwargs)
 
-    app.middleware("http")(request_logging_middleware)
+    if settings.environment == "development":
+        app.middleware("http")(request_logging_middleware)
 
     @app.on_event("startup")
     async def _startup() -> None:

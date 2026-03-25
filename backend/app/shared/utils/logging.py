@@ -5,7 +5,8 @@ import sys
 
 
 def configure_logging(environment: str) -> None:
-    level = logging.INFO if environment != "development" else logging.DEBUG
+    is_dev = environment == "development"
+    level = logging.DEBUG if is_dev else logging.WARNING
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -16,4 +17,5 @@ def configure_logging(environment: str) -> None:
     logging.getLogger("pymongo").setLevel(logging.WARNING)
     logging.getLogger("motor").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.error").setLevel(level)
-    logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.access").setLevel(logging.INFO if is_dev else logging.WARNING)
+    logging.getLogger("app.http").setLevel(logging.INFO if is_dev else logging.WARNING)
