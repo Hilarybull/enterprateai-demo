@@ -45,8 +45,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    # Always allow localhost/127.0.0.1 in dev to avoid CORS issues when running locally.
-    cors_kwargs["allow_origin_regex"] = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+    # Allow localhost in dev and Render preview domains as a safe fallback.
+    cors_kwargs["allow_origin_regex"] = r"(^https?://(localhost|127\.0\.0\.1)(:\d+)?$)|(^https?://.*\.onrender\.com$)"
     app.add_middleware(CORSMiddleware, **cors_kwargs)
 
     if settings.environment == "development":
