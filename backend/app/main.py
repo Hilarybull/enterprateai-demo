@@ -39,24 +39,24 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.app_name)
 
-    allow_origins = list(dict.fromkeys(settings.cors_origins))
-    if settings.environment != "development":
-        # Ensure Render demo origin is explicitly allowed even if env parsing fails.
-        allow_origins.extend(
-            [
-                "https://enterprateai-demo.onrender.com",
-            ]
+    if settings.environment == "development":
+        allow_origins = list(dict.fromkeys(settings.cors_origins))
+        cors_kwargs = dict(
+            allow_origins=allow_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
         )
-        allow_origins = list(dict.fromkeys(allow_origins))
-
-    cors_kwargs = dict(
-        allow_origins=allow_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    # Allow localhost in dev and Render preview domains as a safe fallback.
-    cors_kwargs["allow_origin_regex"] = r"(^https?://(localhost|127\.0\.0\.1)(:\d+)?$)|(^https?://.*\.onrender\.com$)"
+        # Allow localhost in dev and Render preview domains as a safe fallback.
+        cors_kwargs["allow_origin_regex"] = r"(^https?://(localhost|127\.0\.0\.1)(:\d+)?$)|(^https?://.*\.onrender\.com$)"
+    else:
+        # Production: allow any origin (no cookies), to avoid blocked auth/signup across Render domains.
+        cors_kwargs = dict(
+            allow_origins=["*"],
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     app.add_middleware(CORSMiddleware, **cors_kwargs)
 
     if settings.environment == "development":
