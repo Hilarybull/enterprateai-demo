@@ -39,8 +39,18 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.app_name)
 
+    allow_origins = list(dict.fromkeys(settings.cors_origins))
+    if settings.environment != "development":
+        # Ensure Render demo origin is explicitly allowed even if env parsing fails.
+        allow_origins.extend(
+            [
+                "https://enterprateai-demo.onrender.com",
+            ]
+        )
+        allow_origins = list(dict.fromkeys(allow_origins))
+
     cors_kwargs = dict(
-        allow_origins=settings.cors_origins,
+        allow_origins=allow_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
