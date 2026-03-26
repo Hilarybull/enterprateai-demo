@@ -428,6 +428,7 @@ def uk_sic_search(*, query: str, limit: int = 6) -> List[UkSicCode]:
     """
     Deterministic SIC search over the official UK SIC 2007 dataset (ONS).
     """
+    limit = max(1, min(limit, 6))
     q = (query or "").strip()
     if not q:
         return []
