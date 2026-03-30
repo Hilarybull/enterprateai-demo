@@ -78,15 +78,22 @@ export default function ValidationWizardPage() {
     go_to_market: { target_market: "B2C", customer_budget_level: "Unknown", sub_industry: "", channels: [] }
   }));
 
+  const isProductPath = form.pathway === "product_service_idea";
   const formBlocks = useMemo(
     () => [
-      { key: "business", label: "Business", desc: "Business name, type, industry, currency, and context." },
+      {
+        key: "business",
+        label: isProductPath ? "Product / service" : "Business",
+        desc: isProductPath
+          ? "Product name, category, industry, currency, and context."
+          : "Business name, type, industry, currency, and context."
+      },
       { key: "offer_demand", label: "Offer & demand", desc: "Offer, pricing, volume assumptions, and sales cycle." },
       { key: "costs", label: "Costs", desc: "Fixed and variable costs behind the model." },
       { key: "capacity_cash", label: "Capacity & cash", desc: "Capacity assumptions and starting cash/runway inputs." },
       { key: "go_to_market", label: "Go-to-market", desc: "Target market and acquisition channels." }
     ],
-    []
+    [isProductPath]
   );
 
   const [enabledForms, setEnabledForms] = useState(() => ({ business: true, offer_demand: true, costs: true, capacity_cash: true, go_to_market: true }));
@@ -398,22 +405,30 @@ export default function ValidationWizardPage() {
             <div className="space-y-3">
               {enabledForms.business ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">Business</summary>
+                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+                    {isProductPath ? "Product / service" : "Business"}
+                  </summary>
                   <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
                     <div className="md:col-span-2 lg:col-span-3">
                       <FieldLabel info="A label for this validation so you can find it later.">Workspace name</FieldLabel>
                       <Input value={workspaceName} disabled={Boolean(editingWorkspaceId)} onChange={(e) => { setWorkspaceNameTouched(true); setWorkspaceName(e.target.value); }} />
                     </div>
                     <div className="md:col-span-2 lg:col-span-3">
-                      <FieldLabel info="The name you want to validate. This is required.">Business name *</FieldLabel>
+                      <FieldLabel info="The name you want to validate. This is required.">
+                        {isProductPath ? "Product / service name *" : "Business name *"}
+                      </FieldLabel>
                       <Input value={form.context.business_name} onChange={(e) => update("context.business_name", e.target.value)} />
                     </div>
                     <div className="md:col-span-2 lg:col-span-3">
-                      <FieldLabel info="Short description of what you're building.">What are you building?</FieldLabel>
+                      <FieldLabel info="Short description of what you're building.">
+                        {isProductPath ? "Describe the product / service" : "What are you building?"}
+                      </FieldLabel>
                       <Input value={form.offer.service_type} onChange={(e) => update("offer.service_type", e.target.value)} />
                     </div>
                     <div>
-                      <FieldLabel info="Choose the business category.">Business type</FieldLabel>
+                      <FieldLabel info="Choose the business category.">
+                        {isProductPath ? "Product / service category" : "Business type"}
+                      </FieldLabel>
                       <select value={form.context.business_type_category} onChange={(e) => update("context.business_type_category", e.target.value)} className="ea-input">
                         {BUSINESS_TYPE_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}
                       </select>

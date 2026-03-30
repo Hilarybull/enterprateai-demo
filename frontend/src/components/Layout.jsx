@@ -162,11 +162,13 @@ export default function Layout() {
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
+  const setWorkspaceLoadedAt = useWorkspaceStore((s) => s.setWorkspaceLoadedAt);
   const setIdeaValidation = useWorkspaceStore((s) => s.setIdeaValidation);
   const setInputs = useWorkspaceStore((s) => s.setInputs);
   const setCurrency = useWorkspaceStore((s) => s.setCurrency);
 
   const enableHealthCheck = String(import.meta.env.ENABLE_HEALTH_CHECK ?? "false").toLowerCase() === "true";
+  const workspaceDisplayName = decisionStatus === "accepted" && workspaceName ? workspaceName : workspaceName || "My workspace";
 
   useEffect(() => {
     if (!enableHealthCheck) return;
@@ -224,6 +226,7 @@ export default function Layout() {
         setWorkspaceId(ws.id || null);
         setWorkspaceName(ws.name || null);
         setWorkspaceDraftName(ws.name || "");
+        setWorkspaceLoadedAt(new Date().toISOString());
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
         else setDecisionStatus(null);
@@ -248,7 +251,7 @@ export default function Layout() {
     return () => {
       cancelled = true;
     };
-  }, [token, setCurrency, setDecisionStatus, setIdeaValidation, setInputs, setWorkspaceId, setWorkspaceName]);
+  }, [token, setCurrency, setDecisionStatus, setIdeaValidation, setInputs, setWorkspaceId, setWorkspaceName, setWorkspaceLoadedAt]);
 
   const initials = useMemo(() => initialsFromEmail(email), [email]);
   const filteredNav = useMemo(() => {
@@ -325,6 +328,21 @@ export default function Layout() {
           </div>
         </div>
       ) : null}
+
+      <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 [@media(max-height:780px)]:hidden">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Workspace</div>
+        <div className="mt-2 text-base font-semibold text-slate-900">{workspaceDisplayName}</div>
+        <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700">
+          Starter Plan
+        </div>
+        <div className="mt-3 text-xs text-slate-500">
+          {decisionStatus === "accepted"
+            ? "Workspace verified"
+            : decisionStatus === "rejected"
+              ? "Needs review"
+              : "Setup in progress"}
+        </div>
+      </div>
 
       <div className="mt-auto h-2" />
     </aside>

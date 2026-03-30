@@ -983,17 +983,31 @@ export default function DashboardPage() {
   const setCurrency = useWorkspaceStore((s) => s.setCurrency);
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
+  const workspaceLoadedAt = useWorkspaceStore((s) => s.workspaceLoadedAt);
   const navigate       = useNavigate();
   const hasLoadedRef   = useRef(false);
   const [decisionSaving, setDecisionSaving] = useState(false);
   const [decisionNotice, setDecisionNotice] = useState(null);
   const [decisionError, setDecisionError] = useState(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [needsEvaluation, setNeedsEvaluation] = useState(false);
+  const [evaluationLoading, setEvaluationLoading] = useState(false);
 
   useEffect(() => {
     let alive = true;
     async function loadWorkspace() {
+      if (validation && workspaceId && ideaValidation) {
+        hasLoadedRef.current = true;
+        return;
+      }
+      if (workspaceId && ideaValidation && !validation) {
+        hasLoadedRef.current = true;
+        setNeedsEvaluation(true);
+        return;
+      }
       if (hasLoadedRef.current) return;
       try {
+        setWorkspaceLoading(true);
         const ws = workspaceId
           ? await apiRequest(`/validation/${workspaceId}`, "GET")
           : await apiRequest("/validation/me", "GET");
@@ -1006,20 +1020,45 @@ export default function DashboardPage() {
         if (iv) setIdeaValidation(iv);
         const cur = iv?.context?.currency || ws?.data?.business_profile?.currency;
         if (cur) setCurrency(cur);
+        const cachedValidation =
+          ws?.data?.validation ||
+          ws?.data?.validation_result ||
+          ws?.data?.validation_snapshot ||
+          ws?.data?.last_validation;
+        if (!validation && cachedValidation) {
+          setValidation(cachedValidation);
+          setNeedsEvaluation(false);
+          return;
+        }
         if (!validation) {
-          const result = await apiRequest("/validation/evaluate", "POST", { workspace_id: ws.id });
-          if (alive) setValidation(result);
+          setNeedsEvaluation(true);
         }
       } catch (e) {
         // If no workspace yet, keep dashboard empty state.
         if (String(e?.message || "").includes("HTTP 404")) return;
+      } finally {
+        if (alive) setWorkspaceLoading(false);
       }
     }
     loadWorkspace();
     return () => {
       alive = false;
     };
-  }, [workspaceId, validation, setWorkspaceId, setWorkspaceName, setDecisionStatus, setIdeaValidation, setValidation, setCurrency]);
+  }, [workspaceId, validation, ideaValidation, workspaceLoadedAt, setWorkspaceId, setWorkspaceName, setDecisionStatus, setIdeaValidation, setValidation, setCurrency]);
+
+  const runEvaluation = useCallback(async () => {
+    if (!workspaceId || evaluationLoading) return;
+    setEvaluationLoading(true);
+    try {
+      const result = await apiRequest("/validation/evaluate", "POST", { workspace_id: workspaceId });
+      setValidation(result);
+      setNeedsEvaluation(false);
+    } catch {
+      // handled by empty state prompt
+    } finally {
+      setEvaluationLoading(false);
+    }
+  }, [workspaceId, evaluationLoading, setValidation]);
 
   async function handleDecision(status) {
     if (!workspaceId) return;
@@ -1089,7 +1128,7 @@ export default function DashboardPage() {
     return dedupeText(out).slice(0, 6);
   }, [businessName, businessType, offerName, primaryIndustry]);
 
-  const isLoadingView = Boolean(workspaceId) && !validation;
+  const isLoadingView = workspaceLoading;
 
 
   // ── Market Fit state ──────────────────────────────────────────────
@@ -1119,12 +1158,21 @@ export default function DashboardPage() {
     }
   }, [businessName, primaryIndustry, businessType, ideaValidation]);
 
-  // Auto-fetch once when validation exists
+  // Use cached market fit from validation if available
   useEffect(() => {
-    if (validation && !mfFetched && !mfLoading) {
+    const cached = validation?.metrics?.market_fit;
+    if (cached && !marketFit) {
+      setMarketFit(cached);
+      setMfFetched(true);
+    }
+  }, [validation, marketFit]);
+
+  // Auto-fetch once when detailed view is shown
+  useEffect(() => {
+    if (validation && viewMode === "detailed" && !mfFetched && !mfLoading && !marketFit) {
       fetchMarketFit();
     }
-  }, [validation, mfFetched, mfLoading, fetchMarketFit]);
+  }, [validation, viewMode, mfFetched, mfLoading, marketFit, fetchMarketFit]);
 
   const dimHelp = (key) => {
     const fromBackend = validation?.dimension_explanations?.[key];
@@ -1180,9 +1228,33 @@ export default function DashboardPage() {
       />
 
       {/* ── Empty state ── */}
-      {!validation && !isLoadingView ? (
+      {!workspaceId ? (
         <div className="ea-anim ea-anim-1">
           <WorkspacePrompt />
+        </div>
+      ) : !validation && needsEvaluation ? (
+        <div className="ea-layout">
+          <div className="ea-main">
+            <div className="ea-section ea-anim ea-anim-1">
+              <div className="ea-section-head">
+                <div>
+                  <div className="ea-section-title">Run your evaluation</div>
+                  <div className="ea-section-sub">Generate a fresh snapshot to populate your dashboard.</div>
+                </div>
+              </div>
+              <div className="ea-section-body" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+                <div className="ea-caption" style={{ maxWidth: 420 }}>
+                  Your workspace is ready. Run the evaluation to compute your metrics and unlock the full dashboard view.
+                </div>
+                <Button onClick={runEvaluation} disabled={evaluationLoading}>
+                  {evaluationLoading ? "Evaluating..." : "Evaluate now"}
+                </Button>
+              </div>
+            </div>
+          </div>
+          <aside className="ea-sidebar">
+            <div className="ea-skeleton ea-skeleton-card" />
+          </aside>
         </div>
       ) : isLoadingView ? (
         <div className="ea-layout">

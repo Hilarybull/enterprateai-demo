@@ -122,7 +122,7 @@ Persuasive close with clear next steps.
 
 
 CLIENT_PROPOSAL_PROMPT = """
-Write a complete UK Business Proposal on behalf of {company_name}, addressed to {client_name}.
+Write a complete UK Client Proposal on behalf of {company_name}, addressed to {client_name}.
 Follow the UK proposal outline below strictly.
 
 INPUTS (some may be brief or blank — you must infer intelligently from context):
@@ -140,7 +140,7 @@ Markdown with the headings exactly as shown.
 
 ---
 
-# Business Proposal — {company_name}
+# Client Proposal — {company_name}
 
 ## Cover Page
 Provide a short cover block with proposal title, client name, your company name, and contact details (written out).
@@ -297,7 +297,7 @@ BUSINESS_PLAN_TEMPLATE = """# Business Plan — {company_name}
 """
 
 
-CLIENT_PROPOSAL_TEMPLATE = """# Business Proposal — {company_name}
+CLIENT_PROPOSAL_TEMPLATE = """# Client Proposal — {company_name}
 
 ## Cover Page
 Proposal Title — {proposal_title}

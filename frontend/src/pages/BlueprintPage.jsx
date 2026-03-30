@@ -8,6 +8,7 @@ import { apiRequest, getApiBaseUrl } from "../api/client";
 import Button from "../components/Button";
 import { useWorkspaceStore } from "../store/workspace";
 import WorkspacePrompt from "../components/WorkspacePrompt";
+import { BlueprintIllustration, IllustrationCard } from "../components/Illustrations";
 
 const DOCUMENTS = [
   {
@@ -27,30 +28,6 @@ const DOCUMENTS = [
     title: "Sales Letter",
     desc: "Outreach copy from your offer and value prop",
     needsWorkspace: false
-  },
-  {
-    id: "sales_quotation",
-    title: "Sales Quotation",
-    desc: "Quote format with scope and line items",
-    needsWorkspace: false
-  },
-  {
-    id: "invoice_template",
-    title: "Invoice Template",
-    desc: "Invoice template you can reuse",
-    needsWorkspace: false
-  },
-  {
-    id: "cashflow_analysis",
-    title: "Cashflow Analysis",
-    desc: "Baseline cashflow table",
-    needsWorkspace: true
-  },
-  {
-    id: "financial_projection",
-    title: "Financial Projection",
-    desc: "Twelve month projection (baseline)",
-    needsWorkspace: true
   }
 ];
 
@@ -115,6 +92,8 @@ export default function BlueprintPage() {
   const [docIdByType, setDocIdByType] = useState({});
   const [editedHtmlByType, setEditedHtmlByType] = useState({});
   const [savedDocs, setSavedDocs] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
   const [includeSnapshot, setIncludeSnapshot] = useState(false);
@@ -122,13 +101,14 @@ export default function BlueprintPage() {
   const selectedMeta = useMemo(() => DOCUMENTS.find((d) => d.id === selectedDoc), [selectedDoc]);
   const selectedDocResult = selectedDoc ? docByType[selectedDoc] : null;
   const hasGenerated = Boolean(selectedDocResult?.document_markdown);
-  const needsWorkspace = Boolean(selectedMeta?.needsWorkspace) || selectedDoc === "cashflow_analysis" || selectedDoc === "financial_projection";
+  const needsWorkspace = Boolean(selectedMeta?.needsWorkspace);
   const showWorkspaceId = needsWorkspace && !workspaceId.trim();
   const showCoreNarrative =
     selectedDoc === "business_plan" || selectedDoc === "client_proposal" || selectedDoc === "sales_letter";
-  const showQuoteFields = selectedDoc === "invoice_template" || selectedDoc === "sales_quotation";
+  const showQuoteFields = selectedDoc === "invoice_template";
   const showSalesLetterExtras = selectedDoc === "sales_letter";
   const showProposalExtras = selectedDoc === "client_proposal";
+  const activeCustomers = useMemo(() => customers.filter((c) => !c.archived), [customers]);
 
   async function refreshSavedDocs() {
     try {
@@ -142,6 +122,12 @@ export default function BlueprintPage() {
   useEffect(() => {
     refreshSavedDocs();
   }, []);
+
+  useEffect(() => {
+    if (selectedDoc !== "client_proposal" && selectedDoc !== "sales_letter") {
+      setSelectedCustomerId("");
+    }
+  }, [selectedDoc]);
 
   useEffect(() => {
     if (workspaceIdStored && !workspaceId) setWorkspaceId(workspaceIdStored);
@@ -187,6 +173,25 @@ export default function BlueprintPage() {
       alive = false;
     };
   }, [companyName, ideaValidation, industry, valueProp, workspaceIdStored]);
+
+  useEffect(() => {
+    let alive = true;
+    async function loadCatalogue() {
+      if (!workspaceIdStored) return;
+      try {
+        const ws = await apiRequest("/validation/me", "GET");
+        if (!alive || !ws) return;
+        const cat = ws?.data?.catalogue || {};
+        setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
+      } catch {
+        // ignore
+      }
+    }
+    loadCatalogue();
+    return () => {
+      alive = false;
+    };
+  }, [workspaceIdStored]);
 
   async function syncWorkspaceProfile() {
     const profile = {
@@ -255,7 +260,7 @@ export default function BlueprintPage() {
     const needsWs = DOCUMENTS.find((d) => d.id === docId)?.needsWorkspace;
     if (needsWs) return hasCompany && workspaceId.trim() ? 100 : hasCompany ? 60 : 20;
 
-    if (docId === "invoice_template" || docId === "sales_quotation") {
+    if (docId === "invoice_template") {
       const extra = [billTo.trim().length > 0, items.trim().length > 0].filter(Boolean).length;
       return hasCompany ? 40 + coreCount * 10 + extra * 20 : 15;
     }
@@ -289,6 +294,20 @@ export default function BlueprintPage() {
         itemsRef.current.selectionStart = itemsRef.current.selectionEnd = itemsRef.current.value.length;
       }
     });
+  }
+
+  function applyCustomerSelection(customerId) {
+    setSelectedCustomerId(customerId);
+    const customer = activeCustomers.find((c) => c.id === customerId);
+    if (!customer) return;
+    const address = customer.address ? `\n${customer.address}` : "";
+    if (selectedDoc === "client_proposal") {
+      setBillTo(`${customer.name}${address}`);
+      if (!targetMarket) setTargetMarket(customer.industry || customer.name);
+    }
+    if (selectedDoc === "sales_letter") {
+      if (!targetMarket) setTargetMarket(customer.name);
+    }
   }
 
   async function generateSelected() {
@@ -464,6 +483,12 @@ export default function BlueprintPage() {
             {error}
           </div>
         ) : null}
+        <IllustrationCard
+          title="Blueprint overview"
+          subtitle="Polished document structure with clean sections."
+        >
+          <BlueprintIllustration />
+        </IllustrationCard>
         <SectionCard title="Documents" subtitle="Click a document to generate it.">
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             {DOCUMENTS.map((d) => (
@@ -602,6 +627,27 @@ export default function BlueprintPage() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-3">
+                  {(showProposalExtras || showSalesLetterExtras) && activeCustomers.length ? (
+                    <div>
+                      <div className="ea-label">Customer (optional)</div>
+                      <select
+                        className="ea-input"
+                        value={selectedCustomerId}
+                        onChange={(e) => applyCustomerSelection(e.target.value)}
+                      >
+                        <option value="">Select customer</option>
+                        {activeCustomers.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        Selecting a customer will prefill the client details and audience.
+                      </div>
+                    </div>
+                  ) : null}
+
                   {showCoreNarrative ? (
                     <>
                       <div>

@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
+import { useRef } from "react";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import Button from "../components/Button";
@@ -31,19 +32,86 @@ export default function SimulationPage() {
   const businessId = workspaceId || "biz_unknown";
   const stateVersion = validation?.rubric_version || "state_v1.0";
 
+  const [catalogueData, setCatalogueData] = useState({ products: [], customers: [], vendors: [] });
+  const [financialsData, setFinancialsData] = useState({ invoices: [], expenses: [], contracts: [] });
+
   const stateSnapshot = useMemo(() => {
     const metrics = validation?.metrics || {};
+    const customers = Array.isArray(catalogueData?.customers)
+      ? catalogueData.customers.filter((c) => !c.archived)
+      : [];
+    const invoices = Array.isArray(financialsData?.invoices)
+      ? financialsData.invoices.filter((i) => !i.archived)
+      : [];
+    const expenses = Array.isArray(financialsData?.expenses)
+      ? financialsData.expenses.filter((e) => !e.archived)
+      : [];
+    const contracts = Array.isArray(financialsData?.contracts)
+      ? financialsData.contracts.filter((c) => !c.archived)
+      : [];
+
+    const paidInvoices = invoices.filter((i) => i.status === "paid");
+    const paidExpenses = expenses.filter((e) => e.status === "paid");
+    const signedContracts = contracts.filter((c) => c.status === "signed");
+    const salesContracts = signedContracts.filter((c) => c.contract_type !== "purchase");
+    const purchaseContracts = signedContracts.filter((c) => c.contract_type === "purchase");
+
+    const revenueFromInvoices = paidInvoices.reduce((sum, i) => sum + Number(i.total_amount || 0), 0);
+    const costsFromExpenses = paidExpenses.reduce((sum, e) => sum + Number(e.price || 0), 0);
+    const contractRevenue = salesContracts.reduce((sum, c) => sum + Number(c.price || 0), 0);
+    const contractCosts = purchaseContracts.reduce((sum, c) => sum + Number(c.price || 0), 0);
+
+    const revenueMonthly =
+      paidInvoices.length || contractRevenue > 0
+        ? revenueFromInvoices + contractRevenue
+        : Number(metrics.revenue_monthly || 0);
+    const costsMonthly =
+      paidExpenses.length || contractCosts > 0
+        ? costsFromExpenses + contractCosts
+        : Number(metrics.costs_monthly || 0);
+
+    const customerTotals = paidInvoices.reduce((acc, i) => {
+      const key = i.customer_id || "unknown";
+      acc[key] = (acc[key] || 0) + Number(i.total_amount || 0);
+      return acc;
+    }, {});
+    salesContracts.forEach((c) => {
+      const key = c.counterparty_id || "contract";
+      customerTotals[key] = (customerTotals[key] || 0) + Number(c.price || 0);
+    });
+    const maxCustomer = Object.values(customerTotals).reduce((max, val) => Math.max(max, Number(val || 0)), 0);
+    const topClientShare =
+      (paidInvoices.length || salesContracts.length) && revenueMonthly > 0
+        ? Math.min(100, Math.round((maxCustomer / revenueMonthly) * 100))
+        : ideaValidation?.concentration?.top_client_share_pct ?? null;
+
+    const termValues = customers
+      .map((c) => Number(c.payment_terms))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const paymentTerms =
+      termValues.length > 0
+        ? Math.round(termValues.reduce((a, b) => a + b, 0) / termValues.length)
+        : metrics.payment_terms_days ?? null;
+
+    const customerIds = new Set([
+      ...customers.map((c) => c.id).filter(Boolean),
+      ...paidInvoices.map((i) => i.customer_id).filter(Boolean),
+      ...salesContracts.map((c) => c.counterparty_id).filter(Boolean)
+    ]);
+    const clientsCount =
+      customerIds.size > 0 ? customerIds.size : ideaValidation?.concentration?.clients_count ?? null;
+
     return {
-      revenue_monthly: Number(metrics.revenue_monthly || 0),
-      costs_monthly: Number(metrics.costs_monthly || 0),
+      revenue_monthly: Math.max(0, Number(revenueMonthly || 0)),
+      costs_monthly: Math.max(0, Number(costsMonthly || 0)),
       starting_cash: Number(inputs?.starting_cash || 0),
-      top_client_share_pct: ideaValidation?.concentration?.top_client_share_pct ?? null,
+      top_client_share_pct: topClientShare,
       capacity_utilisation_pct: metrics.capacity?.utilization ?? null,
-      payment_terms_days: metrics.payment_terms_days ?? null,
+      payment_terms_days: paymentTerms,
       sales_cycle_days: metrics.sales_cycle_days ?? null,
-      clients_count: ideaValidation?.concentration?.clients_count ?? null
+      clients_count: clientsCount
     };
-  }, [ideaValidation, inputs, validation]);
+  }, [ideaValidation, inputs, validation, catalogueData, financialsData]);
 
   const [tab, setTab] = useState("adaptive"); // dashboard | manual
   const [templates, setTemplates] = useState([]);
@@ -52,6 +120,9 @@ export default function SimulationPage() {
   const [history, setHistory] = useState([]);
 
   const [loading, setLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [autoProjectionLoading, setAutoProjectionLoading] = useState(false);
+  const [scenarioRunningId, setScenarioRunningId] = useState(null);
   const [error, setError] = useState(null);
 
   const [manualTemplateId, setManualTemplateId] = useState("");
@@ -68,6 +139,7 @@ export default function SimulationPage() {
   const [decisionNotice, setDecisionNotice] = useState(null);
   const [autoProjectionDone, setAutoProjectionDone] = useState(false);
   const [autoSignalsDone, setAutoSignalsDone] = useState(false);
+  const lastSnapshotHashRef = useRef("");
 
   const canRun = Boolean(workspaceId);
 
@@ -91,6 +163,25 @@ export default function SimulationPage() {
     }
     bootstrap();
   }, [workspaceId, businessId, tenantId]);
+
+  useEffect(() => {
+    let alive = true;
+    async function loadWorkspaceData() {
+      if (!workspaceId) return;
+      try {
+        const ws = await apiRequest("/validation/me", "GET");
+        if (!alive || !ws) return;
+        setCatalogueData(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
+        setFinancialsData(ws?.data?.financials || { invoices: [], expenses: [], contracts: [] });
+      } catch {
+        // ignore
+      }
+    }
+    loadWorkspaceData();
+    return () => {
+      alive = false;
+    };
+  }, [workspaceId]);
 
   useEffect(() => {
     setAutoProjectionDone(false);
@@ -137,20 +228,23 @@ export default function SimulationPage() {
 
   async function runScenario(templateId, mode, params, nameOverride) {
     if (!canRun) return;
-    setLoading(true);
+    setActionLoading(true);
+    setScenarioRunningId(templateId);
     setError(null);
     setDecisionNotice(null);
     try {
       const template = templates.find((t) => t.scenario_template_id === templateId);
-      if (!template) throw new Error("Scenario template not found.");
       const payload = {
         tenant_id: tenantId,
         business_id: businessId,
         state_version: stateVersion,
         scenario_template_id: templateId,
         scenario_mode: mode,
-        scenario_name: nameOverride || template.title,
-        parameters: params,
+        scenario_name: nameOverride || template?.title || "Scenario run",
+        parameters: {
+          timeline_months: 6,
+          ...(params || {})
+        },
         state: stateSnapshot
       };
       const runRes = await apiRequest("/v1/scenario-intelligence/scenario-runs", "POST", payload);
@@ -167,13 +261,18 @@ export default function SimulationPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Scenario run failed.");
     } finally {
-      setLoading(false);
+      setActionLoading(false);
+      setScenarioRunningId(null);
     }
   }
 
-  async function runDoNothing(monthsOverride, setAsActive = false) {
+  async function runDoNothing(monthsOverride, setAsActive = false, silent = false) {
     if (!canRun) return;
-    setLoading(true);
+    if (silent) {
+      setAutoProjectionLoading(true);
+    } else {
+      setActionLoading(true);
+    }
     setError(null);
     try {
       const res = await apiRequest("/v1/scenario-intelligence/do-nothing/run", "POST", {
@@ -203,16 +302,24 @@ export default function SimulationPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Projection failed.");
     } finally {
-      setLoading(false);
+      if (silent) {
+        setAutoProjectionLoading(false);
+      } else {
+        setActionLoading(false);
+      }
     }
   }
 
+  const snapshotHash = useMemo(() => JSON.stringify(stateSnapshot || {}), [stateSnapshot]);
+
   useEffect(() => {
-    if (!canRun || tab !== "adaptive" || autoProjectionDone) return;
+    if (!canRun || tab !== "adaptive") return;
     if (loading) return;
-    runDoNothing(6, false);
+    if (snapshotHash === lastSnapshotHashRef.current && autoProjectionDone) return;
+    lastSnapshotHashRef.current = snapshotHash;
+    runDoNothing(6, false, true);
     setAutoProjectionDone(true);
-  }, [tab, canRun, autoProjectionDone, loading]);
+  }, [tab, canRun, autoProjectionDone, loading, snapshotHash]);
 
   useEffect(() => {
     if (!canRun || tab !== "adaptive" || autoSignalsDone) return;
@@ -245,7 +352,7 @@ export default function SimulationPage() {
     if (!canRun) return;
     const ok = window.confirm("Clear scenario history for this workspace?");
     if (!ok) return;
-    setLoading(true);
+    setActionLoading(true);
     setError(null);
     try {
       await apiRequest(`/v1/scenario-intelligence/history?business_id=${businessId}&tenant_id=${tenantId}`, "DELETE");
@@ -253,7 +360,7 @@ export default function SimulationPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to clear history.");
     } finally {
-      setLoading(false);
+      setActionLoading(false);
     }
   }
 
@@ -292,7 +399,9 @@ export default function SimulationPage() {
 
       {workspaceId ? (
         <div className="mt-6 flex justify-end">
-          <Button onClick={() => setTab("manual")}>Run a scenario</Button>
+          <Button onClick={() => setTab(tab === "manual" ? "adaptive" : "manual")}>
+            {tab === "manual" ? "Back to simulation dashboard" : "Run a scenario"}
+          </Button>
         </div>
       ) : null}
 
@@ -302,9 +411,11 @@ export default function SimulationPage() {
             title={
               <div className="flex items-center gap-2">
                 <span>Baseline Continuity (6 months)</span>
+                {autoProjectionLoading ? <Spinner size={14} /> : null}
                 <InfoTip text="Current baseline projection if no action is taken." />
               </div>
             }
+            subtitle={autoProjectionLoading ? "Updating baseline projection." : undefined}
           >
             <ScenarioOutput
               activeRun={projectionRun}
@@ -374,9 +485,9 @@ export default function SimulationPage() {
                               rec.title
                             )
                           }
-                          disabled={loading || !canRun}
+                          disabled={actionLoading || !canRun}
                         >
-                          {loading ? <Spinner size={14} /> : null}
+                          {actionLoading && scenarioRunningId === rec.scenario_template_id ? <Spinner size={14} /> : null}
                           Run scenario
                         </Button>
                       </div>
@@ -419,7 +530,7 @@ export default function SimulationPage() {
                 )}
               </div>
               <div className="mt-3 flex justify-end gap-2">
-                <Button variant="ghost" disabled={loading || !canRun} onClick={clearHistory}>
+                <Button variant="ghost" disabled={actionLoading || !canRun} onClick={clearHistory}>
                   Clear history
                 </Button>
               </div>
@@ -481,7 +592,7 @@ export default function SimulationPage() {
 
             <div className="mt-4 flex justify-end">
               <Button
-                disabled={loading || !canRun}
+                disabled={actionLoading || !canRun}
                 onClick={() => {
                   if (manualTemplateId === "do_nothing_projection") {
                     runDoNothing(parseNumber(manualTimelineMonths, 6), true);
@@ -495,7 +606,7 @@ export default function SimulationPage() {
                   );
                 }}
               >
-                {loading ? <Spinner size={16} /> : null}
+                {actionLoading ? <Spinner size={16} /> : null}
                 {manualTemplateId === "do_nothing_projection" ? "Run projection" : "Run manual scenario"}
               </Button>
             </div>
@@ -522,6 +633,7 @@ function buildDefaultParams(template, stateSnapshot) {
   if (!template) return {};
   const defaults = {
     price_change_pct: 5,
+    effective_month: 1,
     revenue_drop_pct: 10,
     cost_increase_pct: 10,
     employee_count: 1,
