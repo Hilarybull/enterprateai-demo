@@ -23,8 +23,11 @@ export default function GoogleSignInButton({ onCredential, disabled }) {
   const clientId = import.meta.env.REACT_APP_GOOGLE_CLIENT_ID;
   const ref = useRef(null);
   const wrapRef = useRef(null);
+  const callbackRef = useRef(onCredential);
+  const initializedRef = useRef(false);
   const [error, setError] = useState(null);
   const [width, setWidth] = useState(0);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -50,6 +53,10 @@ export default function GoogleSignInButton({ onCredential, disabled }) {
   }, []);
 
   useEffect(() => {
+    callbackRef.current = onCredential;
+  }, [onCredential]);
+
+  useEffect(() => {
     let mounted = true;
     if (!clientId) return;
 
@@ -57,24 +64,17 @@ export default function GoogleSignInButton({ onCredential, disabled }) {
       try {
         await loadGoogleScript();
         if (!mounted) return;
+        setReady(true);
 
-        window.google.accounts.id.initialize({
-          client_id: clientId,
-          callback: (resp) => {
-            if (!resp?.credential) return;
-            onCredential(resp.credential);
-          }
-        });
-
-        if (ref.current) {
-          ref.current.innerHTML = "";
-          window.google.accounts.id.renderButton(ref.current, {
-            theme: "outline",
-            size: "large",
-            shape: "pill",
-            width: width || 320,
-            text: "continue_with"
+        if (!initializedRef.current) {
+          window.google.accounts.id.initialize({
+            client_id: clientId,
+            callback: (resp) => {
+              if (!resp?.credential) return;
+              callbackRef.current?.(resp.credential);
+            }
           });
+          initializedRef.current = true;
         }
       } catch (e) {
         if (!mounted) return;
@@ -85,7 +85,19 @@ export default function GoogleSignInButton({ onCredential, disabled }) {
     return () => {
       mounted = false;
     };
-  }, [clientId, onCredential, width]);
+  }, [clientId]);
+
+  useEffect(() => {
+    if (!ready || !ref.current || !window.google?.accounts?.id) return;
+    ref.current.innerHTML = "";
+    window.google.accounts.id.renderButton(ref.current, {
+      theme: "outline",
+      size: "large",
+      shape: "pill",
+      width: width || 320,
+      text: "continue_with"
+    });
+  }, [ready, width]);
 
   if (!clientId) return null;
 

@@ -7,6 +7,7 @@ function humanizeAuthError(e) {
     const base = import.meta.env.VITE_API_URL ?? import.meta.env.REACT_APP_BACKEND_URL ?? "http://localhost:8001";
     return `Can't reach the server at ${base}. Start the backend and check your API URL.`;
   }
+  if (msg === "AUTH_RESPONSE_INVALID") return "Authentication failed. Please try again.";
   if (msg.startsWith("HTTP 401:")) return "Invalid credentials. Try again or create an account.";
   if (msg.startsWith("HTTP 409:")) return "Account already exists. Sign in instead.";
   if (msg.startsWith("HTTP 422:")) return "Please enter a valid email and a password (8+ characters).";
@@ -43,9 +44,11 @@ export const useAuthStore = create((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const tokenRes = await apiRequest("/auth/login", "POST", { email, password });
-      localStorage.setItem("ea_token", tokenRes.access_token);
+      const token = tokenRes?.access_token ?? tokenRes?.token ?? null;
+      if (!token) throw new Error("AUTH_RESPONSE_INVALID");
+      localStorage.setItem("ea_token", token);
       localStorage.setItem("ea_email", email);
-      set({ token: tokenRes.access_token, email });
+      set({ token, email });
     } catch (e) {
       set({ error: humanizeAuthError(e) });
     } finally {
@@ -57,10 +60,12 @@ export const useAuthStore = create((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const tokenRes = await apiRequest("/auth/google", "POST", { credential });
-      localStorage.setItem("ea_token", tokenRes.access_token);
+      const token = tokenRes?.access_token ?? tokenRes?.token ?? null;
+      if (!token) throw new Error("AUTH_RESPONSE_INVALID");
+      localStorage.setItem("ea_token", token);
       const me = await apiRequest("/auth/me", "GET");
       localStorage.setItem("ea_email", me.email);
-      set({ token: tokenRes.access_token, email: me.email });
+      set({ token, email: me.email });
     } catch (e) {
       set({ error: humanizeAuthError(e) });
     } finally {
