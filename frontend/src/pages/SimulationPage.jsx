@@ -30,13 +30,15 @@ export default function SimulationPage() {
 
   const tenantId = email || "ten_default";
   const businessId = workspaceId || "biz_unknown";
-  const stateVersion = validation?.rubric_version || "state_v1.0";
+  const [registrationStatus, setRegistrationStatus] = useState({ status: "not_started" });
+  const isRegistered = registrationStatus?.status === "registered";
+  const stateVersion = isRegistered ? validation?.rubric_version || "state_v1.0" : "state_v1.0";
 
   const [catalogueData, setCatalogueData] = useState({ products: [], customers: [], vendors: [] });
   const [financialsData, setFinancialsData] = useState({ invoices: [], expenses: [], contracts: [] });
 
   const stateSnapshot = useMemo(() => {
-    const metrics = validation?.metrics || {};
+    const metrics = isRegistered ? validation?.metrics || {} : {};
     const customers = Array.isArray(catalogueData?.customers)
       ? catalogueData.customers.filter((c) => !c.archived)
       : [];
@@ -83,7 +85,7 @@ export default function SimulationPage() {
     const topClientShare =
       (paidInvoices.length || salesContracts.length) && revenueMonthly > 0
         ? Math.min(100, Math.round((maxCustomer / revenueMonthly) * 100))
-        : ideaValidation?.concentration?.top_client_share_pct ?? null;
+        : isRegistered ? ideaValidation?.concentration?.top_client_share_pct ?? null : null;
 
     const termValues = customers
       .map((c) => Number(c.payment_terms))
@@ -91,7 +93,7 @@ export default function SimulationPage() {
     const paymentTerms =
       termValues.length > 0
         ? Math.round(termValues.reduce((a, b) => a + b, 0) / termValues.length)
-        : metrics.payment_terms_days ?? null;
+        : isRegistered ? metrics.payment_terms_days ?? null : null;
 
     const customerIds = new Set([
       ...customers.map((c) => c.id).filter(Boolean),
@@ -99,19 +101,55 @@ export default function SimulationPage() {
       ...salesContracts.map((c) => c.counterparty_id).filter(Boolean)
     ]);
     const clientsCount =
-      customerIds.size > 0 ? customerIds.size : ideaValidation?.concentration?.clients_count ?? null;
+      customerIds.size > 0
+        ? customerIds.size
+        : isRegistered
+          ? ideaValidation?.concentration?.clients_count ?? null
+          : null;
 
     return {
       revenue_monthly: Math.max(0, Number(revenueMonthly || 0)),
       costs_monthly: Math.max(0, Number(costsMonthly || 0)),
       starting_cash: Number(inputs?.starting_cash || 0),
       top_client_share_pct: topClientShare,
-      capacity_utilisation_pct: metrics.capacity?.utilization ?? null,
+      capacity_utilisation_pct: isRegistered ? metrics.capacity?.utilization ?? null : null,
       payment_terms_days: paymentTerms,
-      sales_cycle_days: metrics.sales_cycle_days ?? null,
+      sales_cycle_days: isRegistered ? metrics.sales_cycle_days ?? null : null,
       clients_count: clientsCount
     };
-  }, [ideaValidation, inputs, validation, catalogueData, financialsData]);
+  }, [ideaValidation, inputs, validation, catalogueData, financialsData, isRegistered]);
+
+  const largestClient = useMemo(() => {
+    const customers = Array.isArray(catalogueData?.customers)
+      ? catalogueData.customers.filter((c) => !c.archived)
+      : [];
+    const invoices = Array.isArray(financialsData?.invoices)
+      ? financialsData.invoices.filter((i) => !i.archived)
+      : [];
+    const contracts = Array.isArray(financialsData?.contracts)
+      ? financialsData.contracts.filter((c) => !c.archived && c.status === "signed" && c.contract_type !== "purchase")
+      : [];
+    const paidInvoices = invoices.filter((i) => i.status === "paid");
+    const totals = paidInvoices.reduce((acc, i) => {
+      const key = i.customer_id || "unknown";
+      acc[key] = (acc[key] || 0) + Number(i.total_amount || 0);
+      return acc;
+    }, {});
+    contracts.forEach((c) => {
+      const key = c.counterparty_id || "contract";
+      totals[key] = (totals[key] || 0) + Number(c.price || 0);
+    });
+    const entries = Object.entries(totals);
+    if (!entries.length) return null;
+    const [topId, topValue] = entries.sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+    const customer = customers.find((c) => c.id === topId);
+    const name = customer?.name || "Largest client";
+    const share =
+      stateSnapshot?.revenue_monthly && stateSnapshot.revenue_monthly > 0
+        ? Math.min(100, Math.round((Number(topValue) / stateSnapshot.revenue_monthly) * 100))
+        : null;
+    return { id: topId, name, share };
+  }, [catalogueData, financialsData, stateSnapshot]);
 
   const [tab, setTab] = useState("adaptive"); // dashboard | manual
   const [templates, setTemplates] = useState([]);
@@ -166,6 +204,7 @@ export default function SimulationPage() {
 
   useEffect(() => {
     let alive = true;
+    let intervalId;
     async function loadWorkspaceData() {
       if (!workspaceId) return;
       try {
@@ -173,13 +212,16 @@ export default function SimulationPage() {
         if (!alive || !ws) return;
         setCatalogueData(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
         setFinancialsData(ws?.data?.financials || { invoices: [], expenses: [], contracts: [] });
+        setRegistrationStatus(ws?.data?.registration_status || { status: "not_started" });
       } catch {
         // ignore
       }
     }
     loadWorkspaceData();
+    intervalId = window.setInterval(loadWorkspaceData, 30000);
     return () => {
       alive = false;
+      if (intervalId) window.clearInterval(intervalId);
     };
   }, [workspaceId]);
 
@@ -194,7 +236,7 @@ export default function SimulationPage() {
     if (manual && !manualTemplateId) {
       setManualTemplateId(manual.scenario_template_id);
       setManualName(manual.title);
-      setManualParams(buildDefaultParams(manual, stateSnapshot));
+      setManualParams(buildDefaultParams(manual, stateSnapshot, largestClient));
     }
   }, [templates, manualTemplateId, stateSnapshot]);
 
@@ -366,6 +408,72 @@ export default function SimulationPage() {
 
   const manualTemplate = templates.find((t) => t.scenario_template_id === manualTemplateId);
 
+  function openManualScenario(templateId, titleOverride) {
+    const template = templates.find((t) => t.scenario_template_id === templateId);
+    if (!template) {
+      setError("Scenario templates are still loading. Try again in a moment.");
+      return;
+    }
+    setManualTemplateId(templateId);
+    if (template.scenario_type === "client_loss") {
+      const clientLabel = largestClient?.name || "Highest Client";
+      setManualName(`Loss of ${clientLabel}`);
+    } else {
+      setManualName(titleOverride || template.title);
+    }
+    setManualParams(buildDefaultParams(template, stateSnapshot, largestClient));
+    setTab("manual");
+  }
+
+  function describeRisk(risk) {
+    const code = risk?.reason_code;
+    const value = risk?.metric_value;
+    if (code === "CLIENT_CONCENTRATION_HIGH") {
+      return {
+        title: "Client concentration risk",
+        detail: `Your largest client contributes about ${value ?? stateSnapshot?.top_client_share_pct ?? "—"}% of revenue.`
+      };
+    }
+    if (code === "CAPACITY_OVERLOAD") {
+      return {
+        title: "Capacity overload",
+        detail: `Team utilisation is around ${value ?? stateSnapshot?.capacity_utilisation_pct ?? "—"}%.`
+      };
+    }
+    if (code === "NEGATIVE_MARGIN") {
+      return {
+        title: "Negative margin",
+        detail: `Your monthly profit is currently ${formatCurrency(value ?? 0, currency)}.`
+      };
+    }
+    if (code === "LOW_RUNWAY") {
+      return {
+        title: "Low cash runway",
+        detail: `Cash runway is about ${value ?? "—"} months.`
+      };
+    }
+    return {
+      title: "Risk signal",
+      detail: `${risk?.risk_type || "Risk"} detected.`
+    };
+  }
+
+  function scenarioCaption(rec) {
+    if (rec?.scenario_template_id === "tmpl_client_loss" && largestClient?.name) {
+      return `Based on ${largestClient.name} being your largest client.`;
+    }
+    if (rec?.scenario_template_id === "tmpl_price_increase") {
+      return "Explore whether a small price increase improves stability.";
+    }
+    if (rec?.scenario_template_id === "tmpl_hire_staff") {
+      return "Check if adding capacity is financially safe.";
+    }
+    if (rec?.scenario_template_id === "tmpl_revenue_drop") {
+      return "Stress‑test revenue decline impact.";
+    }
+    return "Run this scenario to see the impact.";
+  }
+
   useEffect(() => {
     if (manualTemplateId === "do_nothing_projection") {
       setManualParams({});
@@ -373,9 +481,21 @@ export default function SimulationPage() {
       return;
     }
     if (!manualTemplate) return;
-    setManualParams(buildDefaultParams(manualTemplate, stateSnapshot));
-    setManualName(manualTemplate.title);
-  }, [manualTemplateId, manualTemplate, stateSnapshot]);
+    const params = buildDefaultParams(manualTemplate, stateSnapshot, largestClient);
+    setManualParams(params);
+    if (manualTemplate.scenario_type === "client_loss") {
+      const clientLabel = largestClient?.name || "Highest Client";
+      setManualName(`Loss of ${clientLabel}`);
+    } else {
+      setManualName(manualTemplate.title);
+    }
+  }, [manualTemplateId, manualTemplate, stateSnapshot, largestClient]);
+
+  useEffect(() => {
+    if (manualTemplate?.scenario_type !== "client_loss") return;
+    if (largestClient?.share == null) return;
+    setManualParams((prev) => ({ ...prev, client_loss_pct: largestClient.share }));
+  }, [manualTemplate, largestClient?.share]);
 
   return (
     <div>
@@ -433,20 +553,20 @@ export default function SimulationPage() {
             <SectionCard
               title={
                 <div className="flex items-center gap-2">
-                  <span>Risk signals</span>
-                  <InfoTip text="Auto-detected risks based on validation inputs." />
+                  <span>Risk alerts</span>
+                  <InfoTip text="Auto-detected risks based on your current business data." />
                 </div>
               }
-              subtitle="Detected structural risks."
+              subtitle="What looks risky right now."
             >
               <div className="space-y-2">
                 {riskSignals.length ? (
                   riskSignals.map((r) => (
                     <div key={r.risk_signal_id} className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{r.risk_type}</div>
-                      <div className="mt-1 text-sm text-slate-700">
-                        {r.reason_code} – {r.metric_name}: {String(r.metric_value)}
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {describeRisk(r).title}
                       </div>
+                      <div className="mt-1 text-sm text-slate-700">{describeRisk(r).detail}</div>
                       <div className="mt-1 text-xs text-slate-500">Severity: {r.severity}</div>
                     </div>
                   ))
@@ -460,31 +580,21 @@ export default function SimulationPage() {
               title={
                 <div className="flex items-center gap-2">
                   <span>Recommended scenarios</span>
-                  <InfoTip text="Scenarios suggested based on detected risks." />
+                  <InfoTip text="Scenarios suggested based on your current business data." />
                 </div>
               }
-              subtitle="Adaptive scenarios triggered by risks."
+              subtitle="Quick simulations to explore next steps."
             >
               <div className="space-y-3">
                 {recommendations.length ? (
                   recommendations.map((rec) => (
                     <div key={rec.scenario_template_id} className="rounded-xl border border-slate-200 bg-white p-3">
                       <div className="text-sm font-semibold text-slate-900">{rec.title}</div>
-                      <div className="text-xs text-slate-500">Trigger: {rec.trigger_reason}</div>
+                      <div className="text-xs text-slate-500">{scenarioCaption(rec)}</div>
                       <div className="mt-2">
                         <Button
                           size="sm"
-                          onClick={() =>
-                            runScenario(
-                              rec.scenario_template_id,
-                              "adaptive",
-                              buildDefaultParams(
-                                templates.find((t) => t.scenario_template_id === rec.scenario_template_id),
-                                stateSnapshot
-                              ),
-                              rec.title
-                            )
-                          }
+                          onClick={() => openManualScenario(rec.scenario_template_id, rec.title)}
                           disabled={actionLoading || !canRun}
                         >
                           {actionLoading && scenarioRunningId === rec.scenario_template_id ? <Spinner size={14} /> : null}
@@ -572,7 +682,9 @@ export default function SimulationPage() {
                 <NumberInput value={manualTimelineMonths} onChange={setManualTimelineMonths} placeholder="6" />
               </div>
 
-              {manualTemplateId !== "do_nothing_projection" && manualTemplate?.required_inputs?.length ? (
+              {manualTemplateId === "do_nothing_projection" ? (
+                <div className="text-sm text-slate-600">Uses current inputs. No additional inputs required.</div>
+              ) : manualTemplate?.required_inputs?.length ? (
                 manualTemplate.required_inputs.map((key) => (
                   <div key={key}>
                     <FieldLabel info={fieldHelp(key)}>{prettyLabel(key)}</FieldLabel>
@@ -581,10 +693,14 @@ export default function SimulationPage() {
                       onChange={(v) => setManualParams((p) => ({ ...p, [key]: parseNumber(v, 0) }))}
                       placeholder="0"
                     />
+                    {key === "client_loss_pct" && largestClient ? (
+                      <div className="mt-1 text-xs text-slate-500">
+                        Largest client: {largestClient.name}
+                        {largestClient.share != null ? ` (~${largestClient.share}% of revenue)` : ""}.
+                      </div>
+                    ) : null}
                   </div>
                 ))
-              ) : manualTemplateId === "do_nothing_projection" ? (
-                <div className="text-sm text-slate-600">Uses current inputs. No additional inputs required.</div>
               ) : (
                 <div className="text-sm text-slate-600">No additional inputs required.</div>
               )}
@@ -629,7 +745,7 @@ export default function SimulationPage() {
   );
 }
 
-function buildDefaultParams(template, stateSnapshot) {
+function buildDefaultParams(template, stateSnapshot, largestClient) {
   if (!template) return {};
   const defaults = {
     price_change_pct: 5,
@@ -648,6 +764,9 @@ function buildDefaultParams(template, stateSnapshot) {
   (template.required_inputs || []).forEach((key) => {
     params[key] = defaults[key] ?? 0;
   });
+  if (template.scenario_type === "client_loss") {
+    params.client_loss_pct = largestClient?.share ?? stateSnapshot?.top_client_share_pct ?? 30;
+  }
   return params;
 }
 
@@ -668,7 +787,7 @@ function fieldHelp(key) {
     delay_months: "Months of delayed payments.",
     revenue_uplift_pct: "Percent revenue uplift for new service.",
     cost_uplift_pct: "Percent cost uplift for new service.",
-    client_loss_pct: "Percent of revenue lost from a client."
+    client_loss_pct: "Percent of monthly revenue lost if the largest client leaves."
   };
   return help[key] || "";
 }
@@ -693,6 +812,37 @@ function ScenarioOutput({
 
   const timelineRows = maxTimelineRows ? timeline.slice(0, maxTimelineRows) : timeline;
   const isTrimmed = maxTimelineRows && timeline.length > maxTimelineRows;
+
+  const baseDate = useMemo(() => {
+    const raw = activeRun?.executed_at || activeRun?.created_at || activeRun?.updated_at;
+    const parsed = raw ? new Date(raw) : new Date();
+    if (Number.isNaN(parsed.getTime())) return new Date();
+    return parsed;
+  }, [activeRun]);
+
+  function formatMonthLabel(monthIndex) {
+    if (!monthIndex) return "—";
+    const d = new Date(baseDate);
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
+    d.setMonth(d.getMonth() + (Number(monthIndex) - 1));
+    return d.toLocaleString(undefined, { month: "short", year: "numeric" });
+  }
+
+  function formatMonthDetail(monthIndex) {
+    if (!monthIndex) return "—";
+    const d = new Date(baseDate);
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
+    d.setMonth(d.getMonth() + (Number(monthIndex) - 1));
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
 
   return (
     <div className="space-y-3">
@@ -748,7 +898,10 @@ function ScenarioOutput({
               <tbody>
                 {timelineRows.map((row) => (
                   <tr key={row.month_index} className="border-t">
-                    <td className="px-2 py-2">{row.month_index}</td>
+                    <td className="px-2 py-2">
+                      <div className="font-semibold text-slate-700">{formatMonthLabel(row.month_index)}</div>
+                      <div className="text-[10px] text-slate-500">{formatMonthDetail(row.month_index)}</div>
+                    </td>
                     <td className="px-2 py-2">{formatCurrency(row.revenue, currency)}</td>
                     <td className="px-2 py-2">{formatCurrency(row.costs, currency)}</td>
                     <td className="px-2 py-2">{formatCurrency(row.profit, currency)}</td>

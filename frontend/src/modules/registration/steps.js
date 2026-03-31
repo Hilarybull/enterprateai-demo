@@ -5,6 +5,6 @@ export const REG_STEPS = [
   { key: "people", label: "People Involved" },
   { key: "address", label: "Registered Address" },
   { key: "documents", label: "Documents & Requirements" },
-  { key: "summary", label: "Your Summary" }
+  { key: "summary", label: "Your Summary" },
+  { key: "status", label: "Registration Status" }
 ];
-

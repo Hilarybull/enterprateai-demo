@@ -13,6 +13,7 @@ import PeopleStep from "./steps/PeopleStep";
 import AddressStep from "./steps/AddressStep";
 import DocumentsStep from "./steps/DocumentsStep";
 import SummaryStep from "./steps/SummaryStep";
+import RegistrationStatusStep from "./steps/RegistrationStatusStep";
 
 export default function RegistrationWizard() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -54,6 +55,10 @@ export default function RegistrationWizard() {
   const [registeredAddress, setRegisteredAddress] = useState("");
   const [ackNotAgent, setAckNotAgent] = useState(false);
   const [ackSelfRegister, setAckSelfRegister] = useState(false);
+  const [registrationStatus, setRegistrationStatus] = useState("not_started");
+  const [registrationNumber, setRegistrationNumber] = useState("");
+  const [registrationDate, setRegistrationDate] = useState("");
+  const [registrationNotes, setRegistrationNotes] = useState("");
 
   const companiesHouseLink = "https://www.gov.uk/limited-company-formation/register-your-company";
   const modelArticlesLink = "https://www.gov.uk/government/publications/model-articles-for-private-companies-limited-by-shares";
@@ -109,6 +114,11 @@ export default function RegistrationWizard() {
         if (reg.address_type) setAddressType(reg.address_type);
         if (Array.isArray(reg.sic_codes) && reg.sic_codes.length) setSicSelected(reg.sic_codes);
         if (reg.entity_type) setSelectedEntityKey(reg.entity_type);
+        const status = ws?.data?.registration_status || {};
+        if (status.status) setRegistrationStatus(status.status);
+        if (status.registration_number) setRegistrationNumber(status.registration_number);
+        if (status.registration_date) setRegistrationDate(status.registration_date);
+        if (status.notes) setRegistrationNotes(status.notes);
       } catch {
         // ignore
       }
@@ -145,6 +155,12 @@ export default function RegistrationWizard() {
               registered_address: registeredAddress.trim(),
               address_type: addressType,
               sic_codes: sicSelected
+            },
+            registration_status: {
+              status: registrationStatus,
+              registration_number: registrationNumber.trim(),
+              registration_date: registrationDate,
+              notes: registrationNotes.trim()
             }
           }
         });
@@ -157,7 +173,22 @@ export default function RegistrationWizard() {
       }
     }, 600);
     return () => clearTimeout(timer);
-  }, [addressType, altName1, altName2, businessDescription, companyName, ideaValidation, registeredAddress, selectedEntityKey, sicSelected, workspaceId]);
+  }, [
+    addressType,
+    altName1,
+    altName2,
+    businessDescription,
+    companyName,
+    ideaValidation,
+    registeredAddress,
+    registrationStatus,
+    registrationNumber,
+    registrationDate,
+    registrationNotes,
+    selectedEntityKey,
+    sicSelected,
+    workspaceId
+  ]);
 
   const selectedEntity = useMemo(() => {
     const groups = entityTypes?.groups || [];
@@ -363,6 +394,17 @@ export default function RegistrationWizard() {
               ackSelfRegister={ackSelfRegister}
               setAckSelfRegister={setAckSelfRegister}
               modelArticlesLink={modelArticlesLink}
+            />
+          ) : step.key === "status" ? (
+            <RegistrationStatusStep
+              status={registrationStatus}
+              setStatus={setRegistrationStatus}
+              registrationNumber={registrationNumber}
+              setRegistrationNumber={setRegistrationNumber}
+              registrationDate={registrationDate}
+              setRegistrationDate={setRegistrationDate}
+              notes={registrationNotes}
+              setNotes={setRegistrationNotes}
             />
           ) : (
             <SummaryStep summary={summary} companiesHouseLink={companiesHouseLink} />

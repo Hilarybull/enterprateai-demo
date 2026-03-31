@@ -52,6 +52,7 @@ export default function ValidationWizardPage() {
   const [error, setError] = useState(null);
   const [isPrefilling, setIsPrefilling] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
+  const [existingCatalogue, setExistingCatalogue] = useState({ products: [], customers: [], vendors: [] });
 
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceNameTouched, setWorkspaceNameTouched] = useState(false);
@@ -121,6 +122,7 @@ export default function ValidationWizardPage() {
       try {
         const ws = await apiRequest(`/validation/${wsId}`, "GET");
         const iv = ws?.data?.idea_validation;
+        setExistingCatalogue(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
         if (!iv || typeof iv !== "object") {
           const profile = ws?.data?.business_profile;
           if (profile && typeof profile === "object") {
@@ -246,15 +248,52 @@ export default function ValidationWizardPage() {
       const startingCash = Math.max(0, payload.cash.starting_cash - payload.cash.upfront_costs);
       setInputs({ price_per_unit: payload.offer.price_per_unit, units_per_month: payload.demand.expected_units_per_month, fixed_costs_monthly: fixedMonthly, variable_cost_per_unit: payload.costs.variable_cost_per_unit, starting_cash: startingCash });
       setCurrency(payload.context.currency || "USD");
+      const productFromValidation = isProductPath
+        ? {
+            id: crypto.randomUUID(),
+            name: String(payload.context.business_name || payload.offer.service_type || "Product").trim(),
+            type: "service",
+            base_price: Number(payload.offer.price_per_unit || 0),
+            discount: 0,
+            freight_cost: 0,
+            archived: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        : null;
+      const existingProducts = Array.isArray(existingCatalogue?.products) ? existingCatalogue.products : [];
+      const nextProducts = productFromValidation
+        ? existingProducts.some(
+            (p) =>
+              String(p?.name || "").trim().toLowerCase() === productFromValidation.name.toLowerCase()
+          )
+          ? existingProducts
+          : [productFromValidation, ...existingProducts]
+        : existingProducts;
+      const nextCatalogue = {
+        products: nextProducts,
+        customers: Array.isArray(existingCatalogue?.customers) ? existingCatalogue.customers : [],
+        vendors: Array.isArray(existingCatalogue?.vendors) ? existingCatalogue.vendors : []
+      };
       let wsId = editingWorkspaceId || storedWorkspaceId;
       if (wsId) {
-        await apiRequest(`/validation/${wsId}`, "PATCH", { data: { idea_validation: payload } }, { timeoutMs: 120000 });
+        await apiRequest(
+          `/validation/${wsId}`,
+          "PATCH",
+          { data: { idea_validation: payload, catalogue: nextCatalogue } },
+          { timeoutMs: 120000 }
+        );
         setWorkspaceId(wsId);
         setWorkspaceNameStore(wsName);
         setDecisionStatus(null);
         setIdeaValidation(payload);
       } else {
-        const ws = await apiRequest("/validation/create", "POST", { name: wsName, data: { idea_validation: payload } }, { timeoutMs: 120000 });
+        const ws = await apiRequest(
+          "/validation/create",
+          "POST",
+          { name: wsName, data: { idea_validation: payload, catalogue: nextCatalogue } },
+          { timeoutMs: 120000 }
+        );
         wsId = ws.id;
         setWorkspaceId(wsId);
         setWorkspaceNameStore(ws.name || wsName);

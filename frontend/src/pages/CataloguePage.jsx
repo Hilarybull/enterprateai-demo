@@ -58,6 +58,27 @@ export default function CataloguePage() {
   });
 
   const paymentTermOptions = ["7", "14", "30", "45"];
+  const INDUSTRY_OPTIONS = [
+    "IT",
+    "Marketing",
+    "Consulting",
+    "Accounting",
+    "Legal",
+    "HR",
+    "Design",
+    "Sales",
+    "Operations",
+    "Customer Support",
+    "Healthcare",
+    "Education",
+    "Construction",
+    "Other"
+  ];
+  const customerIndustryCategory = INDUSTRY_OPTIONS.includes(customerForm.industry)
+    ? customerForm.industry
+    : customerForm.industry
+      ? "Other"
+      : "";
 
   function CardIcon({ tone = "bg-brand-50 text-brand-600", children }) {
     return (
@@ -930,7 +951,33 @@ export default function CataloguePage() {
               </div>
               <div>
                 <div className="ea-label">Industry</div>
-                <Input value={customerForm.industry} onChange={(e) => setCustomerForm((c) => ({ ...c, industry: e.target.value }))} />
+                <select
+                  className="ea-input"
+                  value={customerIndustryCategory}
+                  onChange={(e) =>
+                    setCustomerForm((c) => ({
+                      ...c,
+                      industry: e.target.value === "Other" ? "" : e.target.value
+                    }))
+                  }
+                >
+                  <option value="" disabled>
+                    Select industry
+                  </option>
+                  {INDUSTRY_OPTIONS.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+                {customerIndustryCategory === "Other" ? (
+                  <Input
+                    value={customerForm.industry}
+                    onChange={(e) => setCustomerForm((c) => ({ ...c, industry: e.target.value }))}
+                    placeholder="Type industry"
+                    className="mt-2"
+                  />
+                ) : null}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">

@@ -40,6 +40,7 @@ export default function FinancialsPage() {
   const [editingContractId, setEditingContractId] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [previewInvoiceId, setPreviewInvoiceId] = useState(null);
+  const [previewQuoteId, setPreviewQuoteId] = useState(null);
   const ARCHIVE_WARNING_DAYS = 60;
   const ARCHIVE_EXPIRE_DAYS = 90;
 
@@ -378,8 +379,72 @@ export default function FinancialsPage() {
 </html>`;
   }
 
+  function buildQuoteHtml(quote, customer, product) {
+    return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Quotation ${quote?.id || ""}</title>
+  <style>
+    body{font-family:Arial, sans-serif; color:#0f172a; padding:32px;}
+    .header{display:flex; justify-content:space-between; align-items:flex-start;}
+    .muted{color:#64748b; font-size:12px;}
+    .card{border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-top:16px;}
+    table{width:100%; border-collapse:collapse; margin-top:16px;}
+    th,td{border-bottom:1px solid #e2e8f0; padding:10px; text-align:left; font-size:13px;}
+    th{text-transform:uppercase; letter-spacing:.05em; font-size:11px; color:#64748b;}
+    .right{text-align:right;}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h2>${workspaceName || "EnterprateAI"}</h2>
+      <div class="muted">Sales quotation</div>
+    </div>
+    <div class="right">
+      <div class="muted">Quotation ID</div>
+      <div>${quote?.id || ""}</div>
+      <div class="muted" style="margin-top:8px;">Status</div>
+      <div>${quote?.status || "draft"}</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="muted">Prepared for</div>
+    <div><strong>${customer?.name || "Customer"}</strong></div>
+    <div class="muted">${customer?.address || "Address on file"}</div>
+    <div class="muted" style="margin-top:6px;">Payment terms: ${customer?.payment_terms || "14"} days</div>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Total</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>${product?.name || "Product / Service"}</td>
+        <td class="right">${quote?.quantity || 0}</td>
+        <td class="right">${quote?.unit_price || 0}</td>
+        <td class="right"><strong>${quote?.total_amount || 0}</strong></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="muted" style="margin-top:16px;">This quotation is valid for 30 days unless otherwise stated.</div>
+</body>
+</html>`;
+  }
+
   function downloadInvoice(invoice, customer, product) {
     const html = buildInvoiceHtml(invoice, customer, product);
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
+  }
+
+  function downloadQuote(quote, customer, product) {
+    const html = buildQuoteHtml(quote, customer, product);
     const win = window.open("", "_blank");
     if (!win) return;
     win.document.write(html);
@@ -392,6 +457,14 @@ export default function FinancialsPage() {
     const subject = encodeURIComponent(`Invoice ${invoice?.id || ""}`);
     const body = encodeURIComponent(
       `Hi ${customer?.name || ""},\n\nPlease find your invoice ${invoice?.id || ""} attached. Let us know if you have any questions.\n\nThank you.`
+    );
+    window.location.href = `mailto:${""}?subject=${subject}&body=${body}`;
+  }
+
+  function sendQuote(quote, customer) {
+    const subject = encodeURIComponent(`Quotation ${quote?.id || ""}`);
+    const body = encodeURIComponent(
+      `Hi ${customer?.name || ""},\n\nPlease find your quotation ${quote?.id || ""} attached. Let us know if you have any questions.\n\nThank you.`
     );
     window.location.href = `mailto:${""}?subject=${subject}&body=${body}`;
   }
@@ -694,6 +767,9 @@ export default function FinancialsPage() {
   const previewInvoice = activeInvoices.find((inv) => inv.id === previewInvoiceId) || null;
   const previewCustomer = previewInvoice ? activeCustomers.find((c) => c.id === previewInvoice.customer_id) : null;
   const previewProduct = previewInvoice ? activeProducts.find((p) => p.id === previewInvoice.product_id) : null;
+  const previewQuote = activeQuotes.find((q) => q.id === previewQuoteId) || null;
+  const previewQuoteCustomer = previewQuote ? activeCustomers.find((c) => c.id === previewQuote.customer_id) : null;
+  const previewQuoteProduct = previewQuote ? activeProducts.find((p) => p.id === previewQuote.product_id) : null;
 
   if (!workspaceId) {
     return <WorkspacePrompt />;
@@ -1217,6 +1293,10 @@ export default function FinancialsPage() {
                           {
                             label: quote.status === "accepted" ? "Mark draft" : "Mark accepted",
                             onClick: () => updateStatus("quote", quote.id, quote.status === "accepted" ? "draft" : "accepted")
+                          },
+                          {
+                            label: "View quotation",
+                            onClick: () => setPreviewQuoteId(quote.id)
                           },
                           {
                             label: "Archive",
@@ -1815,6 +1895,92 @@ export default function FinancialsPage() {
 
               <div className="mt-6 text-xs text-slate-500">
                 Thank you for your business. If you have questions about this invoice, contact us to update details.
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {previewQuote ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setPreviewQuoteId(null);
+          }}
+        >
+          <div className="ea-card w-full max-w-3xl max-h-[90vh] overflow-hidden bg-white">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Quotation preview</div>
+                <div className="text-xs text-slate-600">Generated from your catalogue and quotation inputs.</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => sendQuote(previewQuote, previewQuoteCustomer)}
+                >
+                  Send
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => downloadQuote(previewQuote, previewQuoteCustomer, previewQuoteProduct)}
+                >
+                  Download
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewQuoteId(null)}
+                  className="rounded-lg px-2 py-1 text-sm text-slate-600 hover:bg-slate-100"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[calc(90vh-64px)] overflow-auto p-6 text-sm text-slate-700">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="text-lg font-semibold text-slate-900">{workspaceName || "EnterprateAI"}</div>
+                  <div className="text-xs text-slate-500">Sales quotation</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-slate-500">Quotation ID</div>
+                  <div className="text-sm font-semibold text-slate-900">{previewQuote.id}</div>
+                  <div className="mt-2 text-xs text-slate-500">Status</div>
+                  <div className="text-sm font-semibold text-slate-900">{previewQuote.status || "draft"}</div>
+                </div>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 p-3">
+                  <div className="text-xs font-semibold text-slate-600">Prepared for</div>
+                  <div className="mt-2 text-sm font-semibold text-slate-900">{previewQuoteCustomer?.name || "Customer"}</div>
+                  <div className="text-xs text-slate-500">{previewQuoteCustomer?.address || "Address on file"}</div>
+                  <div className="mt-2 text-xs text-slate-500">Payment terms: {previewQuoteCustomer?.payment_terms || "14"} days</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 p-3">
+                  <div className="text-xs font-semibold text-slate-600">Quotation summary</div>
+                  <div className="mt-2 text-xs text-slate-500">Total amount</div>
+                  <div className="text-lg font-semibold text-slate-900">{previewQuote.total_amount}</div>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-xl border border-slate-200">
+                <div className="grid grid-cols-12 gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                  <div className="col-span-6">Item</div>
+                  <div className="col-span-2 text-right">Qty</div>
+                  <div className="col-span-2 text-right">Unit</div>
+                  <div className="col-span-2 text-right">Total</div>
+                </div>
+                <div className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
+                  <div className="col-span-6">{previewQuoteProduct?.name || "Product / Service"}</div>
+                  <div className="col-span-2 text-right">{previewQuote.quantity}</div>
+                  <div className="col-span-2 text-right">{previewQuote.unit_price}</div>
+                  <div className="col-span-2 text-right font-semibold text-slate-900">{previewQuote.total_amount}</div>
+                </div>
+              </div>
+
+              <div className="mt-6 text-xs text-slate-500">
+                This quotation is valid for 30 days unless otherwise stated.
               </div>
             </div>
           </div>

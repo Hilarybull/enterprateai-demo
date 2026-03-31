@@ -605,6 +605,10 @@ async def do_nothing_projection(
         forecast.append(
             dict(
                 month_index=m,
+                revenue=round(revenue, 2),
+                costs=round(costs, 2),
+                profit=round(profit, 2),
+                cash_balance=round(cash, 2),
                 runway_months=round(_runway_months(revenue, costs, cash), 2),
                 stability_score=round(score, 2),
                 state_label=_state_label(score),
