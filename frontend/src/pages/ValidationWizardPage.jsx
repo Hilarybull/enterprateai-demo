@@ -47,7 +47,7 @@ export default function ValidationWizardPage() {
   const setValidation = useWorkspaceStore((s) => s.setValidation);
   const setCurrency = useWorkspaceStore((s) => s.setCurrency);
 
-  const [mode, setMode] = useState("select"); // select | fill
+  const [mode, setMode] = useState(fromOtherModule ? "fill" : "select"); // select | fill
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isPrefilling, setIsPrefilling] = useState(false);
@@ -335,7 +335,7 @@ export default function ValidationWizardPage() {
             </div>
             <div className="mt-1 text-sm text-slate-600 [@media(max-height:820px)]:hidden">
               {fromOtherModule
-                ? "Tell us about your business so we can create your workspace."
+                ? "Tell us about your workspace so we can set things up."
                 : "Choose what to fill first, then generate a deterministic report."}
             </div>
           </div>
@@ -367,35 +367,37 @@ export default function ValidationWizardPage() {
 
         {mode === "select" ? (
           <>
-            <SectionCard
-              title={fromOtherModule ? "Tell us about your business" : "What are you validating?"}
-              subtitle={fromOtherModule ? "Pick the option that best matches your business." : "Choose the option that best matches your idea."}
-            >
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => update("pathway", "business_idea")}
-                  className={
-                    "rounded-2xl border p-4 text-left transition " +
-                    (form.pathway === "business_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
-                  }
-                >
-                  <div className="text-sm font-semibold text-slate-900">Business idea</div>
-                  <div className="mt-1 text-xs text-slate-600">A service, marketplace, or company concept you want to start.</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => update("pathway", "product_service_idea")}
-                  className={
-                    "rounded-2xl border p-4 text-left transition " +
-                    (form.pathway === "product_service_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
-                  }
-                >
-                  <div className="text-sm font-semibold text-slate-900">Product / service idea</div>
-                  <div className="mt-1 text-xs text-slate-600">A product or offering you want to build or add.</div>
-                </button>
-              </div>
-            </SectionCard>
+            {!fromOtherModule ? (
+              <SectionCard
+                title="What are you validating?"
+                subtitle="Choose the option that best matches your idea."
+              >
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => update("pathway", "business_idea")}
+                    className={
+                      "rounded-2xl border p-4 text-left transition " +
+                      (form.pathway === "business_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
+                    }
+                  >
+                    <div className="text-sm font-semibold text-slate-900">Business idea</div>
+                    <div className="mt-1 text-xs text-slate-600">A service, marketplace, or company concept you want to start.</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => update("pathway", "product_service_idea")}
+                    className={
+                      "rounded-2xl border p-4 text-left transition " +
+                      (form.pathway === "product_service_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
+                    }
+                  >
+                    <div className="text-sm font-semibold text-slate-900">Product / service idea</div>
+                    <div className="mt-1 text-xs text-slate-600">A product or offering you want to build or add.</div>
+                  </button>
+                </div>
+              </SectionCard>
+            ) : null}
 
             <div className="mt-4">
               <SectionCard
