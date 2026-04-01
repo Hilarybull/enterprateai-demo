@@ -1822,7 +1822,7 @@ export default function FinancialsPage() {
             if (e.target === e.currentTarget) setPreviewInvoiceId(null);
           }}
         >
-          <div className="ea-card w-full max-w-3xl max-h-[90vh] overflow-hidden bg-white">
+          <div className="ea-dialog w-full max-w-3xl max-h-[90vh] overflow-hidden bg-white">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
                 <div className="text-sm font-semibold text-slate-900">Invoice preview</div>
@@ -1908,7 +1908,7 @@ export default function FinancialsPage() {
             if (e.target === e.currentTarget) setPreviewQuoteId(null);
           }}
         >
-          <div className="ea-card w-full max-w-3xl max-h-[90vh] overflow-hidden bg-white">
+          <div className="ea-dialog w-full max-w-3xl max-h-[90vh] overflow-hidden bg-white">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
                 <div className="text-sm font-semibold text-slate-900">Quotation preview</div>

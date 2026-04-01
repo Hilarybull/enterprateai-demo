@@ -147,16 +147,12 @@ function SidebarLink({ item, onClick }) {
 }
 
 export default function Layout() {
-  const email = useAuthStore((s) => s.email);
   const token = useAuthStore((s) => s.token);
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [apiStatus, setApiStatus] = useState("unknown"); // unknown | ok | down
   const [search, setSearch] = useState("");
-  const [workspaceOpen, setWorkspaceOpen] = useState(false);
-  const [editingWorkspace, setEditingWorkspace] = useState(false);
-  const [workspaceDraftName, setWorkspaceDraftName] = useState("");
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
@@ -225,7 +221,6 @@ export default function Layout() {
         if (cancelled || !ws) return;
         setWorkspaceId(ws.id || null);
         setWorkspaceName(ws.name || null);
-        setWorkspaceDraftName(ws.name || "");
         setWorkspaceLoadedAt(new Date().toISOString());
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
@@ -253,34 +248,11 @@ export default function Layout() {
     };
   }, [token, setCurrency, setDecisionStatus, setIdeaValidation, setInputs, setWorkspaceId, setWorkspaceName, setWorkspaceLoadedAt]);
 
-  const initials = useMemo(() => initialsFromEmail(email), [email]);
   const filteredNav = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
     if (!q) return NAV;
     return NAV.filter((i) => `${i.label} ${i.subtitle}`.toLowerCase().includes(q));
   }, [search]);
-
-  useEffect(() => {
-    function onKeyDown(e) {
-      if (e.key === "Escape") {
-        setWorkspaceOpen(false);
-      }
-    }
-
-    function onDocClick(e) {
-      const t = e.target;
-      if (!(t instanceof Element)) return;
-      if (t.closest("[data-ea-workspace]")) return;
-      setWorkspaceOpen(false);
-    }
-
-    document.addEventListener("keydown", onKeyDown);
-    document.addEventListener("mousedown", onDocClick);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("mousedown", onDocClick);
-    };
-  }, []);
 
   const Sidebar = (
     <aside className="flex h-full w-[260px] flex-col border-r border-slate-200 bg-white px-3 py-4 lg:w-[280px] lg:px-4">
@@ -307,30 +279,22 @@ export default function Layout() {
         ))}
       </nav>
 
-      {enableHealthCheck ? (
-        <div className="mt-3 rounded-2xl bg-white p-3 ring-1 ring-slate-200 [@media(max-height:780px)]:hidden">
-          <div className="flex items-center justify-between">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Status</div>
-            <span
-              className={
-                "inline-flex h-2 w-2 rounded-full " +
-                (apiStatus === "ok" ? "bg-emerald-500" : apiStatus === "down" ? "bg-rose-500" : "bg-slate-300")
-              }
-              title={apiStatus}
-            />
-          </div>
-          <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-600">
-            <div>{apiStatus === "ok" ? "Online" : apiStatus === "down" ? "Offline" : "Checking..."}</div>
-            <button type="button" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-              <Icon name="bell" className="h-4 w-4" />
-              Alerts
-            </button>
-          </div>
+      <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+        <div className="flex items-center justify-between">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Workspace</div>
+          {enableHealthCheck ? (
+            <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500">
+              <span
+                className={
+                  "inline-flex h-2 w-2 rounded-full " +
+                  (apiStatus === "ok" ? "bg-emerald-500" : apiStatus === "down" ? "bg-rose-500" : "bg-slate-300")
+                }
+                title={apiStatus}
+              />
+              {apiStatus === "ok" ? "Online" : apiStatus === "down" ? "Offline" : "Checking..."}
+            </div>
+          ) : null}
         </div>
-      ) : null}
-
-      <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 [@media(max-height:780px)]:hidden">
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Workspace</div>
         <div className="mt-2 text-base font-semibold text-slate-900">{workspaceDisplayName}</div>
         <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700">
           Starter Plan
@@ -350,9 +314,9 @@ export default function Layout() {
 
   return (
     <div className="relative h-[100dvh] bg-slate-50">
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-brand-50 via-accent-50/30 to-white" />
-      <div className="pointer-events-none absolute -top-24 left-1/3 h-72 w-72 -translate-x-1/2 rounded-full bg-brand-200/35 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-24 left-2/3 h-72 w-72 -translate-x-1/2 rounded-full bg-accent-200/25 blur-3xl" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-purple-50 via-blue-50 to-purple-50" />
+      <div className="pointer-events-none absolute -top-24 left-1/3 h-72 w-72 -translate-x-1/2 rounded-full bg-purple-200/35 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-24 left-2/3 h-72 w-72 -translate-x-1/2 rounded-full bg-blue-200/30 blur-3xl" />
 
       <div className="relative flex h-full w-full overflow-hidden">
         <div className="hidden md:block">{Sidebar}</div>
@@ -388,106 +352,7 @@ export default function Layout() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <div className="relative hidden md:block" data-ea-workspace>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-                    onClick={() => {
-                      setWorkspaceOpen((v) => !v);
-                    }}
-                    aria-haspopup="menu"
-                    aria-expanded={workspaceOpen}
-                  >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-gradient-to-br from-brand-50 to-accent-50 text-xs font-semibold text-brand-700 ring-1 ring-brand-100">
-                      {initials}
-                    </span>
-                    <span className="max-w-[180px] truncate">
-                      {decisionStatus === "accepted" && workspaceName ? workspaceName : "My workspace"}
-                    </span>
-                    <Icon name="chev" className="h-4 w-4 text-slate-400" />
-                  </button>
-
-                  {workspaceOpen ? (
-                    <div className="absolute right-0 top-full z-30 mt-2 w-64 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
-                      <div className="px-3 py-2">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Workspace</div>
-                        <div className="mt-1 truncate text-sm font-semibold text-slate-900">
-                          {decisionStatus === "accepted" && workspaceName ? workspaceName : "My workspace"}
-                        </div>
-                        <div className="mt-0.5 text-xs text-slate-500">
-                          {decisionStatus === "accepted" ? "Accepted" : decisionStatus === "rejected" ? "Rejected" : "Pending"}
-                        </div>
-                        {email ? <div className="mt-2 truncate text-xs font-semibold text-slate-700">{email}</div> : null}
-                      </div>
-                      <div className="my-1 h-px bg-slate-200" />
-                      {!editingWorkspace ? (
-                        <button
-                          type="button"
-                          className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                          onClick={() => {
-                            setWorkspaceDraftName(decisionStatus === "accepted" && workspaceName ? workspaceName : "My workspace");
-                            setEditingWorkspace(true);
-                          }}
-                        >
-                          Edit workspace name
-                        </button>
-                      ) : (
-                        <div className="px-3 py-2">
-                          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Rename workspace</div>
-                          <input
-                            className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                            value={workspaceDraftName}
-                            onChange={(e) => setWorkspaceDraftName(e.target.value)}
-                          />
-                          <div className="mt-2 flex items-center gap-2">
-                            <button
-                              type="button"
-                              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                              onClick={() => {
-                                setEditingWorkspace(false);
-                              }}
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-                              onClick={async () => {
-                                const nextName = String(workspaceDraftName || "").trim();
-                                if (!nextName) return;
-                                try {
-                                  const ws = await apiRequest("/validation/me", "PATCH", { name: nextName, data: {} });
-                                  if (ws?.name) setWorkspaceName(ws.name);
-                                  setEditingWorkspace(false);
-                                } catch {
-                                  setEditingWorkspace(false);
-                                }
-                              }}
-                            >
-                              Save
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      <button type="button" className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                        Help & Support
-                      </button>
-                      <div className="my-1 h-px bg-slate-200" />
-                      <button
-                        type="button"
-                        className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                        onClick={() => {
-                          logout();
-                          navigate("/login");
-                        }}
-                      >
-                        Log out
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
+              <div className="flex items-center gap-2" />
             </div>
           </header>
 

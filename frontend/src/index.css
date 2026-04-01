@@ -24,15 +24,15 @@
 
 @layer components {
   .ea-card {
-    @apply rounded-2xl border border-slate-200 bg-white shadow-[0_1px_0_rgba(15,23,42,0.02),0_20px_40px_-30px_rgba(15,23,42,0.25)];
+    @apply rounded-lg border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06)];
   }
 
   .ea-card-hover {
-    @apply transition hover:-translate-y-0.5 hover:shadow-md;
+    @apply transition hover:-translate-y-0.5 hover:shadow-lg hover:border-purple-200;
   }
 
   .ea-input {
-    @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-brand-200 focus:ring;
+    @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-brand-200 focus:ring;
   }
 
   .ea-label {
@@ -41,6 +41,14 @@
 
   .ea-muted {
     @apply text-sm text-slate-600;
+  }
+
+  .ea-dialog {
+    @apply rounded-xl border border-slate-200 bg-white shadow-xl;
+  }
+
+  .ea-alert {
+    @apply rounded-lg border px-3 py-2 text-sm;
   }
 }
 
@@ -55,5 +63,24 @@
   }
   .ea-scroll::-webkit-scrollbar {
     display: none;
+  }
+
+  .card-hover {
+    @apply transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 hover:border-purple-200;
+  }
+
+  .animate-slide-in {
+    animation: ea-slide-in 0.4s ease-out both;
+  }
+}
+
+@keyframes ea-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }

@@ -556,7 +556,7 @@ export default function BlueprintPage() {
             if (e.target === e.currentTarget) closeModal();
           }}
         >
-          <div className="ea-card w-full max-w-6xl h-[90vh] overflow-hidden">
+          <div className="ea-dialog w-full max-w-6xl h-[90vh] overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
               <div>
                 <div className="text-sm font-semibold text-slate-900">{selectedMeta.title}</div>
