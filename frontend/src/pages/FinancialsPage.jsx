@@ -11,10 +11,12 @@ import WorkspacePrompt from "../components/WorkspacePrompt";
 import { FinancialIllustration, IllustrationCard } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
+import { formatCurrency } from "../lib/format";
 
 export default function FinancialsPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
+  const currency = useWorkspaceStore((s) => s.currency);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
   const navigate = useNavigate();
@@ -45,14 +47,17 @@ export default function FinancialsPage() {
   const ARCHIVE_EXPIRE_DAYS = 90;
 
   const [invoiceForm, setInvoiceForm] = useState({
+    invoice_id: "",
     customer_id: "",
     product_id: "",
     quantity: "1"
   });
   const [quoteForm, setQuoteForm] = useState({
+    quotation_id: "",
     customer_id: "",
     product_id: "",
-    quantity: "1"
+    quantity: "1",
+    validity_days: "30"
   });
   const [expenseForm, setExpenseForm] = useState({
     vendor_id: "",
@@ -325,6 +330,31 @@ export default function FinancialsPage() {
     return Math.max(0, base - discount + freight);
   }
 
+  function formatMoney(value) {
+    return formatCurrency(Number(value || 0), currency || "GBP");
+  }
+
+  function matchByName(list, value) {
+    const needle = String(value || "").trim().toLowerCase();
+    if (!needle) return null;
+    return list.find((item) => String(item?.name || "").trim().toLowerCase() === needle) || null;
+  }
+
+  function resolveCustomer(ref, fallbackName) {
+    if (!ref) return null;
+    return activeCustomers.find((c) => c.id === ref) || matchByName(activeCustomers, ref) || (fallbackName ? { name: fallbackName } : null);
+  }
+
+  function resolveVendor(ref, fallbackName) {
+    if (!ref) return null;
+    return activeVendors.find((v) => v.id === ref) || matchByName(activeVendors, ref) || (fallbackName ? { name: fallbackName } : null);
+  }
+
+  function resolveProduct(ref, fallbackName) {
+    if (!ref) return null;
+    return activeProducts.find((p) => p.id === ref) || matchByName(activeProducts, ref) || (fallbackName ? { name: fallbackName } : null);
+  }
+
   function buildInvoiceHtml(invoice, customer, product) {
     return `<!doctype html>
 <html>
@@ -367,10 +397,10 @@ export default function FinancialsPage() {
     </thead>
     <tbody>
       <tr>
-        <td>${product?.name || "Product / Service"}</td>
+        <td>${product?.name || invoice?.product_name || "Product / Service"}</td>
         <td class="right">${invoice?.quantity || 0}</td>
-        <td class="right">${invoice?.unit_price || 0}</td>
-        <td class="right"><strong>${invoice?.total_amount || 0}</strong></td>
+        <td class="right">${formatMoney(invoice?.unit_price || 0)}</td>
+        <td class="right"><strong>${formatMoney(invoice?.total_amount || 0)}</strong></td>
       </tr>
     </tbody>
   </table>
@@ -421,36 +451,45 @@ export default function FinancialsPage() {
     </thead>
     <tbody>
       <tr>
-        <td>${product?.name || "Product / Service"}</td>
+        <td>${product?.name || quote?.product_name || "Product / Service"}</td>
         <td class="right">${quote?.quantity || 0}</td>
-        <td class="right">${quote?.unit_price || 0}</td>
-        <td class="right"><strong>${quote?.total_amount || 0}</strong></td>
+        <td class="right">${formatMoney(quote?.unit_price || 0)}</td>
+        <td class="right"><strong>${formatMoney(quote?.total_amount || 0)}</strong></td>
       </tr>
     </tbody>
   </table>
-  <div class="muted" style="margin-top:16px;">This quotation is valid for 30 days unless otherwise stated.</div>
+  <div class="muted" style="margin-top:16px;">This quotation is valid for ${quote?.validity_days || 30} days unless otherwise stated.</div>
 </body>
 </html>`;
   }
 
+  async function downloadPdfFile(html, filename) {
+    const { default: html2pdf } = await import("html2pdf.js");
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    document.body.appendChild(container);
+    await html2pdf()
+      .set({
+        filename,
+        margin: 10,
+        html2canvas: { scale: 2 },
+        jsPDF: { unit: "pt", format: "a4" }
+      })
+      .from(container)
+      .save();
+    document.body.removeChild(container);
+  }
+
   function downloadInvoice(invoice, customer, product) {
     const html = buildInvoiceHtml(invoice, customer, product);
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    win.print();
+    const filename = `invoice-${invoice?.invoice_id || invoice?.id || "draft"}.pdf`;
+    downloadPdfFile(html, filename);
   }
 
   function downloadQuote(quote, customer, product) {
     const html = buildQuoteHtml(quote, customer, product);
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    win.print();
+    const filename = `quotation-${quote?.quotation_id || quote?.id || "draft"}.pdf`;
+    downloadPdfFile(html, filename);
   }
 
   function sendInvoice(invoice, customer) {
@@ -470,12 +509,12 @@ export default function FinancialsPage() {
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ customer_id: "", product_id: "", quantity: "1" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", product_id: "", quantity: "1" });
     setEditingInvoiceId(null);
   }
 
   function resetQuoteForm() {
-    setQuoteForm({ customer_id: "", product_id: "", quantity: "1" });
+    setQuoteForm({ quotation_id: "", customer_id: "", product_id: "", quantity: "1", validity_days: "30" });
     setEditingQuoteId(null);
   }
 
@@ -511,14 +550,18 @@ export default function FinancialsPage() {
       return;
     }
     setError(null);
-    const product = activeProducts.find((p) => p.id === invoiceForm.product_id);
+    const customer = resolveCustomer(invoiceForm.customer_id);
+    const product = resolveProduct(invoiceForm.product_id);
     const unitPrice = getProductPrice(product);
     const total = Number((unitPrice * qty).toFixed(2));
     const next = invoices.map((i) => ({ ...i }));
     const payload = {
       id: editingInvoiceId || crypto.randomUUID(),
-      customer_id: invoiceForm.customer_id,
-      product_id: invoiceForm.product_id,
+      invoice_id: String(invoiceForm.invoice_id || "").trim(),
+      customer_id: customer?.id || invoiceForm.customer_id,
+      customer_name: customer?.name || String(invoiceForm.customer_id || "").trim(),
+      product_id: product?.id || invoiceForm.product_id,
+      product_name: product?.name || String(invoiceForm.product_id || "").trim(),
       quantity: qty,
       unit_price: unitPrice,
       total_amount: total,
@@ -547,17 +590,23 @@ export default function FinancialsPage() {
       return;
     }
     setError(null);
-    const product = activeProducts.find((p) => p.id === quoteForm.product_id);
+    const customer = resolveCustomer(quoteForm.customer_id);
+    const product = resolveProduct(quoteForm.product_id);
     const unitPrice = getProductPrice(product);
     const total = Number((unitPrice * qty).toFixed(2));
+    const validity = Math.max(1, parseInt(String(quoteForm.validity_days || "30"), 10) || 30);
     const next = quotes.map((q) => ({ ...q }));
     const payload = {
       id: editingQuoteId || crypto.randomUUID(),
-      customer_id: quoteForm.customer_id,
-      product_id: quoteForm.product_id,
+      quotation_id: String(quoteForm.quotation_id || "").trim(),
+      customer_id: customer?.id || quoteForm.customer_id,
+      customer_name: customer?.name || String(quoteForm.customer_id || "").trim(),
+      product_id: product?.id || quoteForm.product_id,
+      product_name: product?.name || String(quoteForm.product_id || "").trim(),
       quantity: qty,
       unit_price: unitPrice,
       total_amount: total,
+      validity_days: validity,
       status: editingQuoteId ? next.find((q) => q.id === editingQuoteId)?.status || "draft" : "draft",
       updated_at: new Date().toISOString()
     };
@@ -583,10 +632,12 @@ export default function FinancialsPage() {
       return;
     }
     setError(null);
+    const vendor = resolveVendor(expenseForm.vendor_id);
     const next = expenses.map((e) => ({ ...e }));
     const payload = {
       id: editingExpenseId || crypto.randomUUID(),
-      vendor_id: expenseForm.vendor_id,
+      vendor_id: vendor?.id || expenseForm.vendor_id,
+      vendor_name: vendor?.name || String(expenseForm.vendor_id || "").trim(),
       item: expenseForm.item.trim(),
       price: Number(price.toFixed(2)),
       cost_type: expenseForm.cost_type,
@@ -609,7 +660,11 @@ export default function FinancialsPage() {
       setError("Contract must reference a customer/vendor and product.");
       return;
     }
-    const product = activeProducts.find((p) => p.id === contractForm.product_id);
+    const party =
+      contractForm.contract_type === "sales"
+        ? resolveCustomer(contractForm.counterparty_id)
+        : resolveVendor(contractForm.counterparty_id);
+    const product = resolveProduct(contractForm.product_id);
     const defaultPrice = getProductPrice(product);
     const rawPrice = contractForm.price !== "" ? Number(contractForm.price) : defaultPrice;
     if (!Number.isFinite(rawPrice) || rawPrice <= 0) {
@@ -621,8 +676,10 @@ export default function FinancialsPage() {
     const payload = {
       id: editingContractId || crypto.randomUUID(),
       contract_type: contractForm.contract_type,
-      counterparty_id: contractForm.counterparty_id,
-      product_id: contractForm.product_id,
+      counterparty_id: party?.id || contractForm.counterparty_id,
+      counterparty_name: party?.name || String(contractForm.counterparty_id || "").trim(),
+      product_id: product?.id || contractForm.product_id,
+      product_name: product?.name || String(contractForm.product_id || "").trim(),
       price: Number(rawPrice.toFixed(2)),
       payment_terms: contractForm.payment_terms || "",
       discount: Number(contractForm.discount || 0),
@@ -758,18 +815,18 @@ export default function FinancialsPage() {
   }
 
   const requiresCatalogue = !activeProducts.length || !activeCustomers.length || !activeVendors.length;
-  const selectedProduct = activeProducts.find((p) => p.id === invoiceForm.product_id);
+  const selectedProduct = resolveProduct(invoiceForm.product_id);
   const invoiceUnitPrice = getProductPrice(selectedProduct);
   const invoiceTotal = Number(((Number(invoiceForm.quantity || 0) || 0) * invoiceUnitPrice).toFixed(2));
-  const selectedQuoteProduct = activeProducts.find((p) => p.id === quoteForm.product_id);
+  const selectedQuoteProduct = resolveProduct(quoteForm.product_id);
   const quoteUnitPrice = getProductPrice(selectedQuoteProduct);
   const quoteTotal = Number(((Number(quoteForm.quantity || 0) || 0) * quoteUnitPrice).toFixed(2));
   const previewInvoice = activeInvoices.find((inv) => inv.id === previewInvoiceId) || null;
-  const previewCustomer = previewInvoice ? activeCustomers.find((c) => c.id === previewInvoice.customer_id) : null;
-  const previewProduct = previewInvoice ? activeProducts.find((p) => p.id === previewInvoice.product_id) : null;
+  const previewCustomer = previewInvoice ? resolveCustomer(previewInvoice.customer_id, previewInvoice.customer_name) : null;
+  const previewProduct = previewInvoice ? resolveProduct(previewInvoice.product_id, previewInvoice.product_name) : null;
   const previewQuote = activeQuotes.find((q) => q.id === previewQuoteId) || null;
-  const previewQuoteCustomer = previewQuote ? activeCustomers.find((c) => c.id === previewQuote.customer_id) : null;
-  const previewQuoteProduct = previewQuote ? activeProducts.find((p) => p.id === previewQuote.product_id) : null;
+  const previewQuoteCustomer = previewQuote ? resolveCustomer(previewQuote.customer_id, previewQuote.customer_name) : null;
+  const previewQuoteProduct = previewQuote ? resolveProduct(previewQuote.product_id, previewQuote.product_name) : null;
 
   if (!workspaceId) {
     return <WorkspacePrompt />;
@@ -777,6 +834,21 @@ export default function FinancialsPage() {
 
   return (
     <div>
+      <datalist id="financial-customers">
+        {activeCustomers.map((c) => (
+          <option key={c.id} value={c.name} />
+        ))}
+      </datalist>
+      <datalist id="financial-products">
+        {activeProducts.map((p) => (
+          <option key={p.id} value={p.name} />
+        ))}
+      </datalist>
+      <datalist id="financial-vendors">
+        {activeVendors.map((v) => (
+          <option key={v.id} value={v.name} />
+        ))}
+      </datalist>
       <PageHeader
         title="Financials"
         description="Track invoices, expenses, and contracts with live operational indicators."
@@ -991,38 +1063,32 @@ export default function FinancialsPage() {
             </CardIcon>
           }
         >
-          <div className="grid grid-cols-1 gap-3">
-            <div>
-              <div className="ea-label">Customer *</div>
-              <select
-                className="ea-input"
-                value={invoiceForm.customer_id}
-                onChange={(e) => setInvoiceForm((f) => ({ ...f, customer_id: e.target.value }))}
-                disabled={!activeCustomers.length}
-              >
-                <option value="">Select customer</option>
-                {activeCustomers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="ea-label">Product / Service *</div>
-              <select
-                className="ea-input"
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <div className="ea-label">Invoice ID (optional)</div>
+                <Input
+                  placeholder="Enter invoice ID"
+                  value={invoiceForm.invoice_id}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, invoice_id: e.target.value }))}
+                />
+              </div>
+              <div>
+                <div className="ea-label">Customer *</div>
+                <Input
+                  list="financial-customers"
+                  placeholder={activeCustomers.length ? "Select or type customer" : "Type customer"}
+                  value={invoiceForm.customer_id}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, customer_id: e.target.value }))}
+                />
+              </div>
+              <div>
+                <div className="ea-label">Product / Service *</div>
+              <Input
+                list="financial-products"
+                placeholder={activeProducts.length ? "Select or type product" : "Type product"}
                 value={invoiceForm.product_id}
                 onChange={(e) => setInvoiceForm((f) => ({ ...f, product_id: e.target.value }))}
-                disabled={!activeProducts.length}
-              >
-                <option value="">Select product</option>
-                {activeProducts.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
@@ -1036,12 +1102,12 @@ export default function FinancialsPage() {
               </div>
               <div>
                 <div className="ea-label">Unit price (derived)</div>
-                <Input value={invoiceUnitPrice} disabled />
+                <Input value={formatMoney(invoiceUnitPrice)} disabled />
               </div>
             </div>
             <div>
               <div className="ea-label">Total amount</div>
-              <Input value={invoiceTotal} disabled />
+              <Input value={formatMoney(invoiceTotal)} disabled />
             </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertInvoice}>{editingInvoiceId ? "Update invoice" : "Add invoice"}</Button>
@@ -1070,8 +1136,8 @@ export default function FinancialsPage() {
             <div className="mt-2 space-y-2">
               {activeInvoices.length ? (
                 activeInvoices.map((inv) => {
-                  const customer = activeCustomers.find((c) => c.id === inv.customer_id);
-                  const product = activeProducts.find((p) => p.id === inv.product_id);
+                  const customer = resolveCustomer(inv.customer_id, inv.customer_name);
+                  const product = resolveProduct(inv.product_id, inv.product_name);
                   return (
                     <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                       <div className="min-w-0">
@@ -1079,7 +1145,7 @@ export default function FinancialsPage() {
                           {customer?.name || "Customer"} • {product?.name || "Product"}
                         </div>
                         <div className="text-xs text-slate-500">
-                          Qty {inv.quantity} • Total {inv.total_amount} • Status {inv.status}
+                          Qty {inv.quantity} • Total {formatMoney(inv.total_amount)} • Status {inv.status}
                         </div>
                       </div>
                       <ActionMenu
@@ -1088,11 +1154,12 @@ export default function FinancialsPage() {
                             label: "Edit",
                             onClick: () => {
                               setEditingInvoiceId(inv.id);
-                              setInvoiceForm({
-                                customer_id: inv.customer_id,
-                                product_id: inv.product_id,
-                                quantity: String(inv.quantity || 1)
-                              });
+                                setInvoiceForm({
+                                  invoice_id: inv.invoice_id || "",
+                                  customer_id: inv.customer_name || inv.customer_id,
+                                  product_id: inv.product_name || inv.product_id,
+                                  quantity: String(inv.quantity || 1)
+                                });
                             }
                           },
                           {
@@ -1141,13 +1208,13 @@ export default function FinancialsPage() {
           <div className="mt-2 space-y-2 max-h-60 overflow-auto pr-1">
             {archivedInvoices.length ? (
               archivedInvoices.map((inv) => {
-                const customer = activeCustomers.find((c) => c.id === inv.customer_id);
+                const customer = resolveCustomer(inv.customer_id, inv.customer_name);
                 const age = daysSince(inv.archived_at || inv.updated_at || inv.created_at);
                 const expiring = Math.max(0, ARCHIVE_EXPIRE_DAYS - age);
                 return (
                   <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-900">{customer?.name || "Customer"} • {inv.total_amount}</div>
+                      <div className="text-sm font-semibold text-slate-900">{customer?.name || "Customer"} • {formatMoney(inv.total_amount)}</div>
                       <div className="text-xs text-slate-500">Archived {age} days ago • Expires in {expiring} days</div>
                     </div>
                     <div className="flex gap-2">
@@ -1182,38 +1249,32 @@ export default function FinancialsPage() {
             </CardIcon>
           }
         >
-          <div className="grid grid-cols-1 gap-3">
-            <div>
-              <div className="ea-label">Customer *</div>
-              <select
-                className="ea-input"
-                value={quoteForm.customer_id}
-                onChange={(e) => setQuoteForm((f) => ({ ...f, customer_id: e.target.value }))}
-                disabled={!activeCustomers.length}
-              >
-                <option value="">Select customer</option>
-                {activeCustomers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <div className="ea-label">Quotation ID (optional)</div>
+                <Input
+                  placeholder="Enter quotation ID"
+                  value={quoteForm.quotation_id}
+                  onChange={(e) => setQuoteForm((f) => ({ ...f, quotation_id: e.target.value }))}
+                />
+              </div>
+              <div>
+                <div className="ea-label">Customer *</div>
+                <Input
+                  list="financial-customers"
+                  placeholder={activeCustomers.length ? "Select or type customer" : "Type customer"}
+                  value={quoteForm.customer_id}
+                  onChange={(e) => setQuoteForm((f) => ({ ...f, customer_id: e.target.value }))}
+                />
+              </div>
             <div>
               <div className="ea-label">Product / Service *</div>
-              <select
-                className="ea-input"
+              <Input
+                list="financial-products"
+                placeholder={activeProducts.length ? "Select or type product" : "Type product"}
                 value={quoteForm.product_id}
                 onChange={(e) => setQuoteForm((f) => ({ ...f, product_id: e.target.value }))}
-                disabled={!activeProducts.length}
-              >
-                <option value="">Select product</option>
-                {activeProducts.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
@@ -1227,12 +1288,23 @@ export default function FinancialsPage() {
               </div>
               <div>
                 <div className="ea-label">Unit price (derived)</div>
-                <Input value={quoteUnitPrice} disabled />
+                <Input value={formatMoney(quoteUnitPrice)} disabled />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <div className="ea-label">Quotation validity (days)</div>
+                <Input
+                  type="number"
+                  min="1"
+                  value={quoteForm.validity_days}
+                  onChange={(e) => setQuoteForm((f) => ({ ...f, validity_days: e.target.value }))}
+                />
               </div>
             </div>
             <div>
               <div className="ea-label">Total amount</div>
-              <Input value={quoteTotal} disabled />
+              <Input value={formatMoney(quoteTotal)} disabled />
             </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertQuote}>{editingQuoteId ? "Update quotation" : "Add quotation"}</Button>
@@ -1261,8 +1333,8 @@ export default function FinancialsPage() {
             <div className="mt-2 space-y-2">
               {activeQuotes.length ? (
                 activeQuotes.map((quote) => {
-                  const customer = activeCustomers.find((c) => c.id === quote.customer_id);
-                  const product = activeProducts.find((p) => p.id === quote.product_id);
+                  const customer = resolveCustomer(quote.customer_id, quote.customer_name);
+                  const product = resolveProduct(quote.product_id, quote.product_name);
                   return (
                     <div key={quote.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                       <div className="min-w-0">
@@ -1270,7 +1342,7 @@ export default function FinancialsPage() {
                           {customer?.name || "Customer"} • {product?.name || "Product"}
                         </div>
                         <div className="text-xs text-slate-500">
-                          Qty {quote.quantity} • Total {quote.total_amount} • Status {quote.status || "draft"}
+                          Qty {quote.quantity} • Total {formatMoney(quote.total_amount)} • Status {quote.status || "draft"}
                         </div>
                       </div>
                       <ActionMenu
@@ -1279,11 +1351,13 @@ export default function FinancialsPage() {
                             label: "Edit",
                             onClick: () => {
                               setEditingQuoteId(quote.id);
-                              setQuoteForm({
-                                customer_id: quote.customer_id,
-                                product_id: quote.product_id,
-                                quantity: String(quote.quantity || 1)
-                              });
+                                setQuoteForm({
+                                  quotation_id: quote.quotation_id || "",
+                                  customer_id: quote.customer_name || quote.customer_id,
+                                  product_id: quote.product_name || quote.product_id,
+                                  quantity: String(quote.quantity || 1),
+                                  validity_days: String(quote.validity_days || "30")
+                                });
                             }
                           },
                           {
@@ -1336,13 +1410,13 @@ export default function FinancialsPage() {
           <div className="mt-2 space-y-2 max-h-60 overflow-auto pr-1">
             {archivedQuotes.length ? (
               archivedQuotes.map((quote) => {
-                const customer = activeCustomers.find((c) => c.id === quote.customer_id);
+                const customer = resolveCustomer(quote.customer_id, quote.customer_name);
                 const age = daysSince(quote.archived_at || quote.updated_at || quote.created_at);
                 const expiring = Math.max(0, ARCHIVE_EXPIRE_DAYS - age);
                 return (
                   <div key={quote.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-900">{customer?.name || "Customer"} • {quote.total_amount}</div>
+                      <div className="text-sm font-semibold text-slate-900">{customer?.name || "Customer"} • {formatMoney(quote.total_amount)}</div>
                       <div className="text-xs text-slate-500">Archived {age} days ago • Expires in {expiring} days</div>
                     </div>
                     <div className="flex gap-2">
@@ -1380,28 +1454,21 @@ export default function FinancialsPage() {
           <div className="grid grid-cols-1 gap-3">
             <div>
               <div className="ea-label">Vendor *</div>
-              <select
-                className="ea-input"
+              <Input
+                list="financial-vendors"
+                placeholder={activeVendors.length ? "Select or type vendor" : "Type vendor"}
                 value={expenseForm.vendor_id}
                 onChange={(e) => {
                   const value = e.target.value;
-                  const vendor = activeVendors.find((v) => v.id === value);
+                  const vendor = resolveVendor(value);
                   setExpenseForm((f) => ({
                     ...f,
-                    vendor_id: value,
+                    vendor_id: vendor?.id || value,
                     item: f.item || vendor?.product_name || "",
                     price: f.price || (vendor?.price ? String(vendor.price) : "")
                   }));
                 }}
-                disabled={!activeVendors.length}
-              >
-                <option value="">Select vendor</option>
-                {activeVendors.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
             <div>
               <div className="ea-label">Item *</div>
@@ -1456,7 +1523,7 @@ export default function FinancialsPage() {
             <div className="mt-2 space-y-2">
               {activeExpenses.length ? (
                 activeExpenses.map((exp) => {
-                  const vendor = activeVendors.find((v) => v.id === exp.vendor_id);
+                  const vendor = resolveVendor(exp.vendor_id, exp.vendor_name);
                   return (
                     <div key={exp.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                       <div className="min-w-0">
@@ -1464,7 +1531,7 @@ export default function FinancialsPage() {
                           {vendor?.name || "Vendor"} • {exp.item}
                         </div>
                         <div className="text-xs text-slate-500">
-                          {exp.cost_type} • {exp.price} • Status {exp.status}
+                          {exp.cost_type} • {formatMoney(exp.price)} • Status {exp.status}
                         </div>
                       </div>
                       <ActionMenu
@@ -1474,7 +1541,7 @@ export default function FinancialsPage() {
                             onClick: () => {
                               setEditingExpenseId(exp.id);
                               setExpenseForm({
-                                vendor_id: exp.vendor_id,
+                                vendor_id: exp.vendor_name || exp.vendor_id,
                                 item: exp.item,
                                 price: String(exp.price || ""),
                                 cost_type: exp.cost_type || "variable"
@@ -1523,7 +1590,7 @@ export default function FinancialsPage() {
           <div className="mt-2 space-y-2 max-h-60 overflow-auto pr-1">
             {archivedExpenses.length ? (
               archivedExpenses.map((exp) => {
-                const vendor = activeVendors.find((v) => v.id === exp.vendor_id);
+                const vendor = resolveVendor(exp.vendor_id, exp.vendor_name);
                 const age = daysSince(exp.archived_at || exp.updated_at || exp.created_at);
                 const expiring = Math.max(0, ARCHIVE_EXPIRE_DAYS - age);
                 return (
@@ -1579,54 +1646,38 @@ export default function FinancialsPage() {
               </div>
               <div>
                 <div className="ea-label">{contractForm.contract_type === "sales" ? "Customer" : "Vendor"} *</div>
-                <select
-                  className="ea-input"
+                <Input
+                  list={contractForm.contract_type === "sales" ? "financial-customers" : "financial-vendors"}
+                  placeholder={contractForm.contract_type === "sales" ? "Select or type customer" : "Select or type vendor"}
                   value={contractForm.counterparty_id}
                   onChange={(e) => {
                     const value = e.target.value;
                     const party =
-                      contractForm.contract_type === "sales"
-                        ? activeCustomers.find((c) => c.id === value)
-                        : activeVendors.find((v) => v.id === value);
+                      contractForm.contract_type === "sales" ? resolveCustomer(value) : resolveVendor(value);
                     setContractForm((f) => ({
                       ...f,
-                      counterparty_id: value,
+                      counterparty_id: party?.id || value,
                       payment_terms: party?.payment_terms ? String(party.payment_terms) : f.payment_terms
                     }));
                   }}
-                  disabled={contractForm.contract_type === "sales" ? !activeCustomers.length : !activeVendors.length}
-                >
-                  <option value="">Select</option>
-                  {(contractForm.contract_type === "sales" ? activeCustomers : activeVendors).map((party) => (
-                    <option key={party.id} value={party.id}>
-                      {party.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </div>
             <div>
               <div className="ea-label">Product / Service *</div>
-              <select
-                className="ea-input"
+              <Input
+                list="financial-products"
+                placeholder={activeProducts.length ? "Select or type product" : "Type product"}
                 value={contractForm.product_id}
                 onChange={(e) => {
-                  const product = activeProducts.find((p) => p.id === e.target.value);
+                  const product = resolveProduct(e.target.value);
                   setContractForm((f) => ({
                     ...f,
-                    product_id: e.target.value,
+                    product_id: product?.id || e.target.value,
                     price: product ? String(getProductPrice(product)) : f.price
                   }));
                 }}
-                disabled={!activeProducts.length}
-              >
-                <option value="">Select product</option>
-                {activeProducts.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
@@ -1707,9 +1758,9 @@ export default function FinancialsPage() {
                 activeContracts.map((contract) => {
                   const party =
                     contract.contract_type === "sales"
-                      ? activeCustomers.find((c) => c.id === contract.counterparty_id)
-                      : activeVendors.find((v) => v.id === contract.counterparty_id);
-                  const product = activeProducts.find((p) => p.id === contract.product_id);
+                      ? resolveCustomer(contract.counterparty_id, contract.counterparty_name)
+                      : resolveVendor(contract.counterparty_id, contract.counterparty_name);
+                  const product = resolveProduct(contract.product_id, contract.product_name);
                   return (
                     <div key={contract.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                       <div className="min-w-0">
@@ -1717,7 +1768,7 @@ export default function FinancialsPage() {
                           {contract.contract_type === "sales" ? "Sales" : "Purchase"} • {party?.name || "Partner"}
                         </div>
                         <div className="text-xs text-slate-500">
-                          {product?.name || "Product"} • {contract.price} • Status {contract.status}
+                          {product?.name || "Product"} • {formatMoney(contract.price)} • Status {contract.status}
                         </div>
                       </div>
                       <ActionMenu
@@ -1728,8 +1779,8 @@ export default function FinancialsPage() {
                               setEditingContractId(contract.id);
                               setContractForm({
                                 contract_type: contract.contract_type || "sales",
-                                counterparty_id: contract.counterparty_id,
-                                product_id: contract.product_id,
+                                counterparty_id: contract.counterparty_name || contract.counterparty_id,
+                                product_id: contract.product_name || contract.product_id,
                                 price: String(contract.price || ""),
                                 payment_terms: String(contract.payment_terms || ""),
                                 discount: String(contract.discount || ""),
@@ -1784,8 +1835,8 @@ export default function FinancialsPage() {
               archivedContracts.map((contract) => {
                 const party =
                   contract.contract_type === "sales"
-                    ? activeCustomers.find((c) => c.id === contract.counterparty_id)
-                    : activeVendors.find((v) => v.id === contract.counterparty_id);
+                    ? resolveCustomer(contract.counterparty_id, contract.counterparty_name)
+                    : resolveVendor(contract.counterparty_id, contract.counterparty_name);
                 const age = daysSince(contract.archived_at || contract.updated_at || contract.created_at);
                 const expiring = Math.max(0, ARCHIVE_EXPIRE_DAYS - age);
                 return (
@@ -1874,7 +1925,7 @@ export default function FinancialsPage() {
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Invoice summary</div>
                   <div className="mt-2 text-xs text-slate-500">Total amount</div>
-                  <div className="text-lg font-semibold text-slate-900">{previewInvoice.total_amount}</div>
+                  <div className="text-lg font-semibold text-slate-900">{formatMoney(previewInvoice.total_amount)}</div>
                 </div>
               </div>
 
@@ -1888,8 +1939,8 @@ export default function FinancialsPage() {
                 <div className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
                   <div className="col-span-6">{previewProduct?.name || "Product / Service"}</div>
                   <div className="col-span-2 text-right">{previewInvoice.quantity}</div>
-                  <div className="col-span-2 text-right">{previewInvoice.unit_price}</div>
-                  <div className="col-span-2 text-right font-semibold text-slate-900">{previewInvoice.total_amount}</div>
+                  <div className="col-span-2 text-right">{formatMoney(previewInvoice.unit_price)}</div>
+                  <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(previewInvoice.total_amount)}</div>
                 </div>
               </div>
 
@@ -1960,7 +2011,7 @@ export default function FinancialsPage() {
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Quotation summary</div>
                   <div className="mt-2 text-xs text-slate-500">Total amount</div>
-                  <div className="text-lg font-semibold text-slate-900">{previewQuote.total_amount}</div>
+                  <div className="text-lg font-semibold text-slate-900">{formatMoney(previewQuote.total_amount)}</div>
                 </div>
               </div>
 
@@ -1974,13 +2025,13 @@ export default function FinancialsPage() {
                 <div className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
                   <div className="col-span-6">{previewQuoteProduct?.name || "Product / Service"}</div>
                   <div className="col-span-2 text-right">{previewQuote.quantity}</div>
-                  <div className="col-span-2 text-right">{previewQuote.unit_price}</div>
-                  <div className="col-span-2 text-right font-semibold text-slate-900">{previewQuote.total_amount}</div>
+                  <div className="col-span-2 text-right">{formatMoney(previewQuote.unit_price)}</div>
+                  <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(previewQuote.total_amount)}</div>
                 </div>
               </div>
 
               <div className="mt-6 text-xs text-slate-500">
-                This quotation is valid for 30 days unless otherwise stated.
+                This quotation is valid for {previewQuote.validity_days || 30} days unless otherwise stated.
               </div>
             </div>
           </div>

@@ -73,7 +73,7 @@ class UkSicSuggestResponse(BaseModel):
 
 
 class UkSicSearchRequest(BaseModel):
-    query: str = Field(min_length=2, max_length=200)
+    query: str = Field(min_length=2, max_length=500)
     limit: int = Field(default=6, ge=1, le=6)
 
 

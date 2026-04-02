@@ -47,6 +47,7 @@ STYLE:
 
 BUSINESS_PLAN_PROMPT = """
 Write a complete UK Business Plan for {company_name}, strictly following the outline below.
+This is a formal business plan (not a proposal, not a sales letter).
 
 INPUTS (some may be brief or blank — you must infer intelligently from context):
 {formatted_inputs}
@@ -123,6 +124,7 @@ Persuasive close with clear next steps.
 
 CLIENT_PROPOSAL_PROMPT = """
 Write a complete UK Client Proposal on behalf of {company_name}, addressed to {client_name}.
+This is a client-facing proposal (not a business plan and not a sales letter).
 Follow the UK proposal outline below strictly.
 
 INPUTS (some may be brief or blank — you must infer intelligently from context):
@@ -182,6 +184,7 @@ Clear next steps for approval and onboarding, with contact details.
 
 SALES_LETTER_PROMPT = """
 Write a complete UK-style Sales Letter for {company_name} that reads like a real letter a business would send to a client.
+This is a sales letter (not a proposal and not a business plan).
 
 INPUTS (some may be brief or blank — you must infer intelligently from context):
 {formatted_inputs}

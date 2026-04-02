@@ -57,7 +57,7 @@ export default function CataloguePage() {
     price: ""
   });
 
-  const paymentTermOptions = ["7", "14", "30", "45"];
+  const paymentTermOptions = ["7", "14", "30", "45", "60", "90", "Other"];
   const INDUSTRY_OPTIONS = [
     "IT",
     "Marketing",
@@ -122,8 +122,9 @@ export default function CataloguePage() {
   }
 
   function coercePaymentTerms(value) {
-    const str = String(value || "").trim();
-    return paymentTermOptions.includes(str) ? str : "14";
+    const num = parseInt(String(value || "").trim(), 10);
+    if (!Number.isFinite(num) || num <= 0) return "14";
+    return String(num);
   }
 
   async function handleProductImport(file) {
@@ -375,7 +376,7 @@ export default function CataloguePage() {
       id: editingCustomerId || crypto.randomUUID(),
       name: customerForm.name.trim(),
       address: customerForm.address.trim(),
-      payment_terms: customerForm.payment_terms,
+      payment_terms: coercePaymentTerms(customerForm.payment_terms),
       industry: customerForm.industry.trim(),
       archived: false,
       updated_at: new Date().toISOString()
@@ -402,7 +403,7 @@ export default function CataloguePage() {
       id: editingVendorId || crypto.randomUUID(),
       name: vendorForm.name.trim(),
       address: vendorForm.address.trim(),
-      payment_terms: vendorForm.payment_terms,
+      payment_terms: coercePaymentTerms(vendorForm.payment_terms),
       industry: vendorForm.industry.trim(),
       product_type: vendorForm.product_type,
       product_name: vendorForm.product_name.trim(),
@@ -935,20 +936,37 @@ export default function CataloguePage() {
               <div className="ea-label">Address</div>
               <Input value={customerForm.address} onChange={(e) => setCustomerForm((c) => ({ ...c, address: e.target.value }))} />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <div className="ea-label">Payment terms (days)</div>
-                <select
-                  className="ea-input"
-                  value={customerForm.payment_terms}
-                  onChange={(e) => setCustomerForm((c) => ({ ...c, payment_terms: e.target.value }))}
-                >
-                  <option value="7">7 days</option>
-                  <option value="14">14 days</option>
-                  <option value="30">30 days</option>
-                  <option value="45">45 days</option>
-                </select>
-              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <div className="ea-label">Payment terms (days)</div>
+                  <select
+                    className="ea-input"
+                    value={paymentTermOptions.includes(customerForm.payment_terms) ? customerForm.payment_terms : "Other"}
+                    onChange={(e) =>
+                      setCustomerForm((c) => ({
+                        ...c,
+                        payment_terms: e.target.value === "Other" ? "" : e.target.value
+                      }))
+                    }
+                  >
+                    {paymentTermOptions.map((term) => (
+                      <option key={term} value={term}>
+                        {term === "Other" ? "Other" : `${term} days`}
+                      </option>
+                    ))}
+                  </select>
+                  {!paymentTermOptions.includes(customerForm.payment_terms) && (
+                    <Input
+                      className="mt-2"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="Enter days"
+                      value={customerForm.payment_terms}
+                      onChange={(e) => setCustomerForm((c) => ({ ...c, payment_terms: e.target.value }))}
+                    />
+                  )}
+                  <div className="mt-1 text-xs text-slate-500">Choose a term or select Other to enter a custom value.</div>
+                </div>
               <div>
                 <div className="ea-label">Industry</div>
                 <select
@@ -1128,20 +1146,36 @@ export default function CataloguePage() {
               <div className="ea-label">Address</div>
               <Input value={vendorForm.address} onChange={(e) => setVendorForm((v) => ({ ...v, address: e.target.value }))} />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <div className="ea-label">Payment terms (days)</div>
-                <select
-                  className="ea-input"
-                  value={vendorForm.payment_terms}
-                  onChange={(e) => setVendorForm((v) => ({ ...v, payment_terms: e.target.value }))}
-                >
-                  <option value="7">7 days</option>
-                  <option value="14">14 days</option>
-                  <option value="30">30 days</option>
-                  <option value="45">45 days</option>
-                </select>
-              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <div className="ea-label">Payment terms (days)</div>
+                  <select
+                    className="ea-input"
+                    value={paymentTermOptions.includes(vendorForm.payment_terms) ? vendorForm.payment_terms : "Other"}
+                    onChange={(e) =>
+                      setVendorForm((v) => ({
+                        ...v,
+                        payment_terms: e.target.value === "Other" ? "" : e.target.value
+                      }))
+                    }
+                  >
+                    {paymentTermOptions.map((term) => (
+                      <option key={term} value={term}>
+                        {term === "Other" ? "Other" : `${term} days`}
+                      </option>
+                    ))}
+                  </select>
+                  {!paymentTermOptions.includes(vendorForm.payment_terms) && (
+                    <Input
+                      className="mt-2"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="Enter days"
+                      value={vendorForm.payment_terms}
+                      onChange={(e) => setVendorForm((v) => ({ ...v, payment_terms: e.target.value }))}
+                    />
+                  )}
+                </div>
               <div>
                 <div className="ea-label">Industry</div>
                 <Input value={vendorForm.industry} onChange={(e) => setVendorForm((v) => ({ ...v, industry: e.target.value }))} />

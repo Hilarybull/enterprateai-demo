@@ -260,8 +260,9 @@ async def uk_check_company_name(*, name: str, settings: Settings) -> UkNameCheck
 
     qn = norm(q)
     exact = [t for t in titles if norm(t) == qn]
-    available = len(exact) == 0
     similar = [t for t in titles if t not in exact]
+    # Be conservative: if Companies House returns any matching records, treat as not available.
+    available = len(titles) == 0
     return UkNameCheckResponse(name=q, available=available, exact_matches=exact, similar=similar[:8])
 
 

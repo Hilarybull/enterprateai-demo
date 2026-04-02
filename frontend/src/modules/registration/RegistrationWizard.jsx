@@ -38,6 +38,7 @@ export default function RegistrationWizard() {
   const [selectedEntityKey, setSelectedEntityKey] = useState("ltd_shares");
 
   const [companyName, setCompanyName] = useState("");
+  const [companyNameTouched, setCompanyNameTouched] = useState(false);
   const [altName1, setAltName1] = useState("");
   const [altName2, setAltName2] = useState("");
   const [nameCheck, setNameCheck] = useState(null);
@@ -91,12 +92,12 @@ export default function RegistrationWizard() {
     const offer = ideaValidation.offer || {};
     const prob = ideaValidation.problem || {};
 
-    if (!companyName && ctx.business_name) setCompanyName(ctx.business_name);
+    if (!companyNameTouched && !companyName && ctx.business_name) setCompanyName(ctx.business_name);
     if (!businessDescription) {
       const descParts = [offer.service_type, prob.customer_segment, prob.problem_type].filter(Boolean);
       if (descParts.length) setBusinessDescription(descParts.join(" ").trim());
     }
-  }, [businessDescription, companyName, ideaValidation]);
+  }, [businessDescription, companyName, companyNameTouched, ideaValidation]);
 
   useEffect(() => {
     let alive = true;
@@ -303,7 +304,7 @@ export default function RegistrationWizard() {
       </div>
 
       <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200 [@media(max-height:820px)]:hidden">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7">
+        <div className="flex items-center gap-2 overflow-x-auto">
           {REG_STEPS.map((s, i) => {
             const isActive = i === stepIndex;
             const isDone = i < stepIndex;
@@ -315,7 +316,7 @@ export default function RegistrationWizard() {
                 disabled={!canGo}
                 onClick={() => setStepIndex(i)}
                 className={
-                  "group inline-flex min-w-0 items-center gap-2 rounded-xl border px-2.5 py-2 text-xs font-semibold transition " +
+                  "group inline-flex items-center gap-2 rounded-xl border px-2.5 py-2 text-xs font-semibold whitespace-nowrap transition " +
                   (isActive
                     ? "border-brand-300 bg-brand-50 text-brand-800"
                     : isDone
@@ -352,7 +353,10 @@ export default function RegistrationWizard() {
           ) : step.key === "company_name" ? (
             <CompanyNameStep
               companyName={companyName}
-              setCompanyName={setCompanyName}
+              setCompanyName={(value) => {
+                setCompanyNameTouched(true);
+                setCompanyName(value);
+              }}
               altName1={altName1}
               setAltName1={setAltName1}
               altName2={altName2}

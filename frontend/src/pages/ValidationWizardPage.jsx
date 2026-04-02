@@ -79,7 +79,7 @@ export default function ValidationWizardPage() {
     go_to_market: { target_market: "B2C", customer_budget_level: "Unknown", sub_industry: "", channels: [] }
   }));
 
-  const isProductPath = false;
+  const isProductPath = form.pathway === "product_service_idea";
   const formBlocks = useMemo(
     () => [
       {
@@ -100,9 +100,9 @@ export default function ValidationWizardPage() {
 
   const derivedWorkspaceName = useMemo(() => {
     const bn = String(form?.context?.business_name || "").trim();
-    if (!bn) return "Idea Validation";
+    if (!bn) return isProductPath ? "Product Validation" : "Idea Validation";
     return `${bn} - Validation`;
-  }, [form?.context?.business_name]);
+  }, [form?.context?.business_name, isProductPath]);
 
   const recommendedCapacityPerPerson = useMemo(() => {
     const target = parseNumber(form?.demand?.expected_units_per_month, 0);
@@ -329,7 +329,7 @@ export default function ValidationWizardPage() {
           { timeoutMs: 120000 }
         );
         setValidation(result);
-        navigate("/dashboard");
+        navigate("/results");
       } else {
         setValidation(null);
         setSavedNotice("Workspace saved.");
@@ -472,29 +472,47 @@ export default function ValidationWizardPage() {
             <div className="space-y-3">
               {enabledForms.business ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">Workspace details</summary>
+                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+                    {isProductPath ? "Product details" : "Workspace details"}
+                  </summary>
                   <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
                     <div className="md:col-span-2 lg:col-span-3">
-                      <FieldLabel info="Name of your business idea (used as the workspace label).">Business idea name</FieldLabel>
+                      <FieldLabel
+                        info={
+                          isProductPath
+                            ? "Name of your product or service idea (used as the workspace label)."
+                            : "Name of your business idea (used as the workspace label)."
+                        }
+                      >
+                        {isProductPath ? "Product idea name" : "Business idea name"}
+                      </FieldLabel>
                       <Input value={workspaceName} disabled={Boolean(editingWorkspaceId)} onChange={(e) => { setWorkspaceNameTouched(true); setWorkspaceName(e.target.value); }} />
                     </div>
                     <div className="md:col-span-2 lg:col-span-3">
-                      <FieldLabel info="The name you want to validate. This is required.">Business name *</FieldLabel>
+                      <FieldLabel info="The name you want to validate. This is required.">
+                        {isProductPath ? "Product / service name *" : "Business name *"}
+                      </FieldLabel>
                       <Input value={form.context.business_name} onChange={(e) => update("context.business_name", e.target.value)} />
                     </div>
                     <div className="md:col-span-2 lg:col-span-3">
-                      <FieldLabel info="Short description of what you're building.">What are you building?</FieldLabel>
+                      <FieldLabel info="Short description of what you're building.">
+                        {isProductPath ? "What product or service are you building?" : "What are you building?"}
+                      </FieldLabel>
                       <Input value={form.offer.service_type} onChange={(e) => update("offer.service_type", e.target.value)} />
                     </div>
                     <div>
-                      <FieldLabel info="Choose the business category.">Business type</FieldLabel>
+                      <FieldLabel info="Choose the closest category.">
+                        {isProductPath ? "Product category" : "Business type"}
+                      </FieldLabel>
                       <select value={form.context.business_type_category} onChange={(e) => update("context.business_type_category", e.target.value)} className="ea-input">
                         {BUSINESS_TYPE_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}
                       </select>
                       {form.context.business_type_category === "Other" ? <div className="mt-2"><Input value={form.context.business_type_other} onChange={(e) => update("context.business_type_other", e.target.value)} placeholder="Type business type" /></div> : null}
                     </div>
                     <div>
-                      <FieldLabel info="Choose the primary industry you operate in.">Primary industry</FieldLabel>
+                      <FieldLabel info="Choose the primary industry you operate in.">
+                        {isProductPath ? "Target industry" : "Primary industry"}
+                      </FieldLabel>
                       <select value={form.context.primary_industry_category} onChange={(e) => update("context.primary_industry_category", e.target.value)} className="ea-input">
                         {PRIMARY_INDUSTRY_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}
                       </select>
