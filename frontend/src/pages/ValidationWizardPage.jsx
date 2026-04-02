@@ -69,7 +69,7 @@ export default function ValidationWizardPage() {
 
   const [form, setForm] = useState(() => ({
     pathway: "business_idea",
-    context: { business_name: "", business_type_category: "Technology", business_type_other: "", primary_industry_category: "IT", primary_industry_other: "", location: "", currency: "USD", founder_hours_per_week: "40", stage: "idea" },
+    context: { business_name: "", business_type_category: "Technology", business_type_other: "", primary_industry_category: "IT", primary_industry_other: "", location: "", currency: "GBP", founder_hours_per_week: "40", stage: "idea" },
     problem: { customer_segment_category: "SMEs", customer_segment_other: "", problem_type: "", frequency: "", alternatives: "" },
     offer: { service_type: "", pricing_model: "fixed_job", price_per_unit: "", deliverable_unit_category: "unit", deliverable_unit_other: "" },
     demand: { expected_units_per_month: "", expected_customers: "", sales_cycle_days: "", payment_terms_days: "14" },
@@ -104,6 +104,29 @@ export default function ValidationWizardPage() {
     return `${bn} - Validation`;
   }, [form?.context?.business_name]);
 
+  const recommendedCapacityPerPerson = useMemo(() => {
+    const target = parseNumber(form?.demand?.expected_units_per_month, 0);
+    const team = Math.max(1, parseIntSafe(form?.capacity?.team_size, 1));
+    if (!target) return null;
+    return Math.round(target / team);
+  }, [form?.capacity?.team_size, form?.demand?.expected_units_per_month]);
+
+  const capacityRecommendation = useMemo(() => {
+    const target = parseNumber(form?.demand?.expected_units_per_month, 0);
+    const team = Math.max(1, parseIntSafe(form?.capacity?.team_size, 1));
+    const capacityPerPerson = parseNumber(form?.capacity?.capacity_units_per_person_per_month, 0);
+    if (!target || !team) return null;
+    if (!capacityPerPerson) return null;
+    const requiredTeam = Math.max(1, Math.ceil(target / capacityPerPerson));
+    if (requiredTeam > team) {
+      return `Target needs about ${requiredTeam} people at your current capacity. Consider hiring or lowering the target.`;
+    }
+    if (requiredTeam < team) {
+      return `Team size exceeds the required ${requiredTeam}. You could raise targets or trim capacity.`;
+    }
+    return "Team size matches the target at the current capacity per person.";
+  }, [form?.capacity?.capacity_units_per_person_per_month, form?.capacity?.team_size, form?.demand?.expected_units_per_month]);
+
   useEffect(() => {
     if (workspaceNameTouched) return;
     setWorkspaceName(derivedWorkspaceName);
@@ -119,7 +142,7 @@ export default function ValidationWizardPage() {
       setError(null);
       try {
         const ws = await apiRequest(`/validation/${wsId}`, "GET");
-        const iv = ws?.data?.idea_validation;
+        const iv = ws?.data?.idea_validation || ws?.data?.draft_idea_validation;
         setExistingCatalogue(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
         if (!iv || typeof iv !== "object") {
           const profile = ws?.data?.business_profile;
@@ -278,7 +301,7 @@ export default function ValidationWizardPage() {
         await apiRequest(
           `/validation/${wsId}`,
           "PATCH",
-          { data: { idea_validation: payload, catalogue: nextCatalogue } },
+          { data: { draft_idea_validation: payload, catalogue: nextCatalogue } },
           { timeoutMs: 120000 }
         );
         setWorkspaceId(wsId);
@@ -289,7 +312,7 @@ export default function ValidationWizardPage() {
         const ws = await apiRequest(
           "/validation/create",
           "POST",
-          { name: wsName, data: { idea_validation: payload, catalogue: nextCatalogue } },
+          { name: wsName, data: { draft_idea_validation: payload, catalogue: nextCatalogue } },
           { timeoutMs: 120000 }
         );
         wsId = ws.id;
@@ -299,7 +322,12 @@ export default function ValidationWizardPage() {
         setIdeaValidation(payload);
       }
       if (shouldEvaluate) {
-        const result = await apiRequest("/validation/evaluate", "POST", { workspace_id: wsId }, { timeoutMs: 120000 });
+        const result = await apiRequest(
+          "/validation/evaluate",
+          "POST",
+          { idea_validation: payload },
+          { timeoutMs: 120000 }
+        );
         setValidation(result);
         navigate("/dashboard");
       } else {
@@ -447,7 +475,7 @@ export default function ValidationWizardPage() {
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">Workspace details</summary>
                   <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
                     <div className="md:col-span-2 lg:col-span-3">
-                      <FieldLabel info="A label for this validation so you can find it later.">Workspace name</FieldLabel>
+                      <FieldLabel info="Name of your business idea (used as the workspace label).">Business idea name</FieldLabel>
                       <Input value={workspaceName} disabled={Boolean(editingWorkspaceId)} onChange={(e) => { setWorkspaceNameTouched(true); setWorkspaceName(e.target.value); }} />
                     </div>
                     <div className="md:col-span-2 lg:col-span-3">
@@ -593,8 +621,22 @@ export default function ValidationWizardPage() {
                       <NumberInput placeholder="1" value={form.capacity.team_size} onChange={(v) => update("capacity.team_size", v)} />
                     </div>
                     <div>
-                      <FieldLabel info="How many units one person can deliver per month.">Capacity units / person / month</FieldLabel>
-                      <NumberInput placeholder="0" value={form.capacity.capacity_units_per_person_per_month} onChange={(v) => update("capacity.capacity_units_per_person_per_month", v)} />
+                      <FieldLabel info="How many units one person can deliver per month.">
+                        Capacity units / person / month
+                      </FieldLabel>
+                      <NumberInput
+                        placeholder={recommendedCapacityPerPerson ? String(recommendedCapacityPerPerson) : "0"}
+                        value={form.capacity.capacity_units_per_person_per_month}
+                        onChange={(v) => update("capacity.capacity_units_per_person_per_month", v)}
+                      />
+                      {recommendedCapacityPerPerson ? (
+                        <div className="mt-2 text-xs text-slate-500">
+                          Recommended from target + team size: {recommendedCapacityPerPerson} units per person.
+                        </div>
+                      ) : null}
+                      {capacityRecommendation ? (
+                        <div className="mt-1 text-xs text-slate-600">{capacityRecommendation}</div>
+                      ) : null}
                     </div>
                     <div>
                       <FieldLabel info="Cash available before profitability.">Starting cash</FieldLabel>

@@ -125,40 +125,7 @@ async def evaluate(
     inputs: FinancialInputsPayload | None,
     idea_validation: IdeaValidationPayload | None = None,
 ) -> dict:
-    if workspace_id:
-        ws = await get_workspace(db, user_id=user_id, workspace_id=workspace_id)
-
-        ws_iv = ws.data.get("idea_validation")
-        if isinstance(ws_iv, dict):
-            try:
-                iv_payload = IdeaValidationPayload(**ws_iv)
-            except Exception:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace idea_validation invalid")
-            fin, payment_terms_days, sales_cycle_days, cap = _inputs_from_idea_validation(iv_payload)
-            mf_params = _market_fit_params_from_idea_validation(iv_payload)
-            market_fit = await _safe_market_fit(mf_params) if mf_params else None
-            mf_score = market_fit.get("market_fit_score") if isinstance(market_fit, dict) else None
-            result = evaluate_viability_v3(
-                fin,
-                payment_terms_days=payment_terms_days,
-                sales_cycle_days=sales_cycle_days,
-                capacity=cap,
-                market_fit_score=mf_score,
-            )
-            if isinstance(market_fit, dict):
-                result.setdefault("metrics", {})["market_fit"] = market_fit
-            result["pathway"] = iv_payload.pathway
-            return result
-
-        ws_inputs = ws.data.get("assumptions", ws.data.get("inputs"))
-        if not isinstance(ws_inputs, dict):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace missing assumptions/inputs")
-        try:
-            inputs_payload = FinancialInputsPayload(**ws_inputs)
-        except Exception:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace inputs invalid")
-        return evaluate_viability_v3(_inputs_from_payload(inputs_payload))
-
+    # Always prefer the user's current input payloads when provided.
     if idea_validation is not None:
         fin, payment_terms_days, sales_cycle_days, cap = _inputs_from_idea_validation(idea_validation)
         mf_params = _market_fit_params_from_idea_validation(idea_validation)
@@ -175,6 +142,52 @@ async def evaluate(
             result.setdefault("metrics", {})["market_fit"] = market_fit
         result["pathway"] = idea_validation.pathway
         return result
+
+    if inputs is not None:
+        return evaluate_viability_v3(_inputs_from_payload(inputs))
+
+    if workspace_id:
+        ws = await get_workspace(db, user_id=user_id, workspace_id=workspace_id)
+
+        ws_iv = ws.data.get("idea_validation")
+        if isinstance(ws_iv, dict):
+            try:
+                iv_payload = IdeaValidationPayload(**ws_iv)
+            except Exception:
+                # Auto-clear invalid idea_validation and continue with assumptions/inputs if available.
+                await update_workspace(
+                    db,
+                    user_id=user_id,
+                    workspace_id=str(ws.id),
+                    data_patch={"idea_validation": None},
+                )
+                ws = await get_workspace(db, user_id=user_id, workspace_id=str(ws.id))
+                ws_iv = None
+            else:
+                fin, payment_terms_days, sales_cycle_days, cap = _inputs_from_idea_validation(iv_payload)
+                mf_params = _market_fit_params_from_idea_validation(iv_payload)
+                market_fit = await _safe_market_fit(mf_params) if mf_params else None
+                mf_score = market_fit.get("market_fit_score") if isinstance(market_fit, dict) else None
+                result = evaluate_viability_v3(
+                    fin,
+                    payment_terms_days=payment_terms_days,
+                    sales_cycle_days=sales_cycle_days,
+                    capacity=cap,
+                    market_fit_score=mf_score,
+                )
+                if isinstance(market_fit, dict):
+                    result.setdefault("metrics", {})["market_fit"] = market_fit
+                result["pathway"] = iv_payload.pathway
+                return result
+
+        ws_inputs = ws.data.get("assumptions", ws.data.get("inputs"))
+        if not isinstance(ws_inputs, dict):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace missing assumptions/inputs")
+        try:
+            inputs_payload = FinancialInputsPayload(**ws_inputs)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace inputs invalid")
+        return evaluate_viability_v3(_inputs_from_payload(inputs_payload))
 
     if inputs is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide workspace_id or inputs")

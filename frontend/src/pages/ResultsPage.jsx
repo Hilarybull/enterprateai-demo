@@ -109,7 +109,10 @@ export default function ResultsPage() {
     setDecisionNotice(null);
     try {
       await apiRequest(`/validation/${workspaceId}`, "PATCH", {
-        data: { decision: { status, decided_at: new Date().toISOString() } }
+        data: {
+          decision: { status, decided_at: new Date().toISOString() },
+          ...(status === "accepted" && ideaValidation ? { idea_validation: ideaValidation, draft_idea_validation: null } : {})
+        }
       });
       setDecision(status);
       setDecisionStatusStore(status);
