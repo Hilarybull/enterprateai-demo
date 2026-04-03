@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import html2pdf from "html2pdf.js";
 import DocumentEditor from "../components/DocumentEditor";
 import Input from "../components/Input";
 import PageHeader from "../components/PageHeader";
@@ -393,6 +394,42 @@ export default function BlueprintPage() {
     }
   }
 
+  async function downloadPdfFromHtml(html, filename) {
+    try {
+      const container = document.createElement("div");
+      container.innerHTML = html;
+      container.style.width = "210mm";
+      container.style.padding = "12mm";
+      container.style.boxSizing = "border-box";
+      container.style.fontSize = "14px";
+      container.style.lineHeight = "1.5";
+      container.style.color = "#0f172a";
+      container.style.background = "#ffffff";
+      document.body.appendChild(container);
+      await html2pdf()
+        .set({
+          filename,
+          margin: [10, 10, 10, 10],
+          pagebreak: { mode: ["css", "legacy", "avoid-all"] },
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: {
+            scale: 3,
+            useCORS: true,
+            windowWidth: 794,
+            windowHeight: 1123,
+            backgroundColor: "#ffffff",
+            letterRendering: true
+          },
+          jsPDF: { unit: "pt", format: "a4", orientation: "portrait", compress: true }
+        })
+        .from(container)
+        .save();
+      document.body.removeChild(container);
+    } catch (e) {
+      setError("Unable to generate the PDF. Please refresh and try again.");
+    }
+  }
+
   async function downloadExport(format) {
     const docId = selectedDoc ? docIdByType[selectedDoc] : null;
     if (!docId) {
@@ -402,6 +439,21 @@ export default function BlueprintPage() {
     setError(null);
     try {
       const token = localStorage.getItem("ea_token");
+      if (format === "pdf") {
+        let html = editedHtmlByType[selectedDoc] || selectedDocResult?.document_html || "";
+        if (!html) {
+          const docUrl = `${getApiBaseUrl()}/blueprint/documents/${docId}/export?format=doc`;
+          const res = await fetch(docUrl, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(text || "Export failed");
+          }
+          html = await res.text();
+        }
+        const filename = `${selectedMeta?.title || "document"}-${docId}.pdf`;
+        await downloadPdfFromHtml(html, filename);
+        return;
+      }
       const url = `${getApiBaseUrl()}/blueprint/documents/${docId}/export?format=${format}`;
       const res = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}

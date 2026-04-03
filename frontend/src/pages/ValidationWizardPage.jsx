@@ -118,13 +118,18 @@ export default function ValidationWizardPage() {
     if (!target || !team) return null;
     if (!capacityPerPerson) return null;
     const requiredTeam = Math.max(1, Math.ceil(target / capacityPerPerson));
-    if (requiredTeam > team) {
-      return `Target needs about ${requiredTeam} people at your current capacity. Consider hiring or lowering the target.`;
-    }
-    if (requiredTeam < team) {
-      return `Team size exceeds the required ${requiredTeam}. You could raise targets or trim capacity.`;
-    }
-    return "Team size matches the target at the current capacity per person.";
+    if (requiredTeam > team) return "Hire more staff.";
+    if (requiredTeam < team) return "Overstaffed / Increase Targets.";
+    return "Team size matches the target at this capacity.";
+  }, [form?.capacity?.capacity_units_per_person_per_month, form?.capacity?.team_size, form?.demand?.expected_units_per_month]);
+
+  useEffect(() => {
+    const target = parseNumber(form?.demand?.expected_units_per_month, 0);
+    const team = Math.max(1, parseIntSafe(form?.capacity?.team_size, 1));
+    if (!target || !team) return;
+    const current = String(form?.capacity?.capacity_units_per_person_per_month || "").trim();
+    if (current) return;
+    update("capacity.capacity_units_per_person_per_month", String(Math.round(target / team)));
   }, [form?.capacity?.capacity_units_per_person_per_month, form?.capacity?.team_size, form?.demand?.expected_units_per_month]);
 
   useEffect(() => {
@@ -642,16 +647,16 @@ export default function ValidationWizardPage() {
                       <FieldLabel info="How many units one person can deliver per month.">
                         Capacity units / person / month
                       </FieldLabel>
-                      <NumberInput
-                        placeholder={recommendedCapacityPerPerson ? String(recommendedCapacityPerPerson) : "0"}
-                        value={form.capacity.capacity_units_per_person_per_month}
-                        onChange={(v) => update("capacity.capacity_units_per_person_per_month", v)}
-                      />
-                      {recommendedCapacityPerPerson ? (
-                        <div className="mt-2 text-xs text-slate-500">
-                          Recommended from target + team size: {recommendedCapacityPerPerson} units per person.
-                        </div>
-                      ) : null}
+                        <NumberInput
+                          placeholder={recommendedCapacityPerPerson ? String(recommendedCapacityPerPerson) : "0"}
+                          value={form.capacity.capacity_units_per_person_per_month}
+                          onChange={(v) => update("capacity.capacity_units_per_person_per_month", v)}
+                        />
+                        {recommendedCapacityPerPerson ? (
+                          <div className="mt-2 text-xs text-slate-500">
+                            Capacity per person = Units / month ÷ Team size. Recommended: {recommendedCapacityPerPerson} units per person.
+                          </div>
+                        ) : null}
                       {capacityRecommendation ? (
                         <div className="mt-1 text-xs text-slate-600">{capacityRecommendation}</div>
                       ) : null}

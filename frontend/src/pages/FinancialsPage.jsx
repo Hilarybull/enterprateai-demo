@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import html2pdf from "html2pdf.js";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
 import Input from "../components/Input";
@@ -334,6 +335,13 @@ export default function FinancialsPage() {
     return formatCurrency(Number(value || 0), currency || "GBP");
   }
 
+  function formatPaymentTerms(value) {
+    const str = String(value || "").trim();
+    const num = parseInt(str, 10);
+    if (str && Number.isFinite(num) && String(num) === str) return `${num} days`;
+    return str || "Payment terms";
+  }
+
   function matchByName(list, value) {
     const needle = String(value || "").trim().toLowerCase();
     if (!needle) return null;
@@ -362,9 +370,10 @@ export default function FinancialsPage() {
     <meta charset="utf-8"/>
     <title>Invoice ${invoice?.invoice_id || invoice?.id || ""}</title>
   <style>
-    body{font-family:Arial, sans-serif; color:#0f172a; padding:32px;}
+    *{color:#0f172a !important;}
+    body{font-family:Inter, Arial, sans-serif; background:#ffffff; padding:32px; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;}
     .header{display:flex; justify-content:space-between; align-items:flex-start;}
-    .muted{color:#64748b; font-size:12px;}
+    .muted{color:#1f2937; font-size:12px;}
     .card{border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-top:16px;}
     table{width:100%; border-collapse:collapse; margin-top:16px;}
     th,td{border-bottom:1px solid #e2e8f0; padding:10px; text-align:left; font-size:13px;}
@@ -389,7 +398,7 @@ export default function FinancialsPage() {
     <div class="muted">Bill to</div>
     <div><strong>${customer?.name || "Customer"}</strong></div>
     <div class="muted">${customer?.address || "Address on file"}</div>
-    <div class="muted" style="margin-top:6px;">Payment terms: ${customer?.payment_terms || "14"} days</div>
+    <div class="muted" style="margin-top:6px;">Payment terms: ${formatPaymentTerms(customer?.payment_terms)}</div>
   </div>
   <table>
     <thead>
@@ -416,9 +425,10 @@ export default function FinancialsPage() {
     <meta charset="utf-8"/>
     <title>Quotation ${quote?.quotation_id || quote?.id || ""}</title>
   <style>
-    body{font-family:Arial, sans-serif; color:#0f172a; padding:32px;}
+    *{color:#0f172a !important;}
+    body{font-family:Inter, Arial, sans-serif; background:#ffffff; padding:32px; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;}
     .header{display:flex; justify-content:space-between; align-items:flex-start;}
-    .muted{color:#64748b; font-size:12px;}
+    .muted{color:#1f2937; font-size:12px;}
     .card{border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-top:16px;}
     table{width:100%; border-collapse:collapse; margin-top:16px;}
     th,td{border-bottom:1px solid #e2e8f0; padding:10px; text-align:left; font-size:13px;}
@@ -443,7 +453,7 @@ export default function FinancialsPage() {
     <div class="muted">Prepared for</div>
     <div><strong>${customer?.name || "Customer"}</strong></div>
     <div class="muted">${customer?.address || "Address on file"}</div>
-    <div class="muted" style="margin-top:6px;">Payment terms: ${customer?.payment_terms || "14"} days</div>
+    <div class="muted" style="margin-top:6px;">Payment terms: ${formatPaymentTerms(customer?.payment_terms)}</div>
   </div>
   <table>
     <thead>
@@ -464,20 +474,39 @@ export default function FinancialsPage() {
   }
 
   async function downloadPdfFile(html, filename) {
-    const { default: html2pdf } = await import("html2pdf.js");
-    const container = document.createElement("div");
-    container.innerHTML = html;
-    document.body.appendChild(container);
-    await html2pdf()
-      .set({
-        filename,
-        margin: 10,
-        html2canvas: { scale: 2 },
-        jsPDF: { unit: "pt", format: "a4" }
-      })
-      .from(container)
-      .save();
-    document.body.removeChild(container);
+    try {
+      const container = document.createElement("div");
+      container.innerHTML = html;
+      container.style.width = "210mm";
+      container.style.padding = "12mm";
+      container.style.boxSizing = "border-box";
+      container.style.fontSize = "14px";
+      container.style.lineHeight = "1.5";
+      container.style.color = "#0f172a";
+      container.style.background = "#ffffff";
+      document.body.appendChild(container);
+      await html2pdf()
+        .set({
+          filename,
+          margin: [10, 10, 10, 10],
+          pagebreak: { mode: ["css", "legacy", "avoid-all"] },
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: {
+            scale: 3,
+            useCORS: true,
+            windowWidth: 794,
+            windowHeight: 1123,
+            backgroundColor: "#ffffff",
+            letterRendering: true
+          },
+          jsPDF: { unit: "pt", format: "a4", orientation: "portrait", compress: true }
+        })
+        .from(container)
+        .save();
+      document.body.removeChild(container);
+    } catch (e) {
+      setError("Unable to generate the PDF. Please refresh and try again.");
+    }
   }
 
   function downloadInvoice(invoice, customer, product) {
@@ -1920,7 +1949,7 @@ export default function FinancialsPage() {
                   <div className="text-xs font-semibold text-slate-600">Bill to</div>
                   <div className="mt-2 text-sm font-semibold text-slate-900">{previewCustomer?.name || "Customer"}</div>
                   <div className="text-xs text-slate-500">{previewCustomer?.address || "Address on file"}</div>
-                  <div className="mt-2 text-xs text-slate-500">Payment terms: {previewCustomer?.payment_terms || "14"} days</div>
+                  <div className="mt-2 text-xs text-slate-500">Payment terms: {formatPaymentTerms(previewCustomer?.payment_terms)}</div>
                 </div>
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Invoice summary</div>
@@ -2002,12 +2031,12 @@ export default function FinancialsPage() {
               </div>
 
               <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="rounded-xl border border-slate-200 p-3">
-                  <div className="text-xs font-semibold text-slate-600">Prepared for</div>
-                  <div className="mt-2 text-sm font-semibold text-slate-900">{previewQuoteCustomer?.name || "Customer"}</div>
-                  <div className="text-xs text-slate-500">{previewQuoteCustomer?.address || "Address on file"}</div>
-                  <div className="mt-2 text-xs text-slate-500">Payment terms: {previewQuoteCustomer?.payment_terms || "14"} days</div>
-                </div>
+                  <div className="rounded-xl border border-slate-200 p-3">
+                    <div className="text-xs font-semibold text-slate-600">Prepared for</div>
+                    <div className="mt-2 text-sm font-semibold text-slate-900">{previewQuoteCustomer?.name || "Customer"}</div>
+                    <div className="text-xs text-slate-500">{previewQuoteCustomer?.address || "Address on file"}</div>
+                    <div className="mt-2 text-xs text-slate-500">Payment terms: {formatPaymentTerms(previewQuoteCustomer?.payment_terms)}</div>
+                  </div>
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Quotation summary</div>
                   <div className="mt-2 text-xs text-slate-500">Total amount</div>

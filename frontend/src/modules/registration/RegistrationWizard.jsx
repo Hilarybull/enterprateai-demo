@@ -303,8 +303,8 @@ export default function RegistrationWizard() {
         </div>
       </div>
 
-      <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200 [@media(max-height:820px)]:hidden">
-        <div className="flex items-center gap-2 overflow-x-auto">
+        <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200 [@media(max-height:820px)]:hidden">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
           {REG_STEPS.map((s, i) => {
             const isActive = i === stepIndex;
             const isDone = i < stepIndex;
@@ -315,9 +315,9 @@ export default function RegistrationWizard() {
                 type="button"
                 disabled={!canGo}
                 onClick={() => setStepIndex(i)}
-                className={
-                  "group inline-flex items-center gap-2 rounded-xl border px-2.5 py-2 text-xs font-semibold whitespace-nowrap transition " +
-                  (isActive
+                  className={
+                    "group inline-flex items-center justify-center gap-2 rounded-xl border px-2 py-1.5 text-[11px] font-semibold transition " +
+                    (isActive
                     ? "border-brand-300 bg-brand-50 text-brand-800"
                     : isDone
                       ? "border-emerald-200 bg-emerald-50 text-emerald-800"

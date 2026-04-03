@@ -127,6 +127,13 @@ export default function CataloguePage() {
     return String(num);
   }
 
+  function formatPaymentTerms(value) {
+    const str = String(value || "").trim();
+    const num = parseInt(str, 10);
+    if (str && Number.isFinite(num) && String(num) === str) return `${num} days`;
+    return str || "Payment terms";
+  }
+
   async function handleProductImport(file) {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".csv")) {
@@ -938,7 +945,7 @@ export default function CataloguePage() {
             </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <div className="ea-label">Payment terms (days)</div>
+                  <div className="ea-label">Payment terms</div>
                   <select
                     className="ea-input"
                     value={paymentTermOptions.includes(customerForm.payment_terms) ? customerForm.payment_terms : "Other"}
@@ -1039,7 +1046,7 @@ export default function CataloguePage() {
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-900">{c.name}</div>
                       <div className="text-xs text-slate-500">
-                        {c.industry || "Industry"} • {c.payment_terms} days • {c.address || "Address on file"}
+                        {c.industry || "Industry"} • {formatPaymentTerms(c.payment_terms)} • {c.address || "Address on file"}
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1147,7 +1154,7 @@ export default function CataloguePage() {
             </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <div className="ea-label">Payment terms (days)</div>
+                  <div className="ea-label">Payment terms</div>
                   <select
                     className="ea-input"
                     value={paymentTermOptions.includes(vendorForm.payment_terms) ? vendorForm.payment_terms : "Other"}
@@ -1244,7 +1251,7 @@ export default function CataloguePage() {
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-900">{v.name}</div>
                       <div className="text-xs text-slate-500">
-                        {v.product_name} • {v.product_type} • {v.payment_terms} days • {v.price}
+                        {v.product_name} • {v.product_type} • {formatPaymentTerms(v.payment_terms)} • {v.price}
                       </div>
                     </div>
                     <div className="flex gap-2">

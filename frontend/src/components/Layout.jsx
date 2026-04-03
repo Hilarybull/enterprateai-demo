@@ -1,8 +1,8 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useAuthStore } from "../store/auth";
 import { apiRequest, getApiBaseUrl } from "../api/client";
-import logoUrl from "../logo.png";
+import logoUrl from "../enterprate-logo.png";
 import { useWorkspaceStore } from "../store/workspace";
 
 const NAV = [
@@ -131,8 +131,10 @@ function SidebarLink({ item, onClick }) {
       to={item.to}
       onClick={onClick}
       className={({ isActive }) =>
-        "group flex items-center gap-3 rounded-2xl px-3 py-2 transition " +
-        (isActive ? "bg-brand-50 text-brand-700 ring-1 ring-brand-100" : "text-slate-700 hover:bg-slate-50 hover:text-slate-900")
+        "group mx-1 flex items-center gap-3 rounded-2xl px-3 py-2.5 transition " +
+        (isActive
+          ? "bg-brand-50 text-brand-700 ring-1 ring-brand-100 dark:bg-slate-900 dark:text-slate-100 dark:ring-slate-800"
+          : "text-slate-700 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-200 dark:hover:bg-slate-900")
       }
     >
       <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-slate-700 ring-1 ring-slate-200 group-hover:bg-slate-50 group-[.active]:bg-gradient-to-br group-[.active]:from-brand-50 group-[.active]:to-accent-50">
@@ -153,6 +155,9 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [apiStatus, setApiStatus] = useState("unknown"); // unknown | ok | down
   const [search, setSearch] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem("ea_theme") || "system");
+  const profileRef = useRef(null);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
@@ -165,6 +170,28 @@ export default function Layout() {
 
   const enableHealthCheck = String(import.meta.env.ENABLE_HEALTH_CHECK ?? "false").toLowerCase() === "true";
   const workspaceDisplayName = decisionStatus === "accepted" && workspaceName ? workspaceName : workspaceName || "My workspace";
+  const email = useAuthStore((s) => s.email);
+  const profileInitials = initialsFromEmail(email);
+
+  useEffect(() => {
+    if (theme === "dark") document.documentElement.classList.add("dark");
+    else document.documentElement.classList.remove("dark");
+    if (theme === "system") {
+      localStorage.removeItem("ea_theme");
+    } else {
+      localStorage.setItem("ea_theme", theme);
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    function handleClick(e) {
+      if (!profileRef.current || profileRef.current.contains(e.target)) return;
+      setProfileOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [profileOpen]);
 
   useEffect(() => {
     if (!enableHealthCheck) return;
@@ -255,17 +282,11 @@ export default function Layout() {
   }, [search]);
 
   const Sidebar = (
-    <aside className="flex h-full w-[260px] flex-col border-r border-slate-200 bg-white px-3 py-4 lg:w-[280px] lg:px-4">
+    <aside className="flex h-full w-[260px] flex-col border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[280px] lg:px-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
-              <img src={logoUrl} alt="EnterprateAI" className="h-8 w-8 object-contain" />
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-500">EnterprateAI</div>
-              <div className="mt-0.5 truncate text-[12px] font-semibold text-slate-900">AI operating system</div>
-            </div>
+            <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto object-contain sm:h-8" />
           </div>
         </div>
         <button className="md:hidden rounded-xl p-2 text-slate-600 hover:bg-slate-100" onClick={() => setMobileOpen(false)}>
@@ -273,15 +294,15 @@ export default function Layout() {
         </button>
       </div>
 
-      <nav className="ea-scroll mt-3 flex-1 space-y-1 overflow-auto pr-1">
+      <nav className="ea-scroll mt-5 flex-1 space-y-1 overflow-auto pr-1">
         {filteredNav.map((item) => (
           <SidebarLink key={item.to} item={item} onClick={() => setMobileOpen(false)} />
         ))}
       </nav>
 
-      <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+      <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900/70 dark:ring-slate-800">
         <div className="flex items-center justify-between">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Workspace</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Workspace</div>
           {enableHealthCheck ? (
             <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500">
               <span
@@ -291,15 +312,15 @@ export default function Layout() {
                 }
                 title={apiStatus}
               />
-              {apiStatus === "ok" ? "Online" : apiStatus === "down" ? "Offline" : "Checking..."}
+              <span className="dark:text-slate-400">{apiStatus === "ok" ? "Online" : apiStatus === "down" ? "Offline" : "Checking..."}</span>
             </div>
           ) : null}
         </div>
-        <div className="mt-2 text-base font-semibold text-slate-900">{workspaceDisplayName}</div>
-        <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700">
+        <div className="mt-2 text-base font-semibold text-slate-900 dark:text-slate-100">{workspaceDisplayName}</div>
+        <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
           Starter Plan
         </div>
-        <div className="mt-3 text-xs text-slate-500">
+        <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
           {decisionStatus === "accepted"
             ? "Workspace verified"
             : decisionStatus === "rejected"
@@ -313,10 +334,10 @@ export default function Layout() {
   );
 
   return (
-    <div className="relative h-[100dvh] bg-slate-50">
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-purple-50 via-blue-50 to-purple-50" />
-      <div className="pointer-events-none absolute -top-24 left-1/3 h-72 w-72 -translate-x-1/2 rounded-full bg-purple-200/35 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-24 left-2/3 h-72 w-72 -translate-x-1/2 rounded-full bg-blue-200/30 blur-3xl" />
+    <div className="relative h-[100dvh] bg-slate-50 dark:bg-slate-950">
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-purple-50 via-blue-50 to-purple-50 dark:from-slate-900 dark:via-slate-950 dark:to-slate-900" />
+      <div className="pointer-events-none absolute -top-24 left-1/3 h-72 w-72 -translate-x-1/2 rounded-full bg-purple-200/35 blur-3xl dark:bg-purple-900/30" />
+      <div className="pointer-events-none absolute -bottom-24 left-2/3 h-72 w-72 -translate-x-1/2 rounded-full bg-blue-200/30 blur-3xl dark:bg-blue-900/20" />
 
       <div className="relative flex h-full w-full overflow-hidden">
         <div className="hidden md:block">{Sidebar}</div>
@@ -329,7 +350,7 @@ export default function Layout() {
         ) : null}
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/80 backdrop-blur">
+          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
             <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-6">
               <div className="flex items-center gap-2 md:hidden">
                 <button
@@ -344,7 +365,7 @@ export default function Layout() {
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <input
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none ring-brand-200 focus:ring"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none ring-brand-200 focus:ring dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
                     placeholder="Search modules, features..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -352,7 +373,65 @@ export default function Layout() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2" />
+              <div className="relative flex items-center gap-2" ref={profileRef}>
+                <button
+                  type="button"
+                  onClick={() => setProfileOpen((v) => !v)}
+                  className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-white">
+                    {profileInitials}
+                  </span>
+                </button>
+                {profileOpen ? (
+                  <div className="absolute right-0 top-12 z-30 w-56 rounded-2xl border border-slate-200 bg-white p-2 text-xs shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                    <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Account</div>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                      onClick={() => {
+                        setProfileOpen(false);
+                        window.location.href = "mailto:support@enterprate.ai";
+                      }}
+                    >
+                      Help & support
+                    </button>
+                    <div className="mt-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Appearance</div>
+                    {[
+                      { value: "system", label: "System" },
+                      { value: "light", label: "Light" },
+                      { value: "dark", label: "Dark" }
+                    ].map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                        onClick={() => setTheme(opt.value)}
+                      >
+                        <span>{opt.label}</span>
+                        <span
+                          className={
+                            "h-2 w-2 rounded-full " +
+                            (theme === opt.value ? "bg-brand-600" : "bg-slate-200")
+                          }
+                        />
+                      </button>
+                    ))}
+                    <div className="my-2 h-px bg-slate-200 dark:bg-slate-800" />
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                      onClick={() => {
+                        setProfileOpen(false);
+                        logout();
+                        navigate("/login");
+                      }}
+                    >
+                      Log out
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </header>
 

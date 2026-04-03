@@ -6,6 +6,9 @@
   :root {
     color-scheme: light;
   }
+  .dark {
+    color-scheme: dark;
+  }
 
   html,
   body,
@@ -15,40 +18,49 @@
 
   body {
     @apply bg-slate-50 text-slate-900 antialiased font-sans text-[14px] leading-relaxed overflow-hidden;
+    @apply dark:bg-slate-950 dark:text-slate-100;
   }
 
   ::selection {
     @apply bg-brand-200 text-slate-900;
+    @apply dark:bg-brand-600 dark:text-white;
   }
 }
 
 @layer components {
   .ea-card {
     @apply rounded-lg border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06)];
+    @apply dark:border-slate-800 dark:bg-slate-900/70 dark:shadow-[0_1px_2px_rgba(0,0,0,0.4)];
   }
 
   .ea-card-hover {
     @apply transition hover:-translate-y-0.5 hover:shadow-lg hover:border-purple-200;
+    @apply dark:hover:border-purple-500/40 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.35)];
   }
 
   .ea-input {
     @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-brand-200 focus:ring;
+    @apply dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100;
   }
 
   .ea-label {
     @apply mb-1 text-[12px] font-semibold text-slate-600;
+    @apply dark:text-slate-300;
   }
 
   .ea-muted {
     @apply text-sm text-slate-600;
+    @apply dark:text-slate-300;
   }
 
   .ea-dialog {
     @apply rounded-xl border border-slate-200 bg-white shadow-xl;
+    @apply dark:border-slate-800 dark:bg-slate-900;
   }
 
   .ea-alert {
     @apply rounded-lg border px-3 py-2 text-sm;
+    @apply dark:border-slate-800;
   }
 }
 
@@ -71,6 +83,92 @@
 
   .animate-slide-in {
     animation: ea-slide-in 0.4s ease-out both;
+  }
+
+  .dark .bg-white {
+    background-color: #0f172a !important;
+  }
+  .dark .bg-white\/70 {
+    background-color: rgba(15, 23, 42, 0.7) !important;
+  }
+  .dark .bg-white\/80 {
+    background-color: rgba(15, 23, 42, 0.8) !important;
+  }
+  .dark .bg-white\/85 {
+    background-color: rgba(15, 23, 42, 0.85) !important;
+  }
+  .dark .bg-white\/90 {
+    background-color: rgba(15, 23, 42, 0.9) !important;
+  }
+  .dark .bg-white\/95 {
+    background-color: rgba(15, 23, 42, 0.95) !important;
+  }
+  .dark .bg-slate-50 {
+    @apply bg-slate-900;
+  }
+  .dark .bg-slate-100 {
+    @apply bg-slate-800;
+  }
+  .dark .bg-slate-200 {
+    @apply bg-slate-700;
+  }
+  .dark .bg-brand-50,
+  .dark .bg-brand-100,
+  .dark .bg-accent-50,
+  .dark .bg-accent-100 {
+    background-color: #0f172a !important;
+    color: #f8fafc !important;
+  }
+  .dark .bg-brand-50,
+  .dark .bg-brand-100,
+  .dark .bg-accent-50,
+  .dark .bg-accent-100 {
+    @apply text-slate-100;
+  }
+  .dark .text-slate-900 {
+    color: #f8fafc;
+  }
+  .dark .text-slate-800 {
+    color: #f1f5f9;
+  }
+  .dark .text-slate-700 {
+    color: #e2e8f0;
+  }
+  .dark .text-slate-600 {
+    color: #cbd5e1;
+  }
+  .dark .text-slate-500 {
+    color: #94a3b8;
+  }
+  .dark .text-slate-400 {
+    color: #cbd5f5;
+  }
+  .dark .text-brand-900,
+  .dark .text-brand-800,
+  .dark .text-brand-700,
+  .dark .text-brand-600 {
+    color: #c7d2fe;
+  }
+  .dark .border-slate-200 {
+    @apply border-slate-800;
+  }
+  .dark .border-slate-300 {
+    @apply border-slate-700;
+  }
+  .dark .border-slate-100 {
+    @apply border-slate-800;
+  }
+  .dark .ring-slate-100 {
+    @apply ring-slate-800;
+  }
+  .dark .ring-slate-200 {
+    @apply ring-slate-800;
+  }
+  .dark .hover\:bg-slate-50:hover {
+    @apply bg-slate-800;
+  }
+  .dark .hover\:bg-slate-100:hover {
+    @apply bg-slate-800;
   }
 }
 

@@ -126,7 +126,7 @@ export default function DashboardPage() {
             <StatTile label="Revenue (paid)" value={formatCurrency(metrics.revenue, currency)} />
             <StatTile label="Expenses (paid)" value={formatCurrency(metrics.costs, currency)} tone="warn" />
             <StatTile label="Pending invoices" value={formatNumber(metrics.pendingInvoices)} />
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm text-slate-900 dark:text-slate-100">
               <div className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-500">
                 <div>Active risks</div>
               </div>

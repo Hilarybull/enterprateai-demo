@@ -7,7 +7,7 @@ import { useAuthStore } from "../store/auth";
 import Spinner from "../components/Spinner";
 import GoogleSignInButton from "../components/GoogleSignInButton";
 import SegmentedTabs from "../components/SegmentedTabs";
-import logoUrl from "../logo.png";
+import logoUrl from "../enterprate-logo.png";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -42,10 +42,8 @@ export default function LoginPage() {
 
       <div className="relative w-full max-w-[520px] pb-10">
         <div className="text-center">
-          <div className="mx-auto inline-flex items-center justify-center rounded-3xl bg-white px-4 py-2.5 shadow-sm ring-1 ring-slate-200">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
-              <img src={logoUrl} alt="EnterprateAI" className="h-10 w-10 object-contain drop-shadow-sm" />
-            </div>
+          <div className="mx-auto inline-flex items-center justify-center">
+            <img src={logoUrl} alt="EnterprateAI" className="h-10 w-auto object-contain sm:h-12" />
           </div>
           <div className="mt-3 text-[28px] font-semibold tracking-tight text-brand-700 sm:text-3xl [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:text-2xl">
             Welcome to EnterprateAI
