@@ -75,14 +75,17 @@ export default function DashboardPage() {
 
     const revenue = sumBy(paidInvoices, "total_amount") + sumBy(salesContracts, "price");
     const costs = sumBy(paidExpenses, "price") + sumBy(purchaseContracts, "price");
-    const riskCount = Array.isArray(validation?.flags) ? validation.flags.length : 0;
+    const flags = Array.isArray(validation?.flags) ? validation.flags : [];
+    const riskCount = flags.length;
+    const topRisks = flags.slice(0, 2).map((f) => String(f?.code || f?.title || f || "").replace(/_/g, " ").trim()).filter(Boolean);
 
     return {
       revenue,
       costs,
       pendingInvoices: pendingInvoices.length,
       paidInvoices: paidInvoices.length,
-      riskCount
+      riskCount,
+      topRisks
     };
   }, [snapshot, validation]);
 
@@ -123,11 +126,21 @@ export default function DashboardPage() {
             <StatTile label="Revenue (paid)" value={formatCurrency(metrics.revenue, currency)} />
             <StatTile label="Expenses (paid)" value={formatCurrency(metrics.costs, currency)} tone="warn" />
             <StatTile label="Pending invoices" value={formatNumber(metrics.pendingInvoices)} />
-            <StatTile
-              label="Active risks"
-              value={metrics.riskCount ? formatNumber(metrics.riskCount) : "No active risks"}
-              tone={metrics.riskCount ? "danger" : "success"}
-            />
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-500">
+                <div>Active risks</div>
+              </div>
+              <div className="mt-1 text-[20px] font-semibold tracking-tight text-slate-900">
+                {metrics.riskCount ? formatNumber(metrics.riskCount) : "No active risks"}
+              </div>
+              {metrics.topRisks?.length ? (
+                <div className="mt-2 text-xs text-slate-500">
+                  {metrics.topRisks.map((risk) => (
+                    <div key={risk}>{risk}</div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

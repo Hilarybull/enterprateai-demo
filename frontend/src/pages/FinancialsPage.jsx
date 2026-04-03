@@ -358,9 +358,9 @@ export default function FinancialsPage() {
   function buildInvoiceHtml(invoice, customer, product) {
     return `<!doctype html>
 <html>
-<head>
-  <meta charset="utf-8"/>
-  <title>Invoice ${invoice?.id || ""}</title>
+  <head>
+    <meta charset="utf-8"/>
+    <title>Invoice ${invoice?.invoice_id || invoice?.id || ""}</title>
   <style>
     body{font-family:Arial, sans-serif; color:#0f172a; padding:32px;}
     .header{display:flex; justify-content:space-between; align-items:flex-start;}
@@ -378,9 +378,9 @@ export default function FinancialsPage() {
       <h2>${workspaceName || "EnterprateAI"}</h2>
       <div class="muted">Invoice</div>
     </div>
-    <div class="right">
-      <div class="muted">Invoice ID</div>
-      <div>${invoice?.id || ""}</div>
+      <div class="right">
+        <div class="muted">Invoice ID</div>
+        <div>${invoice?.invoice_id || invoice?.id || ""}</div>
       <div class="muted" style="margin-top:8px;">Status</div>
       <div>${invoice?.status || "pending"}</div>
     </div>
@@ -412,9 +412,9 @@ export default function FinancialsPage() {
   function buildQuoteHtml(quote, customer, product) {
     return `<!doctype html>
 <html>
-<head>
-  <meta charset="utf-8"/>
-  <title>Quotation ${quote?.id || ""}</title>
+  <head>
+    <meta charset="utf-8"/>
+    <title>Quotation ${quote?.quotation_id || quote?.id || ""}</title>
   <style>
     body{font-family:Arial, sans-serif; color:#0f172a; padding:32px;}
     .header{display:flex; justify-content:space-between; align-items:flex-start;}
@@ -432,9 +432,9 @@ export default function FinancialsPage() {
       <h2>${workspaceName || "EnterprateAI"}</h2>
       <div class="muted">Sales quotation</div>
     </div>
-    <div class="right">
-      <div class="muted">Quotation ID</div>
-      <div>${quote?.id || ""}</div>
+      <div class="right">
+        <div class="muted">Quotation ID</div>
+        <div>${quote?.quotation_id || quote?.id || ""}</div>
       <div class="muted" style="margin-top:8px;">Status</div>
       <div>${quote?.status || "draft"}</div>
     </div>
@@ -493,17 +493,17 @@ export default function FinancialsPage() {
   }
 
   function sendInvoice(invoice, customer) {
-    const subject = encodeURIComponent(`Invoice ${invoice?.id || ""}`);
+    const subject = encodeURIComponent(`Invoice ${invoice?.invoice_id || invoice?.id || ""}`);
     const body = encodeURIComponent(
-      `Hi ${customer?.name || ""},\n\nPlease find your invoice ${invoice?.id || ""} attached. Let us know if you have any questions.\n\nThank you.`
+      `Hi ${customer?.name || ""},\n\nPlease find your invoice ${invoice?.invoice_id || invoice?.id || ""} attached. Let us know if you have any questions.\n\nThank you.`
     );
     window.location.href = `mailto:${""}?subject=${subject}&body=${body}`;
   }
 
   function sendQuote(quote, customer) {
-    const subject = encodeURIComponent(`Quotation ${quote?.id || ""}`);
+    const subject = encodeURIComponent(`Quotation ${quote?.quotation_id || quote?.id || ""}`);
     const body = encodeURIComponent(
-      `Hi ${customer?.name || ""},\n\nPlease find your quotation ${quote?.id || ""} attached. Let us know if you have any questions.\n\nThank you.`
+      `Hi ${customer?.name || ""},\n\nPlease find your quotation ${quote?.quotation_id || quote?.id || ""} attached. Let us know if you have any questions.\n\nThank you.`
     );
     window.location.href = `mailto:${""}?subject=${subject}&body=${body}`;
   }
@@ -1909,7 +1909,7 @@ export default function FinancialsPage() {
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-slate-500">Invoice ID</div>
-                  <div className="text-sm font-semibold text-slate-900">{previewInvoice.id}</div>
+                  <div className="text-sm font-semibold text-slate-900">{previewInvoice.invoice_id || previewInvoice.id}</div>
                   <div className="mt-2 text-xs text-slate-500">Status</div>
                   <div className="text-sm font-semibold text-slate-900">{previewInvoice.status}</div>
                 </div>
@@ -1995,7 +1995,7 @@ export default function FinancialsPage() {
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-slate-500">Quotation ID</div>
-                  <div className="text-sm font-semibold text-slate-900">{previewQuote.id}</div>
+                  <div className="text-sm font-semibold text-slate-900">{previewQuote.quotation_id || previewQuote.id}</div>
                   <div className="mt-2 text-xs text-slate-500">Status</div>
                   <div className="text-sm font-semibold text-slate-900">{previewQuote.status || "draft"}</div>
                 </div>

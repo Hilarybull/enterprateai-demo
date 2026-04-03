@@ -957,10 +957,9 @@ export default function CataloguePage() {
                   </select>
                   {!paymentTermOptions.includes(customerForm.payment_terms) && (
                     <Input
-                      className="mt-2"
+                      className="mt-2 w-full"
                       type="text"
-                      inputMode="numeric"
-                      placeholder="Enter days"
+                      placeholder="Enter payment terms"
                       value={customerForm.payment_terms}
                       onChange={(e) => setCustomerForm((c) => ({ ...c, payment_terms: e.target.value }))}
                     />
@@ -1167,10 +1166,9 @@ export default function CataloguePage() {
                   </select>
                   {!paymentTermOptions.includes(vendorForm.payment_terms) && (
                     <Input
-                      className="mt-2"
+                      className="mt-2 w-full"
                       type="text"
-                      inputMode="numeric"
-                      placeholder="Enter days"
+                      placeholder="Enter payment terms"
                       value={vendorForm.payment_terms}
                       onChange={(e) => setVendorForm((v) => ({ ...v, payment_terms: e.target.value }))}
                     />
