@@ -94,7 +94,7 @@ export default function DashboardPage() {
       <WorkspacePrompt
         title="Create your workspace"
         subtitle="Run Idea Validation to save your workspace and unlock the rest of the platform."
-        ctaLabel="Go to Idea Validation"
+        ctaLabel="Create Workspace"
         ctaHref="/validation"
       />
     );

@@ -14,12 +14,12 @@ import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
 function humanizeValidationError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
   if (msg === "NETWORK_ERROR") {
-    const base = import.meta.env.VITE_API_URL ?? import.meta.env.REACT_APP_BACKEND_URL ?? "http://localhost:8001";
+    const base = import.meta.env.VITE_API_URL ?? import.meta.env.REACT_APP_BACKEND_URL ?? "http://localhost:8000";
     return `Can't reach the server at ${base}. Start the backend and check your API URL.`;
   }
   if (msg === "TIMEOUT") return "The server is taking too long to respond. Check the backend logs and try again.";
   if (msg.startsWith("HTTP 401:")) return "Please sign in to continue.";
-  if (msg.startsWith("HTTP 422:")) return "Please complete the required fields (especially Business name).";
+  if (msg.startsWith("HTTP 422:")) return "Please enter a business name or product / service name to continue.";
   return msg;
 }
 
@@ -219,7 +219,11 @@ export default function ValidationWizardPage() {
     });
   }
 
-  const canRun = useMemo(() => String(form.context.business_name || "").trim().length >= 2, [form.context.business_name]);
+  const canRun = useMemo(() => {
+    const bn = String(form.context.business_name || "").trim();
+    const sn = String(form.offer?.service_type || "").trim();
+    return bn.length >= 2 || sn.length >= 2;
+  }, [form.context.business_name, form.offer?.service_type]);
   const canEdit = !isLoading && !isPrefilling;
 
   function startFilling() {
@@ -252,6 +256,9 @@ export default function ValidationWizardPage() {
       delete payload.problem.customer_segment_category;
       delete payload.problem.customer_segment_other;
       payload.context.founder_hours_per_week = parseNumber(payload.context.founder_hours_per_week, 40);
+      if (!String(payload.context.business_name || "").trim() && String(payload.offer?.service_type || "").trim()) {
+        payload.context.business_name = String(payload.offer.service_type).trim();
+      }
       payload.offer.price_per_unit = parseNumber(payload.offer.price_per_unit, 0);
       const duCat = String(payload.offer.deliverable_unit_category || "").trim();
       const duOther = String(payload.offer.deliverable_unit_other || "").trim();

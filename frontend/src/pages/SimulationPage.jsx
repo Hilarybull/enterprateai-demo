@@ -23,6 +23,7 @@ const FieldLabel = ({ children, info }) => (
 export default function SimulationPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
+  const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
   const validation = useWorkspaceStore((s) => s.validation);
   const inputs = useWorkspaceStore((s) => s.inputs);
   const currency = useWorkspaceStore((s) => s.currency);
@@ -36,6 +37,8 @@ export default function SimulationPage() {
 
   const [catalogueData, setCatalogueData] = useState({ products: [], customers: [], vendors: [] });
   const [financialsData, setFinancialsData] = useState({ invoices: [], expenses: [], contracts: [] });
+
+  const acceptedIdeaValidation = decisionStatus === "accepted" ? ideaValidation : null;
 
   const stateSnapshot = useMemo(() => {
     const metrics = isRegistered ? validation?.metrics || {} : {};
@@ -85,7 +88,7 @@ export default function SimulationPage() {
     const topClientShare =
       (paidInvoices.length || salesContracts.length) && revenueMonthly > 0
         ? Math.min(100, Math.round((maxCustomer / revenueMonthly) * 100))
-        : isRegistered ? ideaValidation?.concentration?.top_client_share_pct ?? null : null;
+        : isRegistered ? acceptedIdeaValidation?.concentration?.top_client_share_pct ?? null : null;
 
     const termValues = customers
       .map((c) => Number(c.payment_terms))
@@ -104,7 +107,7 @@ export default function SimulationPage() {
       customerIds.size > 0
         ? customerIds.size
         : isRegistered
-          ? ideaValidation?.concentration?.clients_count ?? null
+          ? acceptedIdeaValidation?.concentration?.clients_count ?? null
           : null;
 
     return {
@@ -117,7 +120,7 @@ export default function SimulationPage() {
       sales_cycle_days: isRegistered ? metrics.sales_cycle_days ?? null : null,
       clients_count: clientsCount
     };
-  }, [ideaValidation, inputs, validation, catalogueData, financialsData, isRegistered]);
+  }, [acceptedIdeaValidation, inputs, validation, catalogueData, financialsData, isRegistered]);
 
   const largestClient = useMemo(() => {
     const customers = Array.isArray(catalogueData?.customers)

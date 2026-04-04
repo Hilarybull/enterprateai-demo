@@ -148,7 +148,8 @@ function buildPreviewFragment({ title, bodyHtml }) {
   return `
     <style>
       :root { color-scheme: light; }
-      .page-wrap { padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 24px; }
+      * { box-sizing: border-box; }
+      .page-wrap { padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 24px; font-family: "Inter", "Segoe UI", Arial, sans-serif; }
       .page {
         width: 210mm;
         min-height: 297mm;
@@ -156,6 +157,7 @@ function buildPreviewFragment({ title, bodyHtml }) {
         border: 1px solid #e2e8f0;
         border-radius: 12px;
         padding: 18mm 16mm;
+        color: #0f172a;
       }
       h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }
       h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
@@ -341,7 +343,7 @@ export default function DocumentEditor({ title = "Document", markdown, initialHt
 
   return (
     <Card className="h-full min-h-0 flex flex-col">
-      <div className="-mx-5 -mt-5 mb-4 border-b border-slate-200 bg-white/80 px-5 py-3 backdrop-blur flex-shrink-0">
+      <div className="-mx-5 -mt-5 mb-4 border-b border-slate-200 bg-white/80 px-5 py-3 backdrop-blur flex-shrink-0 dark:border-slate-700 dark:bg-slate-900/80">
         <div className="flex flex-wrap items-center gap-2">
           <select
             className="ea-input h-10 w-[150px] shrink-0"
@@ -404,7 +406,7 @@ export default function DocumentEditor({ title = "Document", markdown, initialHt
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16"/><path d="M10 10h10"/><path d="M4 14h16"/><path d="M10 18h10"/></svg>
           </button>
 
-          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
             <span>Color</span>
             <input
               type="color"
@@ -447,7 +449,7 @@ export default function DocumentEditor({ title = "Document", markdown, initialHt
                 <path d="M8 7h8M8 11h8M8 15h6" />
               </svg>
             </button>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-slate-500 dark:text-slate-400">
               {showPaginated ? "Preview mode (read‑only)" : "Edit mode"}
             </span>
           </div>
@@ -483,17 +485,18 @@ export default function DocumentEditor({ title = "Document", markdown, initialHt
         </div>
       </div>
 
-      <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200 flex-1 min-h-0">
+      <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200 flex-1 min-h-0 dark:bg-slate-900/60 dark:ring-slate-800">
         <div className="h-full min-h-0 overflow-auto rounded-2xl pr-1">
           {showPaginated ? (
             <div
-              className="h-full min-h-0 overflow-auto rounded-xl border border-slate-200 bg-white"
+              className="h-full min-h-0 overflow-auto rounded-xl border border-slate-200 bg-white dark:border-slate-700"
+              style={{ color: "#0f172a" }}
               dangerouslySetInnerHTML={{ __html: paginatedHtml }}
             />
           ) : (
             <div
               ref={ref}
-              className="ea-doc mx-auto w-full max-w-[900px] rounded-xl border border-slate-200 bg-white p-8 shadow-sm outline-none"
+              className="ea-doc mx-auto w-full max-w-[900px] rounded-xl border border-slate-200 bg-white p-8 shadow-sm outline-none dark:border-slate-700 dark:bg-white"
               contentEditable
               suppressContentEditableWarning
               onInput={(e) => {

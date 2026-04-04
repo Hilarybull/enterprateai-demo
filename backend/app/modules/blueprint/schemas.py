@@ -24,7 +24,7 @@ class BlueprintGenerateRequest(BaseModel):
     company_name: str = Field(min_length=2, max_length=64)
     workspace_id: Optional[str] = Field(default=None, description="Optional idea-validation workspace id to pull deterministic metrics.")
     include_validation_snapshot: bool = Field(
-        default=True,
+        default=False,
         description="When workspace_id is provided, include a deterministic validation + financial snapshot in the document.",
     )
     industry: Optional[str] = Field(default=None, max_length=80)

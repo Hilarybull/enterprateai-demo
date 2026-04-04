@@ -98,7 +98,7 @@ def _inputs_from_idea_validation(payload: IdeaValidationPayload) -> tuple[Financ
 
 def _market_fit_params_from_idea_validation(payload: IdeaValidationPayload) -> dict[str, Any] | None:
     ctx = payload.context
-    business_name = (ctx.business_name or "").strip()
+    business_name = (ctx.business_name or "").strip() or (payload.offer.service_type or "").strip()
     industry = (getattr(ctx, "primary_industry", "") or "").strip() or (ctx.business_type or "").strip() or (payload.offer.service_type or "").strip()
     location = (ctx.location or "").strip() or "London"
     uk_region = (getattr(ctx, "uk_region", "") or "").strip() or "GB-ENG"

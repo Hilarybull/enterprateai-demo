@@ -42,6 +42,7 @@ export default function BlueprintPage() {
   const setWorkspaceIdStored = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceNameStored = useWorkspaceStore((s) => s.setWorkspaceName);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
+  const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
   const [selectedDoc, setSelectedDoc] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showInputs, setShowInputs] = useState(true);
@@ -95,6 +96,7 @@ export default function BlueprintPage() {
   const [savedDocs, setSavedDocs] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [customClientName, setCustomClientName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
   const [includeSnapshot, setIncludeSnapshot] = useState(false);
@@ -110,6 +112,8 @@ export default function BlueprintPage() {
   const showSalesLetterExtras = selectedDoc === "sales_letter";
   const showProposalExtras = selectedDoc === "client_proposal";
   const activeCustomers = useMemo(() => customers.filter((c) => !c.archived), [customers]);
+  const acceptedIdeaValidation = decisionStatus === "accepted" ? ideaValidation : null;
+  const OTHER_CUSTOMER_ID = "__other__";
 
   async function refreshSavedDocs() {
     try {
@@ -127,6 +131,7 @@ export default function BlueprintPage() {
   useEffect(() => {
     if (selectedDoc !== "client_proposal" && selectedDoc !== "sales_letter") {
       setSelectedCustomerId("");
+      setCustomClientName("");
     }
   }, [selectedDoc]);
 
@@ -135,10 +140,10 @@ export default function BlueprintPage() {
   }, [workspaceIdStored, workspaceId]);
 
   useEffect(() => {
-    if (!ideaValidation) return;
-    const ctx = ideaValidation.context || {};
-    const offer = ideaValidation.offer || {};
-    const prob = ideaValidation.problem || {};
+    if (!acceptedIdeaValidation) return;
+    const ctx = acceptedIdeaValidation.context || {};
+    const offer = acceptedIdeaValidation.offer || {};
+    const prob = acceptedIdeaValidation.problem || {};
 
     if (!companyName && ctx.business_name) setCompanyName(ctx.business_name);
     if (!industry) setIndustry(ctx.primary_industry || ctx.business_type || "");
@@ -152,12 +157,12 @@ export default function BlueprintPage() {
       else if (pm === "retainer") setPricingModel("Retainer");
       else if (pm === "fixed_job") setPricingModel("One-time");
     }
-  }, [companyName, ideaValidation, industry, pricingModel, problem, solution, targetMarket]);
+  }, [acceptedIdeaValidation, companyName, industry, pricingModel, problem, solution, targetMarket]);
 
   useEffect(() => {
     let alive = true;
     async function prefillFromWorkspace() {
-      if (ideaValidation || !workspaceIdStored) return;
+    if (acceptedIdeaValidation || !workspaceIdStored) return;
       try {
         const ws = await apiRequest(`/validation/${workspaceIdStored}`, "GET");
         if (!alive) return;
@@ -173,7 +178,7 @@ export default function BlueprintPage() {
     return () => {
       alive = false;
     };
-  }, [companyName, ideaValidation, industry, valueProp, workspaceIdStored]);
+  }, [acceptedIdeaValidation, companyName, industry, valueProp, workspaceIdStored]);
 
   useEffect(() => {
     let alive = true;
@@ -297,16 +302,34 @@ export default function BlueprintPage() {
     });
   }
 
+  function formatPaymentTerms(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric)) return `${numeric} days`;
+    return raw;
+  }
+
   function applyCustomerSelection(customerId) {
     setSelectedCustomerId(customerId);
+    if (!customerId) return;
+    if (customerId === OTHER_CUSTOMER_ID) {
+      setCustomClientName("");
+      setBillTo("");
+      return;
+    }
     const customer = activeCustomers.find((c) => c.id === customerId);
     if (!customer) return;
-    const address = customer.address ? `\n${customer.address}` : "";
     if (selectedDoc === "client_proposal") {
-      setBillTo(`${customer.name}${address}`);
+      setBillTo(`${customer.name}`);
       if (!targetMarket) setTargetMarket(customer.industry || customer.name);
+      if (!terms && customer.payment_terms) {
+        const formatted = formatPaymentTerms(customer.payment_terms);
+        if (formatted) setTerms(`Payment terms: ${formatted}`);
+      }
     }
     if (selectedDoc === "sales_letter") {
+      setBillTo(`${customer.name}`);
       if (!targetMarket) setTargetMarket(customer.name);
     }
   }
@@ -317,8 +340,18 @@ export default function BlueprintPage() {
       setShowInputs(true);
       return;
     }
+    if ((selectedDoc === "client_proposal" || selectedDoc === "sales_letter") && !String(billTo || customClientName).trim()) {
+      setError("Select a client from your catalogue or type a client name to continue.");
+      setShowInputs(true);
+      return;
+    }
     if (needsWorkspace && !workspaceId.trim()) {
       setError("Paste an Idea Validation workspace id to generate this document.");
+      setShowInputs(true);
+      return;
+    }
+    if (includeSnapshot && !workspaceId.trim() && !workspaceIdStored) {
+      setError("Select a workspace to include the financial snapshot.");
       setShowInputs(true);
       return;
     }
@@ -340,7 +373,7 @@ export default function BlueprintPage() {
         value_proposition: valueProp,
         tone,
         extra_notes: extraNotes,
-        bill_to: billTo,
+        bill_to: billTo || customClientName,
         items,
         terms,
 
@@ -397,7 +430,34 @@ export default function BlueprintPage() {
   async function downloadPdfFromHtml(html, filename) {
     try {
       const container = document.createElement("div");
-      container.innerHTML = html;
+      const source = String(html || "");
+      const pageParts = source.split('<div class="page-break"></div>').map((p) => p.trim()).filter(Boolean);
+      const wrappedHtml = pageParts.length
+        ? pageParts.map((p) => `<div class="page">${p}</div>`).join("")
+        : `<div class="page">${source}</div>`;
+      const pdfStyles = `
+        <style>
+          * { box-sizing: border-box; }
+          :root { color-scheme: light; }
+          body { margin: 0; padding: 0; }
+          .page-wrap { display: flex; flex-direction: column; gap: 18px; font-family: "Inter", "Segoe UI", Arial, sans-serif; }
+          .page { width: 210mm; min-height: 297mm; background: #ffffff; color: #0f172a; padding: 18mm 16mm; border-radius: 8px; }
+          h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; color: #0f172a; }
+          h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; color: #0f172a; }
+          h3 { font-size: 14px; font-weight: 800; margin: 16px 0 6px; color: #0f172a; }
+          p, li { font-size: 12.5px; line-height: 1.7; color: #1f2937; }
+          ul { margin: 8px 0 0 18px; padding: 0; }
+          li { margin: 6px 0; }
+          strong { color: #0f172a; }
+          table { width: 100%; border-collapse: collapse; margin: 12px 0 6px; font-size: 12.5px; }
+          th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; color: #0f172a; }
+          th { background: #f8fafc; font-weight: 700; }
+          .cover-page { min-height: 70vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
+          .cover-page p { margin: 6px 0; }
+          .page-break { page-break-after: always; break-after: page; height: 1px; }
+        </style>
+      `;
+      container.innerHTML = `${pdfStyles}${wrappedHtml}`;
       container.style.width = "210mm";
       container.style.padding = "12mm";
       container.style.boxSizing = "border-box";
@@ -405,22 +465,23 @@ export default function BlueprintPage() {
       container.style.lineHeight = "1.5";
       container.style.color = "#0f172a";
       container.style.background = "#ffffff";
+      container.className = "page-wrap";
       document.body.appendChild(container);
       await html2pdf()
         .set({
           filename,
-          margin: [10, 10, 10, 10],
-          pagebreak: { mode: ["css", "legacy", "avoid-all"] },
+          margin: [8, 8, 8, 8],
+          pagebreak: { mode: ["css", "legacy"] },
           image: { type: "jpeg", quality: 0.98 },
           html2canvas: {
-            scale: 3,
+            scale: 2,
             useCORS: true,
-            windowWidth: 794,
-            windowHeight: 1123,
+            windowWidth: 1240,
+            windowHeight: 1754,
             backgroundColor: "#ffffff",
             letterRendering: true
           },
-          jsPDF: { unit: "pt", format: "a4", orientation: "portrait", compress: true }
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait", compress: true }
         })
         .from(container)
         .save();
@@ -679,24 +740,42 @@ export default function BlueprintPage() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-3">
-                  {(showProposalExtras || showSalesLetterExtras) && activeCustomers.length ? (
+                  {showProposalExtras || showSalesLetterExtras ? (
                     <div>
-                      <div className="ea-label">Customer (optional)</div>
-                      <select
-                        className="ea-input"
-                        value={selectedCustomerId}
-                        onChange={(e) => applyCustomerSelection(e.target.value)}
-                      >
-                        <option value="">Select customer</option>
-                        {activeCustomers.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="mt-1 text-[11px] text-slate-500">
-                        Selecting a customer will prefill the client details and audience.
-                      </div>
+                      <div className="ea-label">Customer</div>
+                      {activeCustomers.length ? (
+                        <>
+                          <select
+                            className="ea-input"
+                            value={selectedCustomerId}
+                            onChange={(e) => applyCustomerSelection(e.target.value)}
+                          >
+                            <option value="">Select customer</option>
+                            {activeCustomers.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                            <option value={OTHER_CUSTOMER_ID}>Other (type a name)</option>
+                          </select>
+                          <div className="mt-1 text-[11px] text-slate-500">
+                            Selecting a customer will prefill the client details and audience.
+                          </div>
+                        </>
+                      ) : null}
+                      {!activeCustomers.length || selectedCustomerId === OTHER_CUSTOMER_ID ? (
+                        <div className="mt-2">
+                          <div className="ea-label">Client name</div>
+                          <Input
+                            value={customClientName}
+                            onChange={(e) => {
+                              setCustomClientName(e.target.value);
+                              setBillTo(e.target.value);
+                            }}
+                            placeholder="Enter client name"
+                          />
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 

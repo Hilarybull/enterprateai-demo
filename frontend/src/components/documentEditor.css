@@ -127,3 +127,30 @@
   border-radius: 14px;
   background: #ffffff;
 }
+
+.dark .ea-icon-btn {
+  border-color: #334155;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.dark .ea-icon-btn:hover {
+  background: #1e293b;
+  border-color: #475569;
+  color: #f8fafc;
+}
+
+.dark .ea-icon-btn.ea-icon-btn-active {
+  background: rgba(124, 58, 237, 0.2);
+  border-color: rgba(124, 58, 237, 0.6);
+  color: #c4b5fd;
+}
+
+.dark .ea-doc table {
+  border-color: #cbd5f5;
+}
+
+.dark .ea-doc th,
+.dark .ea-doc td {
+  border-color: #cbd5f5;
+}

@@ -24,7 +24,6 @@ from app.modules.idea_validation.service import evaluate as evaluate_validation
 from app.modules.idea_validation.service import get_workspace as get_validation_workspace
 from app.modules.idea_validation.schemas import IdeaValidationPayload
 from app.core.config import get_settings
-from app.shared.llm.guardrails import strip_numbers
 from app.shared.llm.openai_client import AutoLLMClient, LLMClient, NoopLLMClient
 
 
@@ -32,7 +31,9 @@ def _safe_text(s: str | None) -> str:
     return (s or "").strip()
 
 def _strip_digits(s: str | None) -> str:
-    return strip_numbers(_safe_text(s))
+    # Kept for backward compatibility in case older code paths call it.
+    # We now allow numeric values that are explicitly provided by the system/user.
+    return _safe_text(s)
 
 
 def _expand_note(*, field: str, text: str, company: str, industry: str, target_market: str, pricing_model: str) -> str:
@@ -115,15 +116,6 @@ def _expand_note(*, field: str, text: str, company: str, industry: str, target_m
         f"{t.capitalize().rstrip('.')} is treated as an initial assumption. {c} will validate it quickly and adjust based on customer feedback and delivery learnings."
     )
 
-
-def _strip_digits_in_dict(d: dict[str, Any]) -> dict[str, str]:
-    cleaned: dict[str, str] = {}
-    for k, v in d.items():
-        if v is None:
-            cleaned[str(k)] = ""
-        else:
-            cleaned[str(k)] = _strip_digits(str(v))
-    return cleaned
 
 
 def _clean_document(doc: str) -> str:
@@ -608,24 +600,25 @@ def _render_validation_snapshot(*, currency: str, validation: dict | None) -> st
     if not validation:
         return "Not available yet. Add financial inputs in your workspace to generate this snapshot."
     metrics  = validation.get("metrics") if isinstance(validation.get("metrics"), dict) else {}
-    lines: list[str] = []
     revenue    = metrics.get("revenue_monthly", 0.0)
     costs      = metrics.get("costs_monthly", 0.0)
     net        = metrics.get("net_monthly", 0.0)
     margin     = metrics.get("margin", 0.0)
     break_even = metrics.get("break_even_months")
     runway     = metrics.get("runway_months")
-    lines.append("")
-    lines.append("**Financial snapshot:**")
-    lines.append("")
-    lines.append("| Metric | Value |")
-    lines.append("| --- | --- |")
-    lines.append(f"| Monthly revenue | {_fmt_money(float(revenue or 0.0), currency)} |")
-    lines.append(f"| Monthly costs | {_fmt_money(float(costs or 0.0), currency)} |")
-    lines.append(f"| Monthly net | {_fmt_money(float(net or 0.0), currency)} |")
-    lines.append(f"| Contribution margin | {_fmt_pct(float(margin or 0.0))} |")
-    lines.append(f"| Break-even | {_fmt_months(break_even)} |")
-    lines.append(f"| Runway | {_fmt_months(runway)} |")
+
+    def row(label: str, value: str) -> str:
+        return f"{label:<28} {value}"
+
+    lines: list[str] = []
+    lines.append(row("Metric", "Value"))
+    lines.append("-" * 42)
+    lines.append(row("Monthly revenue", _fmt_money(float(revenue or 0.0), currency)))
+    lines.append(row("Monthly costs", _fmt_money(float(costs or 0.0), currency)))
+    lines.append(row("Monthly net", _fmt_money(float(net or 0.0), currency)))
+    lines.append(row("Contribution margin", _fmt_pct(float(margin or 0.0))))
+    lines.append(row("Break-even", _fmt_months(break_even)))
+    lines.append(row("Runway", _fmt_months(runway)))
     return "\n".join(lines).strip()
 
 
@@ -794,12 +787,12 @@ async def generate_blueprint(
     industry      = _safe_text(payload.industry)
     pricing_model = _safe_text(payload.pricing_model)
 
-    # Never pass raw user-provided numbers to the LLM — strip digits before prompting.
-    problem    = _strip_digits(payload.problem)
-    solution   = _strip_digits(payload.solution)
-    target     = _strip_digits(payload.target_market)
-    value_prop = _strip_digits(payload.value_proposition)
-    extra      = _strip_digits(payload.extra_notes)
+    # Allow numeric values only when explicitly supplied by the user/system.
+    problem    = _safe_text(payload.problem)
+    solution   = _safe_text(payload.solution)
+    target     = _safe_text(payload.target_market)
+    value_prop = _safe_text(payload.value_proposition)
+    extra      = _safe_text(payload.extra_notes)
 
     provider = "noop"
     model    = "none"
@@ -835,7 +828,7 @@ async def generate_blueprint(
 
         type_to_title = {
             "business_plan": "Business Plan",
-            "client_proposal": "Business Proposal",
+            "client_proposal": "Client Proposal",
             "sales_letter": "Sales Letter",
             "sales_quotation": "Sales Quotation",
             "invoice_template": "Invoice",
@@ -880,9 +873,6 @@ async def generate_blueprint(
         for k, v in raw.items():
             val = _safe_text(v)
             enriched[str(k)] = val if val else _narrative_fallback(str(k))
-
-        # Strip digits only before generation call
-        enriched = _strip_digits_in_dict(enriched)
 
         doc_prompt    = build_prompt_fn(enriched)
         doc, prov, mdl = await _generate_section(llm, prompt=doc_prompt, label=f"{doc_type}_full", warnings=warnings)
@@ -979,6 +969,10 @@ async def generate_blueprint(
             pricing_model=pricing_model,
         )
 
+        snapshot_text = ""
+        if payload.include_validation_snapshot:
+            snapshot_text = _render_validation_snapshot(currency=currency, validation=validation)
+
         raw_inputs = {
             "company_name":          company,
             "industry":              industry or workspace_context.get("industry", "") or workspace_context.get("primary_industry", ""),
@@ -1016,15 +1010,16 @@ async def generate_blueprint(
             "technology_adoption":   "",
             "operational_expansion": "",
             "conclusion":            "",
+            "financial_snapshot":    snapshot_text,
         }
 
         doc, provider, model = await _enrich_and_generate(
             "Business Plan", raw_inputs, build_business_plan_prompt, BUSINESS_PLAN_TEMPLATE
         )
 
-        if payload.include_validation_snapshot and validation:
+        if payload.include_validation_snapshot:
             snapshot = _render_validation_snapshot(currency=currency, validation=validation)
-            doc = f"{doc}\n\n---\n\n## Financial Snapshot\n\n{snapshot}\n"
+            doc = f"{doc}\n\nFINANCIAL SNAPSHOT\n\n{snapshot}\n"
 
         cover_lines = [
             f"Company — {company}",
@@ -1148,13 +1143,16 @@ async def generate_blueprint(
             "Client Proposal", raw_inputs, build_client_proposal_prompt, CLIENT_PROPOSAL_TEMPLATE
         )
         doc = _ensure_client_proposal_format(doc)
+        if payload.include_validation_snapshot:
+            snapshot = _render_validation_snapshot(currency=currency, validation=validation)
+            doc = f"{doc}\n\nFINANCIAL SNAPSHOT\n\n{snapshot}\n"
         cover_lines = [
             f"Proposal Title — {raw_inputs.get('proposal_title')}",
             f"Client — {raw_inputs.get('client_name')}",
             f"Prepared By — {company}",
             f"Contact Details — {raw_inputs.get('contact_details')}",
         ]
-        doc = _apply_cover_page(doc, title=f"Business Proposal — {company}", lines=cover_lines)
+        doc = _apply_cover_page(doc, title=f"Client Proposal — {company}", lines=cover_lines)
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
         )

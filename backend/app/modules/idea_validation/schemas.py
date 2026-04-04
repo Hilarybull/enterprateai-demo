@@ -54,7 +54,7 @@ PricingModel = Literal["hourly", "fixed_job", "retainer"]
 
 class BusinessContext(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    business_name: str = Field(min_length=2, max_length=80)
+    business_name: str = Field(default="", max_length=80)
     business_type: str = Field(default="service_micro_business", max_length=80)
     primary_industry: str = Field(default="", max_length=80)
     location: str = Field(default="", max_length=80)
