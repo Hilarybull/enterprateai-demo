@@ -77,7 +77,7 @@ export default function DashboardPage() {
     const costs = sumBy(paidExpenses, "price") + sumBy(purchaseContracts, "price");
     const flags = Array.isArray(validation?.flags) ? validation.flags : [];
     const riskCount = flags.length;
-    const topRisks = flags.slice(0, 2).map((f) => String(f?.code || f?.title || f || "").replace(/_/g, " ").trim()).filter(Boolean);
+    const riskItems = flags.map((f) => String(f?.code || f?.title || f || "").replace(/_/g, " ").trim()).filter(Boolean);
 
     return {
       revenue,
@@ -85,7 +85,7 @@ export default function DashboardPage() {
       pendingInvoices: pendingInvoices.length,
       paidInvoices: paidInvoices.length,
       riskCount,
-      topRisks
+      riskItems
     };
   }, [snapshot, validation]);
 
@@ -126,17 +126,19 @@ export default function DashboardPage() {
             <StatTile label="Revenue (paid)" value={formatCurrency(metrics.revenue, currency)} />
             <StatTile label="Expenses (paid)" value={formatCurrency(metrics.costs, currency)} tone="warn" />
             <StatTile label="Pending invoices" value={formatNumber(metrics.pendingInvoices)} />
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm text-slate-900 dark:text-slate-100">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm text-slate-900 dark:text-slate-100 min-h-[124px] flex flex-col">
               <div className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-500">
                 <div>Active risks</div>
               </div>
               <div className="mt-1 text-[20px] font-semibold tracking-tight text-slate-900">
                 {metrics.riskCount ? formatNumber(metrics.riskCount) : "No active risks"}
               </div>
-              {metrics.topRisks?.length ? (
-                <div className="mt-2 text-xs text-slate-500">
-                  {metrics.topRisks.map((risk) => (
-                    <div key={risk}>{risk}</div>
+              {metrics.riskItems?.length ? (
+                <div className="mt-2 text-xs text-slate-500 max-h-16 overflow-auto pr-1">
+                  {metrics.riskItems.map((risk, idx) => (
+                    <div key={`${risk}-${idx}`} className="truncate">
+                      {risk}
+                    </div>
                   ))}
                 </div>
               ) : null}
@@ -159,11 +161,23 @@ export default function DashboardPage() {
               </div>
             </SectionCard>
 
-            <SectionCard title="Financial activity" subtitle="Track invoices, expenses, and contracts quickly.">
-              <div className="space-y-2 text-sm text-slate-600">
-                <div>Paid invoices: {metrics.paidInvoices}</div>
-                <div>Pending invoices: {metrics.pendingInvoices}</div>
-                <div className="pt-2">
+            <SectionCard
+              title="Financial activity"
+              subtitle="Track invoices, expenses, and contracts quickly."
+              className="flex h-full flex-col"
+            >
+              <div className="flex flex-1 flex-col gap-3 text-sm text-slate-600">
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between">
+                    <span>Paid invoices</span>
+                    <span className="font-semibold text-slate-900">{metrics.paidInvoices}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Pending invoices</span>
+                    <span className="font-semibold text-slate-900">{metrics.pendingInvoices}</span>
+                  </div>
+                </div>
+                <div className="mt-auto">
                   <Button size="sm" variant="secondary" onClick={() => navigate("/financials")}>
                     Go to Financials
                   </Button>
@@ -171,12 +185,27 @@ export default function DashboardPage() {
               </div>
             </SectionCard>
 
-            <SectionCard title="Catalogue status" subtitle="Keep products, customers, and vendors ready for reuse.">
-              <div className="space-y-2 text-sm text-slate-600">
-                <div>Products: {snapshot.catalogue.products?.length || 0}</div>
-                <div>Customers: {snapshot.catalogue.customers?.length || 0}</div>
-                <div>Vendors: {snapshot.catalogue.vendors?.length || 0}</div>
-                <div className="pt-2">
+            <SectionCard
+              title="Catalogue status"
+              subtitle="Keep products, customers, and vendors ready for reuse."
+              className="flex h-full flex-col"
+            >
+              <div className="flex flex-1 flex-col gap-3 text-sm text-slate-600">
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between">
+                    <span>Products</span>
+                    <span className="font-semibold text-slate-900">{snapshot.catalogue.products?.length || 0}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Customers</span>
+                    <span className="font-semibold text-slate-900">{snapshot.catalogue.customers?.length || 0}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Vendors</span>
+                    <span className="font-semibold text-slate-900">{snapshot.catalogue.vendors?.length || 0}</span>
+                  </div>
+                </div>
+                <div className="mt-auto">
                   <Button size="sm" variant="secondary" onClick={() => navigate("/catalogue")}>
                     Manage catalogue
                   </Button>
