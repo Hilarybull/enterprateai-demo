@@ -60,7 +60,7 @@ export default function ValidationWizardPage() {
   const BUSINESS_TYPE_OPTIONS = useMemo(() => ["Technology", "Health", "Finance", "Cleaning", "Education", "Retail", "Logistics", "Real Estate", "Hospitality", "Manufacturing", "Agriculture", "Media", "Other"], []);
   const PRIMARY_INDUSTRY_OPTIONS = useMemo(() => ["IT", "Marketing", "Consulting", "Accounting", "Legal", "HR", "Design", "Sales", "Operations", "Customer Support", "Healthcare", "Education", "Construction", "Other"], []);
   const CUSTOMER_SEGMENT_OPTIONS = useMemo(() => ["SMEs", "Freelancers", "Households", "Other"], []);
-  const DELIVERABLE_UNIT_OPTIONS = useMemo(() => ["unit", "job", "session", "project", "month", "subscription", "Other"], []);
+  const DELIVERABLE_UNIT_OPTIONS = useMemo(() => ["unit", "job", "session", "project", "month", "hour", "subscription", "Other"], []);
   const PRICING_MODEL_OPTIONS = useMemo(() => [{ value: "hourly", label: "Hourly" }, { value: "fixed_job", label: "Fixed job" }, { value: "retainer", label: "Retainer" }], []);
   const GTM_CHANNEL_OPTIONS = useMemo(
     () => ["Referrals", "Ads", "Partnerships", "Marketplace", "Outbound", "SEO", "Social", "Events", "Communities", "Affiliates"],
@@ -116,17 +116,15 @@ export default function ValidationWizardPage() {
     const team = Math.max(1, parseIntSafe(form?.capacity?.team_size, 1));
     const capacityPerPerson = parseNumber(form?.capacity?.capacity_units_per_person_per_month, 0);
     if (!target || !team) return null;
-    const standardCapacityPerPerson = capacityPerPerson || recommendedCapacityPerPerson || 0;
-    if (!standardCapacityPerPerson) return null;
-    const requiredTeam = Math.max(1, Math.ceil(target / standardCapacityPerPerson));
+    if (!capacityPerPerson) return null;
+    const requiredTeam = Math.max(1, Math.ceil(target / capacityPerPerson));
     if (requiredTeam > team) return "Hire more staff.";
     if (requiredTeam < team) return "Overstaffed / Increase Targets.";
     return "Team size matches the target at this capacity.";
   }, [
     form?.capacity?.capacity_units_per_person_per_month,
     form?.capacity?.team_size,
-    form?.demand?.expected_units_per_month,
-    recommendedCapacityPerPerson
+    form?.demand?.expected_units_per_month
   ]);
 
   useEffect(() => {
@@ -665,14 +663,13 @@ export default function ValidationWizardPage() {
                           value={form.capacity.capacity_units_per_person_per_month}
                           onChange={(v) => update("capacity.capacity_units_per_person_per_month", v)}
                         />
-                        {recommendedCapacityPerPerson ? (
+                        {recommendedCapacityPerPerson || capacityRecommendation ? (
                           <div className="mt-2 text-xs text-slate-500">
-                            Capacity per person = Units / month ÷ Team size. Recommended: {recommendedCapacityPerPerson} units per person.
+                            {recommendedCapacityPerPerson ? `Recommended: ${recommendedCapacityPerPerson} units per person.` : ""}
+                            {recommendedCapacityPerPerson && capacityRecommendation ? " " : ""}
+                            {capacityRecommendation || ""}
                           </div>
                         ) : null}
-                      {capacityRecommendation ? (
-                        <div className="mt-1 text-xs text-slate-600">{capacityRecommendation}</div>
-                      ) : null}
                     </div>
                     <div>
                       <FieldLabel info="Cash available before profitability.">Starting cash</FieldLabel>
