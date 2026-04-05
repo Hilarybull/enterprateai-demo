@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     claude_api_key: str | None = Field(default=None, validation_alias=AliasChoices("CLAUDE_API_KEY",))
     # Use a stable, explicit model id by default to avoid provider-side "Not Found"
     # errors when aliases like "*-latest" are not supported for an API key.
-    claude_model: str = Field(default="claude-3-5-sonnet-20241022", validation_alias=AliasChoices("CLAUDE_MODEL",))
+    claude_model: str = Field(default="claude-3-5-sonnet-20240620", validation_alias=AliasChoices("CLAUDE_MODEL",))
     gemini_api_key: str | None = Field(default=None, validation_alias=AliasChoices("GEMINI_API_KEY",))
     gemini_model: str = Field(default="gemini-1.5-flash", validation_alias=AliasChoices("GEMINI_MODEL",))
     emergent_llm_key: str | None = Field(default=None, validation_alias=AliasChoices("EMERGENT_LLM_KEY",))

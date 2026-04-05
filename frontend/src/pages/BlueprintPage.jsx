@@ -79,14 +79,10 @@ export default function BlueprintPage() {
   const [senderPhone, setSenderPhone] = useState("");
   const [senderEmail, setSenderEmail] = useState("");
   const [senderWebsite, setSenderWebsite] = useState("");
-  const [subjectLines, setSubjectLines] = useState(
-    "A reliable, no‑drama way to keep standards consistent\nA simple proposal for dependable delivery\nA clear plan to improve consistency without extra oversight"
-  );
-  const [followupSequence, setFollowupSequence] = useState(
-    "Touch one: quick reminder and recap of the main benefit, inviting a short call\nTouch two: share a practical example of how the process reduces risk and saves time\nTouch three: final check‑in offering to hold a slot and answer questions"
-  );
-  const [subjectLinesMode, setSubjectLinesMode] = useState("recommended");
-  const [followupMode, setFollowupMode] = useState("recommended");
+  const [subjectLineChoice, setSubjectLineChoice] = useState("A reliable, no-drama way to keep standards consistent");
+  const [subjectLineCustom, setSubjectLineCustom] = useState("");
+  const [followupChoice, setFollowupChoice] = useState("Touch one: quick reminder and recap of the main benefit, inviting a short call");
+  const [followupCustom, setFollowupCustom] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -365,7 +361,7 @@ export default function BlueprintPage() {
         company_name: companyName,
         industry,
         pricing_model: pricingModel,
-        workspace_id: workspaceId ? workspaceId : null,
+        workspace_id: (workspaceId || workspaceIdStored || "").trim() || null,
         include_validation_snapshot: includeSnapshot,
         problem,
         solution,
@@ -393,8 +389,8 @@ export default function BlueprintPage() {
         sender_phone: senderPhone,
         sender_email: senderEmail,
         sender_website: senderWebsite,
-        subject_lines: subjectLines,
-        followup_sequence: followupSequence
+        subject_lines: subjectLineChoice === "Other" ? subjectLineCustom : subjectLineChoice,
+        followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice
       }, { timeoutMs: 120000 });
       setDocByType((prev) => ({ ...prev, [selectedDoc]: res }));
       if (res?.document_id) setDocIdByType((prev) => ({ ...prev, [selectedDoc]: res.document_id }));
@@ -431,53 +427,53 @@ export default function BlueprintPage() {
     try {
       const container = document.createElement("div");
       const source = String(html || "");
-      const pageParts = source.split('<div class="page-break"></div>').map((p) => p.trim()).filter(Boolean);
-      const wrappedHtml = pageParts.length
-        ? pageParts.map((p) => `<div class="page">${p}</div>`).join("")
-        : `<div class="page">${source}</div>`;
       const pdfStyles = `
         <style>
           * { box-sizing: border-box; }
           :root { color-scheme: light; }
           body { margin: 0; padding: 0; }
-          .page-wrap { display: flex; flex-direction: column; gap: 18px; font-family: "Inter", "Segoe UI", Arial, sans-serif; }
-          .page { width: 210mm; min-height: 297mm; background: #ffffff; color: #0f172a; padding: 18mm 16mm; border-radius: 8px; }
-          h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; color: #0f172a; }
-          h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; color: #0f172a; }
-          h3 { font-size: 14px; font-weight: 800; margin: 16px 0 6px; color: #0f172a; }
-          p, li { font-size: 12.5px; line-height: 1.7; color: #1f2937; }
+          .pdf-doc { width: 190mm; padding: 14mm 10mm; font-family: "Inter", "Segoe UI", Arial, sans-serif; background: #ffffff; margin: 0 auto; }
+          .pdf-doc, .pdf-doc * { color: #0f172a !important; }
+          h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }
+          h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
+          h3 { font-size: 14px; font-weight: 800; margin: 16px 0 6px; }
+          p, li { font-size: 12.5px; line-height: 1.7; }
           ul { margin: 8px 0 0 18px; padding: 0; }
           li { margin: 6px 0; }
-          strong { color: #0f172a; }
           table { width: 100%; border-collapse: collapse; margin: 12px 0 6px; font-size: 12.5px; }
-          th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; color: #0f172a; }
+          th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
           th { background: #f8fafc; font-weight: 700; }
           .cover-page { min-height: 70vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
           .cover-page p { margin: 6px 0; }
           .page-break { page-break-after: always; break-after: page; height: 1px; }
         </style>
       `;
-      container.innerHTML = `${pdfStyles}${wrappedHtml}`;
+      const pageParts = source.split('<div class="page-break"></div>');
+      const withBreaks = pageParts
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .join('<div class="page-break"></div>');
+      container.innerHTML = `${pdfStyles}<div class="pdf-doc">${withBreaks || source}</div>`;
       container.style.width = "210mm";
-      container.style.padding = "12mm";
+      container.style.padding = "0";
       container.style.boxSizing = "border-box";
       container.style.fontSize = "14px";
       container.style.lineHeight = "1.5";
       container.style.color = "#0f172a";
       container.style.background = "#ffffff";
-      container.className = "page-wrap";
+      container.className = "pdf-root";
       document.body.appendChild(container);
       await html2pdf()
         .set({
           filename,
-          margin: [8, 8, 8, 8],
-          pagebreak: { mode: ["css", "legacy"] },
+          margin: [6, 6, 6, 6],
+          pagebreak: { mode: ["css", "legacy", "avoid-all"] },
           image: { type: "jpeg", quality: 0.98 },
           html2canvas: {
             scale: 2,
             useCORS: true,
-            windowWidth: 1240,
-            windowHeight: 1754,
+            windowWidth: 1100,
+            windowHeight: 1550,
             backgroundColor: "#ffffff",
             letterRendering: true
           },
@@ -914,58 +910,55 @@ export default function BlueprintPage() {
                         <Input value={senderPhone} onChange={(e) => setSenderPhone(e.target.value)} placeholder="Phone (optional)" />
                       </div>
                       <div className="md:col-span-2">
-                        <div className="ea-label">Subject line options</div>
+                        <div className="ea-label">Subject line</div>
                         <select
-                          value={subjectLinesMode}
-                          onChange={(e) => {
-                            const next = e.target.value;
-                            setSubjectLinesMode(next);
-                            if (next === "recommended") {
-                              setSubjectLines(
-                                "A reliable, no‑drama way to keep standards consistent\nA simple proposal for dependable delivery\nA clear plan to improve consistency without extra oversight"
-                              );
-                            } else if (next === "blank") {
-                              setSubjectLines("");
-                            }
-                          }}
+                          value={subjectLineChoice}
+                          onChange={(e) => setSubjectLineChoice(e.target.value)}
                           className="ea-input"
                         >
-                          <option value="recommended">Use recommended set</option>
-                          <option value="blank">Write my own</option>
+                          <option value="A reliable, no-drama way to keep standards consistent">
+                            A reliable, no-drama way to keep standards consistent
+                          </option>
+                          <option value="A simple proposal for dependable delivery">
+                            A simple proposal for dependable delivery
+                          </option>
+                          <option value="Other">Other (type your own)</option>
                         </select>
-                        <textarea
-                          value={subjectLines}
-                          onChange={(e) => setSubjectLines(e.target.value)}
-                          className="mt-2 min-h-16 ea-input"
-                          placeholder="One subject line per line"
-                        />
+                        {subjectLineChoice === "Other" ? (
+                          <Input
+                            value={subjectLineCustom}
+                            onChange={(e) => setSubjectLineCustom(e.target.value)}
+                            placeholder="Type a custom subject line"
+                            className="mt-2"
+                          />
+                        ) : null}
                       </div>
                       <div className="md:col-span-2">
-                        <div className="ea-label">Follow‑up sequence</div>
+                        <div className="ea-label">Follow-up sequence</div>
                         <select
-                          value={followupMode}
-                          onChange={(e) => {
-                            const next = e.target.value;
-                            setFollowupMode(next);
-                            if (next === "recommended") {
-                              setFollowupSequence(
-                                "Touch one: quick reminder and recap of the main benefit, inviting a short call\nTouch two: share a practical example of how the process reduces risk and saves time\nTouch three: final check‑in offering to hold a slot and answer questions"
-                              );
-                            } else if (next === "blank") {
-                              setFollowupSequence("");
-                            }
-                          }}
+                          value={followupChoice}
+                          onChange={(e) => setFollowupChoice(e.target.value)}
                           className="ea-input"
                         >
-                          <option value="recommended">Use recommended set</option>
-                          <option value="blank">Write my own</option>
+                          <option value="Touch one: quick reminder and recap of the main benefit, inviting a short call">
+                            Touch one: quick reminder and recap of the main benefit, inviting a short call
+                          </option>
+                          <option value="Touch two: share a practical example of how the process reduces risk and saves time">
+                            Touch two: share a practical example of how the process reduces risk and saves time
+                          </option>
+                          <option value="Touch three: final check-in offering to hold a slot and answer questions">
+                            Touch three: final check-in offering to hold a slot and answer questions
+                          </option>
+                          <option value="Other">Other (type your own)</option>
                         </select>
-                        <textarea
-                          value={followupSequence}
-                          onChange={(e) => setFollowupSequence(e.target.value)}
-                          className="mt-2 min-h-16 ea-input"
-                          placeholder="One touch per line"
-                        />
+                        {followupChoice === "Other" ? (
+                          <Input
+                            value={followupCustom}
+                            onChange={(e) => setFollowupCustom(e.target.value)}
+                            placeholder="Type a custom follow-up line"
+                            className="mt-2"
+                          />
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
@@ -1025,3 +1018,10 @@ export default function BlueprintPage() {
     </div>
   );
 }
+
+
+
+
+
+
+

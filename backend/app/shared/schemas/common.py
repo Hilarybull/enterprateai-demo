@@ -24,7 +24,11 @@ class PyObjectId(ObjectId):
 
 
 class MongoModel(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        populate_by_name=True,
+        json_encoders={ObjectId: str},
+    )
 
 
 class WorkspaceDocument(MongoModel):
@@ -34,4 +38,3 @@ class WorkspaceDocument(MongoModel):
     data: dict
     created_at: datetime
     updated_at: datetime
-

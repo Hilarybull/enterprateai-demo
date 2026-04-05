@@ -11,6 +11,7 @@ from app.modules.business_registration.router import router as registration_rout
 from app.modules.idea_validation.router import router as validation_router
 from app.modules.scenario_intelligence.router import router as scenario_intelligence_router
 from app.modules.simulation.router import router as simulation_router
+from app.modules.upgrade.router import router as upgrade_router
 from app.shared.auth.router import router as auth_router
 from app.shared.utils.logging import configure_logging
 from app.shared.utils.middleware import request_logging_middleware
@@ -76,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(blueprint_router)
     app.include_router(simulation_router)
     app.include_router(scenario_intelligence_router)
+    app.include_router(upgrade_router)
 
     @app.get("/health")
     async def health() -> dict:

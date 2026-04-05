@@ -327,5 +327,9 @@ def build_client_proposal_prompt(inputs: dict) -> str:
 
 def build_sales_letter_prompt(inputs: dict) -> str:
     formatted = format_inputs_for_prompt(inputs)
-    return SALES_LETTER_PROMPT.format(company_name=inputs.get("company_name", "the company"), formatted_inputs=formatted)
+    return SALES_LETTER_PROMPT.format(
+        company_name=inputs.get("company_name", "the company"),
+        client_name=inputs.get("client_name", "the client"),
+        formatted_inputs=formatted,
+    )
 

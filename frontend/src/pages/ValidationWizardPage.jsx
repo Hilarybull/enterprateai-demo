@@ -116,12 +116,18 @@ export default function ValidationWizardPage() {
     const team = Math.max(1, parseIntSafe(form?.capacity?.team_size, 1));
     const capacityPerPerson = parseNumber(form?.capacity?.capacity_units_per_person_per_month, 0);
     if (!target || !team) return null;
-    if (!capacityPerPerson) return null;
-    const requiredTeam = Math.max(1, Math.ceil(target / capacityPerPerson));
+    const standardCapacityPerPerson = capacityPerPerson || recommendedCapacityPerPerson || 0;
+    if (!standardCapacityPerPerson) return null;
+    const requiredTeam = Math.max(1, Math.ceil(target / standardCapacityPerPerson));
     if (requiredTeam > team) return "Hire more staff.";
     if (requiredTeam < team) return "Overstaffed / Increase Targets.";
     return "Team size matches the target at this capacity.";
-  }, [form?.capacity?.capacity_units_per_person_per_month, form?.capacity?.team_size, form?.demand?.expected_units_per_month]);
+  }, [
+    form?.capacity?.capacity_units_per_person_per_month,
+    form?.capacity?.team_size,
+    form?.demand?.expected_units_per_month,
+    recommendedCapacityPerPerson
+  ]);
 
   useEffect(() => {
     const target = parseNumber(form?.demand?.expected_units_per_month, 0);

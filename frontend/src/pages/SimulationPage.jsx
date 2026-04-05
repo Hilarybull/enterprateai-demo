@@ -21,6 +21,7 @@ const FieldLabel = ({ children, info }) => (
 );
 
 export default function SimulationPage() {
+  const simulationEnabled = false;
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
@@ -37,8 +38,23 @@ export default function SimulationPage() {
 
   const [catalogueData, setCatalogueData] = useState({ products: [], customers: [], vendors: [] });
   const [financialsData, setFinancialsData] = useState({ invoices: [], expenses: [], contracts: [] });
+  const [upgradeNotice, setUpgradeNotice] = useState(null);
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
 
   const acceptedIdeaValidation = decisionStatus === "accepted" ? ideaValidation : null;
+
+  async function handleUpgradeClick() {
+    setUpgradeLoading(true);
+    setUpgradeNotice(null);
+    try {
+      await apiRequest("/upgrade/click", "POST", { feature: "simulation", source: "simulation_page" });
+      setUpgradeNotice("Upgrade request sent. We will reach out shortly.");
+    } catch {
+      setUpgradeNotice("Unable to send upgrade request. Please try again.");
+    } finally {
+      setUpgradeLoading(false);
+    }
+  }
 
   const stateSnapshot = useMemo(() => {
     const metrics = isRegistered ? validation?.metrics || {} : {};
@@ -500,6 +516,35 @@ export default function SimulationPage() {
     setManualParams((prev) => ({ ...prev, client_loss_pct: largestClient.share }));
   }, [manualTemplate, largestClient?.share]);
 
+  if (!simulationEnabled) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Simulation"
+          subtitle="What-if scenarios"
+        />
+        <SectionCard title="Simulation">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6">
+            <div className="text-lg font-semibold text-slate-900">To use simulation, please upgrade.</div>
+            <div className="mt-2 text-sm text-slate-600">
+              Unlock scenario planning, forecasting, and sensitivity analysis.
+            </div>
+            <div className="mt-4 flex items-center gap-3">
+              <Button onClick={handleUpgradeClick} disabled={upgradeLoading}>
+                {upgradeLoading ? <Spinner size={16} /> : null}
+                {upgradeLoading ? "Sending..." : "Upgrade"}
+              </Button>
+            </div>
+            {upgradeNotice ? (
+              <div className="mt-3 text-sm text-slate-600">{upgradeNotice}</div>
+            ) : null}
+          </div>
+        </SectionCard>
+      </div>
+    );
+  }
+
+  // Simulation view temporarily disabled; keep code below for reactivation.
   return (
     <div>
       <PageHeader

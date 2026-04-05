@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from fastapi import HTTPException, status
 
 from app.modules.blueprint.repository import create_document
 from app.modules.blueprint.schemas import BlueprintGenerateRequest, BlueprintGenerateResponse
@@ -136,6 +137,56 @@ def _clean_document(doc: str) -> str:
         cleaned.append(p)
         last_norm = norm
     return "\n\n".join(cleaned)
+
+
+def _strip_business_plan_labels(doc: str) -> str:
+    """
+    Remove label-style prefixes that conflict with the business plan prompt
+    (e.g., "The Mission:", "The Hook:", "The Request:").
+    """
+    if not doc:
+        return doc
+    patterns = (
+        re.compile(r"^\s*The Mission:\s*", re.IGNORECASE),
+        re.compile(r"^\s*The Hook:\s*", re.IGNORECASE),
+        re.compile(r"^\s*The Request:\s*", re.IGNORECASE),
+    )
+    cleaned_lines: list[str] = []
+    for line in doc.splitlines():
+        updated = line
+        for pat in patterns:
+            updated = pat.sub("", updated)
+        cleaned_lines.append(updated)
+    return "\n".join(cleaned_lines).strip()
+
+
+def _strip_financial_snapshot_section(doc: str) -> str:
+    """
+    Remove any FINANCIAL SNAPSHOT section from a business plan
+    when snapshot is not explicitly requested.
+    """
+    if not doc:
+        return doc
+    lines = doc.splitlines()
+    out: list[str] = []
+    in_section = False
+    for line in lines:
+        if re.match(r"^\s*(##\s*)?FINANCIAL SNAPSHOT\b", line.strip(), re.IGNORECASE):
+            in_section = True
+            continue
+        if in_section:
+            if re.match(r"^\s*##\s+\S", line.strip()) or (
+                re.match(r"^[A-Z][A-Z\s\-&/]+$", line.strip())
+                and line.strip()
+                and not line.strip().upper().startswith("FINANCIAL SNAPSHOT")
+            ):
+                in_section = False
+                out.append(line)
+            else:
+                continue
+        else:
+            out.append(line)
+    return "\n".join(out).strip()
 
 
 def _strip_cover_section(doc: str) -> str:
@@ -503,8 +554,6 @@ async def _generate_section(
     try:
         res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt)
         text = res.text.strip()
-        if text:
-            text = strip_numbers(text)
         if not text:
             warnings.append(f"AI returned empty text for: {label}")
         return text, res.provider, res.model
@@ -598,7 +647,9 @@ def _extract_business_context_from_workspace(data: dict) -> dict[str, str]:
 
 def _render_validation_snapshot(*, currency: str, validation: dict | None) -> str:
     if not validation:
-        return "Not available yet. Add financial inputs in your workspace to generate this snapshot."
+        return (
+            "Not available yet. Add financial inputs in your workspace to generate this snapshot."
+        )
     metrics  = validation.get("metrics") if isinstance(validation.get("metrics"), dict) else {}
     revenue    = metrics.get("revenue_monthly", 0.0)
     costs      = metrics.get("costs_monthly", 0.0)
@@ -607,19 +658,17 @@ def _render_validation_snapshot(*, currency: str, validation: dict | None) -> st
     break_even = metrics.get("break_even_months")
     runway     = metrics.get("runway_months")
 
-    def row(label: str, value: str) -> str:
-        return f"{label:<28} {value}"
-
-    lines: list[str] = []
-    lines.append(row("Metric", "Value"))
-    lines.append("-" * 42)
-    lines.append(row("Monthly revenue", _fmt_money(float(revenue or 0.0), currency)))
-    lines.append(row("Monthly costs", _fmt_money(float(costs or 0.0), currency)))
-    lines.append(row("Monthly net", _fmt_money(float(net or 0.0), currency)))
-    lines.append(row("Contribution margin", _fmt_pct(float(margin or 0.0))))
-    lines.append(row("Break-even", _fmt_months(break_even)))
-    lines.append(row("Runway", _fmt_months(runway)))
-    return "\n".join(lines).strip()
+    rows = [
+        ("Monthly revenue", _fmt_money(float(revenue or 0.0), currency)),
+        ("Monthly costs", _fmt_money(float(costs or 0.0), currency)),
+        ("Monthly net", _fmt_money(float(net or 0.0), currency)),
+        ("Contribution margin", _fmt_pct(float(margin or 0.0))),
+        ("Break-even", _fmt_months(break_even)),
+        ("Runway", _fmt_months(runway)),
+    ]
+    table = ["| Metric | Value |", "| --- | --- |"]
+    table += [f"| {label} | {value} |" for label, value in rows]
+    return "\n".join(table).strip()
 
 
 def _render_cashflow_analysis_fields(*, company: str, currency: str, validation: dict | None, starting_cash: float) -> dict[str, str]:
@@ -782,6 +831,12 @@ async def generate_blueprint(
         llm = NoopLLMClient()
         warnings.append("Text enhancement is unavailable; returned template-only document.")
 
+    if isinstance(llm, NoopLLMClient) and payload.type in ("business_plan", "client_proposal", "sales_letter"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LLM provider not configured. Add CLAUDE_API_KEY (preferred) or another provider to generate this document.",
+        )
+
     company       = _safe_text(payload.company_name)
     tone          = _safe_text(payload.tone) or "professional"
     industry      = _safe_text(payload.industry)
@@ -861,7 +916,9 @@ async def generate_blueprint(
         doc_type: str,
         raw: dict,
         build_prompt_fn,
-        fallback_template: str,
+        fallback_template: str | None,
+        *,
+        allow_fallback: bool = True,
     ) -> tuple[str, str, str]:
         """
         1. Build a complete input dict (fill missing fields deterministically).
@@ -879,8 +936,12 @@ async def generate_blueprint(
 
         # Readable fallback — never return an empty skeleton
         if not doc:
+            if not allow_fallback or not fallback_template:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"LLM returned empty output for {doc_type}. Check provider credentials and try again.",
+                )
             warnings.append(f"Document generation returned empty for {doc_type} — using enriched fallback.")
-            # Use the document's template shape so the output still reads like a real deliverable.
             for key in set(_TEMPLATE_FIELD_RE.findall(fallback_template)):
                 if not str(enriched.get(key) or "").strip():
                     enriched[key] = _narrative_fallback(key)
@@ -1014,20 +1075,18 @@ async def generate_blueprint(
         }
 
         doc, provider, model = await _enrich_and_generate(
-            "Business Plan", raw_inputs, build_business_plan_prompt, BUSINESS_PLAN_TEMPLATE
+            "Business Plan", raw_inputs, build_business_plan_prompt, BUSINESS_PLAN_TEMPLATE, allow_fallback=False
         )
+        doc = _strip_business_plan_labels(doc)
+        doc = _strip_financial_snapshot_section(doc)
 
         if payload.include_validation_snapshot:
             snapshot = _render_validation_snapshot(currency=currency, validation=validation)
-            doc = f"{doc}\n\nFINANCIAL SNAPSHOT\n\n{snapshot}\n"
-
-        cover_lines = [
-            f"Company — {company}",
-            f"Industry — {industry}" if industry else "",
-            f"Target Market — {target}" if target else "",
-            "Prepared For — Internal business use",
-        ]
-        doc = _apply_cover_page(doc, title=f"Business Plan — {company}", lines=cover_lines)
+            doc = (
+                f"{doc}\n\n## Financial Snapshot\n"
+                f"{snapshot}\n\n"
+                "The figures above reflect the current baseline inputs and can be refined as assumptions are updated."
+            )
 
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
@@ -1140,19 +1199,16 @@ async def generate_blueprint(
         }
 
         doc, provider, model = await _enrich_and_generate(
-            "Client Proposal", raw_inputs, build_client_proposal_prompt, CLIENT_PROPOSAL_TEMPLATE
+            "Client Proposal", raw_inputs, build_client_proposal_prompt, CLIENT_PROPOSAL_TEMPLATE, allow_fallback=False
         )
         doc = _ensure_client_proposal_format(doc)
         if payload.include_validation_snapshot:
             snapshot = _render_validation_snapshot(currency=currency, validation=validation)
-            doc = f"{doc}\n\nFINANCIAL SNAPSHOT\n\n{snapshot}\n"
-        cover_lines = [
-            f"Proposal Title — {raw_inputs.get('proposal_title')}",
-            f"Client — {raw_inputs.get('client_name')}",
-            f"Prepared By — {company}",
-            f"Contact Details — {raw_inputs.get('contact_details')}",
-        ]
-        doc = _apply_cover_page(doc, title=f"Client Proposal — {company}", lines=cover_lines)
+            doc = (
+                f"{doc}\n\n## Financial Snapshot\n"
+                f"{snapshot}\n\n"
+                "The figures above reflect the current baseline inputs and can be refined as assumptions are updated."
+            )
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
         )
@@ -1230,7 +1286,7 @@ async def generate_blueprint(
         }
 
         doc, provider, model = await _enrich_and_generate(
-            "Sales Letter", raw_inputs, build_sales_letter_prompt, SALES_LETTER_TEMPLATE
+            "Sales Letter", raw_inputs, build_sales_letter_prompt, SALES_LETTER_TEMPLATE, allow_fallback=False
         )
         signature_lines = [
             _safe_text(getattr(payload, "sender_name", None)) or "Client Services Team",
