@@ -42,6 +42,8 @@ export default function RegistrationWizard() {
   const [altName1, setAltName1] = useState("");
   const [altName2, setAltName2] = useState("");
   const [nameCheck, setNameCheck] = useState(null);
+  const [altName1Check, setAltName1Check] = useState(null);
+  const [altName2Check, setAltName2Check] = useState(null);
   const [nameCheckLoading, setNameCheckLoading] = useState(false);
   const [nameCheckError, setNameCheckError] = useState(null);
 
@@ -60,6 +62,10 @@ export default function RegistrationWizard() {
   const [registrationNumber, setRegistrationNumber] = useState("");
   const [registrationDate, setRegistrationDate] = useState("");
   const [registrationNotes, setRegistrationNotes] = useState("");
+  const [registrationCheckName, setRegistrationCheckName] = useState("");
+  const [registrationCheckResult, setRegistrationCheckResult] = useState(null);
+  const [registrationCheckLoading, setRegistrationCheckLoading] = useState(false);
+  const [registrationCheckError, setRegistrationCheckError] = useState(null);
 
   const companiesHouseLink = "https://www.gov.uk/limited-company-formation/register-your-company";
   const modelArticlesLink = "https://www.gov.uk/government/publications/model-articles-for-private-companies-limited-by-shares";
@@ -120,6 +126,7 @@ export default function RegistrationWizard() {
         if (status.registration_number) setRegistrationNumber(status.registration_number);
         if (status.registration_date) setRegistrationDate(status.registration_date);
         if (status.notes) setRegistrationNotes(status.notes);
+        if (status.checked_company_name) setRegistrationCheckName(status.checked_company_name);
       } catch {
         // ignore
       }
@@ -161,7 +168,8 @@ export default function RegistrationWizard() {
               status: registrationStatus,
               registration_number: registrationNumber.trim(),
               registration_date: registrationDate,
-              notes: registrationNotes.trim()
+              notes: registrationNotes.trim(),
+              checked_company_name: registrationCheckName.trim()
             }
           }
         });
@@ -201,17 +209,67 @@ export default function RegistrationWizard() {
     return null;
   }, [entityTypes, selectedEntityKey]);
 
+  const canCheckNames = Boolean(companyName.trim() || altName1.trim() || altName2.trim());
+
   async function checkAvailability() {
     setNameCheckLoading(true);
     setNameCheckError(null);
     setNameCheck(null);
+    setAltName1Check(null);
+    setAltName2Check(null);
     try {
-      const res = await apiRequest(`/registration/uk/name/check?name=${encodeURIComponent(companyName)}`, "GET");
-      setNameCheck(res);
+      const checks = [];
+      if (companyName.trim()) {
+        checks.push(
+          apiRequest(`/registration/uk/name/check?name=${encodeURIComponent(companyName)}`, "GET").then((res) => ({
+            key: "primary",
+            res
+          }))
+        );
+      }
+      if (altName1.trim()) {
+        checks.push(
+          apiRequest(`/registration/uk/name/check?name=${encodeURIComponent(altName1)}`, "GET").then((res) => ({
+            key: "alt1",
+            res
+          }))
+        );
+      }
+      if (altName2.trim()) {
+        checks.push(
+          apiRequest(`/registration/uk/name/check?name=${encodeURIComponent(altName2)}`, "GET").then((res) => ({
+            key: "alt2",
+            res
+          }))
+        );
+      }
+      const results = await Promise.all(checks);
+      results.forEach((item) => {
+        if (item.key === "primary") setNameCheck(item.res);
+        if (item.key === "alt1") setAltName1Check(item.res);
+        if (item.key === "alt2") setAltName2Check(item.res);
+      });
     } catch (e) {
       setNameCheckError(e instanceof Error ? e.message : "Name check failed");
     } finally {
       setNameCheckLoading(false);
+    }
+  }
+
+  async function checkRegistrationStatusName() {
+    setRegistrationCheckLoading(true);
+    setRegistrationCheckError(null);
+    setRegistrationCheckResult(null);
+    try {
+      const res = await apiRequest(
+        `/registration/uk/name/check?name=${encodeURIComponent(registrationCheckName)}`,
+        "GET"
+      );
+      setRegistrationCheckResult(res);
+    } catch (e) {
+      setRegistrationCheckError(e instanceof Error ? e.message : "Registration check failed");
+    } finally {
+      setRegistrationCheckLoading(false);
     }
   }
 
@@ -284,7 +342,10 @@ export default function RegistrationWizard() {
 
   const disableNext =
     (step.key === "activity" && sicSelected.length !== 4) ||
-    (step.key === "documents" && (!ackNotAgent || !ackSelfRegister));
+    (step.key === "documents" && (!ackNotAgent || !ackSelfRegister)) ||
+    (step.key === "status" &&
+      registrationStatus === "registered" &&
+      !(registrationCheckResult?.exact_matches?.length > 0));
 
   return (
     <div className="space-y-4">
@@ -362,6 +423,9 @@ export default function RegistrationWizard() {
               altName2={altName2}
               setAltName2={setAltName2}
               nameCheck={nameCheck}
+              altName1Check={altName1Check}
+              altName2Check={altName2Check}
+              canCheckNames={canCheckNames}
               loading={nameCheckLoading}
               error={nameCheckError}
               onCheck={checkAvailability}
@@ -409,6 +473,12 @@ export default function RegistrationWizard() {
               setRegistrationDate={setRegistrationDate}
               notes={registrationNotes}
               setNotes={setRegistrationNotes}
+              checkName={registrationCheckName}
+              setCheckName={setRegistrationCheckName}
+              checkResult={registrationCheckResult}
+              checkLoading={registrationCheckLoading}
+              checkError={registrationCheckError}
+              onCheck={checkRegistrationStatusName}
             />
           ) : (
             <SummaryStep summary={summary} companiesHouseLink={companiesHouseLink} />
@@ -431,6 +501,11 @@ export default function RegistrationWizard() {
             ) : null}
             {disableNext && step.key === "documents" ? (
               <div className="mt-2 text-xs font-semibold text-slate-500">Please acknowledge the requirements to continue.</div>
+            ) : null}
+            {disableNext && step.key === "status" && registrationStatus === "registered" ? (
+              <div className="mt-2 text-xs font-semibold text-slate-500">
+                Check the company name against Companies House before marking as registered.
+              </div>
             ) : null}
           </div>
         </div>

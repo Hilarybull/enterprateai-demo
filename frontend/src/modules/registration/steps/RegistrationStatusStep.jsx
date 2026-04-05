@@ -9,13 +9,45 @@ export default function RegistrationStatusStep({
   registrationDate,
   setRegistrationDate,
   notes,
-  setNotes
+  setNotes,
+  checkName,
+  setCheckName,
+  checkResult,
+  checkLoading,
+  checkError,
+  onCheck
 }) {
+  const isVerified = checkResult?.exact_matches?.length > 0;
   return (
     <SectionCard
       title="Registration status"
       subtitle="Let us know when your business is officially registered so we can use real records in your workspace."
     >
+      <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Check Companies House</div>
+        <div className="mt-2 grid gap-3 md:grid-cols-[1fr_auto]">
+          <Input
+            placeholder="Enter company name to verify"
+            value={checkName}
+            onChange={(e) => setCheckName(e.target.value)}
+          />
+          <button
+            type="button"
+            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+            disabled={checkLoading || !checkName.trim()}
+            onClick={onCheck}
+          >
+            {checkLoading ? "Checking..." : "Check registration"}
+          </button>
+        </div>
+        {checkError ? <div className="mt-2 text-xs font-semibold text-rose-600">{checkError}</div> : null}
+        {checkResult ? (
+          <div className="mt-2 text-xs font-semibold text-slate-600">
+            {isVerified ? "Company found in Companies House records." : "No exact match found yet."}
+          </div>
+        ) : null}
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</div>

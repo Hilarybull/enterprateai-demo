@@ -14,6 +14,9 @@ export default function CompanyNameStep({
   altName2,
   setAltName2,
   nameCheck,
+  altName1Check,
+  altName2Check,
+  canCheckNames,
   loading,
   error,
   onCheck
@@ -29,9 +32,9 @@ export default function CompanyNameStep({
           <div className="ea-label">Preferred Company Name *</div>
           <Input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="e.g., Sparkle Cleaning" />
           <div className="mt-3 flex items-center gap-2">
-            <Button variant="secondary" disabled={loading || !companyName.trim()} onClick={onCheck}>
+            <Button variant="secondary" disabled={loading || !canCheckNames} onClick={onCheck}>
               {loading ? <Spinner size={16} /> : null}
-              Check availability
+              Check all names
             </Button>
             {nameCheck ? (
               <span
@@ -60,8 +63,32 @@ export default function CompanyNameStep({
         <div>
           <div className="ea-label">Alternative Names (optional)</div>
           <div className="grid grid-cols-1 gap-3">
-            <Input value={altName1} onChange={(e) => setAltName1(e.target.value)} placeholder="Alternative name 1" />
-            <Input value={altName2} onChange={(e) => setAltName2(e.target.value)} placeholder="Alternative name 2" />
+            <div className="space-y-2">
+              <Input value={altName1} onChange={(e) => setAltName1(e.target.value)} placeholder="Alternative name 1" />
+              {altName1Check ? (
+                <span
+                  className={classNames(
+                    "inline-flex w-fit rounded-full px-3 py-1 text-xs font-semibold ring-1",
+                    altName1Check.available ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-rose-50 text-rose-700 ring-rose-200"
+                  )}
+                >
+                  {altName1Check.available ? "Available" : "Not available"}
+                </span>
+              ) : null}
+            </div>
+            <div className="space-y-2">
+              <Input value={altName2} onChange={(e) => setAltName2(e.target.value)} placeholder="Alternative name 2" />
+              {altName2Check ? (
+                <span
+                  className={classNames(
+                    "inline-flex w-fit rounded-full px-3 py-1 text-xs font-semibold ring-1",
+                    altName2Check.available ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-rose-50 text-rose-700 ring-rose-200"
+                  )}
+                >
+                  {altName2Check.available ? "Available" : "Not available"}
+                </span>
+              ) : null}
+            </div>
           </div>
           <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
             <div className="font-semibold text-slate-900">Naming rules</div>
@@ -77,4 +104,3 @@ export default function CompanyNameStep({
     </SectionCard>
   );
 }
-

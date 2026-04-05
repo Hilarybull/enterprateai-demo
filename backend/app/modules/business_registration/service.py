@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import re
+from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, List
@@ -254,15 +255,48 @@ async def uk_check_company_name(*, name: str, settings: Settings) -> UkNameCheck
         if isinstance(t, str) and t.strip():
             titles.append(t.strip())
 
+    suffixes = {
+        "limited",
+        "ltd",
+        "llp",
+        "plc",
+        "cic",
+        "company",
+        "co",
+        "the",
+        "and",
+    }
+
     def norm(s: str) -> str:
         s2 = re.sub(r"\s+", " ", s.strip().lower())
         return re.sub(r"[^a-z0-9 ]+", "", s2)
 
+    def tokens(s: str) -> list[str]:
+        raw = [t for t in norm(s).split(" ") if t]
+        return [t for t in raw if t not in suffixes]
+
+    def compact(s: str) -> str:
+        return "".join(tokens(s))
+
+    def similarity(a: str, b: str) -> float:
+        ta = set(tokens(a))
+        tb = set(tokens(b))
+        if not ta or not tb:
+            return 0.0
+        jaccard = len(ta & tb) / len(ta | tb)
+        seq = SequenceMatcher(None, compact(a), compact(b)).ratio()
+        return max(jaccard, seq)
+
     qn = norm(q)
     exact = [t for t in titles if norm(t) == qn]
-    similar = [t for t in titles if t not in exact]
-    # Be conservative: if Companies House returns any matching records, treat as not available.
-    available = len(titles) == 0
+    similar = []
+    for t in titles:
+        if t in exact:
+            continue
+        if similarity(q, t) >= 0.78:
+            similar.append(t)
+    # Treat as unavailable only when exact match exists or strong similarity exists.
+    available = len(exact) == 0 and len(similar) == 0
     return UkNameCheckResponse(name=q, available=available, exact_matches=exact, similar=similar[:8])
 
 
