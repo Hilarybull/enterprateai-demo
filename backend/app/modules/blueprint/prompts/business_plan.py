@@ -14,8 +14,7 @@ STRICT REQUIREMENTS:
 - Do NOT repeat the same idea across sections. Each section must add new, distinct value.
 - Minimum one full paragraph per sub section. Bullet points may supplement but never replace prose.
 - If a field is blank or insufficient, infer from industry context and write it as natural, confident narrative.
-- Do NOT use unnecessary hyphens in the generated document. Write compound words and phrases as
-  separate words unless the hyphen is grammatically required (e.g. well established, up to date).
+- Do NOT use unnecessary hyphens in the generated document. Write compound words and phrases as separate words unless the hyphen is grammatically required (e.g. well established, up to date).
 
 STYLE:
 - Formal, professional British English throughout.
