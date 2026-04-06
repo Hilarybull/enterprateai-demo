@@ -5,7 +5,6 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from app.shared.schemas.common import MongoModel, PyObjectId
 
 
 BlueprintType = Literal[
@@ -70,8 +69,8 @@ class BlueprintGenerateResponse(BaseModel):
     document_id: Optional[str] = None
 
 
-class BlueprintDocument(MongoModel):
-    id: PyObjectId = Field(alias="_id")
+class BlueprintDocument(BaseModel):
+    id: str
     user_id: str
     type: BlueprintType
     title: str

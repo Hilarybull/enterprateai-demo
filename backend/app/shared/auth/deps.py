@@ -3,13 +3,11 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from fastapi import Depends, HTTPException, Request, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
-
-from app.core.database import get_db
+from app.core.supabase import sb_select
 from app.shared.auth.security import decode_token
 
 
-async def get_current_user(request: Request, db: AsyncIOMotorDatabase = Depends(get_db)) -> Dict[str, Any]:
+async def get_current_user(request: Request) -> Dict[str, Any]:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
@@ -21,8 +19,7 @@ async def get_current_user(request: Request, db: AsyncIOMotorDatabase = Depends(
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
-    user = await db["users"].find_one({"_id": user_id})
+    user = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    return {"id": user["_id"], "email": user["email"]}
-
+    return {"id": user["id"], "email": user["email"]}

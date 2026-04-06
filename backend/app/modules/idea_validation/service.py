@@ -3,10 +3,9 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict
+from uuid import uuid4
 
-from bson import ObjectId
 from fastapi import HTTPException, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import get_settings
 from app.modules.idea_validation.calculations import CapacityInputs as CapacityCalcInputs
@@ -14,10 +13,10 @@ from app.modules.idea_validation.calculations import FinancialInputs, evaluate_v
 from app.modules.idea_validation.market_fit_service import build_fallback_market_fit, get_market_fit
 from app.modules.idea_validation.schemas import FinancialInputsPayload, IdeaValidationPayload
 from app.shared.schemas.common import WorkspaceDocument
+from app.core.supabase import sb_insert, sb_select, sb_update
 
 
 async def create_workspace(
-    db: AsyncIOMotorDatabase,
     *,
     user_id: str,
     name: str,
@@ -25,33 +24,61 @@ async def create_workspace(
 ) -> str:
     now = datetime.now(timezone.utc)
     data = _augment_workspace_patch(data or {})
-    existing = await db["workspaces"].find_one({"user_id": user_id})
+    existing = await sb_select(
+        "workspaces",
+        filters=[("user_id", "eq", user_id)],
+        order="updated_at",
+        desc=True,
+        limit=1,
+        single=True,
+    )
     if existing:
         merged = dict(existing.get("data") or {})
         for k, v in (data or {}).items():
             merged[k] = v
-        update = {"data": merged, "updated_at": now}
+        update = {"data": merged, "updated_at": now.isoformat()}
         if name and name.strip():
             update["name"] = name.strip()
-        await db["workspaces"].update_one({"_id": existing["_id"]}, {"$set": update})
-        return str(existing["_id"])
+        await sb_update(
+            "workspaces",
+            filters=[("id", "eq", existing["id"]), ("user_id", "eq", user_id)],
+            payload=update,
+        )
+        return str(existing["id"])
 
-    doc = {"user_id": user_id, "name": name, "data": data, "created_at": now, "updated_at": now}
-    res = await db["workspaces"].insert_one(doc)
-    return str(res.inserted_id)
+    workspace_id = str(uuid4())
+    doc = {
+        "id": workspace_id,
+        "user_id": user_id,
+        "name": name,
+        "data": data,
+        "created_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+    }
+    await sb_insert("workspaces", doc)
+    return workspace_id
 
 
-async def get_user_workspace(db: AsyncIOMotorDatabase, *, user_id: str) -> WorkspaceDocument | None:
-    doc = await db["workspaces"].find_one({"user_id": user_id}, sort=[("updated_at", -1)])
+async def get_user_workspace(*, user_id: str) -> WorkspaceDocument | None:
+    doc = await sb_select(
+        "workspaces",
+        filters=[("user_id", "eq", user_id)],
+        order="updated_at",
+        desc=True,
+        limit=1,
+        single=True,
+    )
     if not doc:
         return None
     return WorkspaceDocument(**doc)
 
 
-async def get_workspace(db: AsyncIOMotorDatabase, *, user_id: str, workspace_id: str) -> WorkspaceDocument:
-    if not ObjectId.is_valid(workspace_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid workspace id")
-    doc = await db["workspaces"].find_one({"_id": ObjectId(workspace_id), "user_id": user_id})
+async def get_workspace(*, user_id: str, workspace_id: str) -> WorkspaceDocument:
+    doc = await sb_select(
+        "workspaces",
+        filters=[("id", "eq", workspace_id), ("user_id", "eq", user_id)],
+        single=True,
+    )
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     return WorkspaceDocument(**doc)
@@ -118,7 +145,6 @@ async def _safe_market_fit(params: dict[str, Any], *, timeout_sec: float = 1.5) 
 
 
 async def evaluate(
-    db: AsyncIOMotorDatabase,
     *,
     user_id: str,
     workspace_id: str | None,
@@ -147,7 +173,7 @@ async def evaluate(
         return evaluate_viability_v3(_inputs_from_payload(inputs))
 
     if workspace_id:
-        ws = await get_workspace(db, user_id=user_id, workspace_id=workspace_id)
+        ws = await get_workspace(user_id=user_id, workspace_id=workspace_id)
 
         ws_iv = ws.data.get("idea_validation")
         if isinstance(ws_iv, dict):
@@ -156,12 +182,11 @@ async def evaluate(
             except Exception:
                 # Auto-clear invalid idea_validation and continue with assumptions/inputs if available.
                 await update_workspace(
-                    db,
                     user_id=user_id,
                     workspace_id=str(ws.id),
                     data_patch={"idea_validation": None},
                 )
-                ws = await get_workspace(db, user_id=user_id, workspace_id=str(ws.id))
+                ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
                 ws_iv = None
             else:
                 fin, payment_terms_days, sales_cycle_days, cap = _inputs_from_idea_validation(iv_payload)
@@ -221,14 +246,13 @@ async def market_fit(
 
 
 async def update_workspace(
-    db: AsyncIOMotorDatabase,
     *,
     user_id: str,
     workspace_id: str,
     data_patch: Dict[str, Any],
     name: str | None = None,
 ) -> WorkspaceDocument:
-    ws = await get_workspace(db, user_id=user_id, workspace_id=workspace_id)
+    ws = await get_workspace(user_id=user_id, workspace_id=workspace_id)
     now = datetime.now(timezone.utc)
 
     merged = dict(ws.data or {})
@@ -237,29 +261,28 @@ async def update_workspace(
     for k, v in (data_patch or {}).items():
         merged[k] = v
 
-    update = {"data": merged, "updated_at": now}
+    update = {"data": merged, "updated_at": now.isoformat()}
     if name and str(name).strip():
         update["name"] = str(name).strip()
 
-    await db["workspaces"].update_one(
-        {"_id": ws.id, "user_id": user_id},
-        {"$set": update},
+    await sb_update(
+        "workspaces",
+        filters=[("id", "eq", ws.id), ("user_id", "eq", user_id)],
+        payload=update,
     )
-    return await get_workspace(db, user_id=user_id, workspace_id=workspace_id)
+    return await get_workspace(user_id=user_id, workspace_id=workspace_id)
 
 
 async def upsert_user_workspace(
-    db: AsyncIOMotorDatabase,
     *,
     user_id: str,
     data_patch: Dict[str, Any],
     name: str | None = None,
 ) -> WorkspaceDocument:
     data_patch = _augment_workspace_patch(data_patch or {})
-    existing = await get_user_workspace(db, user_id=user_id)
+    existing = await get_user_workspace(user_id=user_id)
     if existing:
         return await update_workspace(
-            db,
             user_id=user_id,
             workspace_id=str(existing.id),
             data_patch=data_patch,
@@ -267,8 +290,8 @@ async def upsert_user_workspace(
         )
 
     default_name = str(name).strip() if name and str(name).strip() else "My workspace"
-    workspace_id = await create_workspace(db, user_id=user_id, name=default_name, data=data_patch or {})
-    return await get_workspace(db, user_id=user_id, workspace_id=workspace_id)
+    workspace_id = await create_workspace(user_id=user_id, name=default_name, data=data_patch or {})
+    return await get_workspace(user_id=user_id, workspace_id=workspace_id)
 
 
 def _augment_workspace_patch(data_patch: Dict[str, Any], *, existing: Dict[str, Any] | None = None) -> Dict[str, Any]:

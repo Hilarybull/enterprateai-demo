@@ -49,8 +49,12 @@ class OpenAIResponsesClient(LLMClient):
         }
 
         async with httpx.AsyncClient(timeout=25) as client:
-            resp = await client.post("https://api.openai.com/v1/responses", json=payload, headers=headers)
-            resp.raise_for_status()
+            try:
+                resp = await client.post("https://api.openai.com/v1/responses", json=payload, headers=headers)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                body = e.response.text if e.response is not None else ""
+                raise RuntimeError(f"OpenAI API error {e.response.status_code if e.response else 'unknown'}: {body}") from e
             data = resp.json()
 
         text = ""
@@ -107,8 +111,12 @@ class AnthropicMessagesClient(LLMClient):
         }
 
         async with httpx.AsyncClient(timeout=25) as client:
-            resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
-            resp.raise_for_status()
+            try:
+                resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                body = e.response.text if e.response is not None else ""
+                raise RuntimeError(f"Anthropic API error {e.response.status_code if e.response else 'unknown'}: {body}") from e
             data = resp.json()
 
         text = ""
@@ -148,8 +156,12 @@ class GeminiGenerateClient(LLMClient):
         }
 
         async with httpx.AsyncClient(timeout=25) as client:
-            resp = await client.post(url, params={"key": self._settings.gemini_api_key}, json=payload)
-            resp.raise_for_status()
+            try:
+                resp = await client.post(url, params={"key": self._settings.gemini_api_key}, json=payload)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                body = e.response.text if e.response is not None else ""
+                raise RuntimeError(f"Gemini API error {e.response.status_code if e.response else 'unknown'}: {body}") from e
             data = resp.json()
 
         text = ""

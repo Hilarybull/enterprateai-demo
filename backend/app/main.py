@@ -5,7 +5,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from app.core.config import get_settings
-from app.core.database import close_mongo_connection, connect_to_mongo
 from app.modules.blueprint.router import router as blueprint_router
 from app.modules.business_registration.router import router as registration_router
 from app.modules.idea_validation.router import router as validation_router
@@ -15,7 +14,6 @@ from app.modules.upgrade.router import router as upgrade_router
 from app.shared.auth.router import router as auth_router
 from app.shared.utils.logging import configure_logging
 from app.shared.utils.middleware import request_logging_middleware
-from app.shared.utils.redact import redact_uri
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +23,10 @@ def create_app() -> FastAPI:
     configure_logging(settings.environment)
     if settings.environment == "development":
         logger.info(
-            "Config loaded env=%s mongo_uri=%s mongo_db=%s cors_origins=%s",
+            "Config loaded env=%s cors_origins=%s supabase_enabled=%s",
             settings.environment,
-            redact_uri(settings.mongo_uri),
-            settings.mongo_db,
             settings.cors_origins,
+            bool(settings.supabase_url and settings.supabase_service_role_key),
         )
         logger.info(
             "LLM providers configured claude=%s gemini=%s openai=%s",
@@ -62,14 +59,6 @@ def create_app() -> FastAPI:
 
     if settings.environment == "development":
         app.middleware("http")(request_logging_middleware)
-
-    @app.on_event("startup")
-    async def _startup() -> None:
-        await connect_to_mongo()
-
-    @app.on_event("shutdown")
-    async def _shutdown() -> None:
-        await close_mongo_connection()
 
     app.include_router(auth_router)
     app.include_router(validation_router)

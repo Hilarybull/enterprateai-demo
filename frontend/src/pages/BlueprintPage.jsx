@@ -81,7 +81,7 @@ export default function BlueprintPage() {
   const [senderWebsite, setSenderWebsite] = useState("");
   const [subjectLineChoice, setSubjectLineChoice] = useState("A reliable, no-drama way to keep standards consistent");
   const [subjectLineCustom, setSubjectLineCustom] = useState("");
-  const [followupChoice, setFollowupChoice] = useState("Touch one: quick reminder and recap of the main benefit, inviting a short call");
+  const [followupChoice, setFollowupChoice] = useState("Quick reminder and recap of the main benefit, inviting a short call");
   const [followupCustom, setFollowupCustom] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
@@ -701,6 +701,12 @@ export default function BlueprintPage() {
               </div>
             </div>
 
+            {error ? (
+              <div className="mx-5 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {error}
+              </div>
+            ) : null}
+
             <div className="flex h-[calc(90vh-64px)] min-h-0 overflow-hidden">
               {showInputs ? (
                 <div className="w-full shrink-0 overflow-auto border-b border-slate-200 bg-white p-5 lg:w-[420px] lg:border-b-0 lg:border-r">
@@ -940,14 +946,14 @@ export default function BlueprintPage() {
                           onChange={(e) => setFollowupChoice(e.target.value)}
                           className="ea-input"
                         >
-                          <option value="Touch one: quick reminder and recap of the main benefit, inviting a short call">
-                            Touch one: quick reminder and recap of the main benefit, inviting a short call
+                          <option value="Quick reminder and recap of the main benefit, inviting a short call">
+                            Quick reminder and recap of the main benefit, inviting a short call
                           </option>
-                          <option value="Touch two: share a practical example of how the process reduces risk and saves time">
-                            Touch two: share a practical example of how the process reduces risk and saves time
+                          <option value="Share a practical example of how the process reduces risk and saves time">
+                            Share a practical example of how the process reduces risk and saves time
                           </option>
-                          <option value="Touch three: final check-in offering to hold a slot and answer questions">
-                            Touch three: final check-in offering to hold a slot and answer questions
+                          <option value="Final check-in offering to hold a slot and answer questions">
+                            Final check-in offering to hold a slot and answer questions
                           </option>
                           <option value="Other">Other (type your own)</option>
                         </select>
@@ -968,11 +974,6 @@ export default function BlueprintPage() {
                     <textarea value={extraNotes} onChange={(e) => setExtraNotes(e.target.value)} className="min-h-16 ea-input" placeholder="Extra context, audience, constraints, etc." />
                   </div>
 
-                  {error ? (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                      {error}
-                    </div>
-                  ) : null}
                 </div>
                 </div>
               ) : null}

@@ -43,6 +43,7 @@ export default function ResultsPage() {
   const [sideTab, setSideTab] = useState("breakdown"); // breakdown | reasons | recommendations
   const [viewMode, setViewMode] = useState("simple"); // simple | detailed
   const [signalsTab, setSignalsTab] = useState("trend"); // trend | community
+  const [marketFitTab, setMarketFitTab] = useState("score"); // score | demand | survival | competition
   const [marketFit, setMarketFit] = useState(null);
   const [mfLoading, setMfLoading] = useState(false);
   const [mfError, setMfError] = useState(null);
@@ -359,12 +360,13 @@ export default function ResultsPage() {
           {viewMode === "detailed" ? (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <SectionCard
-                title="Market fit"
+                title="Trend score"
                 subtitle="Keyword trend and community signals."
+                className="flex h-[360px] flex-col"
                 headerRight={
                   <div className="w-full max-w-[260px]">
                     <SegmentedTabs
-                      ariaLabel="Market fit tabs"
+                      ariaLabel="Trend score tabs"
                       value={signalsTab}
                       onChange={setSignalsTab}
                       size="sm"
@@ -376,6 +378,7 @@ export default function ResultsPage() {
                   </div>
                 }
               >
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1">
                 {signalsTab === "trend" ? (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2">
@@ -437,9 +440,10 @@ export default function ResultsPage() {
                     </div>
                   </div>
                 )}
+                </div>
               </SectionCard>
 
-              <SectionCard title="Insights" subtitle="Breakdown, reasons, and recommendations.">
+              <SectionCard title="Insights" subtitle="Breakdown, reasons, and recommendations." className="flex h-[360px] flex-col overflow-hidden">
                 <SegmentedTabs
                   ariaLabel="Insights tabs"
                   value={sideTab}
@@ -451,7 +455,7 @@ export default function ResultsPage() {
                   ]}
                 />
 
-                <div className="mt-4 max-h-[45vh] overflow-auto pr-1">
+                <div className="mt-4 flex-1 min-h-0 overflow-auto pr-1">
                   {sideTab === "breakdown" ? (
                     <div className="space-y-2 text-sm text-slate-700">
                       <div className="flex items-center justify-between">
@@ -534,11 +538,13 @@ export default function ResultsPage() {
             )}
           </SectionCard>
 
-          <SectionCard
-            title="Market fit"
-            subtitle="Demand trend, sector survival, and local competition."
-            headerRight={mfKeyword ? <InfoTip text={`Signals for: ${mfKeyword}`} /> : null}
-          >
+          {viewMode === "detailed" ? (
+            <SectionCard
+              title="Market fit"
+              subtitle="Demand trend, sector survival, and local competition."
+              className="flex h-[360px] flex-col overflow-hidden"
+              headerRight={mfKeyword ? <InfoTip text={`Signals for: ${mfKeyword}`} /> : null}
+            >
             {!mfKeyword ? (
               <div className="text-sm text-slate-600">Add a business name and industry to load market fit.</div>
             ) : mfLoading ? (
@@ -556,44 +562,57 @@ export default function ResultsPage() {
             ) : marketFit?.market_fit_score == null ? (
               <div className="text-sm text-slate-600">No market fit data yet.</div>
             ) : (
-              <div className="space-y-3">
-                <div className="flex items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4">
-                  <div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <div className="mb-3">
+                  <SegmentedTabs
+                    ariaLabel="Market fit tabs"
+                    value={marketFitTab}
+                    onChange={setMarketFitTab}
+                    size="sm"
+                    options={[
+                      { value: "score", label: "Market fit score" },
+                      { value: "demand", label: "Demand trend" },
+                      { value: "survival", label: "Sector survival" },
+                      { value: "competition", label: "Local competition" }
+                    ]}
+                  />
+                </div>
+
+                {marketFitTab === "score" ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Market fit score</div>
                     <div className="mt-1 text-2xl font-semibold text-slate-900">{formatNumber(marketFit.market_fit_score)}/100</div>
                     <div className="mt-1 text-sm font-semibold text-slate-700">{String(marketFit.market_fit_classification || "—")}</div>
+                    <div className="mt-3 text-xs text-slate-600">
+                      {shortExplanation(String(marketFit.market_fit_explanation || ""), 180)}
+                    </div>
                   </div>
-                  <div className="max-w-[55%] text-right text-xs text-slate-600">
-                    {shortExplanation(String(marketFit.market_fit_explanation || ""), 160)}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3">
-                  {[
-                    ["market_demand", "Demand trend"],
-                    ["sector_survival", "Sector survival"],
-                    ["local_competition", "Local competition"]
-                  ].map(([key, label]) => {
+                ) : (
+                  (() => {
+                    const map = {
+                      demand: ["market_demand", "Demand trend"],
+                      survival: ["sector_survival", "Sector survival"],
+                      competition: ["local_competition", "Local competition"]
+                    };
+                    const [key, label] = map[marketFitTab] || map.demand;
                     const v = typeof marketFit?.dimension_scores?.[key] === "number" ? marketFit.dimension_scores[key] : 0;
                     const help = String(marketFit?.dimension_explanations?.[key] || "");
                     return (
-                      <div key={key} className="rounded-2xl border border-slate-200 bg-white p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs font-semibold text-slate-500">{label}</div>
-                          <InfoTip text={help || "—"} />
-                        </div>
-                        <div className="mt-1 text-lg font-semibold text-slate-900">{formatNumber(v)}/100</div>
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{formatNumber(v)}/100</div>
                         <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
                           <div className="h-full bg-indigo-500" style={{ width: pctWidth(v) }} />
                         </div>
-                        {help ? <div className="mt-2 text-xs text-slate-600">{shortExplanation(help, 120)}</div> : null}
+                        <div className="mt-3 text-xs text-slate-600">{help || "—"}</div>
                       </div>
                     );
-                  })}
-                </div>
+                  })()
+                )}
               </div>
             )}
-          </SectionCard>
+            </SectionCard>
+          ) : null}
         </aside>
       </div>
     </div>

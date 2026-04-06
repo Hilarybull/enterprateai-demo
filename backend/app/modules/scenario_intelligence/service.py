@@ -4,8 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
-
+from app.core.supabase import sb_delete, sb_insert, sb_select
 from app.modules.scenario_intelligence.schemas import (
     BusinessStateSnapshot,
     ScenarioRecommendation,
@@ -361,7 +360,6 @@ def _result_state(base_score: float, scenario_score: float) -> str:
 
 
 async def save_risk_signals(
-    db: AsyncIOMotorDatabase,
     tenant_id: str,
     business_id: str,
     state_version: str,
@@ -383,12 +381,11 @@ async def save_risk_signals(
                 **s,
             )
         )
-    await db.scenario_risk_signals.insert_many(docs)
+    await sb_insert("scenario_risk_signals", docs)
     return _clean_many(docs)
 
 
 async def create_scenario_run(
-    db: AsyncIOMotorDatabase,
     tenant_id: str,
     business_id: str,
     state_version: str,
@@ -433,13 +430,13 @@ async def create_scenario_run(
         state_result=state_result,
     )
 
-    await db.scenario_runs.insert_one(run_doc)
+    await sb_insert("scenario_runs", run_doc)
 
     timeline_docs = [
         dict(scenario_run_id=run_id, created_at=now, **row) for row in timeline
     ]
     if timeline_docs:
-        await db.scenario_timelines.insert_many(timeline_docs)
+        await sb_insert("scenario_timelines", timeline_docs)
 
     recs = _recommendations_from_result(state_result)
     rec_docs = []
@@ -456,7 +453,7 @@ async def create_scenario_run(
             )
         )
     if rec_docs:
-        await db.scenario_recommendations.insert_many(rec_docs)
+        await sb_insert("scenario_recommendations", rec_docs)
 
     return run_doc
 
@@ -487,22 +484,32 @@ def _recommendations_from_result(state_result: str) -> List[Dict[str, Any]]:
     ]
 
 
-async def get_scenario_run(db: AsyncIOMotorDatabase, run_id: str) -> Dict[str, Any] | None:
-    return _clean(await db.scenario_runs.find_one({"scenario_run_id": run_id}))
+async def get_scenario_run(run_id: str) -> Dict[str, Any] | None:
+    doc = await sb_select("scenario_runs", filters=[("scenario_run_id", "eq", run_id)], single=True)
+    return _clean(doc)
 
 
-async def get_scenario_timeline(db: AsyncIOMotorDatabase, run_id: str) -> List[Dict[str, Any]]:
-    cursor = db.scenario_timelines.find({"scenario_run_id": run_id}).sort("month_index", 1)
-    return _clean_many([doc async for doc in cursor])
+async def get_scenario_timeline(run_id: str) -> List[Dict[str, Any]]:
+    data = await sb_select(
+        "scenario_timelines",
+        filters=[("scenario_run_id", "eq", run_id)],
+        order="month_index",
+        desc=False,
+    )
+    return _clean_many(data)
 
 
-async def get_recommendations(db: AsyncIOMotorDatabase, run_id: str) -> List[Dict[str, Any]]:
-    cursor = db.scenario_recommendations.find({"scenario_run_id": run_id}).sort("priority", 1)
-    return _clean_many([doc async for doc in cursor])
+async def get_recommendations(run_id: str) -> List[Dict[str, Any]]:
+    data = await sb_select(
+        "scenario_recommendations",
+        filters=[("scenario_run_id", "eq", run_id)],
+        order="priority",
+        desc=False,
+    )
+    return _clean_many(data)
 
 
 async def save_decision(
-    db: AsyncIOMotorDatabase,
     tenant_id: str,
     business_id: str,
     run_id: str,
@@ -523,21 +530,27 @@ async def save_decision(
         reviewed_at=None,
         created_at=now,
     )
-    await db.scenario_decisions.insert_one(doc)
+    await sb_insert("scenario_decisions", doc)
     return _clean(doc)
 
 
-async def scenario_history(db: AsyncIOMotorDatabase, tenant_id: str, business_id: str) -> List[Dict[str, Any]]:
-    runs = db.scenario_runs.find(
-        {"tenant_id": tenant_id, "business_id": business_id}
-    ).sort("created_at", -1)
-    run_list = _clean_many([doc async for doc in runs])
-    decisions = db.scenario_decisions.find(
-        {"tenant_id": tenant_id, "business_id": business_id}
+async def scenario_history(tenant_id: str, business_id: str) -> List[Dict[str, Any]]:
+    run_list = _clean_many(
+        await sb_select(
+            "scenario_runs",
+            filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)],
+            order="created_at",
+            desc=True,
+        )
     )
-    decision_map = {}
-    async for d in decisions:
-        d = _clean(d) or {}
+    decision_rows = _clean_many(
+        await sb_select(
+            "scenario_decisions",
+            filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)],
+        )
+    )
+    decision_map: Dict[str, Any] = {}
+    for d in decision_rows:
         if d.get("scenario_run_id"):
             decision_map[d["scenario_run_id"]] = d.get("decision_status")
     history = []
@@ -555,23 +568,26 @@ async def scenario_history(db: AsyncIOMotorDatabase, tenant_id: str, business_id
     return history
 
 
-async def clear_history(db: AsyncIOMotorDatabase, tenant_id: str, business_id: str) -> int:
-    run_ids = []
-    cursor = db.scenario_runs.find({"tenant_id": tenant_id, "business_id": business_id}, {"scenario_run_id": 1})
-    async for doc in cursor:
-        run_id = doc.get("scenario_run_id")
-        if run_id:
-            run_ids.append(run_id)
+async def clear_history(tenant_id: str, business_id: str) -> int:
+    run_rows = await sb_select(
+        "scenario_runs",
+        filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)],
+        columns="scenario_run_id",
+    )
+    run_ids = [r.get("scenario_run_id") for r in run_rows if r.get("scenario_run_id")]
 
-    deleted_runs = await db.scenario_runs.delete_many({"tenant_id": tenant_id, "business_id": business_id})
+    deleted_runs = await sb_delete(
+        "scenario_runs",
+        filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)],
+    )
 
     if run_ids:
-        await db.scenario_timelines.delete_many({"scenario_run_id": {"$in": run_ids}})
-        await db.scenario_recommendations.delete_many({"scenario_run_id": {"$in": run_ids}})
+        await sb_delete("scenario_timelines", filters=[("scenario_run_id", "in", run_ids)])
+        await sb_delete("scenario_recommendations", filters=[("scenario_run_id", "in", run_ids)])
 
-    await db.scenario_decisions.delete_many({"tenant_id": tenant_id, "business_id": business_id})
-    await db.scenario_risk_signals.delete_many({"tenant_id": tenant_id, "business_id": business_id})
-    return deleted_runs.deleted_count
+    await sb_delete("scenario_decisions", filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)])
+    await sb_delete("scenario_risk_signals", filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)])
+    return len(deleted_runs) if isinstance(deleted_runs, list) else 0
 
 
 async def do_nothing_projection(

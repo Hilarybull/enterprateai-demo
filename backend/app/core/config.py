@@ -31,6 +31,11 @@ class Settings(BaseSettings):
 
     mongo_uri: str = Field(default="mongodb://localhost:27017", validation_alias=AliasChoices("MONGO_URI", "MONGO_URL"))
     mongo_db: str = Field(default="enterprateai", validation_alias=AliasChoices("MONGO_DB", "DB_NAME"))
+    supabase_url: str | None = Field(default=None, validation_alias=AliasChoices("SUPABASE_URL", "PUBLIC_SUPABASE_URL"))
+    supabase_service_role_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_ROLE"),
+    )
 
     jwt_secret_key: str = Field(default="CHANGE_ME", validation_alias=AliasChoices("JWT_SECRET_KEY", "JWT_SECRET"))
     jwt_algorithm: str = Field(default="HS256", validation_alias=AliasChoices("JWT_ALGORITHM", "JWT_ALGO"))

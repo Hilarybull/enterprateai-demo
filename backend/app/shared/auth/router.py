@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
-
 from app.core.config import get_settings
-from app.core.database import get_db
+from app.core.supabase import sb_insert, sb_select, sb_update
 from app.shared.auth.google import verify_google_id_token
 from app.shared.auth.schemas import GoogleAuthRequest, LoginRequest, RegisterRequest, TokenResponse, UserPublic
 from app.shared.auth.security import create_access_token, hash_password, verify_password
@@ -14,26 +12,26 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=UserPublic)
-async def register(payload: RegisterRequest, db: AsyncIOMotorDatabase = Depends(get_db)) -> UserPublic:
-    existing = await db["users"].find_one({"email": payload.email.lower()})
+async def register(payload: RegisterRequest) -> UserPublic:
+    existing = await sb_select("users", filters=[("email", "eq", payload.email.lower())], single=True)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
-    user_doc = {"_id": payload.email.lower(), "email": payload.email.lower(), "password_hash": hash_password(payload.password)}
-    await db["users"].insert_one(user_doc)
-    return UserPublic(id=user_doc["_id"], email=user_doc["email"])
+    user_doc = {"id": payload.email.lower(), "email": payload.email.lower(), "password_hash": hash_password(payload.password)}
+    await sb_insert("users", user_doc)
+    return UserPublic(id=user_doc["id"], email=user_doc["email"])
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, db: AsyncIOMotorDatabase = Depends(get_db)) -> TokenResponse:
-    user = await db["users"].find_one({"_id": payload.email.lower()})
+async def login(payload: LoginRequest) -> TokenResponse:
+    user = await sb_select("users", filters=[("id", "eq", payload.email.lower())], single=True)
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    token = create_access_token(subject=user["_id"])
+    token = create_access_token(subject=user["id"])
     return TokenResponse(access_token=token)
 
 
 @router.post("/google", response_model=TokenResponse)
-async def google_auth(payload: GoogleAuthRequest, db: AsyncIOMotorDatabase = Depends(get_db)) -> TokenResponse:
+async def google_auth(payload: GoogleAuthRequest) -> TokenResponse:
     settings = get_settings()
     if not settings.google_client_id:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Google auth not configured")
@@ -41,22 +39,24 @@ async def google_auth(payload: GoogleAuthRequest, db: AsyncIOMotorDatabase = Dep
     identity = verify_google_id_token(credential=payload.credential, audience=settings.google_client_id)
 
     # Upsert user by email to keep user_id stable across auth methods.
-    existing = await db["users"].find_one({"_id": identity.email})
+    existing = await sb_select("users", filters=[("id", "eq", identity.email)], single=True)
     if not existing:
-        await db["users"].insert_one(
+        await sb_insert(
+            "users",
             {
-                "_id": identity.email,
+                "id": identity.email,
                 "email": identity.email,
                 "auth_provider": "google",
                 "google_sub": identity.sub,
                 "name": identity.name,
                 "picture": identity.picture,
-            }
+            },
         )
     else:
-        await db["users"].update_one(
-            {"_id": identity.email},
-            {"$set": {"auth_provider": existing.get("auth_provider") or "google", "google_sub": identity.sub, "name": identity.name, "picture": identity.picture}},
+        await sb_update(
+            "users",
+            filters=[("id", "eq", identity.email)],
+            payload={"auth_provider": existing.get("auth_provider") or "google", "google_sub": identity.sub, "name": identity.name, "picture": identity.picture},
         )
 
     token = create_access_token(subject=identity.email)

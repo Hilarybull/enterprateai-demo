@@ -40,8 +40,8 @@ docker-compose.yml
 
 ## Quick Start (Docker)
 1) Create env:
-   - Copy `.env.example` to `.env` and set `JWT_SECRET_KEY`.
-2) Run API + MongoDB:
+   - Copy `.env.example` to `.env` and set `JWT_SECRET_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+2) Run API:
    - `docker compose up --build`
 3) API health:
    - `GET http://localhost:8000/health`
@@ -54,9 +54,9 @@ From `backend/`:
 4) `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
 
 Env vars (example in `.env.example`):
-- `MONGO_URI`, `MONGO_DB`
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
 - `JWT_SECRET_KEY`
-- `OPENAI_API_KEY` (optional)
+- `OPENAI_API_KEY` / `CLAUDE_API_KEY` (optional)
 
 ## Local Frontend (Vite + React, JavaScript)
 From `frontend/`:
@@ -83,4 +83,4 @@ Frontend env:
 
 ## Notes
 - Modular monolith: each module has its own router, schemas, and service layer, and communicates internally via function calls (not HTTP).
-- MongoDB is used with a flexible `workspaces` collection design.
+- Supabase (Postgres) stores users, workspaces, blueprints, and scenario data.

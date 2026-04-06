@@ -3,7 +3,6 @@
 import re
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
 from fastapi import HTTPException, status
 
 from app.modules.blueprint.repository import create_document
@@ -531,14 +530,25 @@ def _inject_signature_block(doc: str, lines: list[str]) -> str:
     cleaned = [l for l in (lines or []) if _safe_text(l)]
     if not cleaned:
         return doc
-    block = "Sincerely,\n" + "\n".join(cleaned)
-    if "Sincerely," in doc:
-        before, _, after = doc.partition("Sincerely,")
-        # Trim any existing lines after Sincerely
-        tail = after.splitlines()
-        # Keep nothing after the sign-off to avoid duplicates
-        return before.rstrip() + "\n\n" + block
-    return doc.rstrip() + "\n\n" + block
+    def _strip_existing_signoff(text: str) -> str:
+        signoffs = (
+            "yours sincerely",
+            "yours faithfully",
+            "sincerely",
+            "best regards",
+            "kind regards",
+            "regards",
+        )
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            l = line.strip().lower()
+            if any(l.startswith(s) for s in signoffs):
+                return "\n".join(lines[:i]).rstrip()
+        return text.rstrip()
+
+    base = _strip_existing_signoff(doc)
+    block = "Yours sincerely,\n" + "\n".join(cleaned)
+    return base.rstrip() + "\n\n" + block
 
 
 _TEMPLATE_FIELD_RE = re.compile(r"{([a-zA-Z_][a-zA-Z0-9_]*)}")
@@ -558,7 +568,8 @@ async def _generate_section(
             warnings.append(f"AI returned empty text for: {label}")
         return text, res.provider, res.model
     except Exception as e:
-        warnings.append(f"AI generation failed for {label}: {type(e).__name__}")
+        detail = str(e).strip() or "Unknown error"
+        warnings.append(f"AI generation failed for {label}: {type(e).__name__}: {detail}")
         return "", "noop", "none"
 
 
@@ -817,7 +828,6 @@ def _render_financial_projection(*, currency: str, validation: dict | None, star
 async def generate_blueprint(
     payload: BlueprintGenerateRequest,
     *,
-    db: AsyncIOMotorDatabase | None = None,
     user_id: str | None = None,
 ) -> BlueprintGenerateResponse:
     warnings: list[str] = []
@@ -857,16 +867,16 @@ async def generate_blueprint(
     starting_cash = 0.0
     workspace_context: dict[str, str] = {}
 
-    if payload.workspace_id and db is not None and user_id:
+    if payload.workspace_id and user_id:
         try:
-            ws  = await get_validation_workspace(db, user_id=user_id, workspace_id=payload.workspace_id)
+            ws  = await get_validation_workspace(user_id=user_id, workspace_id=payload.workspace_id)
             cur = _extract_currency_from_workspace_data(ws.data)
             if cur:
                 currency = cur
             starting_cash     = _extract_starting_cash_from_workspace(ws.data)
             workspace_context = _extract_business_context_from_workspace(ws.data)
             if payload.include_validation_snapshot or payload.type in ("cashflow_analysis", "financial_projection"):
-                validation = await evaluate_validation(db, user_id=user_id, workspace_id=payload.workspace_id, inputs=None, idea_validation=None)
+                validation = await evaluate_validation(user_id=user_id, workspace_id=payload.workspace_id, inputs=None, idea_validation=None)
         except Exception:
             validation = None
 
@@ -875,7 +885,7 @@ async def generate_blueprint(
         return f"{doc_type} — {c}"
 
     async def _persist_response(resp: BlueprintGenerateResponse) -> BlueprintGenerateResponse:
-        if not (db is not None and user_id):
+        if not user_id:
             return resp
         if not (resp.document_markdown and str(resp.document_markdown).strip()):
             warnings.append("Document was empty; nothing saved.")
@@ -893,7 +903,6 @@ async def generate_blueprint(
         title = _default_title(type_to_title.get(payload.type, "Document"), company)
         try:
             doc_id = await create_document(
-                db,
                 user_id=user_id,
                 type=payload.type,
                 title=title,
@@ -937,6 +946,15 @@ async def generate_blueprint(
         # Readable fallback — never return an empty skeleton
         if not doc:
             if not allow_fallback or not fallback_template:
+                failure_detail = next(
+                    (w for w in reversed(warnings) if w.startswith(f"AI generation failed for {doc_type}_full:")),
+                    None,
+                )
+                if failure_detail:
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail=f"{failure_detail}. Check provider credentials, model access, and try again.",
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=f"LLM returned empty output for {doc_type}. Check provider credentials and try again.",
@@ -1170,10 +1188,11 @@ async def generate_blueprint(
         next_steps_note = (
             "Confirm scope and expectations, agree the start window, and schedule the onboarding session to begin delivery."
         )
+        client_name = _safe_text(payload.bill_to) or "Client name to be confirmed"
         raw_inputs = {
             "company_name":        company,
-            "client_name":         _safe_text(payload.bill_to) or "Client name to be confirmed",
-            "proposal_title":      _safe_text(getattr(payload, "proposal_title", None)) or f"Proposal from {company}",
+            "client_name":         client_name,
+            "proposal_title":      _safe_text(getattr(payload, "proposal_title", None)) or f"Proposal for {client_name}",
             "date":                "",
             "contact_details":     _safe_text(getattr(payload, "contact_details", None)) or f"Contact {company} to confirm details",
             "summary":             client_value_note or business_impact_note,

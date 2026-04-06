@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Optional
+from uuid import uuid4
 
-from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReturnDocument
-
+from app.core.supabase import sb_delete, sb_select, sb_update, sb_upsert
 from app.modules.blueprint.schemas import (
     BlueprintDocument,
     BlueprintDocumentListItem,
@@ -19,18 +17,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _oid(id_str: str) -> ObjectId:
-    if not ObjectId.is_valid(id_str):
-        raise ValueError("Invalid ObjectId")
-    return ObjectId(id_str)
-
-
-def _collection(db: AsyncIOMotorDatabase):
-    return db["blueprint_documents"]
-
-
 async def create_document(
-    db: AsyncIOMotorDatabase,
     *,
     user_id: str,
     type: BlueprintType,
@@ -47,7 +34,10 @@ async def create_document(
     if not document_markdown or not str(document_markdown).strip():
         raise ValueError("Empty document_markdown")
     ts = _now()
-    update: dict[str, Any] = {
+    payload: dict[str, Any] = {
+        "id": str(uuid4()),
+        "user_id": user_id,
+        "type": type,
         "title": title,
         "company_name": company_name,
         "industry": industry,
@@ -57,44 +47,45 @@ async def create_document(
         "document_html": document_html,
         "provider": provider,
         "model": model,
-        "updated_at": ts,
+        "created_at": ts.isoformat(),
+        "updated_at": ts.isoformat(),
     }
-    res = await _collection(db).find_one_and_update(
-        {"user_id": user_id, "type": type},
-        {"$set": update, "$setOnInsert": {"created_at": ts, "user_id": user_id, "type": type}},
-        upsert=True,
-        return_document=ReturnDocument.AFTER,
-    )
-    if not res:
+
+    rows = await sb_upsert("blueprint_documents", payload=payload, on_conflict="user_id,type")
+    if not rows:
         raise RuntimeError("Failed to upsert document")
-    return str(res["_id"])
+    return rows[0]["id"]
 
 
 async def list_documents(
-    db: AsyncIOMotorDatabase,
     *,
     user_id: str,
     type: Optional[str] = None,
     limit: int = 30,
 ) -> list[BlueprintDocumentListItem]:
-    query: dict[str, Any] = {"user_id": user_id}
+    filters: list[tuple[str, str, Any]] = [("user_id", "eq", user_id)]
     if type:
-        query["type"] = type
-    query["document_markdown"] = {"$exists": True, "$ne": ""}
-
-    cur = _collection(db).find(query, {"document_markdown": 0, "document_html": 0}).sort("updated_at", -1)
+        filters.append(("type", "eq", type))
+    data = await sb_select(
+        "blueprint_documents",
+        filters=filters,
+        columns="id,type,title,company_name,updated_at,document_markdown",
+        order="updated_at",
+        desc=True,
+        limit=limit,
+    )
     out: list[BlueprintDocumentListItem] = []
     seen: set[str] = set()
-    async for d in cur:
+    for d in data:
         doc_type = d.get("type")
-        if not doc_type:
+        if not doc_type or doc_type in seen:
             continue
-        if doc_type in seen:
+        if not d.get("document_markdown"):
             continue
         seen.add(doc_type)
         out.append(
             BlueprintDocumentListItem(
-                id=str(d["_id"]),
+                id=d["id"],
                 type=doc_type,
                 title=d.get("title") or "",
                 company_name=d.get("company_name") or "",
@@ -107,25 +98,27 @@ async def list_documents(
 
 
 async def get_document(
-    db: AsyncIOMotorDatabase,
     *,
     user_id: str,
     document_id: str,
 ) -> BlueprintDocument | None:
-    d = await _collection(db).find_one({"_id": _oid(document_id), "user_id": user_id})
+    d = await sb_select(
+        "blueprint_documents",
+        filters=[("id", "eq", document_id), ("user_id", "eq", user_id)],
+        single=True,
+    )
     if not d:
         return None
     return BlueprintDocument.model_validate(d)
 
 
 async def update_document(
-    db: AsyncIOMotorDatabase,
     *,
     user_id: str,
     document_id: str,
     patch: BlueprintDocumentUpdateRequest,
 ) -> BlueprintDocument | None:
-    update: dict[str, Any] = {"updated_at": _now()}
+    update: dict[str, Any] = {"updated_at": _now().isoformat()}
     if patch.title is not None:
         update["title"] = patch.title
     if patch.document_markdown is not None:
@@ -133,21 +126,23 @@ async def update_document(
     if patch.document_html is not None:
         update["document_html"] = patch.document_html
 
-    res = await _collection(db).find_one_and_update(
-        {"_id": _oid(document_id), "user_id": user_id},
-        {"$set": update},
-        return_document=ReturnDocument.AFTER,
+    rows = await sb_update(
+        "blueprint_documents",
+        filters=[("id", "eq", document_id), ("user_id", "eq", user_id)],
+        payload=update,
     )
-    if not res:
+    if not rows:
         return None
-    return BlueprintDocument.model_validate(res)
+    return BlueprintDocument.model_validate(rows[0])
 
 
 async def delete_document(
-    db: AsyncIOMotorDatabase,
     *,
     user_id: str,
     document_id: str,
 ) -> bool:
-    res = await _collection(db).delete_one({"_id": _oid(document_id), "user_id": user_id})
-    return bool(res.deleted_count)
+    rows = await sb_delete(
+        "blueprint_documents",
+        filters=[("id", "eq", document_id), ("user_id", "eq", user_id)],
+    )
+    return bool(rows)

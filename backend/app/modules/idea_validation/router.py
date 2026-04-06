@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
-from motor.motor_asyncio import AsyncIOMotorDatabase
-
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, Query, Response
 from app.modules.idea_validation.schemas import (
     CreateValidationWorkspaceRequest,
     CreateWorkspaceResponse,
@@ -51,44 +48,38 @@ async def market_fit_endpoint(
 @router.post("/create", response_model=CreateWorkspaceResponse)
 async def create_validation_workspace(
     payload: CreateValidationWorkspaceRequest,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_user),
 ) -> CreateWorkspaceResponse:
-    workspace_id = await create_workspace(db, user_id=user["id"], name=payload.name, data=payload.data)
-    ws = await get_workspace(db, user_id=user["id"], workspace_id=workspace_id)
+    workspace_id = await create_workspace(user_id=user["id"], name=payload.name, data=payload.data)
+    ws = await get_workspace(user_id=user["id"], workspace_id=workspace_id)
     return CreateWorkspaceResponse(id=str(ws.id), name=ws.name, created_at=ws.created_at)
 
 
 @router.get("/me", response_model=WorkspaceResponse)
 async def get_my_workspace(
-    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_user),
 ) -> WorkspaceResponse:
-    ws = await get_user_workspace(db, user_id=user["id"])
+    ws = await get_user_workspace(user_id=user["id"])
     if not ws:
-        from fastapi import HTTPException, status
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+        return Response(status_code=204)
     return WorkspaceResponse.from_doc(ws)
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)
 async def get_validation_workspace(
     workspace_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_user),
 ) -> WorkspaceResponse:
-    ws = await get_workspace(db, user_id=user["id"], workspace_id=workspace_id)
+    ws = await get_workspace(user_id=user["id"], workspace_id=workspace_id)
     return WorkspaceResponse.from_doc(ws)
 
 
 @router.post("/evaluate", response_model=ValidationResult)
 async def evaluate_validation(
     payload: EvaluateRequest,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_user),
 ) -> ValidationResult:
     result = await evaluate(
-        db,
         user_id=user["id"],
         workspace_id=payload.workspace_id,
         inputs=payload.inputs,
@@ -100,10 +91,9 @@ async def evaluate_validation(
 @router.patch("/me", response_model=WorkspaceResponse)
 async def patch_my_workspace(
     payload: UpdateWorkspaceRequest,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_user),
 ) -> WorkspaceResponse:
-    ws = await upsert_user_workspace(db, user_id=user["id"], data_patch=payload.data, name=payload.name)
+    ws = await upsert_user_workspace(user_id=user["id"], data_patch=payload.data, name=payload.name)
     return WorkspaceResponse.from_doc(ws)
 
 
@@ -111,11 +101,9 @@ async def patch_my_workspace(
 async def patch_validation_workspace(
     workspace_id: str,
     payload: UpdateWorkspaceRequest,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(get_current_user),
 ) -> WorkspaceResponse:
     ws = await update_workspace(
-        db,
         user_id=user["id"],
         workspace_id=workspace_id,
         data_patch=payload.data,

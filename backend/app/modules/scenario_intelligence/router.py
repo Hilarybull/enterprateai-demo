@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
-
-from app.core.database import get_db
 from app.shared.auth.deps import get_current_user
 from app.modules.scenario_intelligence.schemas import (
     DoNothingRequest,
@@ -44,11 +41,10 @@ router = APIRouter(prefix="/v1/scenario-intelligence", tags=["scenario-intellige
 @router.post("/risk-detection/run", response_model=RiskDetectionResponse)
 async def risk_detection_run(
     payload: RiskDetectionRequest,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     _user=Depends(get_current_user),
 ) -> RiskDetectionResponse:
     signals = detect_risks(payload.state)
-    saved = await save_risk_signals(db, payload.tenant_id, payload.business_id, payload.state_version, signals)
+    saved = await save_risk_signals(payload.tenant_id, payload.business_id, payload.state_version, signals)
     return RiskDetectionResponse(
         business_id=payload.business_id,
         engine_version=ENGINE_VERSION,
@@ -79,7 +75,6 @@ async def scenario_templates_list(
 @router.post("/scenario-runs", response_model=ScenarioRunResponse)
 async def scenario_runs_create(
     payload: ScenarioRunRequest,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     _user=Depends(get_current_user),
 ) -> ScenarioRunResponse:
     template = resolve_template(payload.scenario_template_id)
@@ -87,7 +82,6 @@ async def scenario_runs_create(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario template not found")
 
     run_doc = await create_scenario_run(
-        db=db,
         tenant_id=payload.tenant_id,
         business_id=payload.business_id,
         state_version=payload.state_version,
@@ -118,14 +112,13 @@ async def scenario_runs_execute(
 @router.get("/scenario-runs/{scenario_run_id}", response_model=ScenarioRunResult)
 async def scenario_runs_get(
     scenario_run_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     _user=Depends(get_current_user),
 ) -> ScenarioRunResult:
-    run = await get_scenario_run(db, scenario_run_id)
+    run = await get_scenario_run(scenario_run_id)
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario run not found")
-    recs = await get_recommendations(db, scenario_run_id)
-    timeline = await get_scenario_timeline(db, scenario_run_id)
+    recs = await get_recommendations(scenario_run_id)
+    timeline = await get_scenario_timeline(scenario_run_id)
     timeline_summary = {f"month_{t['month_index']}": t["state_label"] for t in timeline}
 
     return ScenarioRunResult(
@@ -144,13 +137,12 @@ async def scenario_runs_get(
 @router.get("/scenario-runs/{scenario_run_id}/timeline", response_model=ScenarioTimelineResponse)
 async def scenario_runs_timeline(
     scenario_run_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     _user=Depends(get_current_user),
 ) -> ScenarioTimelineResponse:
-    run = await get_scenario_run(db, scenario_run_id)
+    run = await get_scenario_run(scenario_run_id)
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario run not found")
-    timeline = await get_scenario_timeline(db, scenario_run_id)
+    timeline = await get_scenario_timeline(scenario_run_id)
     return ScenarioTimelineResponse(scenario_run_id=scenario_run_id, timeline=timeline)
 
 
@@ -173,14 +165,12 @@ async def do_nothing_run(
 async def scenario_decision(
     scenario_run_id: str,
     payload: ScenarioDecisionRequest,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     _user=Depends(get_current_user),
 ) -> ScenarioDecisionResponse:
-    run = await get_scenario_run(db, scenario_run_id)
+    run = await get_scenario_run(scenario_run_id)
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario run not found")
     doc = await save_decision(
-        db=db,
         tenant_id=run["tenant_id"],
         business_id=run["business_id"],
         run_id=scenario_run_id,
@@ -199,10 +189,9 @@ async def scenario_decision(
 async def scenario_history_list(
     business_id: str,
     tenant_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     _user=Depends(get_current_user),
 ) -> ScenarioHistoryResponse:
-    history = await scenario_history(db, tenant_id=tenant_id, business_id=business_id)
+    history = await scenario_history(tenant_id=tenant_id, business_id=business_id)
     return ScenarioHistoryResponse(history=history)
 
 
@@ -210,8 +199,7 @@ async def scenario_history_list(
 async def scenario_history_clear(
     business_id: str,
     tenant_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_db),
     _user=Depends(get_current_user),
 ) -> dict:
-    deleted = await clear_history(db, tenant_id=tenant_id, business_id=business_id)
+    deleted = await clear_history(tenant_id=tenant_id, business_id=business_id)
     return {"deleted_runs": deleted}
