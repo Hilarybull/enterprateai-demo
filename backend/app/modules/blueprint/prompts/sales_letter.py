@@ -10,9 +10,7 @@ STRICT REQUIREMENTS:
 - Do NOT copy input phrases verbatim. Always paraphrase and expand into professional narrative.
 - Avoid repetition across elements; each line must add new value.
 - Use the provided date line exactly; do not add a "Date:" prefix.
-- If a subject line is provided, use it exactly as a **bold** line (no "Subject:" prefix).
-- If a subject line is NOT provided, generate one concise subject line and render it in **bold**.
-- Only one subject line is allowed.
+- Include a subject line after the greeting, written in uppercase and **bold**.
 - If a follow-up sequence is provided, include a short paragraph that summarises it in one or two sentences.
 - Use the provided client name in the recipient block and greeting.
 - Keep the overall word count close to the provided target word count.
@@ -30,11 +28,11 @@ OUTPUT FORMAT:
 ---
 
 Write only the letter itself (no extra headings beyond the cover page).
-Include a date line, recipient block, greeting, subject line, and sign-off.
+Include a date line, greeting, subject line, and sign-off.
 The letter should be continuous prose with short paragraphs and a confident, friendly tone.
 Include, in order, the following elements inside the letter body (do not label them with extra headings):
-- A bold subject line (no "Subject:" prefix).
-- A headline line as the first sentence after the subject (not bold).
+- A bold, uppercase subject line after the greeting.
+- A headline line immediately after the subject (not bold).
 - Opening / hook.
 - Problem statement.
 - Solution introduction.

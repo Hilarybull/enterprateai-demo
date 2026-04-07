@@ -70,6 +70,15 @@ function markdownToHtml(md) {
       continue;
     }
 
+    if (
+      trimmed.startsWith("<p class=\"subject-line\">") &&
+      trimmed.endsWith("</p>")
+    ) {
+      closeList();
+      html += trimmed;
+      continue;
+    }
+
     if (line.startsWith("# ")) {
       closeList();
       html += `<h1>${inlineFormat(escapeHtml(line.slice(2).trim()))}</h1>`;
@@ -173,6 +182,7 @@ function buildPreviewFragment({ title, bodyHtml }) {
       table { width: 100%; border-collapse: collapse; margin: 12px 0 6px; font-size: 12.5px; }
       th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
       th { background: #f8fafc; font-weight: 700; }
+      .subject-line { text-align: center; margin: 8px 0 14px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
       .cover-page { min-height: 70vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
       .cover-page p { margin: 6px 0; }
     </style>

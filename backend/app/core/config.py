@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     claude_model: str = Field(default="claude-3-5-sonnet-20240620", validation_alias=AliasChoices("CLAUDE_MODEL",))
     gemini_api_key: str | None = Field(default=None, validation_alias=AliasChoices("GEMINI_API_KEY",))
     gemini_model: str = Field(default="gemini-1.5-flash", validation_alias=AliasChoices("GEMINI_MODEL",))
+    allow_gemini_fallback: bool = Field(default=False, validation_alias=AliasChoices("ALLOW_GEMINI_FALLBACK",))
     emergent_llm_key: str | None = Field(default=None, validation_alias=AliasChoices("EMERGENT_LLM_KEY",))
 
     # Optional integrations (placeholders for future modules)

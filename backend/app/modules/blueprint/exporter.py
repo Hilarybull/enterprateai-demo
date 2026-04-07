@@ -58,6 +58,7 @@ def render_export_html(title: str, body_html: str) -> str:
       ul {{ margin: 8px 0 0 18px; padding: 0; }}
       li {{ margin: 6px 0; }}
       strong {{ color: #0f172a; }}
+      .subject-line {{ text-align: center; margin: 8px 0 14px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }}
       table {{ width: 100%; border-collapse: collapse; margin: 12px 0 6px; font-size: 12.5px; }}
       th, td {{ border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }}
       th {{ background: #f8fafc; font-weight: 700; }}
@@ -110,6 +111,7 @@ def render_pdf_html(title: str, body_html: str) -> str:
       h1 + p, h2 + p, h3 + p, h2 + ul, h3 + ul {{ break-before: avoid-page; page-break-before: avoid; }}
       p, li {{ font-size: 12px; line-height: 1.6; }}
       p, li {{ orphans: 3; widows: 3; }}
+      .subject-line {{ text-align: center; margin: 8px 0 12px; font-weight: bold; letter-spacing: 0.04em; text-transform: uppercase; }}
       ul {{ margin: 6px 0 0 16px; }}
       table {{ width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }}
       th, td {{ border: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; vertical-align: top; }}

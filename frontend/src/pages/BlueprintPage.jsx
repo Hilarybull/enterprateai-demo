@@ -138,7 +138,10 @@ export default function BlueprintPage() {
   const [customClientName, setCustomClientName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
-  const [includeSnapshot, setIncludeSnapshot] = useState(false);
+  const [includeSnapshotByDoc, setIncludeSnapshotByDoc] = useState({
+    business_plan: false,
+    client_proposal: false,
+  });
   const [sectionsByDoc, setSectionsByDoc] = useState({
     business_plan: [],
     client_proposal: [],
@@ -423,7 +426,8 @@ export default function BlueprintPage() {
       setShowInputs(true);
       return;
     }
-    if (includeSnapshot && !workspaceId.trim() && !workspaceIdStored) {
+    const wantsSnapshot = includeSnapshotByDoc[selectedDoc];
+    if (wantsSnapshot && !workspaceId.trim() && !workspaceIdStored) {
       setError("Select a workspace to include the financial snapshot.");
       setShowInputs(true);
       return;
@@ -439,7 +443,7 @@ export default function BlueprintPage() {
         industry,
         pricing_model: pricingModel,
         workspace_id: (workspaceId || workspaceIdStored || "").trim() || null,
-        include_validation_snapshot: includeSnapshot,
+        include_validation_snapshot: includeSnapshotByDoc[selectedDoc],
         problem,
         solution,
         target_market: targetMarket,
@@ -953,12 +957,17 @@ export default function BlueprintPage() {
                     </div>
                   ) : null}
 
-                  {selectedDoc === "business_plan" ? (
+                  {selectedDoc === "business_plan" || selectedDoc === "client_proposal" ? (
                     <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
                       <input
                         type="checkbox"
-                        checked={includeSnapshot}
-                        onChange={(e) => setIncludeSnapshot(e.target.checked)}
+                        checked={includeSnapshotByDoc[selectedDoc] || false}
+                        onChange={(e) =>
+                          setIncludeSnapshotByDoc((prev) => ({
+                            ...prev,
+                            [selectedDoc]: e.target.checked,
+                          }))
+                        }
                       />
                       <span>Include financial snapshot</span>
                     </div>

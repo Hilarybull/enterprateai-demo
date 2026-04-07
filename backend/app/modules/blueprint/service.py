@@ -249,7 +249,28 @@ def _strip_financial_snapshot_section(doc: str) -> str:
                 continue
         else:
             out.append(line)
-    return "\n".join(out).strip()
+
+    # Remove snapshot tables even if a heading is missing.
+    cleaned: list[str] = []
+    i = 0
+    while i < len(out):
+        line = out[i]
+        if "|" in line:
+            block: list[str] = []
+            j = i
+            while j < len(out) and ("|" in out[j] or not out[j].strip()):
+                block.append(out[j])
+                j += 1
+            block_text = "\n".join(block).lower()
+            if "monthly revenue" in block_text and "runway" in block_text and "metric" in block_text and "value" in block_text:
+                i = j
+                continue
+            cleaned.extend(block)
+            i = j
+            continue
+        cleaned.append(line)
+        i += 1
+    return "\n".join(cleaned).strip()
 
 
 def _strip_cover_section(doc: str) -> str:
@@ -308,12 +329,11 @@ def _normalize_sales_letter(
     if date_text:
         preamble.append(date_text)
         preamble.append("")
-    preamble.append(f"To: {name}")
-    preamble.append("")
     preamble.append(f"Dear {name},")
     preamble.append("")
     if subject:
-        preamble.append(f"**{subject}**")
+        subject_text = subject.upper()
+        preamble.append(f"<p class=\"subject-line\"><strong>{subject_text}</strong></p>")
         preamble.append("")
 
     filtered: list[str] = []
@@ -332,7 +352,11 @@ def _normalize_sales_letter(
             continue
         if date_text and stripped.lower() == date_text.strip().lower():
             continue
+        if "subject-line" in stripped.lower():
+            continue
         if subject_plain and stripped.lower().strip("*") == subject_plain:
+            continue
+        if subject_plain and subject_plain in stripped.lower():
             continue
         if non_empty_seen <= 3 and stripped.startswith("**") and stripped.endswith("**"):
             # Remove stray bold headings at the top of the body.
@@ -823,6 +847,55 @@ async def _generate_section(
         return "", "noop", "none"
 
 
+def _format_section_prompt(*, doc_type: str, section_title: str, inputs_text: str) -> str:
+    return (
+        f"Write only the content for the section titled '{section_title}' in a {doc_type}.\n"
+        "Requirements:\n"
+        "- UK professional English.\n"
+        "- Minimum two full paragraphs.\n"
+        "- No headings, labels, or numbering.\n"
+        "- No invented prices, dates, or numeric claims.\n"
+        "- Avoid repetition and keep it specific to the inputs.\n\n"
+        f"Inputs:\n{inputs_text}"
+    )
+
+
+async def _generate_sections_fallback(
+    llm: LLMClient,
+    *,
+    doc_type: str,
+    headings: list[str],
+    inputs_text: str,
+    warnings: list[str],
+    cover_lines: list[str] | None = None,
+) -> tuple[str, str, str]:
+    provider = "mixed"
+    model = "mixed"
+    out: list[str] = []
+    for heading in headings:
+        title = heading.replace("## ", "").replace("### ", "").strip()
+        if heading == "## Cover Page" and cover_lines:
+            cover = "\n".join([l for l in cover_lines if _safe_text(l)])
+            out.append(heading)
+            out.append(cover if cover.strip() else "Cover page details are provided below.")
+            out.append('<div class="page-break"></div>')
+            out.append("")
+            continue
+        prompt = _format_section_prompt(doc_type=doc_type, section_title=title, inputs_text=inputs_text)
+        text, provider, model = await _generate_section(
+            llm,
+            prompt=prompt,
+            label=f"{doc_type}_{title}",
+            warnings=warnings,
+        )
+        if not text:
+            text = _narrative_fallback(title.lower().replace(" ", "_"))
+        out.append(heading)
+        out.append(text)
+        out.append("")
+    return "\n".join(out).strip(), provider, model
+
+
 def _fmt_money(amount: float, currency: str) -> str:
     cur = (currency or "USD").upper()
     try:
@@ -1307,8 +1380,9 @@ async def generate_blueprint(
         )
 
         snapshot_text = ""
+        # We append snapshots ourselves to avoid duplication in LLM output.
         if payload.include_validation_snapshot:
-            snapshot_text = _render_validation_snapshot(currency=currency, validation=validation)
+            snapshot_text = ""
 
         raw_inputs = {
             "company_name":          company,
@@ -1354,9 +1428,22 @@ async def generate_blueprint(
             "financial_snapshot":    snapshot_text,
         }
 
-        doc, provider, model = await _enrich_and_generate(
-            "Business Plan", raw_inputs, build_business_plan_prompt, BUSINESS_PLAN_TEMPLATE, allow_fallback=False
-        )
+        try:
+            doc, provider, model = await _enrich_and_generate(
+                "Business Plan", raw_inputs, build_business_plan_prompt, BUSINESS_PLAN_TEMPLATE, allow_fallback=False
+            )
+        except HTTPException as e:
+            if e.status_code == status.HTTP_502_BAD_GATEWAY:
+                inputs_text = format_inputs_for_prompt(raw_inputs)
+                doc, provider, model = await _generate_sections_fallback(
+                    llm,
+                    doc_type="Business Plan",
+                    headings=BUSINESS_PLAN_HEADINGS,
+                    inputs_text=inputs_text,
+                    warnings=warnings,
+                )
+            else:
+                raise
         doc = _strip_business_plan_labels(doc)
         doc = _strip_financial_snapshot_section(doc)
         doc = _strip_date_lines(doc)
@@ -1559,9 +1646,35 @@ async def generate_blueprint(
             "next_steps":          next_steps_note,
         }
 
-        doc, provider, model = await _enrich_and_generate(
-            "Client Proposal", raw_inputs, build_client_proposal_prompt, CLIENT_PROPOSAL_TEMPLATE, allow_fallback=False
-        )
+        try:
+            doc, provider, model = await _enrich_and_generate(
+                "Client Proposal",
+                raw_inputs,
+                build_client_proposal_prompt,
+                CLIENT_PROPOSAL_TEMPLATE,
+                allow_fallback=False,
+                skip_fill_keys={"contact_details"},
+            )
+        except HTTPException as e:
+            if e.status_code == status.HTTP_502_BAD_GATEWAY:
+                inputs_text = format_inputs_for_prompt(raw_inputs)
+                cover_lines = [
+                    f"Proposal Title — {_safe_text(raw_inputs.get('proposal_title')) or f'Proposal for {client_name}'}",
+                    f"Client — {client_name}",
+                    f"Prepared By — {company}",
+                ]
+                if contact_details:
+                    cover_lines.append(f"Contact Details — {contact_details}")
+                doc, provider, model = await _generate_sections_fallback(
+                    llm,
+                    doc_type="Client Proposal",
+                    headings=CLIENT_PROPOSAL_HEADINGS,
+                    inputs_text=inputs_text,
+                    warnings=warnings,
+                    cover_lines=cover_lines,
+                )
+            else:
+                raise
         doc = _ensure_client_proposal_format(doc)
         doc = _strip_date_lines(doc)
         if not contact_details:
@@ -1606,6 +1719,15 @@ async def generate_blueprint(
             primary=primary_sections,
             fallback=fallback_sections,
         )
+        cover_lines = [
+            f"Proposal Title — {_safe_text(raw_inputs.get('proposal_title')) or f'Proposal for {client_name}'}",
+            f"Client — {client_name}",
+            f"Prepared By — {company}",
+        ]
+        if contact_details:
+            cover_lines.append(f"Contact Details — {contact_details}")
+        if "## Cover Page" in headings:
+            doc = _apply_cover_page(doc, title=f"Proposal for {client_name}", lines=cover_lines)
         if payload.include_validation_snapshot:
             snapshot = _render_validation_snapshot(currency=currency, validation=validation)
             doc = (
@@ -1613,6 +1735,8 @@ async def generate_blueprint(
                 f"{snapshot}\n\n"
                 "The figures above reflect the current baseline inputs and can be refined as assumptions are updated."
             )
+        else:
+            doc = _strip_financial_snapshot_section(doc)
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
         )

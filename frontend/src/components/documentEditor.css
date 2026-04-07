@@ -56,6 +56,14 @@
   color: #0f172a;
 }
 
+.ea-doc .subject-line {
+  text-align: center;
+  margin: 8px 0 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .ea-doc {
   min-height: 65vh;
   margin: 0 auto;

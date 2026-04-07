@@ -139,7 +139,6 @@ CLIENT_PROPOSAL_TEMPLATE = """# Proposal for {client_name}
 Proposal Title — {proposal_title}
 Client — {client_name}
 Prepared By — {company_name}
-Contact Details — {contact_details}
 <div class="page-break"></div>
 
 ## Executive Summary
@@ -194,10 +193,6 @@ Contact Details — {contact_details}
 
 SALES_LETTER_TEMPLATE = """
 {letter_date}
-
-{recipient_block}
-
-**{subject_line}**
 
 Dear {salutation},
 

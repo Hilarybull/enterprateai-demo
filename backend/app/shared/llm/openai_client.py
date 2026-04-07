@@ -48,7 +48,7 @@ class OpenAIResponsesClient(LLMClient):
             ],
         }
 
-        async with httpx.AsyncClient(timeout=25) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             try:
                 resp = await client.post("https://api.openai.com/v1/responses", json=payload, headers=headers)
                 resp.raise_for_status()
@@ -110,7 +110,7 @@ class AnthropicMessagesClient(LLMClient):
             "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
         }
 
-        async with httpx.AsyncClient(timeout=25) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             try:
                 resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
                 resp.raise_for_status()
@@ -155,7 +155,7 @@ class GeminiGenerateClient(LLMClient):
             "generationConfig": {"temperature": 0.5, "maxOutputTokens": 8000},
         }
 
-        async with httpx.AsyncClient(timeout=25) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             try:
                 resp = await client.post(url, params={"key": self._settings.gemini_api_key}, json=payload)
                 resp.raise_for_status()
@@ -190,11 +190,14 @@ class AutoLLMClient(LLMClient):
     def __init__(self) -> None:
         self._settings = get_settings()
         self._clients: list[LLMClient] = []
+        has_primary = False
         if self._settings.openai_api_key:
             self._clients.append(OpenAIResponsesClient())
+            has_primary = True
         if self._settings.claude_api_key:
             self._clients.append(AnthropicMessagesClient())
-        if self._settings.gemini_api_key:
+            has_primary = True
+        if self._settings.gemini_api_key and (not has_primary or self._settings.allow_gemini_fallback):
             self._clients.append(GeminiGenerateClient())
         if not self._clients:
             self._clients.append(NoopLLMClient())
