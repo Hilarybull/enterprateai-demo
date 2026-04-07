@@ -158,11 +158,15 @@ function buildPreviewFragment({ title, bodyHtml }) {
         border-radius: 12px;
         padding: 18mm 16mm;
         color: #0f172a;
+        margin: 0 auto;
+        box-sizing: border-box;
       }
       h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }
       h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
       h3 { font-size: 14px; font-weight: 800; margin: 16px 0 6px; }
-      p, li { font-size: 12.5px; line-height: 1.7; color: #1f2937; }
+      h1, h2, h3 { break-after: avoid-page; page-break-after: avoid; }
+      h1 + p, h2 + p, h3 + p, h2 + ul, h3 + ul { break-before: avoid-page; page-break-before: avoid; }
+      p, li { font-size: 12.5px; line-height: 1.7; color: #1f2937; orphans: 3; widows: 3; }
       ul { margin: 8px 0 0 18px; padding: 0; }
       li { margin: 6px 0; }
       strong { color: #0f172a; }
@@ -496,7 +500,7 @@ export default function DocumentEditor({ title = "Document", markdown, initialHt
           ) : (
             <div
               ref={ref}
-              className="ea-doc mx-auto w-full max-w-[900px] rounded-xl border border-slate-200 bg-white p-8 shadow-sm outline-none dark:border-slate-700 dark:bg-white"
+              className="ea-doc mx-auto w-full max-w-[1100px] rounded-xl border border-slate-200 bg-white p-8 shadow-sm outline-none dark:border-slate-700 dark:bg-white"
               contentEditable
               suppressContentEditableWarning
               onInput={(e) => {

@@ -59,6 +59,8 @@ class BlueprintGenerateRequest(BaseModel):
     sender_website: Optional[str] = None
     subject_lines: Optional[str] = None
     followup_sequence: Optional[str] = None
+    sections: Optional[list[str]] = Field(default=None, description="Optional section identifiers to generate.")
+    word_count: Optional[int] = Field(default=None, ge=50, le=5000, description="Target word count for sales letters.")
 
 
 class BlueprintGenerateResponse(BaseModel):

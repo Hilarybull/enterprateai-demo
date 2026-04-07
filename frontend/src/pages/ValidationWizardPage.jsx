@@ -37,6 +37,7 @@ export default function ValidationWizardPage() {
   const [searchParams] = useSearchParams();
   const editingWorkspaceId = searchParams.get("workspace_id");
   const fromOtherModule = searchParams.get("from") === "module";
+  const returnTo = searchParams.get("return");
   const storedWorkspaceId = useWorkspaceStore((s) => s.workspaceId);
 
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
@@ -350,7 +351,11 @@ export default function ValidationWizardPage() {
         setValidation(null);
         setSavedNotice("Workspace saved.");
         if (fromOtherModule) {
-          navigate("/validation", { replace: true });
+          if (returnTo) {
+            navigate(returnTo, { replace: true });
+          } else {
+            navigate("/validation", { replace: true });
+          }
         }
       }
     } catch (e) {

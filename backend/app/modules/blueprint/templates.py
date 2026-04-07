@@ -24,85 +24,116 @@ from app.modules.blueprint.prompts.sales_letter import SALES_LETTER_PROMPT
 BUSINESS_PLAN_TEMPLATE = """# Business Plan — {company_name}
 
 ## Executive Summary
-**The Mission:** {mission}
+{mission}
 
-**The Hook:** {hook}
+{hook}
 
-**The Request:** {funding_request}
+{funding_request}
 
 {overview}
 
 ## Business Overview
-**Legal Structure:** {legal_structure}
+### Business Model
+{business_model}
 
-**Registration:** {registration}
+### Legal Structure (UK)
+{legal_structure}
 
-**Location:** {location}
+### Registration (UK)
+{registration}
 
-{business_overview}
+### Location
+{location}
 
 ## Market Analysis
-**Target Audience:** {target_market}
+### Target Audience
+{target_market}
 
-**Competitor Analysis:** {competitor_analysis}
+### Competitor Analysis
+{competitor_analysis}
 
-**Market Trends:** {market_trends}
+### Market Trends
+{market_trends}
 
 ## Products and Services
-**The Problem:** {problem}
+### The Problem
+{problem}
 
-**The Solution:** {solution}
+### The Solution
+{solution}
 
-**Pricing Strategy:** {pricing_strategy}
+### Pricing Strategy
+{pricing_strategy}
 
 ## Sales and Marketing
-**Branding:** {branding}
+### Branding
+{branding}
 
-**Channels:** {channels}
+### Channels
+{channels}
 
-**Marketing Strategy:** {go_to_market}
+### Marketing Strategy
+{go_to_market}
 
 ## Operational Plan
-**Suppliers:** {suppliers}
+### Suppliers
+{suppliers}
 
-**Technology:** {technology}
+### Technology
+{technology}
 
-**Insurance:** {insurance}
+### Insurance
+{insurance}
 
 {operations}
 
 ## Management and Personnel
-**The Team:** {team}
+### The Team
+{team}
 
-**Hiring:** {hiring_plan}
+### Hiring Plan
+{hiring_plan}
 
 ## Financial Plan
-**Sales Forecast:** {sales_forecast}
+### Sales Forecast
+{sales_forecast}
 
-**Cash Flow Statement:** {cashflow_summary}
+### Cash Flow Statement
+{cashflow_summary}
 
-**Break-even Analysis:** {breakeven}
+### Break Even Analysis
+{breakeven}
 
 ## Risk Analysis
-{risks}
+### Market Risk
+{risk_market}
+
+### Financial Risk
+{risk_financial}
+
+### Operational Risk
+{risk_operational}
+
+### Regulatory Risk
+{risk_regulatory}
 
 ## Growth Strategy
-**Market Expansion:** {market_expansion}
+{market_expansion}
 
-**Product Roadmap:** {product_roadmap}
+{product_roadmap}
 
-**Strategic Partnerships:** {partnerships}
+{partnerships}
 
-**Technology Adoption:** {technology_adoption}
+{technology_adoption}
 
-**Hiring and Operational Expansion:** {operational_expansion}
+{operational_expansion}
 
 ## Conclusion
 {conclusion}
 """
 
 
-CLIENT_PROPOSAL_TEMPLATE = """# Client Proposal — {company_name}
+CLIENT_PROPOSAL_TEMPLATE = """# Proposal for {client_name}
 
 ## Cover Page
 Proposal Title — {proposal_title}
@@ -166,9 +197,11 @@ SALES_LETTER_TEMPLATE = """
 
 {recipient_block}
 
+**{subject_line}**
+
 Dear {salutation},
 
-**{headline}**
+{headline}
 
 {hook}
 
@@ -188,14 +221,6 @@ Benefits include:
 {proof}
 
 {closing}
-
-Sincerely,
-{name}
-{position}
-{company_name}
-{phone}
-{email}
-{website}
 """
 
 

@@ -19,11 +19,29 @@
   margin: 16px 0 6px;
 }
 
+.ea-doc h1,
+.ea-doc h2,
+.ea-doc h3 {
+  break-after: avoid-page;
+  page-break-after: avoid;
+}
+
+.ea-doc h1 + p,
+.ea-doc h2 + p,
+.ea-doc h3 + p,
+.ea-doc h2 + ul,
+.ea-doc h3 + ul {
+  break-before: avoid-page;
+  page-break-before: avoid;
+}
+
 .ea-doc p,
 .ea-doc li {
   font-size: 13px;
   line-height: 1.75;
   color: #1f2937;
+  orphans: 3;
+  widows: 3;
 }
 
 .ea-doc ul {
@@ -40,6 +58,8 @@
 
 .ea-doc {
   min-height: 65vh;
+  margin: 0 auto;
+  max-width: 210mm;
 }
 
 .ea-doc table {

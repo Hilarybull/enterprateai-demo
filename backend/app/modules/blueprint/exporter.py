@@ -35,7 +35,7 @@ def render_export_html(title: str, body_html: str) -> str:
         background: #ffffff;
         color: #0f172a;
       }}
-      .page-wrap {{ padding: 24px; }}
+      .page-wrap {{ padding: 24px; display: flex; flex-direction: column; align-items: center; }}
       .page {{
         width: 210mm;
         min-height: 297mm;
@@ -44,12 +44,17 @@ def render_export_html(title: str, body_html: str) -> str:
         border-radius: 12px;
         padding: 18mm 16mm;
         page-break-after: always;
+        margin: 0 auto;
+        box-sizing: border-box;
       }}
       .page:last-child {{ page-break-after: auto; }}
       h1 {{ text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }}
       h2 {{ text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }}
       h3 {{ font-size: 14px; font-weight: 800; margin: 16px 0 6px; }}
+      h1, h2, h3 {{ break-after: avoid-page; page-break-after: avoid; }}
+      h1 + p, h2 + p, h3 + p, h2 + ul, h3 + ul {{ break-before: avoid-page; page-break-before: avoid; }}
       p, li {{ font-size: 12.5px; line-height: 1.7; color: #1f2937; }}
+      p, li {{ orphans: 3; widows: 3; }}
       ul {{ margin: 8px 0 0 18px; padding: 0; }}
       li {{ margin: 6px 0; }}
       strong {{ color: #0f172a; }}
@@ -97,11 +102,14 @@ def render_pdf_html(title: str, body_html: str) -> str:
     <meta charset="utf-8" />
     <title>{safe_title}</title>
     <style>
-      body {{ font-family: Helvetica, Arial, sans-serif; font-size: 12px; color: #111827; }}
+      body {{ margin: 0; font-family: Helvetica, Arial, sans-serif; font-size: 12px; color: #111827; }}
       h1 {{ text-align: center; font-size: 22px; margin: 0 0 12px; }}
       h2 {{ text-align: center; font-size: 15px; margin: 16px 0 10px; }}
       h3 {{ font-size: 13px; margin: 12px 0 6px; }}
+      h1, h2, h3 {{ break-after: avoid-page; page-break-after: avoid; }}
+      h1 + p, h2 + p, h3 + p, h2 + ul, h3 + ul {{ break-before: avoid-page; page-break-before: avoid; }}
       p, li {{ font-size: 12px; line-height: 1.6; }}
+      p, li {{ orphans: 3; widows: 3; }}
       ul {{ margin: 6px 0 0 16px; }}
       table {{ width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }}
       th, td {{ border: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; vertical-align: top; }}

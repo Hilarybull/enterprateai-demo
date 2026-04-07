@@ -41,7 +41,7 @@ class OpenAIResponsesClient(LLMClient):
             # Long-form documents need more output room. This client is used only
             # for narrative generation; all numeric/calculation outputs are
             # blocked by guardrails upstream/downstream.
-            "max_output_tokens": 2500,
+            "max_output_tokens": 9000,
             "input": [
                 {"role": "system", "content": [{"type": "input_text", "text": system}]},
                 {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
@@ -104,7 +104,7 @@ class AnthropicMessagesClient(LLMClient):
         }
         payload = {
             "model": self._settings.claude_model,
-            "max_tokens": 3000,
+            "max_tokens": 8000,
             "temperature": 0.5,
             "system": system,
             "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
@@ -152,7 +152,7 @@ class GeminiGenerateClient(LLMClient):
                     "parts": [{"text": f"{system}\n\n{prompt}"}],
                 }
             ],
-            "generationConfig": {"temperature": 0.5, "maxOutputTokens": 3000},
+            "generationConfig": {"temperature": 0.5, "maxOutputTokens": 8000},
         }
 
         async with httpx.AsyncClient(timeout=25) as client:
@@ -181,7 +181,7 @@ class GeminiGenerateClient(LLMClient):
 class AutoLLMClient(LLMClient):
     """
     Picks the best available LLM provider based on configured keys.
-    Order: Claude -> Gemini -> OpenAI -> Noop
+    Order: OpenAI -> Claude -> Gemini -> Noop
 
     This client is resilient: if a configured provider errors (network, auth, quota),
     it falls back to the next configured provider.
@@ -190,12 +190,12 @@ class AutoLLMClient(LLMClient):
     def __init__(self) -> None:
         self._settings = get_settings()
         self._clients: list[LLMClient] = []
+        if self._settings.openai_api_key:
+            self._clients.append(OpenAIResponsesClient())
         if self._settings.claude_api_key:
             self._clients.append(AnthropicMessagesClient())
         if self._settings.gemini_api_key:
             self._clients.append(GeminiGenerateClient())
-        if self._settings.openai_api_key:
-            self._clients.append(OpenAIResponsesClient())
         if not self._clients:
             self._clients.append(NoopLLMClient())
 

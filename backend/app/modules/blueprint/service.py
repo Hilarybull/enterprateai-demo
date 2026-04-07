@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -34,6 +35,11 @@ def _strip_digits(s: str | None) -> str:
     # Kept for backward compatibility in case older code paths call it.
     # We now allow numeric values that are explicitly provided by the system/user.
     return _safe_text(s)
+
+
+def _today_string() -> str:
+    now = datetime.now()
+    return f"{now.day} {now.strftime('%B')} {now.year}"
 
 
 def _expand_note(*, field: str, text: str, company: str, industry: str, target_market: str, pricing_model: str) -> str:
@@ -138,6 +144,64 @@ def _clean_document(doc: str) -> str:
     return "\n\n".join(cleaned)
 
 
+def _render_template_with_fallback(template: str, raw: dict[str, Any]) -> str:
+    enriched: dict[str, Any] = {}
+    for k, v in raw.items():
+        val = _safe_text(v)
+        enriched[str(k)] = val if val else _narrative_fallback(str(k))
+    for key in set(_TEMPLATE_FIELD_RE.findall(template)):
+        if not str(enriched.get(key) or "").strip():
+            enriched[key] = _narrative_fallback(key)
+    return template.format(**enriched).strip()
+
+
+def _extract_section_map(doc: str) -> tuple[list[str], dict[str, str]]:
+    lines = (doc or "").splitlines()
+    preamble: list[str] = []
+    sections: dict[str, str] = {}
+    current_heading: str | None = None
+    buffer: list[str] = []
+    seen_heading = False
+    for line in lines:
+        if line.startswith("## ") or line.startswith("### "):
+            if current_heading is not None:
+                sections[current_heading] = "\n".join(buffer).strip()
+            current_heading = line.strip()
+            buffer = []
+            seen_heading = True
+            continue
+        if not seen_heading:
+            preamble.append(line)
+        else:
+            buffer.append(line)
+    if current_heading is not None:
+        sections[current_heading] = "\n".join(buffer).strip()
+    return preamble, sections
+
+
+def _rebuild_with_headings(
+    *,
+    preamble: list[str],
+    headings: list[str],
+    primary: dict[str, str],
+    fallback: dict[str, str],
+) -> str:
+    out: list[str] = []
+    pre = [l for l in preamble]
+    while pre and not pre[-1].strip():
+        pre.pop()
+    if pre:
+        out.extend(pre)
+        out.append("")
+    for heading in headings:
+        out.append(heading)
+        content = primary.get(heading) or fallback.get(heading) or ""
+        if content:
+            out.append(content)
+        out.append("")
+    return "\n".join(out).strip()
+
+
 def _strip_business_plan_labels(doc: str) -> str:
     """
     Remove label-style prefixes that conflict with the business plan prompt
@@ -209,6 +273,108 @@ def _strip_cover_section(doc: str) -> str:
     return "\n".join(out).strip()
 
 
+def _normalize_sales_letter(
+    doc: str,
+    *,
+    date_line: str | None,
+    client_name: str | None,
+    subject_line: str | None,
+) -> str:
+    if not doc:
+        return doc
+    lines = [l.rstrip() for l in doc.splitlines()]
+    dear_idx = next((i for i, l in enumerate(lines) if re.match(r"^\s*dear\b", l, re.IGNORECASE)), None)
+    if dear_idx is not None:
+        body_lines = lines[dear_idx + 1:]
+    else:
+        body_lines = lines[:]
+
+    while body_lines and not body_lines[0].strip():
+        body_lines.pop(0)
+    while body_lines and (
+        re.match(r"^\s*date\b", body_lines[0].strip(), re.IGNORECASE)
+        or re.match(r"^\s*\d{1,2}\s+[A-Za-z]+\s+\d{4}\s*$", body_lines[0].strip())
+    ):
+        body_lines.pop(0)
+        while body_lines and not body_lines[0].strip():
+            body_lines.pop(0)
+
+    date_text = _safe_text(date_line)
+    name = _safe_text(client_name) or "Client team"
+    subject = _safe_text(subject_line) or _narrative_fallback("subject_line")
+    subject_plain = subject.strip().lower()
+
+    preamble: list[str] = []
+    if date_text:
+        preamble.append(date_text)
+        preamble.append("")
+    preamble.append(f"To: {name}")
+    preamble.append("")
+    preamble.append(f"Dear {name},")
+    preamble.append("")
+    if subject:
+        preamble.append(f"**{subject}**")
+        preamble.append("")
+
+    filtered: list[str] = []
+    non_empty_seen = 0
+    for line in body_lines:
+        stripped = line.strip()
+        if not stripped:
+            if filtered and filtered[-1] == "":
+                continue
+            filtered.append("")
+            continue
+        non_empty_seen += 1
+        if re.match(r"^\s*to\s*:", stripped, re.IGNORECASE):
+            continue
+        if re.match(r"^\s*dear\b", stripped, re.IGNORECASE):
+            continue
+        if date_text and stripped.lower() == date_text.strip().lower():
+            continue
+        if subject_plain and stripped.lower().strip("*") == subject_plain:
+            continue
+        if non_empty_seen <= 3 and stripped.startswith("**") and stripped.endswith("**"):
+            # Remove stray bold headings at the top of the body.
+            continue
+        filtered.append(line)
+
+    while filtered and not filtered[0].strip():
+        filtered.pop(0)
+
+    return "\n".join(preamble + filtered).strip()
+
+
+def _strip_date_lines(doc: str) -> str:
+    if not doc:
+        return doc
+    lines = doc.splitlines()
+    cleaned: list[str] = []
+    for idx, line in enumerate(lines):
+        l = line.strip()
+        if idx < 6:
+            if re.match(r"^\s*date\b", l, re.IGNORECASE):
+                continue
+            if re.match(r"^\s*\d{1,2}\s+[A-Za-z]+\s+\d{4}\s*$", l):
+                continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+
+def _strip_contact_details_line(doc: str) -> str:
+    if not doc:
+        return doc
+    cleaned = []
+    for line in doc.splitlines():
+        stripped = line.strip()
+        if re.match(r"^\s*contact details\b", stripped, re.IGNORECASE):
+            continue
+        if re.search(r"contact\s+.*confirm details", stripped, re.IGNORECASE):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+
 def _build_cover_page(title: str, lines: list[str]) -> str:
     clean_lines = [l for l in lines if isinstance(l, str) and l.strip()]
     body = "\n".join(clean_lines)
@@ -266,6 +432,12 @@ def _ensure_client_proposal_format(doc: str) -> str:
 
 
 def _narrative_fallback(title: str) -> str:
+    if title in ("date",):
+        return _today_string()
+    if title in ("letter_date",):
+        return _today_string()
+    if title in ("subject_line",):
+        return "A reliable, no-drama way to keep standards consistent"
     if title in ("headline",):
         return "Reliable service that keeps your operation running smoothly without extra oversight."
     if title in ("cta",):
@@ -331,6 +503,31 @@ def _narrative_fallback(title: str) -> str:
         return (
             "The core value proposition is quality and reliability: customers receive a consistent outcome, predictable service, and a straightforward experience. "
             "The offer is positioned for busy customers who value trust, speed, and clarity over complexity."
+        )
+    if title == "business_model":
+        return (
+            "Revenue is generated through clearly packaged services with defined inclusions and a straightforward pricing approach. "
+            "The model prioritises repeatable delivery and customer retention over one-off transactions."
+        )
+    if title == "risk_market":
+        return (
+            "Market risk centres on slower adoption or lower willingness to switch providers. Mitigation focuses on clear differentiation, "
+            "early validation with target customers, and a strong proof of reliability."
+        )
+    if title == "risk_financial":
+        return (
+            "Financial risk relates to cash flow timing and cost control. Mitigation includes conservative ramp-up assumptions, tight cost discipline, "
+            "and staged investment aligned to validated demand."
+        )
+    if title == "risk_operational":
+        return (
+            "Operational risk involves delivery consistency and staffing capacity. Mitigation includes documented standards, quality checks, "
+            "and a phased hiring approach that matches demand."
+        )
+    if title == "risk_regulatory":
+        return (
+            "Regulatory risk is managed by staying aligned with UK compliance requirements, maintaining proper documentation, "
+            "and reviewing obligations as the business scales."
         )
     if title == "funding_request":
         return (
@@ -552,6 +749,59 @@ def _inject_signature_block(doc: str, lines: list[str]) -> str:
 
 
 _TEMPLATE_FIELD_RE = re.compile(r"{([a-zA-Z_][a-zA-Z0-9_]*)}")
+
+BUSINESS_PLAN_HEADINGS = [
+    "## Executive Summary",
+    "## Business Overview",
+    "### Business Model",
+    "### Legal Structure (UK)",
+    "### Registration (UK)",
+    "### Location",
+    "## Market Analysis",
+    "### Target Audience",
+    "### Competitor Analysis",
+    "### Market Trends",
+    "## Products and Services",
+    "### The Problem",
+    "### The Solution",
+    "### Pricing Strategy",
+    "## Sales and Marketing",
+    "### Branding",
+    "### Channels",
+    "### Marketing Strategy",
+    "## Operational Plan",
+    "### Suppliers",
+    "### Technology",
+    "### Insurance",
+    "## Management and Personnel",
+    "### The Team",
+    "### Hiring Plan",
+    "## Financial Plan",
+    "### Sales Forecast",
+    "### Cash Flow Statement",
+    "### Break Even Analysis",
+    "## Risk Analysis",
+    "### Market Risk",
+    "### Financial Risk",
+    "### Operational Risk",
+    "### Regulatory Risk",
+    "## Growth Strategy",
+    "## Conclusion",
+]
+
+CLIENT_PROPOSAL_HEADINGS = [
+    "## Cover Page",
+    "## Executive Summary",
+    "## Understanding of Client Needs",
+    "## Proposed Solution",
+    "## Scope of Work",
+    "## Implementation Plan / Timeline",
+    "## Pricing and Payment Terms",
+    "## Value Proposition / Benefits",
+    "## Company Information",
+    "## Terms and Conditions",
+    "## Acceptance / Call to Action",
+]
 
 
 async def _generate_section(
@@ -841,10 +1091,12 @@ async def generate_blueprint(
         llm = NoopLLMClient()
         warnings.append("Text enhancement is unavailable; returned template-only document.")
 
+    today = _today_string()
+
     if isinstance(llm, NoopLLMClient) and payload.type in ("business_plan", "client_proposal", "sales_letter"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="LLM provider not configured. Add CLAUDE_API_KEY (preferred) or another provider to generate this document.",
+            detail="LLM provider not configured. Add OPENAI_API_KEY (preferred) or another provider to generate this document.",
         )
 
     company       = _safe_text(payload.company_name)
@@ -928,6 +1180,7 @@ async def generate_blueprint(
         fallback_template: str | None,
         *,
         allow_fallback: bool = True,
+        skip_fill_keys: set[str] | None = None,
     ) -> tuple[str, str, str]:
         """
         1. Build a complete input dict (fill missing fields deterministically).
@@ -935,10 +1188,15 @@ async def generate_blueprint(
         3. Generate full document (single LLM call).
         4. If LLM returns empty, render a complete template-based fallback.
         """
+        skip = skip_fill_keys or set()
         enriched: dict[str, Any] = {}
         for k, v in raw.items():
+            key = str(k)
             val = _safe_text(v)
-            enriched[str(k)] = val if val else _narrative_fallback(str(k))
+            if val or key in skip:
+                enriched[key] = val
+            else:
+                enriched[key] = _narrative_fallback(key)
 
         doc_prompt    = build_prompt_fn(enriched)
         doc, prov, mdl = await _generate_section(llm, prompt=doc_prompt, label=f"{doc_type}_full", warnings=warnings)
@@ -1059,6 +1317,7 @@ async def generate_blueprint(
             "hook":                  hook_note,
             "funding_request":       "",
             "overview":              extra or "",
+            "business_model":        "",
             "legal_structure":       "",
             "registration":          "",
             "location":              workspace_context.get("location", ""),
@@ -1082,7 +1341,10 @@ async def generate_blueprint(
             "sales_forecast":        "",
             "cashflow_summary":      "",
             "breakeven":             "",
-            "risks":                 "",
+            "risk_market":           "",
+            "risk_financial":        "",
+            "risk_operational":      "",
+            "risk_regulatory":       "",
             "market_expansion":      "",
             "product_roadmap":       "",
             "partnerships":          "",
@@ -1097,6 +1359,86 @@ async def generate_blueprint(
         )
         doc = _strip_business_plan_labels(doc)
         doc = _strip_financial_snapshot_section(doc)
+        doc = _strip_date_lines(doc)
+        fallback_doc = _strip_financial_snapshot_section(_render_template_with_fallback(BUSINESS_PLAN_TEMPLATE, raw_inputs))
+        fallback_doc = _strip_date_lines(fallback_doc)
+        preamble, primary_sections = _extract_section_map(doc)
+        fallback_preamble, fallback_sections = _extract_section_map(fallback_doc)
+        if not any(line.startswith("# ") for line in preamble):
+            preamble = [f"# Business Plan — {company}"]
+        if len(preamble) <= 1 and fallback_preamble:
+            preamble = fallback_preamble
+
+        section_groups = {
+            "executive_summary": ["## Executive Summary"],
+            "business_overview": [
+                "## Business Overview",
+                "### Business Model",
+                "### Legal Structure (UK)",
+                "### Registration (UK)",
+                "### Location",
+            ],
+            "market_analysis": [
+                "## Market Analysis",
+                "### Target Audience",
+                "### Competitor Analysis",
+                "### Market Trends",
+            ],
+            "products_services": [
+                "## Products and Services",
+                "### The Problem",
+                "### The Solution",
+                "### Pricing Strategy",
+            ],
+            "sales_marketing": [
+                "## Sales and Marketing",
+                "### Branding",
+                "### Channels",
+                "### Marketing Strategy",
+            ],
+            "operational_plan": [
+                "## Operational Plan",
+                "### Suppliers",
+                "### Technology",
+                "### Insurance",
+            ],
+            "management_personnel": [
+                "## Management and Personnel",
+                "### The Team",
+                "### Hiring Plan",
+            ],
+            "financial_plan": [
+                "## Financial Plan",
+                "### Sales Forecast",
+                "### Cash Flow Statement",
+                "### Break Even Analysis",
+            ],
+            "risk_analysis": [
+                "## Risk Analysis",
+                "### Market Risk",
+                "### Financial Risk",
+                "### Operational Risk",
+                "### Regulatory Risk",
+            ],
+            "growth_strategy": ["## Growth Strategy"],
+            "conclusion": ["## Conclusion"],
+        }
+
+        requested_sections = [s for s in (payload.sections or []) if s in section_groups]
+        if requested_sections:
+            selected_headings: set[str] = set()
+            for sid in requested_sections:
+                selected_headings.update(section_groups[sid])
+            headings = [h for h in BUSINESS_PLAN_HEADINGS if h in selected_headings]
+        else:
+            headings = BUSINESS_PLAN_HEADINGS
+
+        doc = _rebuild_with_headings(
+            preamble=preamble,
+            headings=headings,
+            primary=primary_sections,
+            fallback=fallback_sections,
+        )
 
         if payload.include_validation_snapshot:
             snapshot = _render_validation_snapshot(currency=currency, validation=validation)
@@ -1189,12 +1531,12 @@ async def generate_blueprint(
             "Confirm scope and expectations, agree the start window, and schedule the onboarding session to begin delivery."
         )
         client_name = _safe_text(payload.bill_to) or "Client name to be confirmed"
+        contact_details = _safe_text(getattr(payload, "contact_details", None))
         raw_inputs = {
             "company_name":        company,
             "client_name":         client_name,
             "proposal_title":      _safe_text(getattr(payload, "proposal_title", None)) or f"Proposal for {client_name}",
-            "date":                "",
-            "contact_details":     _safe_text(getattr(payload, "contact_details", None)) or f"Contact {company} to confirm details",
+            "contact_details":     contact_details,
             "summary":             client_value_note or business_impact_note,
             "client_situation":    client_problem_note,
             "pain_points":         client_problem_note,
@@ -1221,6 +1563,49 @@ async def generate_blueprint(
             "Client Proposal", raw_inputs, build_client_proposal_prompt, CLIENT_PROPOSAL_TEMPLATE, allow_fallback=False
         )
         doc = _ensure_client_proposal_format(doc)
+        doc = _strip_date_lines(doc)
+        if not contact_details:
+            doc = _strip_contact_details_line(doc)
+        fallback_doc = _ensure_client_proposal_format(_render_template_with_fallback(CLIENT_PROPOSAL_TEMPLATE, raw_inputs))
+        fallback_doc = _strip_date_lines(fallback_doc)
+        if not contact_details:
+            fallback_doc = _strip_contact_details_line(fallback_doc)
+        preamble, primary_sections = _extract_section_map(doc)
+        fallback_preamble, fallback_sections = _extract_section_map(fallback_doc)
+        if not any(line.startswith("# ") for line in preamble):
+            preamble = [f"# Proposal for {client_name}"]
+        if not preamble and fallback_preamble:
+            preamble = fallback_preamble
+
+        section_groups = {
+            "cover_page": ["## Cover Page"],
+            "executive_summary": ["## Executive Summary"],
+            "client_needs": ["## Understanding of Client Needs"],
+            "proposed_solution": ["## Proposed Solution"],
+            "scope_of_work": ["## Scope of Work"],
+            "implementation_plan": ["## Implementation Plan / Timeline"],
+            "pricing_terms": ["## Pricing and Payment Terms"],
+            "value_benefits": ["## Value Proposition / Benefits"],
+            "company_info": ["## Company Information"],
+            "terms_conditions": ["## Terms and Conditions"],
+            "acceptance": ["## Acceptance / Call to Action"],
+        }
+
+        requested_sections = [s for s in (payload.sections or []) if s in section_groups]
+        if requested_sections:
+            selected_headings: set[str] = set()
+            for sid in requested_sections:
+                selected_headings.update(section_groups[sid])
+            headings = [h for h in CLIENT_PROPOSAL_HEADINGS if h in selected_headings]
+        else:
+            headings = CLIENT_PROPOSAL_HEADINGS
+
+        doc = _rebuild_with_headings(
+            preamble=preamble,
+            headings=headings,
+            primary=primary_sections,
+            fallback=fallback_sections,
+        )
         if payload.include_validation_snapshot:
             snapshot = _render_validation_snapshot(currency=currency, validation=validation)
             doc = (
@@ -1236,6 +1621,11 @@ async def generate_blueprint(
     # SALES LETTER
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     if payload.type == "sales_letter":
+        if payload.word_count is None or payload.word_count <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Enter a target word count to generate a sales letter.",
+            )
         sl_problem_note = _expand_note(
             field="problem",
             text=problem or workspace_context.get("problem", ""),
@@ -1278,13 +1668,70 @@ async def generate_blueprint(
         }
         offer_key = offer_input.strip().lower()
         offer_text = offer_map.get(offer_key, offer_input)
+        client_name = _safe_text(payload.bill_to) or target or "Client team"
+        subject_line = _safe_text(getattr(payload, "subject_lines", None))
+        followup_sequence = _safe_text(getattr(payload, "followup_sequence", None))
+
+        section_prompts = {
+            "headline": f"Write a {tone} headline line for a sales letter from {company} to {client_name}.",
+            "hook": f"Write a {tone} opening hook for a sales letter from {company} to {client_name}.",
+            "problem": f"Write a concise problem statement for {client_name} based on: {sl_problem_note}",
+            "solution": f"Write a concise solution introduction based on: {sl_solution_note}",
+            "benefits": f"Write bullet-point benefits (no numbers) for: {sl_value_note}",
+            "proof": f"Write a credibility paragraph (no numbers) for {company}. {extra}",
+            "offer": f"Write a single-sentence offer for {company}: {offer_text}",
+            "cta": f"Write a single-sentence call to action for {company}.",
+            "urgency": f"Write a single-sentence urgency line (no dates).",
+            "closing": f"Write a warm closing paragraph for a sales letter.",
+            "followup": f"Summarise this follow-up sequence in one or two sentences: {followup_sequence}",
+        }
+
+        if payload.sections:
+            outputs: list[str] = []
+            provider = "mixed"
+            model = "mixed"
+            section_titles = {
+                "headline": "Headline",
+                "hook": "Opening / Hook",
+                "problem": "Problem Statement",
+                "solution": "Solution Introduction",
+                "benefits": "Benefits",
+                "proof": "Proof / Credibility",
+                "offer": "Offer",
+                "cta": "Call to Action",
+                "urgency": "Urgency / Scarcity",
+                "closing": "Closing",
+                "followup": "Follow-up Summary",
+            }
+            for sid in payload.sections:
+                if sid not in section_prompts:
+                    continue
+                text, provider, model = await _generate_section(
+                    llm,
+                    prompt=section_prompts[sid],
+                    label=f"sales_letter_{sid}",
+                    warnings=warnings,
+                )
+                if sid == "benefits" and text:
+                    text = _ensure_bullets(text)
+                if not text:
+                    text = _narrative_fallback(sid)
+                outputs.append(f"## {section_titles.get(sid, sid)}\n{text}")
+
+            doc = f"# Sales Letter — {company}\n{today}\n\n" + "\n\n".join(outputs)
+            return await _persist_response(
+                BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
+            )
 
         raw_inputs = {
             "company_name":         company,
+            "client_name":          client_name,
             "target_audience":      target or workspace_context.get("target_market", ""),
-            "letter_date":          "Date: available upon request",
-            "recipient_block":      f"To: {target or 'Client team'}\nCompany: {company}",
-            "salutation":           target or "Client team",
+            "word_count":           f"{payload.word_count} words",
+            "letter_date":          today,
+            "recipient_block":      f"To: {client_name}",
+            "salutation":           client_name,
+            "subject_line":         subject_line,
             "headline":             _safe_text(getattr(payload, "headline", None)) or "",
             "hook":                 sl_hook_note,
             "problem_statement":    sl_problem_note,
@@ -1300,12 +1747,22 @@ async def generate_blueprint(
             "phone":                _safe_text(getattr(payload, "sender_phone", None)) or "",
             "email":                _safe_text(getattr(payload, "sender_email", None)) or "",
             "website":              _safe_text(getattr(payload, "sender_website", None)) or "",
-            "subjects":             _safe_text(getattr(payload, "subject_lines", None)) or "",
-            "followups":            _safe_text(getattr(payload, "followup_sequence", None)) or "",
+            "followup_sequence":    followup_sequence,
         }
 
         doc, provider, model = await _enrich_and_generate(
-            "Sales Letter", raw_inputs, build_sales_letter_prompt, SALES_LETTER_TEMPLATE, allow_fallback=False
+            "Sales Letter",
+            raw_inputs,
+            build_sales_letter_prompt,
+            SALES_LETTER_TEMPLATE,
+            allow_fallback=False,
+            skip_fill_keys={"subject_line", "followup_sequence"},
+        )
+        doc = _normalize_sales_letter(
+            doc,
+            date_line=today,
+            client_name=client_name,
+            subject_line=subject_line,
         )
         signature_lines = [
             _safe_text(getattr(payload, "sender_name", None)) or "Client Services Team",
@@ -1316,12 +1773,7 @@ async def generate_blueprint(
             _safe_text(getattr(payload, "sender_website", None)) or "",
         ]
         doc = _inject_signature_block(doc, signature_lines)
-        cover_lines = [
-            f"Company — {company}",
-            f"Audience — {target}" if target else "",
-            f"Offer — {value_prop}" if value_prop else "",
-        ]
-        doc = _apply_cover_page(doc, title=f"Sales Letter — {company}", lines=cover_lines)
+        # Sales letters should read like a single-page letter, no cover page.
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
         )

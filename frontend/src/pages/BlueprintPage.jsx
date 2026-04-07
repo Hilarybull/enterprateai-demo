@@ -32,6 +32,48 @@ const DOCUMENTS = [
   }
 ];
 
+const BUSINESS_PLAN_SECTIONS = [
+  { id: "executive_summary", label: "Executive summary" },
+  { id: "business_overview", label: "Business overview" },
+  { id: "market_analysis", label: "Market analysis" },
+  { id: "products_services", label: "Products & services" },
+  { id: "sales_marketing", label: "Sales & marketing" },
+  { id: "operational_plan", label: "Operational plan" },
+  { id: "management_personnel", label: "Management & personnel" },
+  { id: "financial_plan", label: "Financial plan" },
+  { id: "risk_analysis", label: "Risk analysis" },
+  { id: "growth_strategy", label: "Growth strategy" },
+  { id: "conclusion", label: "Conclusion" }
+];
+
+const CLIENT_PROPOSAL_SECTIONS = [
+  { id: "cover_page", label: "Cover page" },
+  { id: "executive_summary", label: "Executive summary" },
+  { id: "client_needs", label: "Client needs" },
+  { id: "proposed_solution", label: "Proposed solution" },
+  { id: "scope_of_work", label: "Scope of work" },
+  { id: "implementation_plan", label: "Implementation plan" },
+  { id: "pricing_terms", label: "Pricing & payment terms" },
+  { id: "value_benefits", label: "Value proposition" },
+  { id: "company_info", label: "Company information" },
+  { id: "terms_conditions", label: "Terms & conditions" },
+  { id: "acceptance", label: "Acceptance / call to action" }
+];
+
+const SALES_LETTER_SECTIONS = [
+  { id: "headline", label: "Headline" },
+  { id: "hook", label: "Opening / hook" },
+  { id: "problem", label: "Problem statement" },
+  { id: "solution", label: "Solution introduction" },
+  { id: "benefits", label: "Benefits" },
+  { id: "proof", label: "Proof / credibility" },
+  { id: "offer", label: "Offer" },
+  { id: "cta", label: "Call to action" },
+  { id: "urgency", label: "Urgency / scarcity" },
+  { id: "closing", label: "Closing" },
+  { id: "followup", label: "Follow-up summary" }
+];
+
 function pct(n) {
   const v = Math.max(0, Math.min(100, Math.round(n)));
   return `${v}%`;
@@ -91,11 +133,18 @@ export default function BlueprintPage() {
   const [editedHtmlByType, setEditedHtmlByType] = useState({});
   const [savedDocs, setSavedDocs] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [vendors, setVendors] = useState([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [customClientName, setCustomClientName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
   const [includeSnapshot, setIncludeSnapshot] = useState(false);
+  const [sectionsByDoc, setSectionsByDoc] = useState({
+    business_plan: [],
+    client_proposal: [],
+    sales_letter: []
+  });
+  const [wordCount, setWordCount] = useState("700");
 
   const selectedMeta = useMemo(() => DOCUMENTS.find((d) => d.id === selectedDoc), [selectedDoc]);
   const selectedDocResult = selectedDoc ? docByType[selectedDoc] : null;
@@ -108,6 +157,7 @@ export default function BlueprintPage() {
   const showSalesLetterExtras = selectedDoc === "sales_letter";
   const showProposalExtras = selectedDoc === "client_proposal";
   const activeCustomers = useMemo(() => customers.filter((c) => !c.archived), [customers]);
+  const activeVendors = useMemo(() => vendors.filter((v) => !v.archived), [vendors]);
   const acceptedIdeaValidation = decisionStatus === "accepted" ? ideaValidation : null;
   const OTHER_CUSTOMER_ID = "__other__";
 
@@ -185,6 +235,7 @@ export default function BlueprintPage() {
         if (!alive || !ws) return;
         const cat = ws?.data?.catalogue || {};
         setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
+        setVendors(Array.isArray(cat.vendors) ? cat.vendors : []);
       } catch {
         // ignore
       }
@@ -298,6 +349,22 @@ export default function BlueprintPage() {
     });
   }
 
+  function toggleSection(docId, sectionId) {
+    setSectionsByDoc((prev) => {
+      const current = prev[docId] || [];
+      const exists = current.includes(sectionId);
+      const next = exists ? current.filter((s) => s !== sectionId) : [...current, sectionId];
+      return { ...prev, [docId]: next };
+    });
+  }
+
+  function sectionsForDoc(docId) {
+    if (docId === "business_plan") return BUSINESS_PLAN_SECTIONS;
+    if (docId === "client_proposal") return CLIENT_PROPOSAL_SECTIONS;
+    if (docId === "sales_letter") return SALES_LETTER_SECTIONS;
+    return [];
+  }
+
   function formatPaymentTerms(value) {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -315,18 +382,20 @@ export default function BlueprintPage() {
       return;
     }
     const customer = activeCustomers.find((c) => c.id === customerId);
-    if (!customer) return;
+    const vendor = activeVendors.find((v) => v.id === customerId);
+    const entry = customer || vendor;
+    if (!entry) return;
     if (selectedDoc === "client_proposal") {
-      setBillTo(`${customer.name}`);
-      if (!targetMarket) setTargetMarket(customer.industry || customer.name);
-      if (!terms && customer.payment_terms) {
-        const formatted = formatPaymentTerms(customer.payment_terms);
+      setBillTo(`${entry.name}`);
+      if (!targetMarket) setTargetMarket(entry.industry || entry.name);
+      if (!terms && entry.payment_terms) {
+        const formatted = formatPaymentTerms(entry.payment_terms);
         if (formatted) setTerms(`Payment terms: ${formatted}`);
       }
     }
     if (selectedDoc === "sales_letter") {
-      setBillTo(`${customer.name}`);
-      if (!targetMarket) setTargetMarket(customer.name);
+      setBillTo(`${entry.name}`);
+      if (!targetMarket) setTargetMarket(entry.name);
     }
   }
 
@@ -340,6 +409,14 @@ export default function BlueprintPage() {
       setError("Select a client from your catalogue or type a client name to continue.");
       setShowInputs(true);
       return;
+    }
+    if (selectedDoc === "sales_letter") {
+      const wc = Number(wordCount);
+      if (!wc || wc <= 0) {
+        setError("Enter a target word count for the sales letter.");
+        setShowInputs(true);
+        return;
+      }
     }
     if (needsWorkspace && !workspaceId.trim()) {
       setError("Paste an Idea Validation workspace id to generate this document.");
@@ -390,7 +467,9 @@ export default function BlueprintPage() {
         sender_email: senderEmail,
         sender_website: senderWebsite,
         subject_lines: subjectLineChoice === "Other" ? subjectLineCustom : subjectLineChoice,
-        followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice
+        followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
+        sections: sectionsByDoc[selectedDoc] || [],
+        word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
       }, { timeoutMs: 120000 });
       setDocByType((prev) => ({ ...prev, [selectedDoc]: res }));
       if (res?.document_id) setDocIdByType((prev) => ({ ...prev, [selectedDoc]: res.document_id }));
@@ -432,12 +511,14 @@ export default function BlueprintPage() {
           * { box-sizing: border-box; }
           :root { color-scheme: light; }
           body { margin: 0; padding: 0; }
-          .pdf-doc { width: 190mm; padding: 14mm 10mm; font-family: "Inter", "Segoe UI", Arial, sans-serif; background: #ffffff; margin: 0 auto; }
+          .pdf-doc { width: 100%; max-width: 190mm; padding: 14mm 10mm; font-family: "Inter", "Segoe UI", Arial, sans-serif; background: #ffffff; margin: 0 auto; box-sizing: border-box; }
           .pdf-doc, .pdf-doc * { color: #0f172a !important; }
           h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }
           h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
           h3 { font-size: 14px; font-weight: 800; margin: 16px 0 6px; }
-          p, li { font-size: 12.5px; line-height: 1.7; }
+          h1, h2, h3 { break-after: avoid-page; page-break-after: avoid; }
+          h1 + p, h2 + p, h3 + p, h2 + ul, h3 + ul { break-before: avoid-page; page-break-before: avoid; }
+          p, li { font-size: 12.5px; line-height: 1.7; orphans: 3; widows: 3; }
           ul { margin: 8px 0 0 18px; padding: 0; }
           li { margin: 6px 0; }
           table { width: 100%; border-collapse: collapse; margin: 12px 0 6px; font-size: 12.5px; }
@@ -665,7 +746,7 @@ export default function BlueprintPage() {
             if (e.target === e.currentTarget) closeModal();
           }}
         >
-          <div className="ea-dialog w-full max-w-6xl h-[90vh] overflow-hidden">
+          <div className="ea-dialog w-full max-w-7xl h-[90vh] overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
               <div>
                 <div className="text-sm font-semibold text-slate-900">{selectedMeta.title}</div>
@@ -707,9 +788,43 @@ export default function BlueprintPage() {
               </div>
             ) : null}
 
-            <div className="flex h-[calc(90vh-64px)] min-h-0 overflow-hidden">
+            <div className="flex h-[calc(90vh-64px)] min-h-0 flex-col overflow-hidden lg:flex-row">
+              <div className="order-1 flex-1 min-h-0 h-full overflow-hidden bg-slate-50 p-5">
+                {selectedDocResult?.document_markdown ? (
+                  <div className="flex h-full min-h-0 flex-col gap-3">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {savedNotice ? (
+                        <div className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                          {savedNotice}
+                        </div>
+                      ) : null}
+                      <Button
+                        variant="secondary"
+                        disabled={!docIdByType[selectedDoc] || isSaving}
+                        onClick={saveEdits}
+                      >
+                        {isSaving ? "Saving..." : "Save changes"}
+                      </Button>
+                    </div>
+                    <div className="flex-1 min-h-0">
+                      <DocumentEditor
+                        title={selectedMeta.title}
+                        markdown={selectedDocResult.document_markdown}
+                        initialHtml={selectedDocResult.document_html || ""}
+                        onHtmlChange={(h) => setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: h }))}
+                        onDownload={downloadExport}
+                        onSave={saveEdits}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="ea-card border-dashed p-6 text-sm text-slate-600">
+                    Click <span className="font-semibold">Generate</span> to preview here.
+                  </div>
+                )}
+              </div>
               {showInputs ? (
-                <div className="w-full shrink-0 overflow-auto border-b border-slate-200 bg-white p-5 lg:w-[420px] lg:border-b-0 lg:border-r">
+                <div className="order-2 w-full shrink-0 overflow-auto border-t border-slate-200 bg-white p-5 lg:w-[380px] lg:border-l lg:border-t-0">
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
                     <div className="ea-label">Business name</div>
@@ -745,7 +860,7 @@ export default function BlueprintPage() {
                   {showProposalExtras || showSalesLetterExtras ? (
                     <div>
                       <div className="ea-label">Customer</div>
-                      {activeCustomers.length ? (
+                      {(activeCustomers.length || activeVendors.length) ? (
                         <>
                           <select
                             className="ea-input"
@@ -753,19 +868,32 @@ export default function BlueprintPage() {
                             onChange={(e) => applyCustomerSelection(e.target.value)}
                           >
                             <option value="">Select customer</option>
-                            {activeCustomers.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
+                            {activeCustomers.length ? (
+                              <optgroup label="Customers">
+                                {activeCustomers.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ) : null}
+                            {activeVendors.length ? (
+                              <optgroup label="Vendors">
+                                {activeVendors.map((v) => (
+                                  <option key={v.id} value={v.id}>
+                                    {v.name}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ) : null}
                             <option value={OTHER_CUSTOMER_ID}>Other (type a name)</option>
                           </select>
                           <div className="mt-1 text-[11px] text-slate-500">
-                            Selecting a customer will prefill the client details and audience.
+                            Selecting a customer or vendor will prefill the client details and audience.
                           </div>
                         </>
                       ) : null}
-                      {!activeCustomers.length || selectedCustomerId === OTHER_CUSTOMER_ID ? (
+                      {(!activeCustomers.length && !activeVendors.length) || selectedCustomerId === OTHER_CUSTOMER_ID ? (
                         <div className="mt-2">
                           <div className="ea-label">Client name</div>
                           <Input
@@ -802,6 +930,27 @@ export default function BlueprintPage() {
                         </div>
                       </div>
                     </>
+                  ) : null}
+
+                  {selectedDoc && sectionsForDoc(selectedDoc).length ? (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+                      <div className="text-sm font-semibold text-slate-900">Sections to generate (optional)</div>
+                      <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                        {sectionsForDoc(selectedDoc).map((section) => (
+                          <label key={section.id} className="flex items-center gap-2 text-xs text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={(sectionsByDoc[selectedDoc] || []).includes(section.id)}
+                              onChange={() => toggleSection(selectedDoc, section.id)}
+                            />
+                            <span>{section.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="mt-2 text-[11px] text-slate-500">
+                        Leave unchecked to generate the full document.
+                      </div>
+                    </div>
                   ) : null}
 
                   {selectedDoc === "business_plan" ? (
@@ -875,6 +1024,15 @@ export default function BlueprintPage() {
 
                   {showSalesLetterExtras ? (
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div>
+                        <div className="ea-label">Target word count</div>
+                        <Input
+                          type="number"
+                          value={wordCount}
+                          onChange={(e) => setWordCount(e.target.value)}
+                          placeholder="e.g., 700"
+                        />
+                      </div>
                       <div className="md:col-span-2">
                         <div className="ea-label">Headline angle (optional)</div>
                         <Input value={headline} onChange={(e) => setHeadline(e.target.value)} placeholder="Opening line / headline idea" />
@@ -977,41 +1135,6 @@ export default function BlueprintPage() {
                 </div>
                 </div>
               ) : null}
-
-              <div className="flex-1 min-h-0 h-full overflow-hidden bg-slate-50 p-5">
-                {selectedDocResult?.document_markdown ? (
-                  <div className="flex h-full min-h-0 flex-col gap-3">
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      {savedNotice ? (
-                        <div className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                          {savedNotice}
-                        </div>
-                      ) : null}
-                      <Button
-                        variant="secondary"
-                        disabled={!docIdByType[selectedDoc] || isSaving}
-                        onClick={saveEdits}
-                      >
-                        {isSaving ? "Saving..." : "Save changes"}
-                      </Button>
-                    </div>
-                    <div className="flex-1 min-h-0">
-                    <DocumentEditor
-                      title={selectedMeta.title}
-                      markdown={selectedDocResult.document_markdown}
-                      initialHtml={selectedDocResult.document_html || ""}
-                      onHtmlChange={(h) => setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: h }))}
-                      onDownload={downloadExport}
-                      onSave={saveEdits}
-                    />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="ea-card border-dashed p-6 text-sm text-slate-600">
-                    Click <span className="font-semibold">Generate</span> to preview here.
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </div>

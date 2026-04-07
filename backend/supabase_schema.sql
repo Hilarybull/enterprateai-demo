@@ -35,8 +35,7 @@ create table if not exists blueprint_documents (
   provider text,
   model text,
   created_at timestamptz default now(),
-  updated_at timestamptz default now(),
-  unique (user_id, type)
+  updated_at timestamptz default now()
 );
 
 create table if not exists upgrade_clicks (
@@ -124,4 +123,3 @@ create table if not exists scenario_risk_signals (
   threshold_value numeric,
   reason_code text
 );
-

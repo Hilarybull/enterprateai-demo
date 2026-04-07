@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import uuid4
 
-from app.core.supabase import sb_delete, sb_select, sb_update, sb_upsert
+from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.modules.blueprint.schemas import (
     BlueprintDocument,
     BlueprintDocumentListItem,
@@ -51,9 +51,9 @@ async def create_document(
         "updated_at": ts.isoformat(),
     }
 
-    rows = await sb_upsert("blueprint_documents", payload=payload, on_conflict="user_id,type")
+    rows = await sb_insert("blueprint_documents", payload=payload)
     if not rows:
-        raise RuntimeError("Failed to upsert document")
+        raise RuntimeError("Failed to insert document")
     return rows[0]["id"]
 
 
@@ -75,14 +75,12 @@ async def list_documents(
         limit=limit,
     )
     out: list[BlueprintDocumentListItem] = []
-    seen: set[str] = set()
     for d in data:
         doc_type = d.get("type")
-        if not doc_type or doc_type in seen:
+        if not doc_type:
             continue
         if not d.get("document_markdown"):
             continue
-        seen.add(doc_type)
         out.append(
             BlueprintDocumentListItem(
                 id=d["id"],
@@ -92,8 +90,6 @@ async def list_documents(
                 updated_at=d.get("updated_at"),
             )
         )
-        if len(out) >= limit:
-            break
     return out
 
 

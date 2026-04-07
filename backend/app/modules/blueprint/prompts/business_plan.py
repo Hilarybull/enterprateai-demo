@@ -12,7 +12,8 @@ STRICT REQUIREMENTS:
 - If a numeric value is missing, write around it in narrative form without inventing a figure.
 - Do NOT copy input phrases verbatim. Always paraphrase and expand into professional narrative.
 - Do NOT repeat the same idea across sections. Each section must add new, distinct value.
-- Minimum one full paragraph per sub section. Bullet points may supplement but never replace prose.
+- Minimum two full paragraphs per sub section. Bullet points may supplement but never replace prose.
+- Each main section should read as a mini report: detailed, specific, and multi paragraph.
 - If a field is blank or insufficient, infer from industry context and write it as natural, confident narrative.
 - Do NOT use unnecessary hyphens in the generated document. Write compound words and phrases as separate words unless the hyphen is grammatically required (e.g. well established, up to date).
 
@@ -20,6 +21,7 @@ STYLE:
 - Formal, professional British English throughout.
 - Short paragraphs, clear headings, bullet points where appropriate.
 - Specific to {company_name}, its industry, and the UK market context.
+- The full document should be comprehensive and multi-page (aim for at least ten pages when all sections are included).
 
 OUTPUT FORMAT:
 - Valid Markdown only.
