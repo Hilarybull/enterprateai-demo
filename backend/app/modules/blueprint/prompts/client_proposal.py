@@ -23,7 +23,7 @@ STYLE:
 - Short paragraphs, clear headings, bullet points where appropriate.
 - Specific to {company_name}, {client_name}, their industry, and the UK market context.
 - The proposal must feel genuinely written for {client_name}, not generic.
-- The full document should be comprehensive and multi-page (aim for at least ten pages when all sections are included).
+- The full document should be comprehensive and multi-page (aim for at least ten - fifteen pages (500 words per page) when all sections are included).
 
 OUTPUT FORMAT:
 - Valid Markdown only.

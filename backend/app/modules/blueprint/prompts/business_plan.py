@@ -1,5 +1,5 @@
 BUSINESS_PLAN_PROMPT = """
-Write a complete, submission-ready UK Business Plan for {company_name}, strictly following the outline below.
+Write a complete, submission-ready Business Plan for {company_name}, strictly following the outline below.
 This is a formal business plan — not a proposal, not a sales letter.
 
 INPUTS (some may be brief or blank — infer intelligently from context and industry norms):
@@ -21,7 +21,7 @@ STYLE:
 - Formal, professional British English throughout.
 - Short paragraphs, clear headings, bullet points where appropriate.
 - Specific to {company_name}, its industry, and the UK market context.
-- The full document should be comprehensive and multi-page (aim for at least ten pages when all sections are included).
+- The full document should be comprehensive and multi-page (aim for at least ten - fifteen pages (500 words per page) when all sections are included).
 
 OUTPUT FORMAT:
 - Valid Markdown only.

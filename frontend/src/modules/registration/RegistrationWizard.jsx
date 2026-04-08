@@ -113,6 +113,10 @@ export default function RegistrationWizard() {
         const ws = await apiRequest(`/validation/${workspaceId}`, "GET");
         if (!alive || !ws) return;
         const reg = ws?.data?.registration || {};
+        const workspaceProfile = ws?.data?.workspace_profile || {};
+        if (!companyNameTouched && !companyName && workspaceProfile.company_name) {
+          setCompanyName(workspaceProfile.company_name);
+        }
         if (!companyName && reg.company_name) setCompanyName(reg.company_name);
         if (!altName1 && reg.alt_name_1) setAltName1(reg.alt_name_1);
         if (!altName2 && reg.alt_name_2) setAltName2(reg.alt_name_2);

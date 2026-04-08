@@ -10,6 +10,7 @@ import Button from "../components/Button";
 import { useWorkspaceStore } from "../store/workspace";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import { BlueprintIllustration, IllustrationCard } from "../components/Illustrations";
+import SegmentedTabs from "../components/SegmentedTabs";
 
 const DOCUMENTS = [
   {
@@ -88,6 +89,7 @@ export default function BlueprintPage() {
   const [selectedDoc, setSelectedDoc] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showInputs, setShowInputs] = useState(true);
+  const [inputsTab, setInputsTab] = useState("inputs");
   const [companyName, setCompanyName] = useState("");
   const [industry, setIndustry] = useState("");
   const [pricingModel, setPricingModel] = useState("Subscription");
@@ -151,6 +153,25 @@ export default function BlueprintPage() {
   const [sectionTabByDoc, setSectionTabByDoc] = useState({});
   const [wordCount, setWordCount] = useState("700");
   const sectionDraftsRef = useRef(null);
+  const showSectionDrafts = Boolean(selectedDoc && sectionsForDoc(selectedDoc).length);
+
+  function SectionTile({ label, selected, onClick }) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={
+          "rounded-2xl border p-4 text-left transition " +
+          (selected
+            ? "border-brand-300 bg-brand-50 text-brand-800"
+            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50")
+        }
+      >
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+        <div className="mt-2 text-sm font-semibold">{selected ? "Selected" : "Tap to select"}</div>
+      </button>
+    );
+  }
 
   const selectedMeta = useMemo(() => DOCUMENTS.find((d) => d.id === selectedDoc), [selectedDoc]);
   const selectedDocResult = selectedDoc ? docByType[selectedDoc] : null;
@@ -185,6 +206,7 @@ export default function BlueprintPage() {
       setSelectedCustomerId("");
       setCustomClientName("");
     }
+    setInputsTab("inputs");
   }, [selectedDoc]);
 
   useEffect(() => {
@@ -937,11 +959,7 @@ export default function BlueprintPage() {
                     variant="secondary"
                     onClick={() => {
                       setShowInputs(true);
-                      requestAnimationFrame(() => {
-                        if (sectionDraftsRef.current) {
-                          sectionDraftsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-                        }
-                      });
+                      setInputsTab("sections");
                     }}
                   >
                     Section drafts
@@ -1013,6 +1031,84 @@ export default function BlueprintPage() {
               </div>
               {showInputs ? (
                 <div className="order-2 w-full shrink-0 overflow-auto border-t border-slate-200 bg-white p-5 lg:w-[380px] lg:border-l lg:border-t-0">
+                {showSectionDrafts ? (
+                  <SegmentedTabs
+                    value={inputsTab}
+                    onChange={setInputsTab}
+                    options={[
+                      { value: "inputs", label: "Inputs" },
+                      { value: "sections", label: "Section drafts" }
+                    ]}
+                    size="sm"
+                  />
+                ) : null}
+
+                {inputsTab === "sections" && showSectionDrafts ? (
+                  <div className="mt-4 space-y-3">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+                      <div className="text-sm font-semibold text-slate-900">Section drafts (standalone)</div>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        Select sections to draft. Full document generation still uses the selections from the Inputs tab.
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      {sectionsForDoc(selectedDoc).map((section) => (
+                        <SectionTile
+                          key={section.id}
+                          label={section.label}
+                          selected={(sectionsByDoc[selectedDoc] || []).includes(section.id)}
+                          onClick={() => toggleSection(selectedDoc, section.id)}
+                        />
+                      ))}
+                    </div>
+                    <div>
+                      <Button
+                        variant="secondary"
+                        disabled={isLoading || !(sectionsByDoc[selectedDoc] || []).length}
+                        onClick={generateSectionDrafts}
+                      >
+                        {isLoading ? "Generating..." : "Generate section drafts"}
+                      </Button>
+                    </div>
+                    {sectionDraftsByDoc[selectedDoc] ? (
+                      <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Section drafts</div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {(sectionsByDoc[selectedDoc] || []).map((sid) => (
+                            <button
+                              key={sid}
+                              type="button"
+                              onClick={() => setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: sid }))}
+                              className={
+                                "rounded-full border px-3 py-1 text-[11px] font-semibold " +
+                                (sectionTabByDoc[selectedDoc] === sid
+                                  ? "border-brand-300 bg-brand-50 text-brand-700"
+                                  : "border-slate-200 text-slate-600 hover:bg-slate-50")
+                              }
+                            >
+                              {sectionsForDoc(selectedDoc).find((s) => s.id === sid)?.label || sid}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="mt-3 text-sm text-slate-700">
+                          {(() => {
+                            const headingMap = sectionHeadingMap(selectedDoc);
+                            const extracted = extractSections(sectionDraftsByDoc[selectedDoc]);
+                            const activeId = sectionTabByDoc[selectedDoc] || (sectionsByDoc[selectedDoc] || [])[0];
+                            const heading = headingMap[activeId];
+                            const body = extracted[heading] || "";
+                            return body ? (
+                              <div className="whitespace-pre-wrap leading-relaxed">{body}</div>
+                            ) : (
+                              <div className="text-xs text-slate-500">No content yet. Generate section drafts to preview.</div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                <>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
                     <div className="ea-label">Business name</div>
@@ -1371,6 +1467,8 @@ export default function BlueprintPage() {
                   </div>
 
                 </div>
+                </>
+                )}
                 </div>
               ) : null}
             </div>

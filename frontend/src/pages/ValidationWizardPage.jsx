@@ -32,6 +32,18 @@ function FieldLabel({ children, info }) {
   );
 }
 
+const UPPER_ABBREVIATIONS = new Set(["llp", "sme", "smes", "b2b", "b2c", "b2g", "it", "hr", "uk", "usa"]);
+function formatEnumLabel(value) {
+  const raw = String(value || "");
+  if (!raw) return "";
+  const lower = raw.toLowerCase();
+  if (UPPER_ABBREVIATIONS.has(lower)) return raw.toUpperCase();
+  if (/^\d/.test(raw)) return raw;
+  return raw
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export default function ValidationWizardPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -55,6 +67,7 @@ export default function ValidationWizardPage() {
   const [isPrefilling, setIsPrefilling] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
   const [existingCatalogue, setExistingCatalogue] = useState({ products: [], customers: [], vendors: [] });
+  const [serviceSelection, setServiceSelection] = useState("");
 
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceNameTouched, setWorkspaceNameTouched] = useState(false);
@@ -150,6 +163,13 @@ export default function ValidationWizardPage() {
     primary_revenue_model: "",
     key_offering_focus: ""
   }));
+  const workspaceServices = useMemo(
+    () =>
+      Array.isArray(profile.services)
+        ? profile.services.filter((s) => String(s?.service_name || "").trim())
+        : [],
+    [profile.services]
+  );
 
   const isProductPath = form.pathway === "product_service_idea";
   const formBlocks = useMemo(() => {
@@ -276,6 +296,12 @@ export default function ValidationWizardPage() {
                 : prev.services,
               core_values: Array.isArray(wp.core_values) ? wp.core_values.join(", ") : prev.core_values
             }));
+            if (wp.company_name && !form?.context?.business_name) {
+              update("context.business_name", wp.company_name);
+            }
+            if (wp.primary_industry && !form?.context?.primary_industry_category) {
+              update("context.primary_industry_category", wp.primary_industry);
+            }
           }
           setWorkspaceId(wsId);
           setWorkspaceNameStore(ws?.name || null);
@@ -300,6 +326,12 @@ export default function ValidationWizardPage() {
               : prev.services,
             core_values: Array.isArray(wp.core_values) ? wp.core_values.join(", ") : prev.core_values
           }));
+          if (wp.company_name && !next.context.business_name) {
+            next.context.business_name = wp.company_name;
+          }
+          if (wp.primary_industry && !next.context.primary_industry) {
+            next.context.primary_industry = wp.primary_industry;
+          }
         }
         const next = structuredClone(iv);
         const bt = String(next?.context?.business_type ?? "").trim();
@@ -842,7 +874,48 @@ export default function ValidationWizardPage() {
                       <FieldLabel info="Short description of what you're building.">
                         {isProductPath ? "What product or service are you building?" : "What are you building?"}
                       </FieldLabel>
-                      <Input value={form.offer.service_type} onChange={(e) => update("offer.service_type", e.target.value)} />
+                      {isProductPath && workspaceServices.length ? (
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                          <select
+                            className="ea-input"
+                            value={serviceSelection}
+                            onChange={(e) => {
+                              const nextValue = e.target.value;
+                              setServiceSelection(nextValue);
+                              if (!nextValue) return;
+                              if (nextValue === "__other__") {
+                                update("offer.service_type", "");
+                                return;
+                              }
+                              const svc = workspaceServices.find((s) => s.service_name === nextValue);
+                              if (svc) {
+                                update("offer.service_type", svc.service_name);
+                                if (!form.problem.problem_type && svc.service_description) {
+                                  update("problem.problem_type", svc.service_description);
+                                }
+                              }
+                            }}
+                          >
+                            <option value="">Select from workspace services</option>
+                            {workspaceServices.map((svc) => (
+                              <option key={svc.service_name} value={svc.service_name}>
+                                {svc.service_name}
+                              </option>
+                            ))}
+                            <option value="__other__">Other (type new)</option>
+                          </select>
+                          <Input
+                            value={form.offer.service_type}
+                            onChange={(e) => {
+                              setServiceSelection("__other__");
+                              update("offer.service_type", e.target.value);
+                            }}
+                            placeholder="Type product/service"
+                          />
+                        </div>
+                      ) : (
+                        <Input value={form.offer.service_type} onChange={(e) => update("offer.service_type", e.target.value)} />
+                      )}
                     </div>
                     <div>
                       <FieldLabel info="Choose the closest category.">
@@ -901,13 +974,13 @@ export default function ValidationWizardPage() {
                     <div>
                       <FieldLabel>Business type *</FieldLabel>
                       <select value={profile.business_type} onChange={(e) => updateProfile("business_type", e.target.value)} className="ea-input">
-                        {PROFILE_BUSINESS_TYPES.map((o) => (<option key={o} value={o}>{o.replaceAll("_", " ")}</option>))}
+                        {PROFILE_BUSINESS_TYPES.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                       </select>
                     </div>
                     <div>
                       <FieldLabel>Primary industry *</FieldLabel>
                       <select value={profile.primary_industry} onChange={(e) => updateProfile("primary_industry", e.target.value)} className="ea-input">
-                        {PROFILE_INDUSTRIES.map((o) => (<option key={o} value={o}>{o.replaceAll("_", " ")}</option>))}
+                        {PROFILE_INDUSTRIES.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                       </select>
                     </div>
                     <div className="md:col-span-2 lg:col-span-3">
@@ -925,7 +998,7 @@ export default function ValidationWizardPage() {
                     <div>
                       <FieldLabel>Company size</FieldLabel>
                       <select value={profile.company_size} onChange={(e) => updateProfile("company_size", e.target.value)} className="ea-input">
-                        {PROFILE_COMPANY_SIZES.map((o) => (<option key={o} value={o}>{o}</option>))}
+                        {PROFILE_COMPANY_SIZES.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                       </select>
                     </div>
 
@@ -952,7 +1025,7 @@ export default function ValidationWizardPage() {
                               }}
                               className="ea-input"
                             >
-                              {PROFILE_INDUSTRIES.map((o) => (<option key={o} value={o}>{o.replaceAll("_", " ")}</option>))}
+                              {PROFILE_INDUSTRIES.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                             </select>
                             <Input
                               value={svc.service_description}
@@ -1058,7 +1131,7 @@ export default function ValidationWizardPage() {
                       <FieldLabel>Monthly revenue range</FieldLabel>
                       <select value={profile.monthly_revenue_range} onChange={(e) => updateProfile("monthly_revenue_range", e.target.value)} className="ea-input">
                         <option value="">Select</option>
-                        {PROFILE_MONTHLY_REVENUE.map((o) => (<option key={o} value={o}>{o}</option>))}
+                        {PROFILE_MONTHLY_REVENUE.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                       </select>
                     </div>
                     <div>
@@ -1068,27 +1141,27 @@ export default function ValidationWizardPage() {
                     <div>
                       <FieldLabel>Operating stage *</FieldLabel>
                       <select value={profile.operating_stage} onChange={(e) => updateProfile("operating_stage", e.target.value)} className="ea-input">
-                        {PROFILE_OPERATING_STAGE.map((o) => (<option key={o} value={o}>{o.replaceAll("_", " ")}</option>))}
+                        {PROFILE_OPERATING_STAGE.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                       </select>
                     </div>
                     <div>
                       <FieldLabel>Delivery model *</FieldLabel>
                       <select value={profile.delivery_model} onChange={(e) => updateProfile("delivery_model", e.target.value)} className="ea-input">
-                        {PROFILE_DELIVERY_MODEL.map((o) => (<option key={o} value={o}>{o}</option>))}
+                        {PROFILE_DELIVERY_MODEL.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                       </select>
                     </div>
                     <div>
                       <FieldLabel>Target customer type</FieldLabel>
                       <select value={profile.target_customer_type} onChange={(e) => updateProfile("target_customer_type", e.target.value)} className="ea-input">
                         <option value="">Select</option>
-                        {PROFILE_TARGET_CUSTOMER.map((o) => (<option key={o} value={o}>{o}</option>))}
+                        {PROFILE_TARGET_CUSTOMER.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                       </select>
                     </div>
                     <div>
                       <FieldLabel>Primary revenue model</FieldLabel>
                       <select value={profile.primary_revenue_model} onChange={(e) => updateProfile("primary_revenue_model", e.target.value)} className="ea-input">
                         <option value="">Select</option>
-                        {PROFILE_REVENUE_MODEL.map((o) => (<option key={o} value={o}>{o.replaceAll("_", " ")}</option>))}
+                        {PROFILE_REVENUE_MODEL.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                       </select>
                     </div>
                     <div className="md:col-span-2 lg:col-span-3">
