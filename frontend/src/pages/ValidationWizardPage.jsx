@@ -37,6 +37,7 @@ export default function ValidationWizardPage() {
   const [searchParams] = useSearchParams();
   const editingWorkspaceId = searchParams.get("workspace_id");
   const fromOtherModule = searchParams.get("from") === "module";
+  const isCreateWorkspace = fromOtherModule;
   const returnTo = searchParams.get("return");
   const storedWorkspaceId = useWorkspaceStore((s) => s.workspaceId);
 
@@ -68,6 +69,40 @@ export default function ValidationWizardPage() {
     []
   );
 
+  const PROFILE_BUSINESS_TYPES = useMemo(
+    () => ["sole_trader", "partnership", "limited_company", "llp", "non_profit", "startup"],
+    []
+  );
+  const PROFILE_INDUSTRIES = useMemo(
+    () => [
+      "consulting",
+      "technology",
+      "finance",
+      "healthcare",
+      "education",
+      "retail",
+      "ecommerce",
+      "logistics",
+      "manufacturing",
+      "real_estate",
+      "marketing",
+      "other"
+    ],
+    []
+  );
+  const PROFILE_COMPANY_SIZES = useMemo(() => ["solo", "2-5", "6-10", "11-50", "51-200", "200+"], []);
+  const PROFILE_MONTHLY_REVENUE = useMemo(
+    () => ["0-1k", "1k-5k", "5k-10k", "10k-50k", "50k-100k", "100k+"],
+    []
+  );
+  const PROFILE_OPERATING_STAGE = useMemo(
+    () => ["idea", "pre_revenue", "early_revenue", "growing", "established"],
+    []
+  );
+  const PROFILE_DELIVERY_MODEL = useMemo(() => ["manual", "hybrid", "automated"], []);
+  const PROFILE_TARGET_CUSTOMER = useMemo(() => ["individual", "startup", "SME", "corporate"], []);
+  const PROFILE_REVENUE_MODEL = useMemo(() => ["one_off", "subscription", "retainer", "project_based", "mixed"], []);
+
   const [form, setForm] = useState(() => ({
     pathway: "business_idea",
     context: { business_name: "", business_type_category: "Technology", business_type_other: "", primary_industry_category: "IT", primary_industry_other: "", location: "", currency: "GBP", founder_hours_per_week: "40", stage: "idea" },
@@ -79,10 +114,55 @@ export default function ValidationWizardPage() {
     cash: { starting_cash: "", upfront_costs: "" },
     go_to_market: { target_market: "B2C", customer_budget_level: "Unknown", sub_industry: "", channels: [] }
   }));
+  const [profile, setProfile] = useState(() => ({
+    company_name: "",
+    legal_name: "",
+    registration_number: "",
+    business_type: "limited_company",
+    primary_industry: "consulting",
+    secondary_industries: [],
+    about_company: "",
+    tagline: "",
+    year_established: "",
+    company_size: "solo",
+    services: [{ service_name: "", service_category: "consulting", service_description: "" }],
+    vision: "",
+    mission: "",
+    core_values: "",
+    country: "",
+    city: "",
+    state_or_region: "",
+    postcode: "",
+    address_line_1: "",
+    address_line_2: "",
+    email: "",
+    phone_number: "",
+    website: "",
+    linkedin_url: "",
+    twitter_url: "",
+    instagram_url: "",
+    facebook_url: "",
+    monthly_revenue_range: "",
+    employee_count: "",
+    operating_stage: "idea",
+    delivery_model: "manual",
+    target_customer_type: "",
+    primary_revenue_model: "",
+    key_offering_focus: ""
+  }));
 
   const isProductPath = form.pathway === "product_service_idea";
-  const formBlocks = useMemo(
-    () => [
+  const formBlocks = useMemo(() => {
+    if (isCreateWorkspace) {
+      return [
+        {
+          key: "workspace_profile",
+          label: "Workspace profile",
+          desc: "Identity, services, operations, and contact details."
+        }
+      ];
+    }
+    return [
       {
         key: "business",
         label: "Workspace details",
@@ -92,18 +172,25 @@ export default function ValidationWizardPage() {
       { key: "costs", label: "Costs", desc: "Fixed and variable costs behind the model." },
       { key: "capacity_cash", label: "Capacity & cash", desc: "Capacity assumptions and starting cash/runway inputs." },
       { key: "go_to_market", label: "Go-to-market", desc: "Target market and acquisition channels." }
-    ],
-    []
-  );
+    ];
+  }, [isCreateWorkspace]);
 
-  const [enabledForms, setEnabledForms] = useState(() => ({ business: true, offer_demand: true, costs: true, capacity_cash: true, go_to_market: true }));
+  const [enabledForms, setEnabledForms] = useState(() =>
+    isCreateWorkspace
+      ? { workspace_profile: true }
+      : { business: true, offer_demand: true, costs: true, capacity_cash: true, go_to_market: true }
+  );
   const selectedCount = useMemo(() => Object.values(enabledForms).filter(Boolean).length, [enabledForms]);
 
   const derivedWorkspaceName = useMemo(() => {
+    if (isCreateWorkspace) {
+      const pn = String(profile?.company_name || "").trim();
+      return pn || "Workspace";
+    }
     const bn = String(form?.context?.business_name || "").trim();
     if (!bn) return isProductPath ? "Product Validation" : "Idea Validation";
     return `${bn} - Validation`;
-  }, [form?.context?.business_name, isProductPath]);
+  }, [form?.context?.business_name, isCreateWorkspace, isProductPath, profile?.company_name]);
 
   const recommendedCapacityPerPerson = useMemo(() => {
     const target = parseNumber(form?.demand?.expected_units_per_month, 0);
@@ -145,6 +232,22 @@ export default function ValidationWizardPage() {
   useEffect(() => setCurrency(form?.context?.currency || "USD"), [form?.context?.currency, setCurrency]);
 
   useEffect(() => {
+    if (isCreateWorkspace) {
+      setEnabledForms({ workspace_profile: true });
+      setMode("fill");
+      return;
+    }
+    setEnabledForms((prev) => ({
+      business: true,
+      offer_demand: true,
+      costs: true,
+      capacity_cash: true,
+      go_to_market: true,
+      ...(prev.workspace_profile ? {} : {})
+    }));
+  }, [isCreateWorkspace]);
+
+  useEffect(() => {
     async function prefill() {
       const wsId = editingWorkspaceId || storedWorkspaceId;
       if (!wsId) return;
@@ -163,6 +266,17 @@ export default function ValidationWizardPage() {
             if (profile.location) update("context.location", profile.location);
             if (profile.currency) update("context.currency", profile.currency);
           }
+          const wp = ws?.data?.workspace_profile;
+          if (wp && typeof wp === "object") {
+            setProfile((prev) => ({
+              ...prev,
+              ...wp,
+              services: Array.isArray(wp.services) && wp.services.length
+                ? wp.services
+                : prev.services,
+              core_values: Array.isArray(wp.core_values) ? wp.core_values.join(", ") : prev.core_values
+            }));
+          }
           setWorkspaceId(wsId);
           setWorkspaceNameStore(ws?.name || null);
           setDecisionStatus(ws?.data?.decision?.status || null);
@@ -176,6 +290,17 @@ export default function ValidationWizardPage() {
         setIdeaValidation(iv);
         setWorkspaceName(ws?.name || "");
         setWorkspaceNameTouched(true);
+        const wp = ws?.data?.workspace_profile;
+        if (wp && typeof wp === "object") {
+          setProfile((prev) => ({
+            ...prev,
+            ...wp,
+            services: Array.isArray(wp.services) && wp.services.length
+              ? wp.services
+              : prev.services,
+            core_values: Array.isArray(wp.core_values) ? wp.core_values.join(", ") : prev.core_values
+          }));
+        }
         const next = structuredClone(iv);
         const bt = String(next?.context?.business_type ?? "").trim();
         next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : "Other";
@@ -224,11 +349,41 @@ export default function ValidationWizardPage() {
     });
   }
 
+  function updateProfile(path, value) {
+    setProfile((prev) => {
+      const next = structuredClone(prev);
+      const keys = path.split(".");
+      let cur = next;
+      for (let i = 0; i < keys.length - 1; i++) cur = cur[keys[i]];
+      cur[keys[keys.length - 1]] = value;
+      return next;
+    });
+  }
+
+  function validateProfileDraft() {
+    if (!enabledForms.workspace_profile) return null;
+    if (!String(profile.company_name || "").trim()) return "Company name is required in the workspace profile.";
+    if (!String(profile.business_type || "").trim()) return "Business type is required in the workspace profile.";
+    if (!String(profile.primary_industry || "").trim()) return "Primary industry is required in the workspace profile.";
+    if (!String(profile.about_company || "").trim()) return "About company is required in the workspace profile.";
+    if (!String(profile.country || "").trim()) return "Country is required in the workspace profile.";
+    if (!String(profile.city || "").trim()) return "City is required in the workspace profile.";
+    if (!String(profile.email || "").trim()) return "Email is required in the workspace profile.";
+    if (!String(profile.operating_stage || "").trim()) return "Operating stage is required in the workspace profile.";
+    if (!String(profile.delivery_model || "").trim()) return "Delivery model is required in the workspace profile.";
+    const svc = Array.isArray(profile.services) ? profile.services : [];
+    if (!svc.length || svc.some((s) => !String(s.service_name || "").trim() || !String(s.service_category || "").trim())) {
+      return "Add at least one service with a name and category.";
+    }
+    return null;
+  }
+
   const canRun = useMemo(() => {
+    if (isCreateWorkspace) return !validateProfileDraft();
     const bn = String(form.context.business_name || "").trim();
     const sn = String(form.offer?.service_type || "").trim();
     return bn.length >= 2 || sn.length >= 2;
-  }, [form.context.business_name, form.offer?.service_type]);
+  }, [form.context.business_name, form.offer?.service_type, isCreateWorkspace, profile, enabledForms.workspace_profile]);
   const canEdit = !isLoading && !isPrefilling;
 
   function startFilling() {
@@ -242,7 +397,121 @@ export default function ValidationWizardPage() {
     setError(null);
     setSavedNotice(null);
     try {
-      const wsName = String(workspaceName || "").trim() || derivedWorkspaceName;
+      const profileError = validateProfileDraft();
+      if (profileError) {
+        setError(profileError);
+        setIsLoading(false);
+        return;
+      }
+      const wsName = String((isCreateWorkspace ? profile.company_name : workspaceName) || "").trim() || derivedWorkspaceName;
+
+      let wsId = editingWorkspaceId || storedWorkspaceId;
+      if (isCreateWorkspace) {
+        const profilePayload = {
+          ...profile,
+          company_name: String(profile.company_name || "").trim(),
+          legal_name: String(profile.legal_name || "").trim() || null,
+          registration_number: String(profile.registration_number || "").trim() || null,
+          about_company: String(profile.about_company || "").trim(),
+          tagline: String(profile.tagline || "").trim() || null,
+          year_established: profile.year_established ? Number(profile.year_established) : null,
+          company_size: profile.company_size || null,
+          core_values: String(profile.core_values || "")
+            .split(",")
+            .map((v) => v.trim())
+            .filter(Boolean),
+          secondary_industries: Array.isArray(profile.secondary_industries)
+            ? profile.secondary_industries.filter(Boolean)
+            : [],
+          services: (profile.services || []).map((s) => ({
+            service_name: String(s.service_name || "").trim(),
+            service_category: s.service_category,
+            service_description: String(s.service_description || "").trim() || null
+          })),
+          country: String(profile.country || "").trim(),
+          city: String(profile.city || "").trim(),
+          state_or_region: String(profile.state_or_region || "").trim() || null,
+          postcode: String(profile.postcode || "").trim() || null,
+          address_line_1: String(profile.address_line_1 || "").trim() || null,
+          address_line_2: String(profile.address_line_2 || "").trim() || null,
+          email: String(profile.email || "").trim(),
+          phone_number: String(profile.phone_number || "").trim() || null,
+          website: String(profile.website || "").trim() || null,
+          linkedin_url: String(profile.linkedin_url || "").trim() || null,
+          twitter_url: String(profile.twitter_url || "").trim() || null,
+          instagram_url: String(profile.instagram_url || "").trim() || null,
+          facebook_url: String(profile.facebook_url || "").trim() || null,
+          monthly_revenue_range: profile.monthly_revenue_range || null,
+          employee_count: profile.employee_count ? Number(profile.employee_count) : null,
+          operating_stage: profile.operating_stage,
+          delivery_model: profile.delivery_model,
+          target_customer_type: profile.target_customer_type || null,
+          primary_revenue_model: profile.primary_revenue_model || null,
+          key_offering_focus: String(profile.key_offering_focus || "").trim() || null
+        };
+
+        const existingProducts = Array.isArray(existingCatalogue?.products) ? existingCatalogue.products : [];
+        const serviceProducts = profilePayload.services
+          .filter((s) => s.service_name)
+          .map((s) => ({
+            id: crypto.randomUUID(),
+            name: s.service_name,
+            type: "service",
+            base_price: 0,
+            discount: 0,
+            freight_cost: 0,
+            archived: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }));
+        const nextProducts = serviceProducts.reduce((acc, svc) => {
+          const exists = acc.some((p) => String(p?.name || "").trim().toLowerCase() === svc.name.toLowerCase());
+          return exists ? acc : [svc, ...acc];
+        }, existingProducts);
+        const nextCatalogue = {
+          products: nextProducts,
+          customers: Array.isArray(existingCatalogue?.customers) ? existingCatalogue.customers : [],
+          vendors: Array.isArray(existingCatalogue?.vendors) ? existingCatalogue.vendors : []
+        };
+
+        if (wsId) {
+          await apiRequest(
+            `/validation/${wsId}`,
+            "PATCH",
+            { data: { catalogue: nextCatalogue } },
+            { timeoutMs: 120000 }
+          );
+        } else {
+          const ws = await apiRequest(
+            "/validation/create",
+            "POST",
+            { name: wsName, data: { catalogue: nextCatalogue } },
+            { timeoutMs: 120000 }
+          );
+          wsId = ws.id;
+        }
+
+        setWorkspaceId(wsId);
+        setWorkspaceNameStore(wsName);
+        setDecisionStatus(null);
+        setIdeaValidation(null);
+
+        await apiRequest(
+          "/workspace/profile",
+          "POST",
+          { workspace_id: wsId, profile: profilePayload },
+          { timeoutMs: 120000 }
+        );
+
+        setSavedNotice("Workspace saved.");
+        if (returnTo) {
+          navigate(returnTo, { replace: true });
+        } else {
+          navigate("/dashboard", { replace: true });
+        }
+        return;
+      }
+
       const payload = structuredClone(form);
       payload.existing_business = null;
       const bt = String(payload.context.business_type_category || "").trim();
@@ -313,7 +582,6 @@ export default function ValidationWizardPage() {
         customers: Array.isArray(existingCatalogue?.customers) ? existingCatalogue.customers : [],
         vendors: Array.isArray(existingCatalogue?.vendors) ? existingCatalogue.vendors : []
       };
-      let wsId = editingWorkspaceId || storedWorkspaceId;
       if (wsId) {
         await apiRequest(
           `/validation/${wsId}`,
@@ -338,6 +606,57 @@ export default function ValidationWizardPage() {
         setDecisionStatus(null);
         setIdeaValidation(payload);
       }
+
+      if (enabledForms.workspace_profile) {
+        const profilePayload = {
+          ...profile,
+          company_name: String(profile.company_name || "").trim(),
+          legal_name: String(profile.legal_name || "").trim() || null,
+          registration_number: String(profile.registration_number || "").trim() || null,
+          about_company: String(profile.about_company || "").trim(),
+          tagline: String(profile.tagline || "").trim() || null,
+          year_established: profile.year_established ? Number(profile.year_established) : null,
+          company_size: profile.company_size || null,
+          core_values: String(profile.core_values || "")
+            .split(",")
+            .map((v) => v.trim())
+            .filter(Boolean),
+          secondary_industries: Array.isArray(profile.secondary_industries)
+            ? profile.secondary_industries.filter(Boolean)
+            : [],
+          services: (profile.services || []).map((s) => ({
+            service_name: String(s.service_name || "").trim(),
+            service_category: s.service_category,
+            service_description: String(s.service_description || "").trim() || null
+          })),
+          country: String(profile.country || "").trim(),
+          city: String(profile.city || "").trim(),
+          state_or_region: String(profile.state_or_region || "").trim() || null,
+          postcode: String(profile.postcode || "").trim() || null,
+          address_line_1: String(profile.address_line_1 || "").trim() || null,
+          address_line_2: String(profile.address_line_2 || "").trim() || null,
+          email: String(profile.email || "").trim(),
+          phone_number: String(profile.phone_number || "").trim() || null,
+          website: String(profile.website || "").trim() || null,
+          linkedin_url: String(profile.linkedin_url || "").trim() || null,
+          twitter_url: String(profile.twitter_url || "").trim() || null,
+          instagram_url: String(profile.instagram_url || "").trim() || null,
+          facebook_url: String(profile.facebook_url || "").trim() || null,
+          monthly_revenue_range: profile.monthly_revenue_range || null,
+          employee_count: profile.employee_count ? Number(profile.employee_count) : null,
+          operating_stage: profile.operating_stage,
+          delivery_model: profile.delivery_model,
+          target_customer_type: profile.target_customer_type || null,
+          primary_revenue_model: profile.primary_revenue_model || null,
+          key_offering_focus: String(profile.key_offering_focus || "").trim() || null
+        };
+        await apiRequest(
+          "/workspace/profile",
+          "POST",
+          { workspace_id: wsId, profile: profilePayload },
+          { timeoutMs: 120000 }
+        );
+      }
       if (shouldEvaluate) {
         const result = await apiRequest(
           "/validation/evaluate",
@@ -354,7 +673,7 @@ export default function ValidationWizardPage() {
           if (returnTo) {
             navigate(returnTo, { replace: true });
           } else {
-            navigate("/validation", { replace: true });
+            navigate("/dashboard", { replace: true });
           }
         }
       }
@@ -389,9 +708,13 @@ export default function ValidationWizardPage() {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">Sections selected: {selectedCount} / {formBlocks.length}</div>
-        </div>
+        {!isCreateWorkspace ? (
+          <div className="flex items-center gap-2">
+            <div className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
+              Sections selected: {selectedCount} / {formBlocks.length}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-6">
@@ -414,7 +737,7 @@ export default function ValidationWizardPage() {
           </div>
         ) : null}
 
-        {mode === "select" ? (
+        {mode === "select" && !isCreateWorkspace ? (
           <>
             {!fromOtherModule ? (
               <SectionCard
@@ -552,6 +875,225 @@ export default function ValidationWizardPage() {
                     <div>
                       <FieldLabel info="Your weekly availability.">Founder hours / week</FieldLabel>
                       <NumberInput placeholder="40" value={form.context.founder_hours_per_week} onChange={(v) => update("context.founder_hours_per_week", v)} />
+                    </div>
+                  </div>
+                </details>
+              ) : null}
+
+              {enabledForms.workspace_profile ? (
+                <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
+                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+                    Workspace profile
+                  </summary>
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="md:col-span-2 lg:col-span-3">
+                      <FieldLabel info="Legal or trading name.">Company name *</FieldLabel>
+                      <Input value={profile.company_name} onChange={(e) => updateProfile("company_name", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Legal name</FieldLabel>
+                      <Input value={profile.legal_name} onChange={(e) => updateProfile("legal_name", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Registration number</FieldLabel>
+                      <Input value={profile.registration_number} onChange={(e) => updateProfile("registration_number", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Business type *</FieldLabel>
+                      <select value={profile.business_type} onChange={(e) => updateProfile("business_type", e.target.value)} className="ea-input">
+                        {PROFILE_BUSINESS_TYPES.map((o) => (<option key={o} value={o}>{o.replaceAll("_", " ")}</option>))}
+                      </select>
+                    </div>
+                    <div>
+                      <FieldLabel>Primary industry *</FieldLabel>
+                      <select value={profile.primary_industry} onChange={(e) => updateProfile("primary_industry", e.target.value)} className="ea-input">
+                        {PROFILE_INDUSTRIES.map((o) => (<option key={o} value={o}>{o.replaceAll("_", " ")}</option>))}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2 lg:col-span-3">
+                      <FieldLabel info="Short overview of what you do.">About company *</FieldLabel>
+                      <textarea value={profile.about_company} onChange={(e) => updateProfile("about_company", e.target.value)} className="min-h-20 ea-input" />
+                    </div>
+                    <div className="md:col-span-2 lg:col-span-3">
+                      <FieldLabel>Tagline</FieldLabel>
+                      <Input value={profile.tagline} onChange={(e) => updateProfile("tagline", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Year established</FieldLabel>
+                      <Input type="number" value={profile.year_established} onChange={(e) => updateProfile("year_established", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Company size</FieldLabel>
+                      <select value={profile.company_size} onChange={(e) => updateProfile("company_size", e.target.value)} className="ea-input">
+                        {PROFILE_COMPANY_SIZES.map((o) => (<option key={o} value={o}>{o}</option>))}
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-2 lg:col-span-3">
+                      <FieldLabel info="Add your services. At least one is required.">Services *</FieldLabel>
+                      <div className="space-y-2">
+                        {profile.services.map((svc, idx) => (
+                          <div key={idx} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 p-3 md:grid-cols-3">
+                            <Input
+                              value={svc.service_name}
+                              onChange={(e) => {
+                                const next = structuredClone(profile.services);
+                                next[idx].service_name = e.target.value;
+                                updateProfile("services", next);
+                              }}
+                              placeholder="Service name"
+                            />
+                            <select
+                              value={svc.service_category}
+                              onChange={(e) => {
+                                const next = structuredClone(profile.services);
+                                next[idx].service_category = e.target.value;
+                                updateProfile("services", next);
+                              }}
+                              className="ea-input"
+                            >
+                              {PROFILE_INDUSTRIES.map((o) => (<option key={o} value={o}>{o.replaceAll("_", " ")}</option>))}
+                            </select>
+                            <Input
+                              value={svc.service_description}
+                              onChange={(e) => {
+                                const next = structuredClone(profile.services);
+                                next[idx].service_description = e.target.value;
+                                updateProfile("services", next);
+                              }}
+                              placeholder="Service description"
+                            />
+                            <div className="md:col-span-3 flex justify-end">
+                              <Button
+                                variant="ghost"
+                                disabled={profile.services.length <= 1}
+                                onClick={() => {
+                                  const next = profile.services.filter((_, i) => i !== idx);
+                                  updateProfile("services", next);
+                                }}
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                        <Button
+                          variant="secondary"
+                          onClick={() => updateProfile("services", [...profile.services, { service_name: "", service_category: "consulting", service_description: "" }])}
+                        >
+                          Add service
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <FieldLabel>Vision</FieldLabel>
+                      <Input value={profile.vision} onChange={(e) => updateProfile("vision", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Mission</FieldLabel>
+                      <Input value={profile.mission} onChange={(e) => updateProfile("mission", e.target.value)} />
+                    </div>
+                    <div className="md:col-span-2 lg:col-span-3">
+                      <FieldLabel>Core values (comma separated)</FieldLabel>
+                      <Input value={profile.core_values} onChange={(e) => updateProfile("core_values", e.target.value)} />
+                    </div>
+
+                    <div>
+                      <FieldLabel>Country *</FieldLabel>
+                      <Input value={profile.country} onChange={(e) => updateProfile("country", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>City *</FieldLabel>
+                      <Input value={profile.city} onChange={(e) => updateProfile("city", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>State / Region</FieldLabel>
+                      <Input value={profile.state_or_region} onChange={(e) => updateProfile("state_or_region", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Postcode</FieldLabel>
+                      <Input value={profile.postcode} onChange={(e) => updateProfile("postcode", e.target.value)} />
+                    </div>
+                    <div className="md:col-span-2 lg:col-span-3">
+                      <FieldLabel>Address line 1</FieldLabel>
+                      <Input value={profile.address_line_1} onChange={(e) => updateProfile("address_line_1", e.target.value)} />
+                    </div>
+                    <div className="md:col-span-2 lg:col-span-3">
+                      <FieldLabel>Address line 2</FieldLabel>
+                      <Input value={profile.address_line_2} onChange={(e) => updateProfile("address_line_2", e.target.value)} />
+                    </div>
+
+                    <div>
+                      <FieldLabel>Email *</FieldLabel>
+                      <Input value={profile.email} onChange={(e) => updateProfile("email", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Phone</FieldLabel>
+                      <Input value={profile.phone_number} onChange={(e) => updateProfile("phone_number", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Website</FieldLabel>
+                      <Input value={profile.website} onChange={(e) => updateProfile("website", e.target.value)} />
+                    </div>
+
+                    <div>
+                      <FieldLabel>LinkedIn</FieldLabel>
+                      <Input value={profile.linkedin_url} onChange={(e) => updateProfile("linkedin_url", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Twitter</FieldLabel>
+                      <Input value={profile.twitter_url} onChange={(e) => updateProfile("twitter_url", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Instagram</FieldLabel>
+                      <Input value={profile.instagram_url} onChange={(e) => updateProfile("instagram_url", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Facebook</FieldLabel>
+                      <Input value={profile.facebook_url} onChange={(e) => updateProfile("facebook_url", e.target.value)} />
+                    </div>
+
+                    <div>
+                      <FieldLabel>Monthly revenue range</FieldLabel>
+                      <select value={profile.monthly_revenue_range} onChange={(e) => updateProfile("monthly_revenue_range", e.target.value)} className="ea-input">
+                        <option value="">Select</option>
+                        {PROFILE_MONTHLY_REVENUE.map((o) => (<option key={o} value={o}>{o}</option>))}
+                      </select>
+                    </div>
+                    <div>
+                      <FieldLabel>Employee count</FieldLabel>
+                      <Input type="number" value={profile.employee_count} onChange={(e) => updateProfile("employee_count", e.target.value)} />
+                    </div>
+                    <div>
+                      <FieldLabel>Operating stage *</FieldLabel>
+                      <select value={profile.operating_stage} onChange={(e) => updateProfile("operating_stage", e.target.value)} className="ea-input">
+                        {PROFILE_OPERATING_STAGE.map((o) => (<option key={o} value={o}>{o.replaceAll("_", " ")}</option>))}
+                      </select>
+                    </div>
+                    <div>
+                      <FieldLabel>Delivery model *</FieldLabel>
+                      <select value={profile.delivery_model} onChange={(e) => updateProfile("delivery_model", e.target.value)} className="ea-input">
+                        {PROFILE_DELIVERY_MODEL.map((o) => (<option key={o} value={o}>{o}</option>))}
+                      </select>
+                    </div>
+                    <div>
+                      <FieldLabel>Target customer type</FieldLabel>
+                      <select value={profile.target_customer_type} onChange={(e) => updateProfile("target_customer_type", e.target.value)} className="ea-input">
+                        <option value="">Select</option>
+                        {PROFILE_TARGET_CUSTOMER.map((o) => (<option key={o} value={o}>{o}</option>))}
+                      </select>
+                    </div>
+                    <div>
+                      <FieldLabel>Primary revenue model</FieldLabel>
+                      <select value={profile.primary_revenue_model} onChange={(e) => updateProfile("primary_revenue_model", e.target.value)} className="ea-input">
+                        <option value="">Select</option>
+                        {PROFILE_REVENUE_MODEL.map((o) => (<option key={o} value={o}>{o.replaceAll("_", " ")}</option>))}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2 lg:col-span-3">
+                      <FieldLabel>Key offering focus</FieldLabel>
+                      <Input value={profile.key_offering_focus} onChange={(e) => updateProfile("key_offering_focus", e.target.value)} />
                     </div>
                   </div>
                 </details>
@@ -741,7 +1283,7 @@ export default function ValidationWizardPage() {
         <div className="sticky bottom-0 z-20 -mx-6 mt-4 border-t border-slate-200 bg-transparent px-6 py-3">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-2">
             <div>
-              {mode === "fill" ? (
+              {mode === "fill" && !isCreateWorkspace ? (
                 <Button variant="ghost" disabled={!canEdit} onClick={() => setMode("select")}>Change sections</Button>
               ) : (
                 <div className="h-10" />
@@ -757,13 +1299,21 @@ export default function ValidationWizardPage() {
                       variant="secondary"
                       disabled={isLoading || isPrefilling || !canRun}
                       onClick={() =>
-                        fromOtherModule && !storedWorkspaceId && !editingWorkspaceId
+                        isCreateWorkspace
                           ? saveWorkspace(false)
-                          : saveWorkspace(true)
+                          : fromOtherModule && !storedWorkspaceId && !editingWorkspaceId
+                            ? saveWorkspace(false)
+                            : saveWorkspace(true)
                       }
                     >
                       {isLoading ? <Spinner size={16} /> : null}
-                      {isLoading ? "Running..." : fromOtherModule && !storedWorkspaceId && !editingWorkspaceId ? "Create workspace" : "Evaluate"}
+                      {isLoading
+                        ? "Running..."
+                        : isCreateWorkspace
+                          ? (storedWorkspaceId || editingWorkspaceId ? "Save workspace" : "Create workspace")
+                          : fromOtherModule && !storedWorkspaceId && !editingWorkspaceId
+                            ? "Create workspace"
+                            : "Evaluate"}
                     </Button>
                   ) : (
                     <Button disabled={isLoading || isPrefilling || !canRun} onClick={() => saveWorkspace(false)}>

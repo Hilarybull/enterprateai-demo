@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useAuthStore } from "../store/auth";
 import { apiRequest, getApiBaseUrl } from "../api/client";
@@ -125,14 +125,14 @@ function Icon({ name, className = "h-4 w-4" }) {
   return null;
 }
 
-function SidebarLink({ item, onClick }) {
+function SidebarLink({ item, onClick, forceInactive }) {
   return (
     <NavLink
       to={item.to}
       onClick={onClick}
       className={({ isActive }) =>
         "group mx-1 flex items-center gap-3 rounded-2xl px-3 py-2.5 transition " +
-        (isActive
+        (isActive && !forceInactive
           ? "bg-brand-50 text-brand-700 ring-1 ring-brand-100 dark:bg-slate-900 dark:text-slate-100 dark:ring-slate-800"
           : "text-slate-700 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-200 dark:hover:bg-slate-900")
       }
@@ -152,6 +152,7 @@ export default function Layout() {
   const token = useAuthStore((s) => s.token);
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [apiStatus, setApiStatus] = useState("unknown"); // unknown | ok | down
   const [search, setSearch] = useState("");
@@ -280,6 +281,9 @@ export default function Layout() {
     if (!q) return NAV;
     return NAV.filter((i) => `${i.label} ${i.subtitle}`.toLowerCase().includes(q));
   }, [search]);
+  const isCreateWorkspaceRoute =
+    location.pathname === "/validation" &&
+    new URLSearchParams(location.search).get("from") === "module";
 
   const Sidebar = (
     <aside className="flex h-full w-[260px] flex-col border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[280px] lg:px-5">
@@ -296,7 +300,12 @@ export default function Layout() {
 
       <nav className="ea-scroll mt-5 flex-1 space-y-1 overflow-auto pr-1">
         {filteredNav.map((item) => (
-          <SidebarLink key={item.to} item={item} onClick={() => setMobileOpen(false)} />
+          <SidebarLink
+            key={item.to}
+            item={item}
+            onClick={() => setMobileOpen(false)}
+            forceInactive={item.to === "/validation" && isCreateWorkspaceRoute}
+          />
         ))}
       </nav>
 
@@ -386,6 +395,17 @@ export default function Layout() {
                 {profileOpen ? (
                   <div className="absolute right-0 top-12 z-30 w-56 rounded-2xl border border-slate-200 bg-white p-2 text-xs shadow-xl dark:border-slate-800 dark:bg-slate-900">
                     <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Account</div>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                      onClick={() => {
+                        setProfileOpen(false);
+                        const returnTo = encodeURIComponent(location.pathname + location.search);
+                        navigate(`/validation?from=module&return=${returnTo}`);
+                      }}
+                    >
+                      Edit workspace
+                    </button>
                     <button
                       type="button"
                       className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"

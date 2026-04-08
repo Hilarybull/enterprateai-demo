@@ -21,6 +21,56 @@ create table if not exists workspaces (
   updated_at timestamptz default now()
 );
 
+create table if not exists workspace_profiles (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id text references workspaces(id) on delete cascade,
+  company_name text not null,
+  legal_name text,
+  registration_number text,
+  business_type text not null,
+  primary_industry text not null,
+  secondary_industries text[],
+  about_company text not null,
+  tagline text,
+  year_established int,
+  company_size text,
+  vision text,
+  mission text,
+  core_values text[],
+  country text not null,
+  city text not null,
+  state_or_region text,
+  postcode text,
+  address_line_1 text,
+  address_line_2 text,
+  email text not null,
+  phone_number text,
+  website text,
+  linkedin_url text,
+  twitter_url text,
+  instagram_url text,
+  facebook_url text,
+  monthly_revenue_range text,
+  employee_count int,
+  operating_stage text not null,
+  delivery_model text not null,
+  target_customer_type text,
+  primary_revenue_model text,
+  key_offering_focus text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists services (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id text references workspaces(id) on delete cascade,
+  service_name text not null,
+  service_category text not null,
+  service_description text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
 create table if not exists blueprint_documents (
   id text primary key,
   user_id text references users(id) on delete cascade,

@@ -32,8 +32,6 @@ Include a date line, greeting, subject line, and sign-off.
 The letter should be continuous prose with short paragraphs and a confident, friendly tone.
 Include, in order, the following elements inside the letter body (do not label them with extra headings):
 - A bold, uppercase subject line after the greeting.
-- A headline line immediately after the subject (not bold).
-- Opening / hook.
 - Problem statement.
 - Solution introduction.
 - Benefits as bullet points.

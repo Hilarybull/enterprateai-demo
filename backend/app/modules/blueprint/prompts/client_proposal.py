@@ -64,5 +64,5 @@ Credibility: experience, expertise, relevant work, certifications or accreditati
 Summarise liability, confidentiality, cancellation terms, and intellectual property.
 
 ## Acceptance / Call to Action
-Clear next steps for approval and onboarding, with contact details.
+Clear next steps for approval and onboarding, with contact details(leave contact details empty if not filled).
 """

@@ -147,7 +147,10 @@ export default function BlueprintPage() {
     client_proposal: [],
     sales_letter: []
   });
+  const [sectionDraftsByDoc, setSectionDraftsByDoc] = useState({});
+  const [sectionTabByDoc, setSectionTabByDoc] = useState({});
   const [wordCount, setWordCount] = useState("700");
+  const sectionDraftsRef = useRef(null);
 
   const selectedMeta = useMemo(() => DOCUMENTS.find((d) => d.id === selectedDoc), [selectedDoc]);
   const selectedDocResult = selectedDoc ? docByType[selectedDoc] : null;
@@ -216,9 +219,23 @@ export default function BlueprintPage() {
         const ws = await apiRequest(`/validation/${workspaceIdStored}`, "GET");
         if (!alive) return;
         const profile = ws?.data?.business_profile || {};
-        if (!companyName && profile.business_name) setCompanyName(profile.business_name);
-        if (!industry && (profile.primary_industry || profile.business_type)) setIndustry(profile.primary_industry || profile.business_type);
-        if (!valueProp && profile.value_proposition) setValueProp(profile.value_proposition);
+        const workspaceProfile = ws?.data?.workspace_profile || {};
+        const wpServices = Array.isArray(workspaceProfile.services) ? workspaceProfile.services : [];
+        if (!companyName && (workspaceProfile.company_name || profile.business_name)) {
+          setCompanyName(workspaceProfile.company_name || profile.business_name);
+        }
+        if (!industry && (workspaceProfile.primary_industry || profile.primary_industry || profile.business_type)) {
+          setIndustry(workspaceProfile.primary_industry || profile.primary_industry || profile.business_type);
+        }
+        if (!valueProp && (workspaceProfile.key_offering_focus || workspaceProfile.tagline || profile.value_proposition)) {
+          setValueProp(workspaceProfile.key_offering_focus || workspaceProfile.tagline || profile.value_proposition);
+        }
+        if (!targetMarket && workspaceProfile.target_customer_type) {
+          setTargetMarket(workspaceProfile.target_customer_type);
+        }
+        if (!solution && wpServices.length && wpServices[0].service_name) {
+          setSolution(wpServices[0].service_name);
+        }
       } catch {
         // ignore
       }
@@ -227,7 +244,7 @@ export default function BlueprintPage() {
     return () => {
       alive = false;
     };
-  }, [acceptedIdeaValidation, companyName, industry, valueProp, workspaceIdStored]);
+  }, [acceptedIdeaValidation, companyName, industry, valueProp, workspaceIdStored, targetMarket, solution]);
 
   useEffect(() => {
     let alive = true;
@@ -368,6 +385,73 @@ export default function BlueprintPage() {
     return [];
   }
 
+  function sectionHeadingMap(docId) {
+    if (docId === "business_plan") {
+      return {
+        executive_summary: "Executive Summary",
+        business_overview: "Business Overview",
+        market_analysis: "Market Analysis",
+        products_services: "Products and Services",
+        sales_marketing: "Sales and Marketing",
+        operational_plan: "Operational Plan",
+        management_personnel: "Management and Personnel",
+        financial_plan: "Financial Plan",
+        risk_analysis: "Risk Analysis",
+        growth_strategy: "Growth Strategy",
+        conclusion: "Conclusion"
+      };
+    }
+    if (docId === "client_proposal") {
+      return {
+        cover_page: "Cover Page",
+        executive_summary: "Executive Summary",
+        client_needs: "Understanding of Client Needs",
+        proposed_solution: "Proposed Solution",
+        scope_of_work: "Scope of Work",
+        implementation_plan: "Implementation Plan / Timeline",
+        pricing_terms: "Pricing and Payment Terms",
+        value_benefits: "Value Proposition / Benefits",
+        company_info: "Company Information",
+        terms_conditions: "Terms and Conditions",
+        acceptance: "Acceptance / Call to Action"
+      };
+    }
+    if (docId === "sales_letter") {
+      return {
+        headline: "Headline",
+        hook: "Opening / Hook",
+        problem: "Problem Statement",
+        solution: "Solution Introduction",
+        benefits: "Benefits",
+        proof: "Proof / Credibility",
+        offer: "Offer",
+        cta: "Call to Action",
+        urgency: "Urgency / Scarcity",
+        closing: "Closing",
+        followup: "Follow-up Summary"
+      };
+    }
+    return {};
+  }
+
+  function extractSections(markdown) {
+    const lines = String(markdown || "").split("\n");
+    const sections = {};
+    let current = null;
+    let buffer = [];
+    for (const line of lines) {
+      if (line.startsWith("## ")) {
+        if (current) sections[current] = buffer.join("\n").trim();
+        current = line.replace(/^##\s+/, "").trim();
+        buffer = [];
+      } else {
+        if (current) buffer.push(line);
+      }
+    }
+    if (current) sections[current] = buffer.join("\n").trim();
+    return sections;
+  }
+
   function formatPaymentTerms(value) {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -482,6 +566,91 @@ export default function BlueprintPage() {
       refreshSavedDocs();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Blueprint generation failed");
+      setShowInputs(true);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function generateSectionDrafts() {
+    if (!selectedDoc) return;
+    const chosen = sectionsByDoc[selectedDoc] || [];
+    if (!chosen.length) {
+      setError("Select at least one section to generate.");
+      setShowInputs(true);
+      return;
+    }
+    if (companyName.trim().length < 2) {
+      setError("Enter a business name to generate document sections.");
+      setShowInputs(true);
+      return;
+    }
+    if ((selectedDoc === "client_proposal" || selectedDoc === "sales_letter") && !String(billTo || customClientName).trim()) {
+      setError("Select a client from your catalogue or type a client name to continue.");
+      setShowInputs(true);
+      return;
+    }
+    if (selectedDoc === "sales_letter") {
+      const wc = Number(wordCount);
+      if (!wc || wc <= 0) {
+        setError("Enter a target word count for the sales letter.");
+        setShowInputs(true);
+        return;
+      }
+    }
+    if (needsWorkspace && !workspaceId.trim()) {
+      setError("Paste an Idea Validation workspace id to generate this document.");
+      setShowInputs(true);
+      return;
+    }
+    await syncWorkspaceProfile();
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await apiRequest("/blueprint/generate", "POST", {
+        type: selectedDoc,
+        company_name: companyName,
+        industry,
+        pricing_model: pricingModel,
+        workspace_id: (workspaceId || workspaceIdStored || "").trim() || null,
+        include_validation_snapshot: includeSnapshotByDoc[selectedDoc],
+        problem,
+        solution,
+        target_market: targetMarket,
+        value_proposition: valueProp,
+        tone,
+        extra_notes: extraNotes,
+        bill_to: billTo || customClientName,
+        items,
+        terms,
+
+        proposal_title: proposalTitle,
+        contact_details: contactDetails,
+        timeline,
+        scope_exclusions: scopeExclusions,
+        assumptions,
+
+        headline,
+        proof,
+        offer,
+        cta,
+        urgency,
+        sender_name: senderName,
+        sender_position: senderPosition,
+        sender_phone: senderPhone,
+        sender_email: senderEmail,
+        sender_website: senderWebsite,
+        subject_lines: subjectLineChoice === "Other" ? subjectLineCustom : subjectLineChoice,
+        followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
+        sections: chosen,
+        word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
+      }, { timeoutMs: 120000 });
+      const markdown = res?.document_markdown || "";
+      setSectionDraftsByDoc((prev) => ({ ...prev, [selectedDoc]: markdown }));
+      setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: chosen[0] }));
+      setShowInputs(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Section generation failed");
       setShowInputs(true);
     } finally {
       setIsLoading(false);
@@ -763,6 +932,21 @@ export default function BlueprintPage() {
                 >
                   {showInputs ? "Hide inputs" : "Edit inputs"}
                 </Button>
+                {selectedDoc && sectionsForDoc(selectedDoc).length ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setShowInputs(true);
+                      requestAnimationFrame(() => {
+                        if (sectionDraftsRef.current) {
+                          sectionDraftsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }
+                      });
+                    }}
+                  >
+                    Section drafts
+                  </Button>
+                ) : null}
                 <Button disabled={isLoading} onClick={generateSelected}>
                   {isLoading ? <Spinner size={16} /> : null}
                   {isLoading ? "Generating..." : hasGenerated ? "Regenerate" : "Generate"}
@@ -937,7 +1121,7 @@ export default function BlueprintPage() {
                   ) : null}
 
                   {selectedDoc && sectionsForDoc(selectedDoc).length ? (
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+                    <div ref={sectionDraftsRef} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
                       <div className="text-sm font-semibold text-slate-900">Sections to generate (optional)</div>
                       <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
                         {sectionsForDoc(selectedDoc).map((section) => (
@@ -954,6 +1138,51 @@ export default function BlueprintPage() {
                       <div className="mt-2 text-[11px] text-slate-500">
                         Leave unchecked to generate the full document.
                       </div>
+                      <div className="mt-3">
+                        <Button
+                          variant="secondary"
+                          disabled={isLoading || !(sectionsByDoc[selectedDoc] || []).length}
+                          onClick={generateSectionDrafts}
+                        >
+                          {isLoading ? "Generating..." : "Generate section drafts"}
+                        </Button>
+                      </div>
+                      {sectionDraftsByDoc[selectedDoc] ? (
+                        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Section drafts</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {(sectionsByDoc[selectedDoc] || []).map((sid) => (
+                              <button
+                                key={sid}
+                                type="button"
+                                onClick={() => setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: sid }))}
+                                className={
+                                  "rounded-full border px-3 py-1 text-[11px] font-semibold " +
+                                  (sectionTabByDoc[selectedDoc] === sid
+                                    ? "border-brand-300 bg-brand-50 text-brand-700"
+                                    : "border-slate-200 text-slate-600 hover:bg-slate-50")
+                                }
+                              >
+                                {sectionsForDoc(selectedDoc).find((s) => s.id === sid)?.label || sid}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="mt-3 text-sm text-slate-700">
+                            {(() => {
+                              const headingMap = sectionHeadingMap(selectedDoc);
+                              const extracted = extractSections(sectionDraftsByDoc[selectedDoc]);
+                              const activeId = sectionTabByDoc[selectedDoc] || (sectionsByDoc[selectedDoc] || [])[0];
+                              const heading = headingMap[activeId];
+                              const body = extracted[heading] || "";
+                              return body ? (
+                                <div className="whitespace-pre-wrap leading-relaxed">{body}</div>
+                              ) : (
+                                <div className="text-xs text-slate-500">No content yet. Generate section drafts to preview.</div>
+                              );
+                            })()}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 

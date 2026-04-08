@@ -20,6 +20,7 @@ from app.modules.blueprint.templates import (
     build_business_plan_prompt,
     build_client_proposal_prompt,
     build_sales_letter_prompt,
+    format_inputs_for_prompt,
 )
 from app.modules.idea_validation.service import evaluate as evaluate_validation
 from app.modules.idea_validation.service import get_workspace as get_validation_workspace
