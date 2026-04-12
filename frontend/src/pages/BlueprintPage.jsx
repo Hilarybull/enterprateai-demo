@@ -802,7 +802,7 @@ export default function BlueprintPage() {
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
         sections: sectionsByDoc[selectedDoc] || [],
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
-      }, { timeoutMs: 120000 });
+      }, { timeoutMs: 240000 });
       setDocByType((prev) => ({ ...prev, [selectedDoc]: res }));
       if (res?.document_id) setDocIdByType((prev) => ({ ...prev, [selectedDoc]: res.document_id }));
       setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: "" }));
@@ -905,7 +905,7 @@ export default function BlueprintPage() {
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
         sections: chosen,
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
-      }, { timeoutMs: 120000 });
+      }, { timeoutMs: 240000 });
       const markdown = res?.document_markdown || "";
       setSectionDraftsByDoc((prev) => ({
         ...prev,
@@ -1196,17 +1196,6 @@ export default function BlueprintPage() {
                 >
                   {showInputs ? "Hide inputs" : "Edit inputs"}
                 </Button>
-                {selectedDoc && sectionsForDoc(selectedDoc).length ? (
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setShowInputs(true);
-                      setInputsTab("sections");
-                    }}
-                  >
-                    Section drafts
-                  </Button>
-                ) : null}
                 <Button disabled={isLoading} onClick={generateSelected}>
                   {isLoading ? <Spinner size={16} /> : null}
                   {isLoading ? "Generating..." : hasGenerated ? "Regenerate" : "Generate"}
@@ -1290,6 +1279,19 @@ export default function BlueprintPage() {
                     Click <span className="font-semibold">Generate</span> to preview here.
                   </div>
                 )}
+                {isLoading ? (
+                  <div className="absolute inset-5 z-20 flex items-center justify-center">
+                    <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-lg">
+                      <div className="flex items-center justify-center">
+                        <Spinner />
+                      </div>
+                      <div className="mt-3 text-sm font-semibold text-slate-900">Generating your document</div>
+                      <div className="mt-2 text-xs text-slate-500">
+                        {DID_YOU_KNOW_FACTS[didYouKnowIndex]}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
               {showInputs ? (
                 <div className="order-2 w-full shrink-0 overflow-auto border-t border-slate-200 bg-white p-5 lg:w-[380px] lg:border-l lg:border-t-0">
@@ -1390,19 +1392,6 @@ export default function BlueprintPage() {
                           placeholder="Type your objective"
                           className="mt-2"
                         />
-                ) : null}
-                {isLoading ? (
-                  <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/85">
-                    <div className="max-w-md rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-lg">
-                      <div className="flex items-center justify-center">
-                        <Spinner />
-                      </div>
-                      <div className="mt-3 text-sm font-semibold text-slate-900">Generating your document</div>
-                      <div className="mt-2 text-xs text-slate-500">
-                        {DID_YOU_KNOW_FACTS[didYouKnowIndex]}
-                      </div>
-                    </div>
-                  </div>
                 ) : null}
               </div>
                   ) : null}
