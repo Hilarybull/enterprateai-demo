@@ -47,6 +47,7 @@ export default function ResultsPage() {
   const [marketFit, setMarketFit] = useState(null);
   const [mfLoading, setMfLoading] = useState(false);
   const [mfError, setMfError] = useState(null);
+  const [serviceDraft, setServiceDraft] = useState(null);
 
   useEffect(() => {
     async function loadDecision() {
@@ -54,6 +55,9 @@ export default function ResultsPage() {
       try {
         const ws = await apiRequest(`/validation/${workspaceId}`, "GET");
         setWorkspaceName(ws?.name || null);
+        if (ws?.data?.draft_service_idea) {
+          setServiceDraft(ws.data.draft_service_idea);
+        }
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") {
           setDecision(status);
@@ -132,6 +136,169 @@ export default function ResultsPage() {
         subtitle="Save a workspace in Idea Validation, then run evaluation to see results here."
         ctaLabel="Go to Idea Validation"
       />
+    );
+  }
+
+  const isServiceIdea = Boolean(validation?.scores && validation?.metrics && validation?.outcome);
+  const serviceMetrics = validation?.metrics || {};
+  const serviceScores = validation?.scores || {};
+  const serviceOutcome = String(validation?.outcome || "").trim();
+  const serviceRiskFlags = Array.isArray(validation?.risk_flags) ? validation.risk_flags : [];
+
+  if (isServiceIdea) {
+    const viabilityScore = typeof serviceScores?.viability_score === "number" ? serviceScores.viability_score : 0;
+    const serviceCategory = serviceDraft?.service_category ? String(serviceDraft.service_category).replaceAll("_", " ") : "";
+    const targetCustomer = serviceDraft?.target_customer_type || "";
+    const marketScope = serviceDraft?.target_market_scope ? String(serviceDraft.target_market_scope).replaceAll("_", " ") : "";
+    const serviceDesc = String(serviceDraft?.service_description || "").trim();
+    const capacityUtilisationDisplay =
+      typeof serviceMetrics.capacity_utilisation === "number"
+        ? formatPercent(serviceMetrics.capacity_utilisation)
+        : "—";
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-2xl font-semibold tracking-tight text-slate-900">
+                {validation?.service_name || "Service idea"}
+              </div>
+              {serviceOutcome ? <Badge>{serviceOutcome}</Badge> : null}
+            </div>
+            <div className="mt-1 text-sm text-slate-600">Service idea viability results.</div>
+          </div>
+          <Button variant="secondary" disabled={!workspaceId} onClick={() => navigate(`/validation?workspace_id=${workspaceId}`)}>
+            Modify
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <div className="space-y-4 lg:col-span-8">
+            <SectionCard title="Service overview" subtitle="Context for this product / service idea.">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold text-slate-500">Category</div>
+                  <div className="mt-1 text-sm text-slate-700">{serviceCategory || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-slate-500">Target customer</div>
+                  <div className="mt-1 text-sm text-slate-700">{targetCustomer || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-slate-500">Market scope</div>
+                  <div className="mt-1 text-sm text-slate-700">{marketScope || "—"}</div>
+                </div>
+                <div className="md:col-span-2">
+                  <div className="text-xs font-semibold text-slate-500">Description</div>
+                  <div className="mt-1 text-sm text-slate-700">{serviceDesc || "—"}</div>
+                </div>
+              </div>
+            </SectionCard>
+            <SectionCard
+              title="Viability metrics"
+              subtitle="Revenue, costs, and delivery feasibility."
+              className="bg-white"
+            >
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <StatTile
+                  label="Monthly revenue"
+                  value={formatCurrency(serviceMetrics.monthly_revenue, currency)}
+                  info="Price per sale × expected sales per month."
+                />
+                <StatTile
+                  label="Monthly variable cost"
+                  value={formatCurrency(serviceMetrics.monthly_variable_cost, currency)}
+                  info="Direct delivery costs × expected sales per month."
+                />
+                <StatTile
+                  label="Monthly fixed cost"
+                  value={formatCurrency(serviceMetrics.monthly_fixed_cost, currency)}
+                  info="Software, marketing, admin, rent, and other fixed costs."
+                />
+                <StatTile
+                  label="Contribution / sale"
+                  value={formatCurrency(serviceMetrics.contribution_per_sale, currency)}
+                  info="Price per sale minus variable cost per sale."
+                />
+                <StatTile
+                  label="Contribution margin"
+                  value={formatPercent(serviceMetrics.contribution_margin)}
+                  info="(Monthly revenue - monthly variable cost) / monthly revenue."
+                />
+                <StatTile
+                  label="Break-even months"
+                  info="Time to cover monthly fixed costs at current assumptions."
+                  value={serviceMetrics.break_even_months == null ? "—" : `${formatNumber(serviceMetrics.break_even_months)} months`}
+                />
+                <StatTile
+                  label="Capacity sales / month"
+                  value={formatNumber(serviceMetrics.capacity_sales_per_month)}
+                  info="Available delivery hours / hours required per sale."
+                />
+                <StatTile
+                  label="Capacity utilisation"
+                  value={capacityUtilisationDisplay}
+                  info="Expected sales / capacity sales per month."
+                />
+                <StatTile
+                  label="Capacity feasible"
+                  value={serviceMetrics.capacity_feasible ? "Yes" : "No"}
+                  info="Whether expected sales can be delivered with current capacity."
+                />
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Interpretation" subtitle="Summary and recommendation.">
+              <div className="space-y-2 text-sm text-slate-700">
+                <div>{validation?.interpretation?.summary || "—"}</div>
+                <div><strong>Key driver:</strong> {validation?.interpretation?.key_driver || "—"}</div>
+                <div><strong>Recommendation:</strong> {validation?.interpretation?.recommendation || "—"}</div>
+              </div>
+            </SectionCard>
+
+          </div>
+
+          <aside className="space-y-4 lg:col-span-4 lg:sticky lg:top-24">
+            <div className="ea-card p-5 border border-slate-200 bg-white">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Viability scores</div>
+              <div className="mt-2 text-2xl font-semibold text-slate-900">{formatNumber(viabilityScore)}/100</div>
+              {serviceOutcome ? <div className="mt-1 text-sm font-semibold text-slate-700">{serviceOutcome}</div> : null}
+            </div>
+
+            <SectionCard title="Scores" subtitle="Weighted viability scores (0-100).">
+              <div className="grid grid-cols-1 gap-3">
+                {[
+                  ["Margin score", serviceScores.margin_score],
+                  ["Break-even score", serviceScores.break_even_score],
+                  ["Demand score", serviceScores.demand_score],
+                  ["Capacity score", serviceScores.capacity_score],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-2xl border border-slate-200 bg-white p-3">
+                    <div className="text-xs font-semibold text-slate-500">{label}</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">{formatNumber(value)}/100</div>
+                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div className="h-full bg-indigo-500" style={{ width: pctWidth(value || 0) }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Risk flags" subtitle="Key issues to watch.">
+              {serviceRiskFlags.length ? (
+                <ul className="list-disc space-y-2 pl-5 text-sm text-slate-700">
+                  {serviceRiskFlags.map((flag) => (
+                    <li key={flag}>{String(flag).replace(/_/g, " ")}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-sm text-slate-600">No risk flags.</div>
+              )}
+            </SectionCard>
+          </aside>
+        </div>
+
+      </div>
     );
   }
 

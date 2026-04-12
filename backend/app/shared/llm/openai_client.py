@@ -48,7 +48,7 @@ class OpenAIResponsesClient(LLMClient):
             ],
         }
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=540) as client:
             try:
                 resp = await client.post("https://api.openai.com/v1/responses", json=payload, headers=headers)
                 resp.raise_for_status()
@@ -110,7 +110,7 @@ class AnthropicMessagesClient(LLMClient):
             "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
         }
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=240) as client:
             try:
                 resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
                 resp.raise_for_status()
@@ -155,7 +155,7 @@ class GeminiGenerateClient(LLMClient):
             "generationConfig": {"temperature": 0.5, "maxOutputTokens": 8000},
         }
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=240) as client:
             try:
                 resp = await client.post(url, params={"key": self._settings.gemini_api_key}, json=payload)
                 resp.raise_for_status()

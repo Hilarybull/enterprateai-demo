@@ -6,8 +6,7 @@ Blueprint document prompts and templates.
 Core principle:
 - AI is used ONLY to generate narrative text.
 - AI must NOT introduce financial amounts, prices, percentages, dates, or any digits.
-- Deterministic outputs (e.g., cashflow/projection tables) may include numbers because they
-  come from user inputs + pure calculations, not the LLM.
+- Deterministic outputs (e.g., cashflow/projection tables) may include numbers because they come from user inputs + pure calculations, not the LLM.
 """
 
 
@@ -24,109 +23,40 @@ from app.modules.blueprint.prompts.sales_letter import SALES_LETTER_PROMPT
 BUSINESS_PLAN_TEMPLATE = """# Business Plan — {company_name}
 
 ## Executive Summary
-{mission}
-
-{hook}
-
-{funding_request}
-
-{overview}
+{executive_summary}
 
 ## Business Overview
-### Business Model
-{business_model}
-
-### Legal Structure (UK)
-{legal_structure}
-
-### Registration (UK)
-{registration}
-
-### Location
-{location}
-
-## Market Analysis
-### Target Audience
-{target_market}
-
-### Competitor Analysis
-{competitor_analysis}
-
-### Market Trends
-{market_trends}
+{business_overview}
 
 ## Products and Services
-### The Problem
-{problem}
+{products_services}
 
-### The Solution
-{solution}
+## Market Analysis
+{market_analysis}
 
-### Pricing Strategy
-{pricing_strategy}
+## Competitive Analysis
+{competitive_analysis}
 
-## Sales and Marketing
-### Branding
-{branding}
+## Business Model
+{business_model}
 
-### Channels
-{channels}
+## Marketing and Sales Strategy
+{marketing_sales_strategy}
 
-### Marketing Strategy
-{go_to_market}
+## Operations Plan
+{operations_plan}
 
-## Operational Plan
-### Suppliers
-{suppliers}
+## Management and Organisation
+{management_organisation}
 
-### Technology
-{technology}
+## Financial Snapshot
+{financial_snapshot}
 
-### Insurance
-{insurance}
+## Funding Requirements
+{funding_requirements}
 
-{operations}
-
-## Management and Personnel
-### The Team
-{team}
-
-### Hiring Plan
-{hiring_plan}
-
-## Financial Plan
-### Sales Forecast
-{sales_forecast}
-
-### Cash Flow Statement
-{cashflow_summary}
-
-### Break Even Analysis
-{breakeven}
-
-## Risk Analysis
-### Market Risk
-{risk_market}
-
-### Financial Risk
-{risk_financial}
-
-### Operational Risk
-{risk_operational}
-
-### Regulatory Risk
-{risk_regulatory}
-
-## Growth Strategy
-{market_expansion}
-
-{product_roadmap}
-
-{partnerships}
-
-{technology_adoption}
-
-{operational_expansion}
+## Risk Analysis and Mitigation
+{risk_analysis_mitigation}
 
 ## Conclusion
 {conclusion}
@@ -137,56 +67,41 @@ CLIENT_PROPOSAL_TEMPLATE = """# Proposal for {client_name}
 
 ## Cover Page
 Proposal Title — {proposal_title}
-Client — {client_name}
-Prepared By — {company_name}
+Prepared by — {company_name}
+Prepared for — {client_name}
 <div class="page-break"></div>
 
 ## Executive Summary
-{summary}
+{executive_summary}
 
-## Understanding of Client Needs
-{client_situation}
-
-{pain_points}
-
-{client_goals}
-
-{constraints}
+## Client Needs / Problem Statement
+{client_needs}
 
 ## Proposed Solution
-{approach}
+{proposed_solution}
 
 ## Scope of Work
-**Included:** {scope_included}
+{scope_of_work}
 
-**Exclusions:** {scope_exclusions}
+## Methodology / Approach
+{methodology}
 
-**Assumptions:** {assumptions}
-
-## Implementation Plan / Timeline
+## Timeline / Delivery Schedule
 {timeline}
 
 ## Pricing and Payment Terms
-{commercial_terms}
+{pricing_terms}
 
 ## Value Proposition / Benefits
-{business_impact}
+{value_proposition}
 
-{roi}
-
-{efficiency_gains}
-
-{competitive_advantage}
-
-{risk_reduction}
-
-## Company Information
-{company_info}
+## Company Profile
+{company_profile}
 
 ## Terms and Conditions
-{terms_and_conditions}
+{terms_conditions}
 
-## Acceptance / Call to Action
+## Acceptance / Next Steps
 {next_steps}
 """
 
@@ -326,7 +241,7 @@ def format_inputs_for_prompt(inputs: dict) -> str:
         if isinstance(value, str) and value.strip():
             display_val = value.strip()
         else:
-            display_val = "[not provided — infer from context]"
+            display_val = "[not provided]"
         lines.append(f"{display_key}: {display_val}")
     return "\n".join(lines)
 

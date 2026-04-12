@@ -7,6 +7,7 @@ import SectionCard from "../components/SectionCard";
 import Spinner from "../components/Spinner";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
+import { useAuthStore } from "../store/auth";
 import InfoTip from "../components/InfoTip";
 import NumberInput, { parseIntSafe, parseNumber } from "../components/NumberInput";
 import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
@@ -19,7 +20,10 @@ function humanizeValidationError(e) {
   }
   if (msg === "TIMEOUT") return "The server is taking too long to respond. Check the backend logs and try again.";
   if (msg.startsWith("HTTP 401:")) return "Please sign in to continue.";
-  if (msg.startsWith("HTTP 422:")) return "Please enter a business name or product / service name to continue.";
+  if (msg.startsWith("HTTP 422:")) {
+    const detail = msg.replace(/^HTTP 422:\s*/i, "").trim();
+    return detail ? `Validation error: ${detail}` : "Please check the required fields and try again.";
+  }
   return msg;
 }
 
@@ -60,6 +64,7 @@ export default function ValidationWizardPage() {
   const setIdeaValidation = useWorkspaceStore((s) => s.setIdeaValidation);
   const setValidation = useWorkspaceStore((s) => s.setValidation);
   const setCurrency = useWorkspaceStore((s) => s.setCurrency);
+  const authEmail = useAuthStore((s) => s.email);
 
   const [mode, setMode] = useState(fromOtherModule ? "fill" : "select"); // select | fill
   const [isLoading, setIsLoading] = useState(false);
@@ -116,6 +121,32 @@ export default function ValidationWizardPage() {
   const PROFILE_TARGET_CUSTOMER = useMemo(() => ["individual", "startup", "SME", "corporate"], []);
   const PROFILE_REVENUE_MODEL = useMemo(() => ["one_off", "subscription", "retainer", "project_based", "mixed"], []);
 
+  const SERVICE_CATEGORY_OPTIONS = useMemo(
+    () => ["consulting", "training", "agency", "freelance", "technical_service", "other"],
+    []
+  );
+  const TARGET_CUSTOMER_OPTIONS = useMemo(
+    () => ["individual", "startup", "SME", "corporate"],
+    []
+  );
+  const TARGET_MARKET_SCOPE_OPTIONS = useMemo(
+    () => ["local", "regional", "national", "global"],
+    []
+  );
+  const DEMAND_EVIDENCE_OPTIONS = useMemo(
+    () => [
+      "assumption_only",
+      "market_research",
+      "enquiries",
+      "LOIs",
+      "paid_pilot",
+      "paying_customers",
+      "repeat_paying_customers"
+    ],
+    []
+  );
+  const DIFFERENTIATION_OPTIONS = useMemo(() => ["low", "medium", "high"], []);
+
   const [form, setForm] = useState(() => ({
     pathway: "business_idea",
     context: { business_name: "", business_type_category: "Technology", business_type_other: "", primary_industry_category: "IT", primary_industry_other: "", location: "", currency: "GBP", founder_hours_per_week: "40", stage: "idea" },
@@ -127,6 +158,34 @@ export default function ValidationWizardPage() {
     cash: { starting_cash: "", upfront_costs: "" },
     go_to_market: { target_market: "B2C", customer_budget_level: "Unknown", sub_industry: "", channels: [] }
   }));
+  const [serviceForm, setServiceForm] = useState(() => ({
+    service_name: "",
+    service_category: "consulting",
+    service_description: "",
+    target_customer_type: "SME",
+    target_market_scope: "local",
+    price_per_sale: "",
+    expected_sales_per_month: "",
+    direct_labour_cost_per_sale: "",
+    contractor_cost_per_sale: "",
+    materials_cost_per_sale: "",
+    travel_cost_per_sale: "",
+    other_direct_cost_per_sale: "",
+    monthly_software_cost: "",
+    monthly_marketing_cost: "",
+    monthly_admin_cost: "",
+    monthly_rent_cost: "",
+    monthly_other_fixed_cost: "",
+    hours_required_per_sale: "",
+    available_delivery_hours_per_month: "",
+    demand_evidence_type: "assumption_only",
+    number_of_interested_leads: "",
+    number_of_paying_customers: "",
+    competitor_price_low: "",
+    competitor_price_high: "",
+    differentiation_level: "medium"
+  }));
+  const [serviceCurrency, setServiceCurrency] = useState("GBP");
   const [profile, setProfile] = useState(() => ({
     company_name: "",
     legal_name: "",
@@ -182,6 +241,17 @@ export default function ValidationWizardPage() {
         }
       ];
     }
+    if (isProductPath) {
+      return [
+        { key: "service_basics", label: "Service basics", desc: "Idea, category, and market scope." },
+        { key: "revenue_inputs", label: "Revenue inputs", desc: "Price and expected sales volume." },
+        { key: "direct_costs", label: "Direct delivery costs", desc: "Labour, materials, travel, and other direct costs." },
+        { key: "fixed_costs", label: "Fixed monthly costs", desc: "Software, marketing, admin, and rent." },
+        { key: "capacity_inputs", label: "Capacity inputs", desc: "Hours required and delivery capacity." },
+        { key: "demand_inputs", label: "Demand evidence", desc: "Proof of demand and lead/customer counts." },
+        { key: "competition", label: "Competitive positioning", desc: "Price range and differentiation." }
+      ];
+    }
     return [
       {
         key: "business",
@@ -193,12 +263,22 @@ export default function ValidationWizardPage() {
       { key: "capacity_cash", label: "Capacity & cash", desc: "Capacity assumptions and starting cash/runway inputs." },
       { key: "go_to_market", label: "Go-to-market", desc: "Target market and acquisition channels." }
     ];
-  }, [isCreateWorkspace]);
+  }, [isCreateWorkspace, isProductPath]);
 
   const [enabledForms, setEnabledForms] = useState(() =>
     isCreateWorkspace
       ? { workspace_profile: true }
-      : { business: true, offer_demand: true, costs: true, capacity_cash: true, go_to_market: true }
+      : isProductPath
+        ? {
+            service_basics: true,
+            revenue_inputs: true,
+            direct_costs: true,
+            fixed_costs: true,
+            capacity_inputs: true,
+            demand_inputs: true,
+            competition: true
+          }
+        : { business: true, offer_demand: true, costs: true, capacity_cash: true, go_to_market: true }
   );
   const selectedCount = useMemo(() => Object.values(enabledForms).filter(Boolean).length, [enabledForms]);
 
@@ -249,12 +329,35 @@ export default function ValidationWizardPage() {
     setWorkspaceName(derivedWorkspaceName);
   }, [derivedWorkspaceName, workspaceNameTouched]);
 
-  useEffect(() => setCurrency(form?.context?.currency || "USD"), [form?.context?.currency, setCurrency]);
+  useEffect(() => {
+    if (!isCreateWorkspace) return;
+    if (String(profile.email || "").trim()) return;
+    if (!authEmail) return;
+    updateProfile("email", authEmail);
+  }, [authEmail, isCreateWorkspace, profile.email]);
+
+  useEffect(() => {
+    const next = form?.context?.currency || "USD";
+    setCurrency(next);
+    if (isProductPath) setServiceCurrency(next);
+  }, [form?.context?.currency, isProductPath, setCurrency]);
 
   useEffect(() => {
     if (isCreateWorkspace) {
       setEnabledForms({ workspace_profile: true });
       setMode("fill");
+      return;
+    }
+    if (isProductPath) {
+      setEnabledForms({
+        service_basics: true,
+        revenue_inputs: true,
+        direct_costs: true,
+        fixed_costs: true,
+        capacity_inputs: true,
+        demand_inputs: true,
+        competition: true
+      });
       return;
     }
     setEnabledForms((prev) => ({
@@ -265,7 +368,7 @@ export default function ValidationWizardPage() {
       go_to_market: true,
       ...(prev.workspace_profile ? {} : {})
     }));
-  }, [isCreateWorkspace]);
+  }, [isCreateWorkspace, isProductPath]);
 
   useEffect(() => {
     async function prefill() {
@@ -277,6 +380,7 @@ export default function ValidationWizardPage() {
         const ws = await apiRequest(`/validation/${wsId}`, "GET");
         const iv = ws?.data?.idea_validation || ws?.data?.draft_idea_validation;
         setExistingCatalogue(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
+        if (ws?.data?.currency) setServiceCurrency(ws.data.currency);
         if (!iv || typeof iv !== "object") {
           const profile = ws?.data?.business_profile;
           if (profile && typeof profile === "object") {
@@ -302,6 +406,16 @@ export default function ValidationWizardPage() {
             if (wp.primary_industry && !form?.context?.primary_industry_category) {
               update("context.primary_industry_category", wp.primary_industry);
             }
+            if (Array.isArray(wp.services) && wp.services.length) {
+              const primary = wp.services[0];
+              if (primary?.service_name) updateService("service_name", primary.service_name);
+              if (primary?.service_description) updateService("service_description", primary.service_description);
+              if (primary?.service_category) updateService("service_category", primary.service_category);
+            }
+          }
+          const serviceDraft = ws?.data?.draft_service_idea || ws?.data?.service_idea_validation;
+          if (serviceDraft && typeof serviceDraft === "object") {
+            setServiceForm((prev) => ({ ...prev, ...serviceDraft }));
           }
           setWorkspaceId(wsId);
           setWorkspaceNameStore(ws?.name || null);
@@ -332,6 +446,15 @@ export default function ValidationWizardPage() {
           if (wp.primary_industry && !next.context.primary_industry) {
             next.context.primary_industry = wp.primary_industry;
           }
+        }
+        const serviceDraft = ws?.data?.draft_service_idea || ws?.data?.service_idea_validation;
+        if (serviceDraft && typeof serviceDraft === "object") {
+          setServiceForm((prev) => ({ ...prev, ...serviceDraft }));
+        } else if (wp && Array.isArray(wp.services) && wp.services.length) {
+          const primary = wp.services[0];
+          if (primary?.service_name) updateService("service_name", primary.service_name);
+          if (primary?.service_description) updateService("service_description", primary.service_description);
+          if (primary?.service_category) updateService("service_category", primary.service_category);
         }
         const next = structuredClone(iv);
         const bt = String(next?.context?.business_type ?? "").trim();
@@ -381,6 +504,17 @@ export default function ValidationWizardPage() {
     });
   }
 
+  function updateService(path, value) {
+    setServiceForm((prev) => {
+      const next = structuredClone(prev);
+      const keys = path.split(".");
+      let cur = next;
+      for (let i = 0; i < keys.length - 1; i++) cur = cur[keys[i]];
+      cur[keys[keys.length - 1]] = value;
+      return next;
+    });
+  }
+
   function updateProfile(path, value) {
     setProfile((prev) => {
       const next = structuredClone(prev);
@@ -412,10 +546,37 @@ export default function ValidationWizardPage() {
 
   const canRun = useMemo(() => {
     if (isCreateWorkspace) return !validateProfileDraft();
+    if (isProductPath) {
+      const required = [
+        String(serviceForm.service_name || "").trim().length >= 3,
+        String(serviceForm.service_description || "").trim().length >= 10,
+        String(serviceForm.target_customer_type || "").trim(),
+        String(serviceForm.target_market_scope || "").trim(),
+        parseNumber(serviceForm.price_per_sale, 0) > 0,
+        parseNumber(serviceForm.expected_sales_per_month, 0) >= 0,
+        parseNumber(serviceForm.direct_labour_cost_per_sale, 0) >= 0,
+        parseNumber(serviceForm.other_direct_cost_per_sale, 0) >= 0,
+        parseNumber(serviceForm.monthly_software_cost, 0) >= 0,
+        parseNumber(serviceForm.monthly_marketing_cost, 0) >= 0,
+        parseNumber(serviceForm.monthly_admin_cost, 0) >= 0,
+        parseNumber(serviceForm.hours_required_per_sale, 0) > 0,
+        parseNumber(serviceForm.available_delivery_hours_per_month, 0) > 0,
+        String(serviceForm.demand_evidence_type || "").trim(),
+        String(serviceForm.differentiation_level || "").trim()
+      ];
+      return required.every(Boolean);
+    }
     const bn = String(form.context.business_name || "").trim();
     const sn = String(form.offer?.service_type || "").trim();
     return bn.length >= 2 || sn.length >= 2;
-  }, [form.context.business_name, form.offer?.service_type, isCreateWorkspace, profile, enabledForms.workspace_profile]);
+  }, [
+    form.context.business_name,
+    form.offer?.service_type,
+    isCreateWorkspace,
+    isProductPath,
+    profile,
+    serviceForm
+  ]);
   const canEdit = !isLoading && !isPrefilling;
 
   function startFilling() {
@@ -590,9 +751,9 @@ export default function ValidationWizardPage() {
       const productFromValidation = isProductPath
         ? {
             id: crypto.randomUUID(),
-            name: String(payload.context.business_name || payload.offer.service_type || "Product").trim(),
+            name: String(serviceForm.service_name || "Service").trim(),
             type: "service",
-            base_price: Number(payload.offer.price_per_unit || 0),
+            base_price: Number(parseNumber(serviceForm.price_per_sale, 0) || 0),
             discount: 0,
             freight_cost: 0,
             archived: false,
@@ -618,25 +779,25 @@ export default function ValidationWizardPage() {
         await apiRequest(
           `/validation/${wsId}`,
           "PATCH",
-          { data: { draft_idea_validation: payload, catalogue: nextCatalogue } },
+          { data: { draft_idea_validation: isProductPath ? null : payload, draft_service_idea: isProductPath ? serviceForm : null, catalogue: nextCatalogue } },
           { timeoutMs: 120000 }
         );
         setWorkspaceId(wsId);
         setWorkspaceNameStore(wsName);
         setDecisionStatus(null);
-        setIdeaValidation(payload);
+        setIdeaValidation(isProductPath ? null : payload);
       } else {
         const ws = await apiRequest(
           "/validation/create",
           "POST",
-          { name: wsName, data: { draft_idea_validation: payload, catalogue: nextCatalogue } },
+          { name: wsName, data: { draft_idea_validation: isProductPath ? null : payload, draft_service_idea: isProductPath ? serviceForm : null, catalogue: nextCatalogue } },
           { timeoutMs: 120000 }
         );
         wsId = ws.id;
         setWorkspaceId(wsId);
         setWorkspaceNameStore(ws.name || wsName);
         setDecisionStatus(null);
-        setIdeaValidation(payload);
+        setIdeaValidation(isProductPath ? null : payload);
       }
 
       if (enabledForms.workspace_profile) {
@@ -690,14 +851,64 @@ export default function ValidationWizardPage() {
         );
       }
       if (shouldEvaluate) {
-        const result = await apiRequest(
-          "/validation/evaluate",
-          "POST",
-          { idea_validation: payload },
-          { timeoutMs: 120000 }
-        );
-        setValidation(result);
-        navigate("/results");
+        if (isProductPath) {
+          const serviceName = String(serviceForm.service_name || "").trim();
+          const serviceDescription = String(serviceForm.service_description || "").trim();
+          if (!serviceName) {
+            setError("Please enter a product / service name to continue.");
+            setIsLoading(false);
+            return;
+          }
+          if (serviceDescription.length < 10) {
+            setError("Service description should be at least 10 characters.");
+            setIsLoading(false);
+            return;
+          }
+          const payloadService = {
+            service_name: serviceName,
+            service_category: String(serviceForm.service_category || "").trim().toLowerCase() || "consulting",
+            service_description: serviceDescription,
+            target_customer_type: String(serviceForm.target_customer_type || "").trim(),
+            target_market_scope: String(serviceForm.target_market_scope || "").trim().toLowerCase(),
+            price_per_sale: parseNumber(serviceForm.price_per_sale, 0),
+            expected_sales_per_month: parseNumber(serviceForm.expected_sales_per_month, 0),
+            direct_labour_cost_per_sale: parseNumber(serviceForm.direct_labour_cost_per_sale, 0),
+            contractor_cost_per_sale: parseNumber(serviceForm.contractor_cost_per_sale, 0),
+            materials_cost_per_sale: parseNumber(serviceForm.materials_cost_per_sale, 0),
+            travel_cost_per_sale: parseNumber(serviceForm.travel_cost_per_sale, 0),
+            other_direct_cost_per_sale: parseNumber(serviceForm.other_direct_cost_per_sale, 0),
+            monthly_software_cost: parseNumber(serviceForm.monthly_software_cost, 0),
+            monthly_marketing_cost: parseNumber(serviceForm.monthly_marketing_cost, 0),
+            monthly_admin_cost: parseNumber(serviceForm.monthly_admin_cost, 0),
+            monthly_rent_cost: parseNumber(serviceForm.monthly_rent_cost, 0),
+            monthly_other_fixed_cost: parseNumber(serviceForm.monthly_other_fixed_cost, 0),
+            hours_required_per_sale: parseNumber(serviceForm.hours_required_per_sale, 0),
+            available_delivery_hours_per_month: parseNumber(serviceForm.available_delivery_hours_per_month, 0),
+            demand_evidence_type: String(serviceForm.demand_evidence_type || "").trim().toLowerCase(),
+            number_of_interested_leads: parseIntSafe(serviceForm.number_of_interested_leads, 0),
+            number_of_paying_customers: parseIntSafe(serviceForm.number_of_paying_customers, 0),
+            competitor_price_low: parseNumber(serviceForm.competitor_price_low, 0),
+            competitor_price_high: parseNumber(serviceForm.competitor_price_high, 0),
+            differentiation_level: String(serviceForm.differentiation_level || "").trim().toLowerCase(),
+          };
+          const result = await apiRequest(
+            "/service-ideas/validate",
+            "POST",
+            payloadService,
+            { timeoutMs: 120000 }
+          );
+          setValidation(result);
+          navigate("/results");
+        } else {
+          const result = await apiRequest(
+            "/validation/evaluate",
+            "POST",
+            { idea_validation: payload },
+            { timeoutMs: 120000 }
+          );
+          setValidation(result);
+          navigate("/results");
+        }
       } else {
         setValidation(null);
         setSavedNotice("Workspace saved.");
@@ -846,7 +1057,7 @@ export default function ValidationWizardPage() {
             subtitle={fromOtherModule ? "Open any section and fill it in any order." : "Open any section and fill it in any order."}
           >
             <div className="space-y-3">
-              {enabledForms.business ? (
+              {enabledForms.business && !isProductPath ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">
                     {isProductPath ? "Product details" : "Workspace details"}
@@ -1172,6 +1383,235 @@ export default function ValidationWizardPage() {
                 </details>
               ) : null}
 
+              {isProductPath && (enabledForms.service_basics || enabledForms.revenue_inputs || enabledForms.direct_costs || enabledForms.fixed_costs || enabledForms.capacity_inputs || enabledForms.demand_inputs || enabledForms.competition) ? (
+                <>
+                  {enabledForms.service_basics ? (
+                    <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
+                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Service basics</summary>
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        <div className="md:col-span-2 lg:col-span-3">
+                          <FieldLabel info="Name of the service idea you want to validate.">Service name *</FieldLabel>
+                          {workspaceServices.length ? (
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                              <select
+                                className="ea-input"
+                                value={serviceSelection}
+                                onChange={(e) => {
+                                  const nextValue = e.target.value;
+                                  setServiceSelection(nextValue);
+                                  if (!nextValue) return;
+                                  if (nextValue === "__other__") {
+                                    updateService("service_name", "");
+                                    return;
+                                  }
+                                  const svc = workspaceServices.find((s) => s.service_name === nextValue);
+                                  if (svc) {
+                                    updateService("service_name", svc.service_name);
+                                    if (!serviceForm.service_description && svc.service_description) {
+                                      updateService("service_description", svc.service_description);
+                                    }
+                                    if (svc.service_category) updateService("service_category", svc.service_category);
+                                  }
+                                }}
+                              >
+                                <option value="">Select from workspace services</option>
+                                {workspaceServices.map((svc) => (
+                                  <option key={svc.service_name} value={svc.service_name}>
+                                    {svc.service_name}
+                                  </option>
+                                ))}
+                                <option value="__other__">Other (type new)</option>
+                              </select>
+                              <Input
+                                value={serviceForm.service_name}
+                                onChange={(e) => {
+                                  setServiceSelection("__other__");
+                                  updateService("service_name", e.target.value);
+                                }}
+                                placeholder="Type service name"
+                              />
+                            </div>
+                          ) : (
+                            <Input value={serviceForm.service_name} onChange={(e) => updateService("service_name", e.target.value)} />
+                          )}
+                        </div>
+                        <div className="md:col-span-2 lg:col-span-3">
+                          <FieldLabel info="Short description of what the service delivers.">Service description *</FieldLabel>
+                          <textarea
+                            className="min-h-20 ea-input"
+                            value={serviceForm.service_description}
+                            onChange={(e) => updateService("service_description", e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <FieldLabel info="Choose the closest category.">Service category *</FieldLabel>
+                          <select value={serviceForm.service_category} onChange={(e) => updateService("service_category", e.target.value)} className="ea-input">
+                            {SERVICE_CATEGORY_OPTIONS.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
+                          </select>
+                        </div>
+                        <div>
+                          <FieldLabel info="Who this service is for.">Target customer type *</FieldLabel>
+                          <select value={serviceForm.target_customer_type} onChange={(e) => updateService("target_customer_type", e.target.value)} className="ea-input">
+                            {TARGET_CUSTOMER_OPTIONS.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
+                          </select>
+                        </div>
+                        <div>
+                          <FieldLabel info="Geographic reach for the service.">Target market scope *</FieldLabel>
+                          <select value={serviceForm.target_market_scope} onChange={(e) => updateService("target_market_scope", e.target.value)} className="ea-input">
+                            {TARGET_MARKET_SCOPE_OPTIONS.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
+                          </select>
+                        </div>
+                      </div>
+                    </details>
+                  ) : null}
+
+                  {enabledForms.revenue_inputs ? (
+                    <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
+                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Revenue inputs</summary>
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        <div>
+                          <FieldLabel info="Price charged per sale.">Price per sale *</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.price_per_sale} onChange={(v) => updateService("price_per_sale", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Expected sales volume per month.">Expected sales per month *</FieldLabel>
+                          <NumberInput placeholder="0" value={serviceForm.expected_sales_per_month} onChange={(v) => updateService("expected_sales_per_month", v)} />
+                        </div>
+                      </div>
+                    </details>
+                  ) : null}
+
+                  {enabledForms.direct_costs ? (
+                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Direct delivery costs</summary>
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        <div>
+                          <FieldLabel info="Labour cost to deliver one sale.">Direct labour cost per sale *</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.direct_labour_cost_per_sale} onChange={(v) => updateService("direct_labour_cost_per_sale", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Contractor cost to deliver one sale.">Contractor cost per sale</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.contractor_cost_per_sale} onChange={(v) => updateService("contractor_cost_per_sale", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Materials or tools cost per sale.">Materials/tools cost per sale</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.materials_cost_per_sale} onChange={(v) => updateService("materials_cost_per_sale", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Travel cost per sale.">Travel cost per sale</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.travel_cost_per_sale} onChange={(v) => updateService("travel_cost_per_sale", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Any other direct cost per sale.">Other direct cost per sale</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.other_direct_cost_per_sale} onChange={(v) => updateService("other_direct_cost_per_sale", v)} />
+                        </div>
+                      </div>
+                    </details>
+                  ) : null}
+
+                  {enabledForms.fixed_costs ? (
+                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Fixed monthly costs</summary>
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        <div>
+                          <FieldLabel info="Recurring software costs per month.">Monthly software cost *</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.monthly_software_cost} onChange={(v) => updateService("monthly_software_cost", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Recurring marketing costs per month.">Monthly marketing cost *</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.monthly_marketing_cost} onChange={(v) => updateService("monthly_marketing_cost", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Recurring admin costs per month.">Monthly admin cost *</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.monthly_admin_cost} onChange={(v) => updateService("monthly_admin_cost", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Rent or workspace costs per month.">Monthly rent/workspace cost</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.monthly_rent_cost} onChange={(v) => updateService("monthly_rent_cost", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Any other fixed monthly cost.">Other fixed cost</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.monthly_other_fixed_cost} onChange={(v) => updateService("monthly_other_fixed_cost", v)} />
+                        </div>
+                      </div>
+                    </details>
+                  ) : null}
+
+                  {enabledForms.capacity_inputs ? (
+                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Capacity inputs</summary>
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        <div>
+                          <FieldLabel info="Hours required to deliver one sale.">Hours required *</FieldLabel>
+                          <NumberInput placeholder="0" value={serviceForm.hours_required_per_sale} onChange={(v) => updateService("hours_required_per_sale", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Total delivery hours available per month.">Available delivery hours per month *</FieldLabel>
+                          <NumberInput placeholder="0" value={serviceForm.available_delivery_hours_per_month} onChange={(v) => updateService("available_delivery_hours_per_month", v)} />
+                        </div>
+                      </div>
+                    </details>
+                  ) : null}
+
+                  {enabledForms.demand_inputs ? (
+                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Demand evidence</summary>
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        <div>
+                          <FieldLabel info="Strength of demand evidence.">Demand evidence type *</FieldLabel>
+                          <select value={serviceForm.demand_evidence_type} onChange={(e) => updateService("demand_evidence_type", e.target.value)} className="ea-input">
+                            {DEMAND_EVIDENCE_OPTIONS.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
+                          </select>
+                        </div>
+                        <div>
+                          <FieldLabel info="Number of interested leads.">Interested leads</FieldLabel>
+                          <NumberInput placeholder="0" value={serviceForm.number_of_interested_leads} onChange={(v) => updateService("number_of_interested_leads", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Number of paying customers.">Paying customers</FieldLabel>
+                          <NumberInput placeholder="0" value={serviceForm.number_of_paying_customers} onChange={(v) => updateService("number_of_paying_customers", v)} />
+                        </div>
+                      </div>
+                    </details>
+                  ) : null}
+
+                  {enabledForms.competition ? (
+                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Competitive positioning</summary>
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        <div>
+                          <FieldLabel info="Lowest competitor price you see.">Competitor price (low)</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.competitor_price_low} onChange={(v) => updateService("competitor_price_low", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="Highest competitor price you see.">Competitor price (high)</FieldLabel>
+                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                          <NumberInput placeholder="0" value={serviceForm.competitor_price_high} onChange={(v) => updateService("competitor_price_high", v)} />
+                        </div>
+                        <div>
+                          <FieldLabel info="How differentiated your offer is.">Differentiation level *</FieldLabel>
+                          <select value={serviceForm.differentiation_level} onChange={(e) => updateService("differentiation_level", e.target.value)} className="ea-input">
+                            {DIFFERENTIATION_OPTIONS.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
+                          </select>
+                        </div>
+                      </div>
+                    </details>
+                  ) : null}
+                </>
+              ) : null}
+
               {enabledForms.offer_demand ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">Offer & demand</summary>
@@ -1276,7 +1716,7 @@ export default function ValidationWizardPage() {
                     </div>
                     <div>
                       <FieldLabel info="How many units one person can deliver per month.">
-                        Capacity units / person / month
+                        Capacity units per person per month
                       </FieldLabel>
                         <NumberInput
                           placeholder={recommendedCapacityPerPerson ? String(recommendedCapacityPerPerson) : "0"}

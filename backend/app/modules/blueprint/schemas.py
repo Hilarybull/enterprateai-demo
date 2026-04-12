@@ -57,6 +57,7 @@ class BlueprintGenerateRequest(BaseModel):
     sender_phone: Optional[str] = None
     sender_email: Optional[str] = None
     sender_website: Optional[str] = None
+    objective: Optional[str] = None
     subject_lines: Optional[str] = None
     followup_sequence: Optional[str] = None
     sections: Optional[list[str]] = Field(default=None, description="Optional section identifiers to generate.")

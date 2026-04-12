@@ -21,7 +21,7 @@ const FieldLabel = ({ children, info }) => (
 );
 
 export default function SimulationPage() {
-  const simulationEnabled = false;
+  const simulationEnabled = true;
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);

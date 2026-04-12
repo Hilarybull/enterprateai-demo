@@ -21,8 +21,8 @@ const DOCUMENTS = [
   },
   {
     id: "client_proposal",
-    title: "Client Proposal",
-    desc: "Client-specific scope, approach, and terms",
+    title: "Business Proposals",
+    desc: "Sales proposal with scope, approach, and terms",
     needsWorkspace: false
   },
   {
@@ -36,29 +36,32 @@ const DOCUMENTS = [
 const BUSINESS_PLAN_SECTIONS = [
   { id: "executive_summary", label: "Executive summary" },
   { id: "business_overview", label: "Business overview" },
-  { id: "market_analysis", label: "Market analysis" },
   { id: "products_services", label: "Products & services" },
-  { id: "sales_marketing", label: "Sales & marketing" },
-  { id: "operational_plan", label: "Operational plan" },
-  { id: "management_personnel", label: "Management & personnel" },
-  { id: "financial_plan", label: "Financial plan" },
-  { id: "risk_analysis", label: "Risk analysis" },
-  { id: "growth_strategy", label: "Growth strategy" },
+  { id: "market_analysis", label: "Market analysis" },
+  { id: "competitive_analysis", label: "Competitive analysis" },
+  { id: "business_model", label: "Business model" },
+  { id: "marketing_sales_strategy", label: "Marketing & sales strategy" },
+  { id: "operations_plan", label: "Operations plan" },
+  { id: "management_organisation", label: "Management & organisation" },
+  { id: "financial_snapshot", label: "Financial snapshot" },
+  { id: "funding_requirements", label: "Funding requirements" },
+  { id: "risk_analysis_mitigation", label: "Risk analysis & mitigation" },
   { id: "conclusion", label: "Conclusion" }
 ];
 
 const CLIENT_PROPOSAL_SECTIONS = [
   { id: "cover_page", label: "Cover page" },
   { id: "executive_summary", label: "Executive summary" },
-  { id: "client_needs", label: "Client needs" },
+  { id: "client_needs", label: "Client needs / problem" },
   { id: "proposed_solution", label: "Proposed solution" },
   { id: "scope_of_work", label: "Scope of work" },
-  { id: "implementation_plan", label: "Implementation plan" },
+  { id: "methodology", label: "Methodology / approach" },
+  { id: "timeline", label: "Timeline / delivery schedule" },
   { id: "pricing_terms", label: "Pricing & payment terms" },
-  { id: "value_benefits", label: "Value proposition" },
-  { id: "company_info", label: "Company information" },
+  { id: "value_benefits", label: "Value proposition / benefits" },
+  { id: "company_profile", label: "Company profile" },
   { id: "terms_conditions", label: "Terms & conditions" },
-  { id: "acceptance", label: "Acceptance / call to action" }
+  { id: "acceptance", label: "Acceptance / next steps" }
 ];
 
 const SALES_LETTER_SECTIONS = [
@@ -73,6 +76,27 @@ const SALES_LETTER_SECTIONS = [
   { id: "urgency", label: "Urgency / scarcity" },
   { id: "closing", label: "Closing" },
   { id: "followup", label: "Follow-up summary" }
+];
+
+const BUSINESS_PLAN_OBJECTIVES = ["Standard"];
+
+const CLIENT_PROPOSAL_OBJECTIVES = ["Sales Proposal"];
+
+const SALES_LETTER_OBJECTIVES = [
+  "A reliable, no-drama way to keep standards consistent",
+  "Consistent results without extra oversight",
+  "Reduce rework and keep delivery on track",
+  "Build trust with predictable service quality",
+  "Other"
+];
+
+const DID_YOU_KNOW_FACTS = [
+  "Clear sections make long documents easier to edit and review.",
+  "Executive summaries work best when they reflect only confirmed inputs.",
+  "Consistent headings make PDF exports cleaner and easier to scan.",
+  "Using real workspace data keeps proposals accurate and credible.",
+  "Focused objectives help the generator keep tone and intent aligned.",
+  "Shorter sentences improve readability in long-form plans."
 ];
 
 function pct(n) {
@@ -123,12 +147,18 @@ export default function BlueprintPage() {
   const [senderPhone, setSenderPhone] = useState("");
   const [senderEmail, setSenderEmail] = useState("");
   const [senderWebsite, setSenderWebsite] = useState("");
-  const [subjectLineChoice, setSubjectLineChoice] = useState("A reliable, no-drama way to keep standards consistent");
-  const [subjectLineCustom, setSubjectLineCustom] = useState("");
+  const [workspaceProfile, setWorkspaceProfile] = useState(null);
+  const [objectiveChoiceByDoc, setObjectiveChoiceByDoc] = useState({
+    business_plan: BUSINESS_PLAN_OBJECTIVES[0],
+    client_proposal: CLIENT_PROPOSAL_OBJECTIVES[0],
+    sales_letter: SALES_LETTER_OBJECTIVES[0]
+  });
+  const [objectiveCustomByDoc, setObjectiveCustomByDoc] = useState({});
   const [followupChoice, setFollowupChoice] = useState("Quick reminder and recap of the main benefit, inviting a short call");
   const [followupCustom, setFollowupCustom] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
+  const [didYouKnowIndex, setDidYouKnowIndex] = useState(0);
   const [error, setError] = useState(null);
   const [docByType, setDocByType] = useState({});
   const [docIdByType, setDocIdByType] = useState({});
@@ -140,11 +170,12 @@ export default function BlueprintPage() {
   const [customClientName, setCustomClientName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
-  const [includeSnapshotByDoc, setIncludeSnapshotByDoc] = useState({
-    business_plan: false,
-    client_proposal: false,
-  });
   const [sectionsByDoc, setSectionsByDoc] = useState({
+    business_plan: [],
+    client_proposal: [],
+    sales_letter: []
+  });
+  const [draftSectionsByDoc, setDraftSectionsByDoc] = useState({
     business_plan: [],
     client_proposal: [],
     sales_letter: []
@@ -155,20 +186,24 @@ export default function BlueprintPage() {
   const sectionDraftsRef = useRef(null);
   const showSectionDrafts = Boolean(selectedDoc && sectionsForDoc(selectedDoc).length);
 
-  function SectionTile({ label, selected, onClick }) {
+  function SectionTile({ label, selected, snippet, onClick }) {
     return (
       <button
         type="button"
         onClick={onClick}
         className={
-          "rounded-2xl border p-4 text-left transition " +
+          "w-full rounded-2xl border p-4 text-left transition " +
           (selected
             ? "border-brand-300 bg-brand-50 text-brand-800"
             : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50")
         }
       >
         <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-        <div className="mt-2 text-sm font-semibold">{selected ? "Selected" : "Tap to select"}</div>
+        {snippet ? (
+          <div className="mt-2 text-xs text-slate-600 line-clamp-3">{snippet}</div>
+        ) : (
+          <div className="mt-2 text-xs text-slate-400">Not generated yet.</div>
+        )}
       </button>
     );
   }
@@ -187,6 +222,20 @@ export default function BlueprintPage() {
   const activeVendors = useMemo(() => vendors.filter((v) => !v.archived), [vendors]);
   const acceptedIdeaValidation = decisionStatus === "accepted" ? ideaValidation : null;
   const OTHER_CUSTOMER_ID = "__other__";
+  const draftSectionMap = useMemo(() => {
+    if (!selectedDoc || !sectionDraftsByDoc[selectedDoc]) return {};
+    return extractSections(sectionDraftsByDoc[selectedDoc]);
+  }, [selectedDoc, sectionDraftsByDoc]);
+  const activeDraftSectionId = selectedDoc
+    ? sectionTabByDoc[selectedDoc] || (draftSectionsByDoc[selectedDoc] || [])[0]
+    : null;
+  const activeDraftHeading = selectedDoc && activeDraftSectionId
+    ? sectionHeadingMap(selectedDoc)[activeDraftSectionId]
+    : null;
+  const activeDraftBody = activeDraftHeading ? draftSectionMap?.[activeDraftHeading] : "";
+  const sectionPreviewHtml =
+    activeDraftHeading && activeDraftBody ? buildSectionPreviewHtml(activeDraftHeading, activeDraftBody) : "";
+  const showSectionPreview = inputsTab === "sections" && showSectionDrafts;
 
   async function refreshSavedDocs() {
     try {
@@ -208,6 +257,15 @@ export default function BlueprintPage() {
     }
     setInputsTab("inputs");
   }, [selectedDoc]);
+
+  useEffect(() => {
+    if (!isLoading) return;
+    setDidYouKnowIndex(0);
+    const id = setInterval(() => {
+      setDidYouKnowIndex((prev) => (prev + 1) % DID_YOU_KNOW_FACTS.length);
+    }, 10000);
+    return () => clearInterval(id);
+  }, [isLoading]);
 
   useEffect(() => {
     if (workspaceIdStored && !workspaceId) setWorkspaceId(workspaceIdStored);
@@ -243,6 +301,7 @@ export default function BlueprintPage() {
         const profile = ws?.data?.business_profile || {};
         const workspaceProfile = ws?.data?.workspace_profile || {};
         const wpServices = Array.isArray(workspaceProfile.services) ? workspaceProfile.services : [];
+        setWorkspaceProfile(workspaceProfile || null);
         if (!companyName && (workspaceProfile.company_name || profile.business_name)) {
           setCompanyName(workspaceProfile.company_name || profile.business_name);
         }
@@ -255,8 +314,12 @@ export default function BlueprintPage() {
         if (!targetMarket && workspaceProfile.target_customer_type) {
           setTargetMarket(workspaceProfile.target_customer_type);
         }
-        if (!solution && wpServices.length && wpServices[0].service_name) {
-          setSolution(wpServices[0].service_name);
+        if (!solution && wpServices.length) {
+          const joined = wpServices
+            .map((s) => String(s?.service_name || "").trim())
+            .filter(Boolean)
+            .join(" / ");
+          if (joined) setSolution(joined);
         }
       } catch {
         // ignore
@@ -287,6 +350,15 @@ export default function BlueprintPage() {
       alive = false;
     };
   }, [workspaceIdStored]);
+
+  useEffect(() => {
+    if (!workspaceProfile || !workspaceCompanyMatches()) return;
+    const defaultContact = getWorkspaceContactDetails();
+    if (!contactDetails && defaultContact) setContactDetails(defaultContact);
+    if (!senderEmail && workspaceProfile.email) setSenderEmail(String(workspaceProfile.email));
+    if (!senderPhone && workspaceProfile.phone_number) setSenderPhone(String(workspaceProfile.phone_number));
+    if (!senderWebsite && workspaceProfile.website) setSenderWebsite(String(workspaceProfile.website));
+  }, [workspaceProfile, contactDetails, senderEmail, senderPhone, senderWebsite]);
 
   async function syncWorkspaceProfile() {
     const profile = {
@@ -407,19 +479,50 @@ export default function BlueprintPage() {
     return [];
   }
 
+  function toggleDraftSection(docId, sectionId) {
+    setDraftSectionsByDoc((prev) => {
+      const current = prev[docId] || [];
+      const exists = current.includes(sectionId);
+      const next = exists ? current.filter((s) => s !== sectionId) : [...current, sectionId];
+      return { ...prev, [docId]: next };
+    });
+  }
+
+  async function handleDraftTileClick(sectionId) {
+    if (!selectedDoc) return;
+    const heading = sectionHeadingMap(selectedDoc)[sectionId];
+    const existing = heading ? draftSectionMap[heading] : "";
+    setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: sectionId }));
+    if (existing) return;
+    setDraftSectionsByDoc((prev) => {
+      const current = prev[selectedDoc] || [];
+      if (current.includes(sectionId)) return prev;
+      return { ...prev, [selectedDoc]: [...current, sectionId] };
+    });
+    await generateSectionDrafts([sectionId]);
+  }
+
+  function objectivesForDoc(docId) {
+    if (docId === "business_plan") return BUSINESS_PLAN_OBJECTIVES;
+    if (docId === "client_proposal") return CLIENT_PROPOSAL_OBJECTIVES;
+    return [];
+  }
+
   function sectionHeadingMap(docId) {
     if (docId === "business_plan") {
       return {
         executive_summary: "Executive Summary",
         business_overview: "Business Overview",
-        market_analysis: "Market Analysis",
         products_services: "Products and Services",
-        sales_marketing: "Sales and Marketing",
-        operational_plan: "Operational Plan",
-        management_personnel: "Management and Personnel",
-        financial_plan: "Financial Plan",
-        risk_analysis: "Risk Analysis",
-        growth_strategy: "Growth Strategy",
+        market_analysis: "Market Analysis",
+        competitive_analysis: "Competitive Analysis",
+        business_model: "Business Model",
+        marketing_sales_strategy: "Marketing and Sales Strategy",
+        operations_plan: "Operations Plan",
+        management_organisation: "Management and Organisation",
+        financial_snapshot: "Financial Snapshot",
+        funding_requirements: "Funding Requirements",
+        risk_analysis_mitigation: "Risk Analysis and Mitigation",
         conclusion: "Conclusion"
       };
     }
@@ -427,15 +530,16 @@ export default function BlueprintPage() {
       return {
         cover_page: "Cover Page",
         executive_summary: "Executive Summary",
-        client_needs: "Understanding of Client Needs",
+        client_needs: "Client Needs / Problem Statement",
         proposed_solution: "Proposed Solution",
         scope_of_work: "Scope of Work",
-        implementation_plan: "Implementation Plan / Timeline",
+        methodology: "Methodology / Approach",
+        timeline: "Timeline / Delivery Schedule",
         pricing_terms: "Pricing and Payment Terms",
         value_benefits: "Value Proposition / Benefits",
-        company_info: "Company Information",
+        company_profile: "Company Profile",
         terms_conditions: "Terms and Conditions",
-        acceptance: "Acceptance / Call to Action"
+        acceptance: "Acceptance / Next Steps"
       };
     }
     if (docId === "sales_letter") {
@@ -462,9 +566,9 @@ export default function BlueprintPage() {
     let current = null;
     let buffer = [];
     for (const line of lines) {
-      if (line.startsWith("## ")) {
+      if (line.startsWith("## ") || line.startsWith("### ")) {
         if (current) sections[current] = buffer.join("\n").trim();
-        current = line.replace(/^##\s+/, "").trim();
+        current = line.replace(/^###?\s+/, "").trim();
         buffer = [];
       } else {
         if (current) buffer.push(line);
@@ -472,6 +576,114 @@ export default function BlueprintPage() {
     }
     if (current) sections[current] = buffer.join("\n").trim();
     return sections;
+  }
+
+  function stripMarkdown(text) {
+    const raw = String(text || "");
+    if (!raw) return "";
+    return raw
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/^>\s?/gm, "")
+      .replace(/^\s*\|.*\|\s*$/gm, " ")
+      .replace(/^\s*\|?[-:\s|]+\|?\s*$/gm, " ")
+      .replace(/\|/g, " ")
+      .replace(/^\s*[-*+]\s+/gm, "")
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/__(.+?)__/g, "$1")
+      .replace(/\[(.+?)\]\(.+?\)/g, "$1")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function buildSectionPreviewHtml(title, body) {
+    const heading = stripMarkdown(title || "");
+    const cleaned = String(body || "").replaceAll("\r\n", "\n").trim();
+    if (!heading && !cleaned) return "";
+    const paragraphs = cleaned.split(/\n{2,}/g).map((p) => p.trim()).filter(Boolean);
+    const parts = [];
+    if (heading) {
+      parts.push(`<h2 style="text-align:center;">${heading}</h2>`);
+    }
+    paragraphs.forEach((para) => {
+      const lines = para.split("\n");
+      const bullets = lines.filter((l) => l.trim().startsWith("- "));
+      if (bullets.length === lines.length && bullets.length) {
+        parts.push("<ul>");
+        bullets.forEach((b) => {
+          parts.push(`<li>${stripMarkdown(b.replace(/^\s*-\s+/, ""))}</li>`);
+        });
+        parts.push("</ul>");
+      } else {
+        parts.push(`<p>${stripMarkdown(para)}</p>`);
+      }
+    });
+    return parts.join("");
+  }
+
+  function getObjectiveValue(docId) {
+    const choice = objectiveChoiceByDoc[docId] || "";
+    if (docId === "sales_letter") {
+      if (choice === "Other") {
+        return String(objectiveCustomByDoc[docId] || "").trim();
+      }
+      return String(choice || "").trim();
+    }
+    if (choice === "Other") {
+      return String(objectiveCustomByDoc[docId] || "").trim();
+    }
+    return String(choice || "").trim();
+  }
+
+  function workspaceCompanyMatches() {
+    const wsName = String(workspaceProfile?.company_name || "").trim();
+    if (!wsName) return true;
+    if (!companyName.trim()) return true;
+    return companyName.trim().toLowerCase() === wsName.toLowerCase();
+  }
+
+  function resolveWithWorkspace(value, fallback) {
+    if (String(value || "").trim()) return String(value || "").trim();
+    return workspaceCompanyMatches() ? String(fallback || "").trim() : "";
+  }
+
+  function getWorkspaceContactDetails() {
+    if (!workspaceProfile) return "";
+    const parts = [
+      workspaceProfile.email,
+      workspaceProfile.phone_number,
+      workspaceProfile.website
+    ]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+    return parts.join(" | ");
+  }
+
+  function getSectionSnippet(docId, sectionId) {
+    const heading = sectionHeadingMap(docId)[sectionId];
+    const body = heading ? draftSectionMap[heading] : "";
+    if (!body) return "";
+    const flat = stripMarkdown(body);
+    if (!flat) return "";
+    return flat.length > 120 ? `${flat.slice(0, 120)}…` : flat;
+  }
+
+  function mergeSectionDrafts(docId, existingMarkdown, incomingMarkdown) {
+    const existing = extractSections(existingMarkdown || "");
+    const incoming = extractSections(incomingMarkdown || "");
+    const merged = { ...existing, ...incoming };
+    const headingMap = sectionHeadingMap(docId);
+    const orderedHeadings = sectionsForDoc(docId)
+      .map((s) => headingMap[s.id])
+      .filter(Boolean);
+    const parts = [];
+    orderedHeadings.forEach((heading) => {
+      if (merged[heading]) {
+        parts.push(`## ${heading}\n${merged[heading].trim()}`);
+      }
+    });
+    return parts.join("\n\n").trim();
   }
 
   function formatPaymentTerms(value) {
@@ -509,7 +721,15 @@ export default function BlueprintPage() {
   }
 
   async function generateSelected() {
-    if (companyName.trim().length < 2) {
+    const resolvedCompanyName = resolveWithWorkspace(companyName, workspaceProfile?.company_name);
+    const resolvedIndustry = resolveWithWorkspace(industry, workspaceProfile?.primary_industry);
+    const resolvedValueProp = resolveWithWorkspace(valueProp, workspaceProfile?.key_offering_focus || workspaceProfile?.tagline);
+    const resolvedTargetMarket = resolveWithWorkspace(targetMarket, workspaceProfile?.target_customer_type);
+    const resolvedContactDetails = resolveWithWorkspace(contactDetails, getWorkspaceContactDetails());
+    const resolvedSenderEmail = resolveWithWorkspace(senderEmail, workspaceProfile?.email);
+    const resolvedSenderPhone = resolveWithWorkspace(senderPhone, workspaceProfile?.phone_number);
+    const resolvedSenderWebsite = resolveWithWorkspace(senderWebsite, workspaceProfile?.website);
+    if (resolvedCompanyName.trim().length < 2) {
       setError("Enter a business name to generate documents.");
       setShowInputs(true);
       return;
@@ -532,7 +752,8 @@ export default function BlueprintPage() {
       setShowInputs(true);
       return;
     }
-    const wantsSnapshot = includeSnapshotByDoc[selectedDoc];
+    const wantsSnapshot =
+      selectedDoc === "business_plan" && (sectionsByDoc[selectedDoc] || []).includes("financial_snapshot");
     if (wantsSnapshot && !workspaceId.trim() && !workspaceIdStored) {
       setError("Select a workspace to include the financial snapshot.");
       setShowInputs(true);
@@ -545,15 +766,15 @@ export default function BlueprintPage() {
     try {
       const res = await apiRequest("/blueprint/generate", "POST", {
         type: selectedDoc,
-        company_name: companyName,
-        industry,
+        company_name: resolvedCompanyName,
+        industry: resolvedIndustry,
         pricing_model: pricingModel,
         workspace_id: (workspaceId || workspaceIdStored || "").trim() || null,
-        include_validation_snapshot: includeSnapshotByDoc[selectedDoc],
+        include_validation_snapshot: wantsSnapshot,
         problem,
         solution,
-        target_market: targetMarket,
-        value_proposition: valueProp,
+        target_market: resolvedTargetMarket,
+        value_proposition: resolvedValueProp,
         tone,
         extra_notes: extraNotes,
         bill_to: billTo || customClientName,
@@ -561,7 +782,7 @@ export default function BlueprintPage() {
         terms,
 
         proposal_title: proposalTitle,
-        contact_details: contactDetails,
+        contact_details: resolvedContactDetails,
         timeline,
         scope_exclusions: scopeExclusions,
         assumptions,
@@ -573,10 +794,11 @@ export default function BlueprintPage() {
         urgency,
         sender_name: senderName,
         sender_position: senderPosition,
-        sender_phone: senderPhone,
-        sender_email: senderEmail,
-        sender_website: senderWebsite,
-        subject_lines: subjectLineChoice === "Other" ? subjectLineCustom : subjectLineChoice,
+        sender_phone: resolvedSenderPhone,
+        sender_email: resolvedSenderEmail,
+        sender_website: resolvedSenderWebsite,
+        objective: getObjectiveValue(selectedDoc),
+        subject_lines: getObjectiveValue("sales_letter"),
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
         sections: sectionsByDoc[selectedDoc] || [],
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
@@ -584,6 +806,13 @@ export default function BlueprintPage() {
       setDocByType((prev) => ({ ...prev, [selectedDoc]: res }));
       if (res?.document_id) setDocIdByType((prev) => ({ ...prev, [selectedDoc]: res.document_id }));
       setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: "" }));
+      if (res?.document_markdown) {
+        setSectionDraftsByDoc((prev) => ({ ...prev, [selectedDoc]: res.document_markdown }));
+        setDraftSectionsByDoc((prev) => ({
+          ...prev,
+          [selectedDoc]: (prev[selectedDoc] && prev[selectedDoc].length) ? prev[selectedDoc] : sectionsForDoc(selectedDoc).map((s) => s.id)
+        }));
+      }
       setShowInputs(false);
       refreshSavedDocs();
     } catch (e) {
@@ -594,15 +823,23 @@ export default function BlueprintPage() {
     }
   }
 
-  async function generateSectionDrafts() {
+  async function generateSectionDrafts(overrideSections = null) {
     if (!selectedDoc) return;
-    const chosen = sectionsByDoc[selectedDoc] || [];
+    const chosen = overrideSections || draftSectionsByDoc[selectedDoc] || [];
     if (!chosen.length) {
       setError("Select at least one section to generate.");
       setShowInputs(true);
       return;
     }
-    if (companyName.trim().length < 2) {
+    const resolvedCompanyName = resolveWithWorkspace(companyName, workspaceProfile?.company_name);
+    const resolvedIndustry = resolveWithWorkspace(industry, workspaceProfile?.primary_industry);
+    const resolvedValueProp = resolveWithWorkspace(valueProp, workspaceProfile?.key_offering_focus || workspaceProfile?.tagline);
+    const resolvedTargetMarket = resolveWithWorkspace(targetMarket, workspaceProfile?.target_customer_type);
+    const resolvedContactDetails = resolveWithWorkspace(contactDetails, getWorkspaceContactDetails());
+    const resolvedSenderEmail = resolveWithWorkspace(senderEmail, workspaceProfile?.email);
+    const resolvedSenderPhone = resolveWithWorkspace(senderPhone, workspaceProfile?.phone_number);
+    const resolvedSenderWebsite = resolveWithWorkspace(senderWebsite, workspaceProfile?.website);
+    if (resolvedCompanyName.trim().length < 2) {
       setError("Enter a business name to generate document sections.");
       setShowInputs(true);
       return;
@@ -631,15 +868,16 @@ export default function BlueprintPage() {
     try {
       const res = await apiRequest("/blueprint/generate", "POST", {
         type: selectedDoc,
-        company_name: companyName,
-        industry,
+        company_name: resolvedCompanyName,
+        industry: resolvedIndustry,
         pricing_model: pricingModel,
         workspace_id: (workspaceId || workspaceIdStored || "").trim() || null,
-        include_validation_snapshot: includeSnapshotByDoc[selectedDoc],
+        include_validation_snapshot:
+          selectedDoc === "business_plan" && chosen.includes("financial_snapshot"),
         problem,
         solution,
-        target_market: targetMarket,
-        value_proposition: valueProp,
+        target_market: resolvedTargetMarket,
+        value_proposition: resolvedValueProp,
         tone,
         extra_notes: extraNotes,
         bill_to: billTo || customClientName,
@@ -647,7 +885,7 @@ export default function BlueprintPage() {
         terms,
 
         proposal_title: proposalTitle,
-        contact_details: contactDetails,
+        contact_details: resolvedContactDetails,
         timeline,
         scope_exclusions: scopeExclusions,
         assumptions,
@@ -659,16 +897,20 @@ export default function BlueprintPage() {
         urgency,
         sender_name: senderName,
         sender_position: senderPosition,
-        sender_phone: senderPhone,
-        sender_email: senderEmail,
-        sender_website: senderWebsite,
-        subject_lines: subjectLineChoice === "Other" ? subjectLineCustom : subjectLineChoice,
+        sender_phone: resolvedSenderPhone,
+        sender_email: resolvedSenderEmail,
+        sender_website: resolvedSenderWebsite,
+        objective: getObjectiveValue(selectedDoc),
+        subject_lines: getObjectiveValue("sales_letter"),
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
         sections: chosen,
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
       }, { timeoutMs: 120000 });
       const markdown = res?.document_markdown || "";
-      setSectionDraftsByDoc((prev) => ({ ...prev, [selectedDoc]: markdown }));
+      setSectionDraftsByDoc((prev) => ({
+        ...prev,
+        [selectedDoc]: mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", markdown)
+      }));
       setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: chosen[0] }));
       setShowInputs(true);
     } catch (e) {
@@ -995,8 +1237,28 @@ export default function BlueprintPage() {
             ) : null}
 
             <div className="flex h-[calc(90vh-64px)] min-h-0 flex-col overflow-hidden lg:flex-row">
-              <div className="order-1 flex-1 min-h-0 h-full overflow-hidden bg-slate-50 p-5">
-                {selectedDocResult?.document_markdown ? (
+              <div className="order-1 flex-1 min-h-0 h-full overflow-hidden bg-slate-50 p-5 relative">
+                {showSectionPreview ? (
+                  <div className="flex h-full min-h-0 flex-col gap-3">
+                    <div className="text-sm text-slate-500">Section preview</div>
+                    <div className="flex-1 min-h-0">
+                      {sectionPreviewHtml ? (
+                        <DocumentEditor
+                          title={`${selectedMeta.title} — ${sectionsForDoc(selectedDoc).find((s) => s.id === activeDraftSectionId)?.label || "Section"}`}
+                          markdown=""
+                          initialHtml={sectionPreviewHtml}
+                          onHtmlChange={() => {}}
+                          onDownload={null}
+                          onSave={null}
+                        />
+                      ) : (
+                        <div className="ea-card border-dashed p-6 text-sm text-slate-600">
+                          Select a section tile to preview it here.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : selectedDocResult?.document_markdown ? (
                   <div className="flex h-full min-h-0 flex-col gap-3">
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       {savedNotice ? (
@@ -1051,61 +1313,26 @@ export default function BlueprintPage() {
                         Select sections to draft. Full document generation still uses the selections from the Inputs tab.
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="flex max-h-[420px] flex-col gap-3 overflow-y-auto pr-1">
                       {sectionsForDoc(selectedDoc).map((section) => (
                         <SectionTile
                           key={section.id}
                           label={section.label}
-                          selected={(sectionsByDoc[selectedDoc] || []).includes(section.id)}
-                          onClick={() => toggleSection(selectedDoc, section.id)}
+                          selected={(draftSectionsByDoc[selectedDoc] || []).includes(section.id)}
+                          snippet={getSectionSnippet(selectedDoc, section.id)}
+                          onClick={() => handleDraftTileClick(section.id)}
                         />
                       ))}
                     </div>
                     <div>
                       <Button
                         variant="secondary"
-                        disabled={isLoading || !(sectionsByDoc[selectedDoc] || []).length}
-                        onClick={generateSectionDrafts}
+                        disabled={isLoading || !(draftSectionsByDoc[selectedDoc] || []).length}
+                        onClick={() => generateSectionDrafts()}
                       >
                         {isLoading ? "Generating..." : "Generate section drafts"}
                       </Button>
                     </div>
-                    {sectionDraftsByDoc[selectedDoc] ? (
-                      <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Section drafts</div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {(sectionsByDoc[selectedDoc] || []).map((sid) => (
-                            <button
-                              key={sid}
-                              type="button"
-                              onClick={() => setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: sid }))}
-                              className={
-                                "rounded-full border px-3 py-1 text-[11px] font-semibold " +
-                                (sectionTabByDoc[selectedDoc] === sid
-                                  ? "border-brand-300 bg-brand-50 text-brand-700"
-                                  : "border-slate-200 text-slate-600 hover:bg-slate-50")
-                              }
-                            >
-                              {sectionsForDoc(selectedDoc).find((s) => s.id === sid)?.label || sid}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="mt-3 text-sm text-slate-700">
-                          {(() => {
-                            const headingMap = sectionHeadingMap(selectedDoc);
-                            const extracted = extractSections(sectionDraftsByDoc[selectedDoc]);
-                            const activeId = sectionTabByDoc[selectedDoc] || (sectionsByDoc[selectedDoc] || [])[0];
-                            const heading = headingMap[activeId];
-                            const body = extracted[heading] || "";
-                            return body ? (
-                              <div className="whitespace-pre-wrap leading-relaxed">{body}</div>
-                            ) : (
-                              <div className="text-xs text-slate-500">No content yet. Generate section drafts to preview.</div>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                    ) : null}
                   </div>
                 ) : (
                 <>
@@ -1138,6 +1365,47 @@ export default function BlueprintPage() {
                     <div className="ea-label">Tone</div>
                     <Input value={tone} onChange={(e) => setTone(e.target.value)} placeholder="professional" />
                   </div>
+                  {selectedDoc === "business_plan" || selectedDoc === "client_proposal" ? (
+                    <div className="md:col-span-2">
+                      <div className="ea-label">Objective</div>
+                      <select
+                        value={objectiveChoiceByDoc[selectedDoc] || ""}
+                        onChange={(e) =>
+                          setObjectiveChoiceByDoc((prev) => ({ ...prev, [selectedDoc]: e.target.value }))
+                        }
+                        className="ea-input"
+                      >
+                        {objectivesForDoc(selectedDoc).map((o) => (
+                          <option key={o} value={o}>
+                            {o}
+                          </option>
+                        ))}
+                      </select>
+                      {objectiveChoiceByDoc[selectedDoc] === "Other" ? (
+                        <Input
+                          value={objectiveCustomByDoc[selectedDoc] || ""}
+                          onChange={(e) =>
+                            setObjectiveCustomByDoc((prev) => ({ ...prev, [selectedDoc]: e.target.value }))
+                          }
+                          placeholder="Type your objective"
+                          className="mt-2"
+                        />
+                ) : null}
+                {isLoading ? (
+                  <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/85">
+                    <div className="max-w-md rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-lg">
+                      <div className="flex items-center justify-center">
+                        <Spinner />
+                      </div>
+                      <div className="mt-3 text-sm font-semibold text-slate-900">Generating your document</div>
+                      <div className="mt-2 text-xs text-slate-500">
+                        {DID_YOU_KNOW_FACTS[didYouKnowIndex]}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+                  ) : null}
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-3">
@@ -1219,7 +1487,7 @@ export default function BlueprintPage() {
                   {selectedDoc && sectionsForDoc(selectedDoc).length ? (
                     <div ref={sectionDraftsRef} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
                       <div className="text-sm font-semibold text-slate-900">Sections to generate (optional)</div>
-                      <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                      <div className="mt-2 grid grid-cols-1 gap-2">
                         {sectionsForDoc(selectedDoc).map((section) => (
                           <label key={section.id} className="flex items-center gap-2 text-xs text-slate-700">
                             <input
@@ -1243,58 +1511,6 @@ export default function BlueprintPage() {
                           {isLoading ? "Generating..." : "Generate section drafts"}
                         </Button>
                       </div>
-                      {sectionDraftsByDoc[selectedDoc] ? (
-                        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Section drafts</div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {(sectionsByDoc[selectedDoc] || []).map((sid) => (
-                              <button
-                                key={sid}
-                                type="button"
-                                onClick={() => setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: sid }))}
-                                className={
-                                  "rounded-full border px-3 py-1 text-[11px] font-semibold " +
-                                  (sectionTabByDoc[selectedDoc] === sid
-                                    ? "border-brand-300 bg-brand-50 text-brand-700"
-                                    : "border-slate-200 text-slate-600 hover:bg-slate-50")
-                                }
-                              >
-                                {sectionsForDoc(selectedDoc).find((s) => s.id === sid)?.label || sid}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="mt-3 text-sm text-slate-700">
-                            {(() => {
-                              const headingMap = sectionHeadingMap(selectedDoc);
-                              const extracted = extractSections(sectionDraftsByDoc[selectedDoc]);
-                              const activeId = sectionTabByDoc[selectedDoc] || (sectionsByDoc[selectedDoc] || [])[0];
-                              const heading = headingMap[activeId];
-                              const body = extracted[heading] || "";
-                              return body ? (
-                                <div className="whitespace-pre-wrap leading-relaxed">{body}</div>
-                              ) : (
-                                <div className="text-xs text-slate-500">No content yet. Generate section drafts to preview.</div>
-                              );
-                            })()}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {selectedDoc === "business_plan" || selectedDoc === "client_proposal" ? (
-                    <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={includeSnapshotByDoc[selectedDoc] || false}
-                        onChange={(e) =>
-                          setIncludeSnapshotByDoc((prev) => ({
-                            ...prev,
-                            [selectedDoc]: e.target.checked,
-                          }))
-                        }
-                      />
-                      <span>Include financial snapshot</span>
                     </div>
                   ) : null}
 
@@ -1368,6 +1584,32 @@ export default function BlueprintPage() {
                         />
                       </div>
                       <div className="md:col-span-2">
+                        <div className="ea-label">Objective</div>
+                        <select
+                          value={objectiveChoiceByDoc.sales_letter}
+                          onChange={(e) =>
+                            setObjectiveChoiceByDoc((prev) => ({ ...prev, sales_letter: e.target.value }))
+                          }
+                          className="ea-input"
+                        >
+                          {SALES_LETTER_OBJECTIVES.map((o) => (
+                            <option key={o} value={o}>
+                              {o}
+                            </option>
+                          ))}
+                        </select>
+                        {objectiveChoiceByDoc.sales_letter === "Other" ? (
+                          <Input
+                            value={objectiveCustomByDoc.sales_letter || ""}
+                            onChange={(e) =>
+                              setObjectiveCustomByDoc((prev) => ({ ...prev, sales_letter: e.target.value }))
+                            }
+                            placeholder="Type your objective"
+                            className="mt-2"
+                          />
+                        ) : null}
+                      </div>
+                      <div className="md:col-span-2">
                         <div className="ea-label">Headline angle (optional)</div>
                         <Input value={headline} onChange={(e) => setHeadline(e.target.value)} placeholder="Opening line / headline idea" />
                       </div>
@@ -1406,30 +1648,6 @@ export default function BlueprintPage() {
                       <div className="md:col-span-2">
                         <div className="ea-label">Sender phone (optional)</div>
                         <Input value={senderPhone} onChange={(e) => setSenderPhone(e.target.value)} placeholder="Phone (optional)" />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Subject line</div>
-                        <select
-                          value={subjectLineChoice}
-                          onChange={(e) => setSubjectLineChoice(e.target.value)}
-                          className="ea-input"
-                        >
-                          <option value="A reliable, no-drama way to keep standards consistent">
-                            A reliable, no-drama way to keep standards consistent
-                          </option>
-                          <option value="A simple proposal for dependable delivery">
-                            A simple proposal for dependable delivery
-                          </option>
-                          <option value="Other">Other (type your own)</option>
-                        </select>
-                        {subjectLineChoice === "Other" ? (
-                          <Input
-                            value={subjectLineCustom}
-                            onChange={(e) => setSubjectLineCustom(e.target.value)}
-                            placeholder="Type a custom subject line"
-                            className="mt-2"
-                          />
-                        ) : null}
                       </div>
                       <div className="md:col-span-2">
                         <div className="ea-label">Follow-up sequence</div>

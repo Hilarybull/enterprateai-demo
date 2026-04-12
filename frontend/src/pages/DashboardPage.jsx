@@ -27,6 +27,7 @@ export default function DashboardPage() {
     invoices: [],
     expenses: [],
     contracts: [],
+    quotations: [],
     catalogue: { products: [], customers: [], vendors: [] }
   });
 
@@ -47,6 +48,7 @@ export default function DashboardPage() {
           invoices: data?.financials?.invoices || [],
           expenses: data?.financials?.expenses || [],
           contracts: data?.financials?.contracts || [],
+          quotations: data?.financials?.quotations || [],
           catalogue: data?.catalogue || { products: [], customers: [], vendors: [] }
         });
       } catch (e) {
@@ -66,9 +68,11 @@ export default function DashboardPage() {
     const invoices = Array.isArray(snapshot.invoices) ? snapshot.invoices : [];
     const expenses = Array.isArray(snapshot.expenses) ? snapshot.expenses : [];
     const contracts = Array.isArray(snapshot.contracts) ? snapshot.contracts : [];
+    const quotations = Array.isArray(snapshot.quotations) ? snapshot.quotations : [];
     const paidInvoices = invoices.filter((i) => i.status === "paid");
     const pendingInvoices = invoices.filter((i) => i.status !== "paid");
     const paidExpenses = expenses.filter((e) => e.status === "paid");
+    const unpaidExpenses = expenses.filter((e) => e.status !== "paid");
     const signedContracts = contracts.filter((c) => c.status === "signed");
     const salesContracts = signedContracts.filter((c) => c.contract_type !== "purchase");
     const purchaseContracts = signedContracts.filter((c) => c.contract_type === "purchase");
@@ -76,14 +80,43 @@ export default function DashboardPage() {
     const revenue = sumBy(paidInvoices, "total_amount") + sumBy(salesContracts, "price");
     const costs = sumBy(paidExpenses, "price") + sumBy(purchaseContracts, "price");
     const flags = Array.isArray(validation?.flags) ? validation.flags : [];
-    const riskCount = flags.length;
-    const riskItems = flags.map((f) => String(f?.code || f?.title || f || "").replace(/_/g, " ").trim()).filter(Boolean);
+    const dynamicRisks = [];
+    if (sumBy(paidInvoices, "total_amount") < sumBy(unpaidExpenses, "price")) {
+      dynamicRisks.push("Revenue below unpaid expenses (Financials)");
+    }
+    if (costs > revenue && (revenue > 0 || costs > 0)) {
+      dynamicRisks.push("Costs exceed revenue (Financials)");
+    }
+    if (pendingInvoices.length && !paidInvoices.length) {
+      dynamicRisks.push("No paid invoices yet (Financials)");
+    }
+    if (quotations.length && !invoices.length) {
+      dynamicRisks.push("Quotes issued but no invoices sent (Financials)");
+    }
+    if (signedContracts.length && !invoices.length) {
+      dynamicRisks.push("Signed contracts not invoiced yet (Financials)");
+    }
+    if (!snapshot.catalogue.products?.length) {
+      dynamicRisks.push("No active products/services (Catalogue)");
+    }
+    if (!snapshot.catalogue.customers?.length) {
+      dynamicRisks.push("No customers saved (Catalogue)");
+    }
+    const riskItems = [
+      ...flags.map((f) => `${String(f?.code || f?.title || f || "").replace(/_/g, " ").trim()} (Validation)`),
+      ...dynamicRisks
+    ].filter(Boolean);
+    const riskCount = riskItems.length;
 
     return {
       revenue,
       costs,
       pendingInvoices: pendingInvoices.length,
       paidInvoices: paidInvoices.length,
+      paidExpenses: paidExpenses.length,
+      quotations: quotations.length,
+      contracts: contracts.length,
+      unpaidExpenses: unpaidExpenses.length,
       riskCount,
       riskItems
     };
@@ -93,7 +126,7 @@ export default function DashboardPage() {
     return (
       <WorkspacePrompt
         title="Create your workspace"
-        subtitle="Run Idea Validation to save your workspace and unlock the rest of the platform."
+        subtitle="Save your workspace and unlock the rest of the platform."
         ctaLabel="Create Workspace"
         ctaHref="/validation"
       />
@@ -151,7 +184,7 @@ export default function DashboardPage() {
                 <div>
                   {validation
                     ? "Run a simulation to see the impact of your latest numbers on cash, profit, and runway."
-                    : "Complete Idea Validation to unlock recommendations and scenario insights."}
+                    : "Complete wokspace to unlock recommendations and scenario insights."}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => navigate("/simulation")}>
@@ -163,7 +196,7 @@ export default function DashboardPage() {
 
             <SectionCard
               title="Financial activity"
-              subtitle="Track invoices, expenses, and contracts quickly."
+              subtitle="Track invoices, quotations, expenses, and contracts quickly."
               className="flex h-full flex-col"
             >
               <div className="flex flex-1 flex-col gap-3 text-sm text-slate-600">
@@ -175,6 +208,22 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between">
                     <span>Pending invoices</span>
                     <span className="font-semibold text-slate-900">{metrics.pendingInvoices}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Quotations</span>
+                    <span className="font-semibold text-slate-900">{metrics.quotations}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Contracts</span>
+                    <span className="font-semibold text-slate-900">{metrics.contracts}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Paid expenses</span>
+                    <span className="font-semibold text-slate-900">{metrics.paidExpenses}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Unpaid expenses</span>
+                    <span className="font-semibold text-slate-900">{metrics.unpaidExpenses}</span>
                   </div>
                 </div>
                 <div className="mt-auto">

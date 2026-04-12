@@ -156,6 +156,52 @@ def _render_template_with_fallback(template: str, raw: dict[str, Any]) -> str:
     return template.format(**enriched).strip()
 
 
+def _strict_fallback_text(_: str | None = None) -> str:
+    return "This section is based on available data provided by the business."
+
+
+def _build_context_blurb(raw: dict[str, Any]) -> str:
+    company = _safe_text(raw.get("company_name") or raw.get("company") or "")
+    industry = _safe_text(raw.get("industry") or raw.get("primary_industry") or "")
+    services = _safe_text(raw.get("solution") or raw.get("services") or "")
+    target = _safe_text(raw.get("target_market") or raw.get("target_customer_type") or "")
+    value_prop = _safe_text(raw.get("value_proposition") or raw.get("key_offering_focus") or raw.get("tagline") or "")
+    problem = _safe_text(raw.get("problem") or "")
+    objective = _safe_text(raw.get("objective") or "")
+
+    parts: list[str] = []
+    if company and industry:
+        parts.append(f"{company} operates in {industry}.")
+    elif company:
+        parts.append(f"{company} is the business context for this section.")
+    if services:
+        parts.append(f"The core offer focuses on {services}.")
+    if target:
+        parts.append(f"Primary target market: {target}.")
+    if value_prop:
+        parts.append(f"Value proposition: {value_prop}.")
+    if problem:
+        parts.append(f"Key problem addressed: {problem}.")
+    if objective:
+        parts.append(f"Objective: {objective}.")
+
+    if not parts:
+        return _strict_fallback_text()
+    return f"{_strict_fallback_text()} {' '.join(parts)}"
+
+
+def _render_template_strict(template: str, raw: dict[str, Any], fallback_text: str | None = None) -> str:
+    fallback = fallback_text or _strict_fallback_text()
+    enriched: dict[str, Any] = {}
+    for k, v in raw.items():
+        val = _safe_text(v)
+        enriched[str(k)] = val if val else fallback
+    for key in set(_TEMPLATE_FIELD_RE.findall(template)):
+        if not str(enriched.get(key) or "").strip():
+            enriched[key] = fallback
+    return template.format(**enriched).strip()
+
+
 def _extract_section_map(doc: str) -> tuple[list[str], dict[str, str]]:
     lines = (doc or "").splitlines()
     preamble: list[str] = []
@@ -432,26 +478,6 @@ def _ensure_client_proposal_format(doc: str) -> str:
         if not has_break:
             lines.insert(exec_idx, "<div class=\"page-break\"></div>")
             lines.insert(exec_idx, "")
-
-    # Ensure timeline table
-    timeline_idx = next((i for i, l in enumerate(lines) if l.strip() == "## Implementation Plan / Timeline"), None)
-    if timeline_idx is not None:
-        # find next section
-        next_section_idx = next(
-            (i for i in range(timeline_idx + 1, len(lines)) if lines[i].startswith("## ")),
-            len(lines)
-        )
-        body = [l for l in lines[timeline_idx + 1:next_section_idx] if l.strip()]
-        has_table = any("|" in l for l in body) and any("---" in l for l in body)
-        if not has_table:
-            table = [
-                "| Phase | Focus | Timeline (days) |",
-                "| --- | --- | --- |",
-                "| Onboarding and discovery | Confirm objectives, collect requirements, and align stakeholders | Day One to Day Three |",
-                "| Initial delivery and refinement | Start delivery, validate standards, and incorporate feedback | Day Four to Day Ten |",
-                "| Stabilised ongoing delivery | Maintain consistent delivery with periodic reviews | Day Eleven onward |",
-            ]
-            lines = lines[:timeline_idx + 1] + [""] + table + [""] + lines[next_section_idx:]
 
     return "\n".join(lines)
 
@@ -778,54 +804,32 @@ _TEMPLATE_FIELD_RE = re.compile(r"{([a-zA-Z_][a-zA-Z0-9_]*)}")
 BUSINESS_PLAN_HEADINGS = [
     "## Executive Summary",
     "## Business Overview",
-    "### Business Model",
-    "### Legal Structure (UK)",
-    "### Registration (UK)",
-    "### Location",
-    "## Market Analysis",
-    "### Target Audience",
-    "### Competitor Analysis",
-    "### Market Trends",
     "## Products and Services",
-    "### The Problem",
-    "### The Solution",
-    "### Pricing Strategy",
-    "## Sales and Marketing",
-    "### Branding",
-    "### Channels",
-    "### Marketing Strategy",
-    "## Operational Plan",
-    "### Suppliers",
-    "### Technology",
-    "### Insurance",
-    "## Management and Personnel",
-    "### The Team",
-    "### Hiring Plan",
-    "## Financial Plan",
-    "### Sales Forecast",
-    "### Cash Flow Statement",
-    "### Break Even Analysis",
-    "## Risk Analysis",
-    "### Market Risk",
-    "### Financial Risk",
-    "### Operational Risk",
-    "### Regulatory Risk",
-    "## Growth Strategy",
+    "## Market Analysis",
+    "## Competitive Analysis",
+    "## Business Model",
+    "## Marketing and Sales Strategy",
+    "## Operations Plan",
+    "## Management and Organisation",
+    "## Financial Snapshot",
+    "## Funding Requirements",
+    "## Risk Analysis and Mitigation",
     "## Conclusion",
 ]
 
 CLIENT_PROPOSAL_HEADINGS = [
     "## Cover Page",
     "## Executive Summary",
-    "## Understanding of Client Needs",
+    "## Client Needs / Problem Statement",
     "## Proposed Solution",
     "## Scope of Work",
-    "## Implementation Plan / Timeline",
+    "## Methodology / Approach",
+    "## Timeline / Delivery Schedule",
     "## Pricing and Payment Terms",
     "## Value Proposition / Benefits",
-    "## Company Information",
+    "## Company Profile",
     "## Terms and Conditions",
-    "## Acceptance / Call to Action",
+    "## Acceptance / Next Steps",
 ]
 
 
@@ -848,6 +852,23 @@ async def _generate_section(
         return "", "noop", "none"
 
 
+async def _generate_section_required(
+    llm: LLMClient,
+    *,
+    prompt: str,
+    label: str,
+    warnings: list[str],
+    error_label: str,
+) -> tuple[str, str, str]:
+    text, provider, model = await _generate_section(llm, prompt=prompt, label=label, warnings=warnings)
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI generation failed for {error_label}. Check provider credentials and try again.",
+        )
+    return text, provider, model
+
+
 def _format_section_prompt(*, doc_type: str, section_title: str, inputs_text: str) -> str:
     return (
         f"Write only the content for the section titled '{section_title}' in a {doc_type}.\n"
@@ -855,6 +876,8 @@ def _format_section_prompt(*, doc_type: str, section_title: str, inputs_text: st
         "- UK professional English.\n"
         "- Minimum two full paragraphs.\n"
         "- No headings, labels, or numbering.\n"
+        "- Use ONLY the provided inputs; do not invent or infer facts.\n"
+        "- If data is missing, write generically without adding facts.\n"
         "- No invented prices, dates, or numeric claims.\n"
         "- Avoid repetition and keep it specific to the inputs.\n\n"
         f"Inputs:\n{inputs_text}"
@@ -869,6 +892,7 @@ async def _generate_sections_fallback(
     inputs_text: str,
     warnings: list[str],
     cover_lines: list[str] | None = None,
+    fallback_text: str | None = None,
 ) -> tuple[str, str, str]:
     provider = "mixed"
     model = "mixed"
@@ -890,7 +914,7 @@ async def _generate_sections_fallback(
             warnings=warnings,
         )
         if not text:
-            text = _narrative_fallback(title.lower().replace(" ", "_"))
+            text = fallback_text or _narrative_fallback(title.lower().replace(" ", "_"))
         out.append(heading)
         out.append(text)
         out.append("")
@@ -980,12 +1004,71 @@ def _extract_business_context_from_workspace(data: dict) -> dict[str, str]:
     return {k: v for k, v in out.items() if isinstance(v, str) and v.strip()}
 
 
+def _validation_from_workspace_financials(data: dict) -> dict | None:
+    financials = data.get("financials")
+    if not isinstance(financials, dict):
+        return None
+    invoices = financials.get("invoices") or []
+    expenses = financials.get("expenses") or []
+    contracts = financials.get("contracts") or []
+    if not (isinstance(invoices, list) or isinstance(expenses, list) or isinstance(contracts, list)):
+        return None
+
+    def sum_by(items, key, *, status_key=None, status_value=None):
+        total = 0.0
+        for item in items if isinstance(items, list) else []:
+            if status_key and status_value is not None and item.get(status_key) != status_value:
+                continue
+            try:
+                total += float(item.get(key) or 0.0)
+            except Exception:
+                continue
+        return total
+
+    paid_invoices = sum_by(invoices, "total_amount", status_key="status", status_value="paid")
+    paid_expenses = sum_by(expenses, "price", status_key="status", status_value="paid")
+    signed_contracts = [c for c in contracts if isinstance(c, dict) and c.get("status") == "signed"]
+    sales_contracts = sum_by([c for c in signed_contracts if c.get("contract_type") != "purchase"], "price")
+    purchase_contracts = sum_by([c for c in signed_contracts if c.get("contract_type") == "purchase"], "price")
+
+    revenue = paid_invoices + sales_contracts
+    costs = paid_expenses + purchase_contracts
+    net = revenue - costs
+    margin = (net / revenue) if revenue > 0 else 0.0
+
+    if revenue <= 0 and costs <= 0:
+        return None
+
+    catalogue = data.get("catalogue") if isinstance(data.get("catalogue"), dict) else {}
+    products = catalogue.get("products") if isinstance(catalogue, dict) else []
+    customers = catalogue.get("customers") if isinstance(catalogue, dict) else []
+    vendors = catalogue.get("vendors") if isinstance(catalogue, dict) else []
+
+    return {
+        "metrics": {
+            "revenue_monthly": revenue,
+            "costs_monthly": costs,
+            "net_monthly": net,
+            "margin": margin,
+            "break_even_months": None,
+            "runway_months": None,
+        }
+        ,
+        "catalogue": {
+            "products": len(products) if isinstance(products, list) else 0,
+            "customers": len(customers) if isinstance(customers, list) else 0,
+            "vendors": len(vendors) if isinstance(vendors, list) else 0,
+        }
+    }
+
+
 def _render_validation_snapshot(*, currency: str, validation: dict | None) -> str:
     if not validation:
         return (
             "Not available yet. Add financial inputs in your workspace to generate this snapshot."
         )
     metrics  = validation.get("metrics") if isinstance(validation.get("metrics"), dict) else {}
+    catalogue = validation.get("catalogue") if isinstance(validation.get("catalogue"), dict) else {}
     revenue    = metrics.get("revenue_monthly", 0.0)
     costs      = metrics.get("costs_monthly", 0.0)
     net        = metrics.get("net_monthly", 0.0)
@@ -1001,9 +1084,7 @@ def _render_validation_snapshot(*, currency: str, validation: dict | None) -> st
         ("Break-even", _fmt_months(break_even)),
         ("Runway", _fmt_months(runway)),
     ]
-    table = ["| Metric | Value |", "| --- | --- |"]
-    table += [f"| {label} | {value} |" for label, value in rows]
-    return "\n".join(table).strip()
+    return "\n".join([f"- {label}: {value}" for label, value in rows]).strip()
 
 
 def _render_cashflow_analysis_fields(*, company: str, currency: str, validation: dict | None, starting_cash: float) -> dict[str, str]:
@@ -1184,6 +1265,7 @@ async def generate_blueprint(
     target     = _safe_text(payload.target_market)
     value_prop = _safe_text(payload.value_proposition)
     extra      = _safe_text(payload.extra_notes)
+    objective  = _safe_text(getattr(payload, "objective", None))
 
     provider = "noop"
     model    = "none"
@@ -1193,6 +1275,7 @@ async def generate_blueprint(
     starting_cash = 0.0
     workspace_context: dict[str, str] = {}
 
+    ws: Any | None = None
     if payload.workspace_id and user_id:
         try:
             ws  = await get_validation_workspace(user_id=user_id, workspace_id=payload.workspace_id)
@@ -1205,6 +1288,9 @@ async def generate_blueprint(
                 validation = await evaluate_validation(user_id=user_id, workspace_id=payload.workspace_id, inputs=None, idea_validation=None)
         except Exception:
             validation = None
+
+    if payload.include_validation_snapshot and not validation and ws:
+        validation = _validation_from_workspace_financials(ws.data) or validation
 
     def _default_title(doc_type: str, company_name: str) -> str:
         c = (company_name or "").strip() or "Untitled"
@@ -1219,7 +1305,7 @@ async def generate_blueprint(
 
         type_to_title = {
             "business_plan": "Business Plan",
-            "client_proposal": "Client Proposal",
+            "client_proposal": "Business Proposal",
             "sales_letter": "Sales Letter",
             "sales_quotation": "Sales Quotation",
             "invoice_template": "Invoice",
@@ -1255,6 +1341,8 @@ async def generate_blueprint(
         *,
         allow_fallback: bool = True,
         skip_fill_keys: set[str] | None = None,
+        fill_missing: bool = True,
+        fallback_fn=_narrative_fallback,
     ) -> tuple[str, str, str]:
         """
         1. Build a complete input dict (fill missing fields deterministically).
@@ -1270,7 +1358,7 @@ async def generate_blueprint(
             if val or key in skip:
                 enriched[key] = val
             else:
-                enriched[key] = _narrative_fallback(key)
+                enriched[key] = fallback_fn(key) if fill_missing else ""
 
         doc_prompt    = build_prompt_fn(enriched)
         doc, prov, mdl = await _generate_section(llm, prompt=doc_prompt, label=f"{doc_type}_full", warnings=warnings)
@@ -1294,7 +1382,7 @@ async def generate_blueprint(
             warnings.append(f"Document generation returned empty for {doc_type} — using enriched fallback.")
             for key in set(_TEMPLATE_FIELD_RE.findall(fallback_template)):
                 if not str(enriched.get(key) or "").strip():
-                    enriched[key] = _narrative_fallback(key)
+                    enriched[key] = fallback_fn(key) if fill_missing else fallback_fn(key)
             try:
                 doc = fallback_template.format(**enriched).strip()
             except Exception:
@@ -1309,206 +1397,78 @@ async def generate_blueprint(
     # BUSINESS PLAN
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     if payload.type == "business_plan":
-        # If the value proposition is a single word (e.g., "quality"), do not pass it as the hook.
-        # The hook must be written as contextual narrative, not copied from input.
-        hook_input = value_prop or workspace_context.get("value_proposition", "")
-        if len(hook_input.split()) < 3:
-            hook_input = ""
+        workspace_profile = ws.data.get("workspace_profile") if ws and isinstance(ws.data, dict) else {}
+        business_profile = ws.data.get("business_profile") if ws and isinstance(ws.data, dict) else {}
 
-        mission_seed = ""
-        if industry and target:
-            mission_seed = f"{industry} services for {target}"
-        elif industry:
-            mission_seed = f"{industry} services"
-        elif target:
-            mission_seed = f"services for {target}"
+        services = workspace_profile.get("services") if isinstance(workspace_profile, dict) else []
+        services_text = ""
+        if isinstance(services, list):
+            parts = []
+            for s in services:
+                if not isinstance(s, dict):
+                    continue
+                name = _safe_text(s.get("service_name"))
+                desc = _safe_text(s.get("service_description"))
+                cat = _safe_text(s.get("service_category"))
+                row = " - ".join([p for p in [name, cat, desc] if p])
+                if row:
+                    parts.append(row)
+            services_text = "\n".join(parts).strip()
 
-        target_note = _expand_note(
-            field="target_market",
-            text=target or workspace_context.get("target_market", ""),
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
-        problem_note = _expand_note(
-            field="problem",
-            text=problem or workspace_context.get("problem", ""),
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
-        solution_note = _expand_note(
-            field="solution",
-            text=solution or workspace_context.get("solution", ""),
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
-        value_note = _expand_note(
-            field="value_proposition",
-            text=value_prop or workspace_context.get("value_proposition", ""),
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
-        pricing_note = _expand_note(
-            field="pricing_strategy",
-            text=pricing_model or "",
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
-        mission_note = _expand_note(
-            field="mission",
-            text=mission_seed,
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
-        hook_note = _expand_note(
-            field="hook",
-            text=hook_input,
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
+        selected_sections = [s for s in (payload.sections or []) if isinstance(s, str)]
 
         snapshot_text = ""
-        # We append snapshots ourselves to avoid duplication in LLM output.
         if payload.include_validation_snapshot:
-            snapshot_text = ""
+            if validation:
+                snapshot_text = _render_validation_snapshot(currency=currency, validation=validation)
+            else:
+                snapshot_text = "Financial data has not been provided for this section."
 
         raw_inputs = {
-            "company_name":          company,
-            "industry":              industry or workspace_context.get("industry", "") or workspace_context.get("primary_industry", ""),
-            "mission":               mission_note,
-            "hook":                  hook_note,
-            "funding_request":       "",
-            "overview":              extra or "",
-            "business_model":        "",
-            "legal_structure":       "",
-            "registration":          "",
-            "location":              workspace_context.get("location", ""),
-            "business_overview":     "",
-            "target_market":         target_note,
-            "competitor_analysis":   "",
-            "market_trends":         "",
-            "problem":               problem_note,
-            "solution":              solution_note,
-            "value_proposition":     value_note,
-            "pricing_strategy":      pricing_note,
-            "branding":              "",
-            "channels":              "",
-            "go_to_market":          "",
-            "suppliers":             "",
-            "technology":            "",
-            "insurance":             "",
-            "operations":            "",
-            "team":                  "",
-            "hiring_plan":           "",
-            "sales_forecast":        "",
-            "cashflow_summary":      "",
-            "breakeven":             "",
-            "risk_market":           "",
-            "risk_financial":        "",
-            "risk_operational":      "",
-            "risk_regulatory":       "",
-            "market_expansion":      "",
-            "product_roadmap":       "",
-            "partnerships":          "",
-            "technology_adoption":   "",
-            "operational_expansion": "",
-            "conclusion":            "",
-            "financial_snapshot":    snapshot_text,
+            "company_name": company,
+            "legal_structure": _safe_text(workspace_profile.get("business_type") if isinstance(workspace_profile, dict) else ""),
+            "primary_industry": _safe_text(workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else industry),
+            "secondary_industries": ", ".join(workspace_profile.get("secondary_industries") or []) if isinstance(workspace_profile, dict) else "",
+            "about_company": _safe_text(workspace_profile.get("about_company") if isinstance(workspace_profile, dict) else ""),
+            "tagline": _safe_text(workspace_profile.get("tagline") if isinstance(workspace_profile, dict) else ""),
+            "mission": _safe_text(workspace_profile.get("mission") if isinstance(workspace_profile, dict) else ""),
+            "vision": _safe_text(workspace_profile.get("vision") if isinstance(workspace_profile, dict) else ""),
+            "core_values": ", ".join(workspace_profile.get("core_values") or []) if isinstance(workspace_profile, dict) else "",
+            "services": services_text,
+            "target_customer_type": _safe_text(workspace_profile.get("target_customer_type") if isinstance(workspace_profile, dict) else ""),
+            "primary_revenue_model": _safe_text(workspace_profile.get("primary_revenue_model") if isinstance(workspace_profile, dict) else ""),
+            "key_offering_focus": _safe_text(workspace_profile.get("key_offering_focus") if isinstance(workspace_profile, dict) else ""),
+            "operating_stage": _safe_text(workspace_profile.get("operating_stage") if isinstance(workspace_profile, dict) else ""),
+            "delivery_model": _safe_text(workspace_profile.get("delivery_model") if isinstance(workspace_profile, dict) else ""),
+            "employee_count": _safe_text(str(workspace_profile.get("employee_count") or "") if isinstance(workspace_profile, dict) else ""),
+            "location": _safe_text(
+                workspace_context.get("location")
+                or (business_profile.get("location") if isinstance(business_profile, dict) else "")
+            ),
+            "problem": problem,
+            "solution": solution,
+            "target_market": target,
+            "value_proposition": value_prop,
+            "pricing_model": pricing_model,
+            "objective": objective,
+            "extra_notes": extra,
+            "selected_sections": ", ".join(selected_sections),
+            "financial_snapshot": snapshot_text,
         }
-
-        try:
-            doc, provider, model = await _enrich_and_generate(
-                "Business Plan", raw_inputs, build_business_plan_prompt, BUSINESS_PLAN_TEMPLATE, allow_fallback=False
-            )
-        except HTTPException as e:
-            if e.status_code == status.HTTP_502_BAD_GATEWAY:
-                inputs_text = format_inputs_for_prompt(raw_inputs)
-                doc, provider, model = await _generate_sections_fallback(
-                    llm,
-                    doc_type="Business Plan",
-                    headings=BUSINESS_PLAN_HEADINGS,
-                    inputs_text=inputs_text,
-                    warnings=warnings,
-                )
-            else:
-                raise
-        doc = _strip_business_plan_labels(doc)
-        doc = _strip_financial_snapshot_section(doc)
-        doc = _strip_date_lines(doc)
-        fallback_doc = _strip_financial_snapshot_section(_render_template_with_fallback(BUSINESS_PLAN_TEMPLATE, raw_inputs))
-        fallback_doc = _strip_date_lines(fallback_doc)
-        preamble, primary_sections = _extract_section_map(doc)
-        fallback_preamble, fallback_sections = _extract_section_map(fallback_doc)
-        if not any(line.startswith("# ") for line in preamble):
-            preamble = [f"# Business Plan — {company}"]
-        if len(preamble) <= 1 and fallback_preamble:
-            preamble = fallback_preamble
 
         section_groups = {
             "executive_summary": ["## Executive Summary"],
-            "business_overview": [
-                "## Business Overview",
-                "### Business Model",
-                "### Legal Structure (UK)",
-                "### Registration (UK)",
-                "### Location",
-            ],
-            "market_analysis": [
-                "## Market Analysis",
-                "### Target Audience",
-                "### Competitor Analysis",
-                "### Market Trends",
-            ],
-            "products_services": [
-                "## Products and Services",
-                "### The Problem",
-                "### The Solution",
-                "### Pricing Strategy",
-            ],
-            "sales_marketing": [
-                "## Sales and Marketing",
-                "### Branding",
-                "### Channels",
-                "### Marketing Strategy",
-            ],
-            "operational_plan": [
-                "## Operational Plan",
-                "### Suppliers",
-                "### Technology",
-                "### Insurance",
-            ],
-            "management_personnel": [
-                "## Management and Personnel",
-                "### The Team",
-                "### Hiring Plan",
-            ],
-            "financial_plan": [
-                "## Financial Plan",
-                "### Sales Forecast",
-                "### Cash Flow Statement",
-                "### Break Even Analysis",
-            ],
-            "risk_analysis": [
-                "## Risk Analysis",
-                "### Market Risk",
-                "### Financial Risk",
-                "### Operational Risk",
-                "### Regulatory Risk",
-            ],
-            "growth_strategy": ["## Growth Strategy"],
+            "business_overview": ["## Business Overview"],
+            "products_services": ["## Products and Services"],
+            "market_analysis": ["## Market Analysis"],
+            "competitive_analysis": ["## Competitive Analysis"],
+            "business_model": ["## Business Model"],
+            "marketing_sales_strategy": ["## Marketing and Sales Strategy"],
+            "operations_plan": ["## Operations Plan"],
+            "management_organisation": ["## Management and Organisation"],
+            "financial_snapshot": ["## Financial Snapshot"],
+            "funding_requirements": ["## Funding Requirements"],
+            "risk_analysis_mitigation": ["## Risk Analysis and Mitigation"],
             "conclusion": ["## Conclusion"],
         }
 
@@ -1521,20 +1481,50 @@ async def generate_blueprint(
         else:
             headings = BUSINESS_PLAN_HEADINGS
 
-        doc = _rebuild_with_headings(
-            preamble=preamble,
-            headings=headings,
-            primary=primary_sections,
-            fallback=fallback_sections,
-        )
+        if payload.include_validation_snapshot and "## Financial Snapshot" not in headings:
+            insert_at = BUSINESS_PLAN_HEADINGS.index("## Financial Snapshot")
+            headings = [h2 for h2 in headings if h2 != "## Financial Snapshot"]
+            headings.insert(insert_at if insert_at <= len(headings) else len(headings), "## Financial Snapshot")
 
-        if payload.include_validation_snapshot:
-            snapshot = _render_validation_snapshot(currency=currency, validation=validation)
-            doc = (
-                f"{doc}\n\n## Financial Snapshot\n"
-                f"{snapshot}\n\n"
-                "The figures above reflect the current baseline inputs and can be refined as assumptions are updated."
+        if "## Financial Snapshot" in headings and not snapshot_text:
+            raw_inputs["financial_snapshot"] = "Financial data has not been provided for this section."
+
+        if not payload.include_validation_snapshot:
+            headings = [h for h in headings if h != "## Financial Snapshot"]
+
+        inputs_text = format_inputs_for_prompt(raw_inputs)
+        outputs: list[str] = []
+        provider = "mixed"
+        model = "mixed"
+
+        for heading in headings:
+            title = heading.replace("## ", "").strip()
+            if heading == "## Financial Snapshot":
+                prompt = (
+                    "Write only the Financial Snapshot section for a Business Plan.\n"
+                    "Rules:\n"
+                    "- Use ONLY the provided snapshot data.\n"
+                    "- Do NOT invent or estimate any numbers.\n"
+                    "- If data is missing, write exactly: \"Financial data has not been provided for this section.\"\n"
+                    "- No headings or labels.\n\n"
+                    f"Snapshot data:\n{raw_inputs.get('financial_snapshot','')}\n\n"
+                    f"Inputs:\n{inputs_text}"
+                )
+            else:
+                prompt = _format_section_prompt(doc_type="Business Plan", section_title=title, inputs_text=inputs_text)
+
+            text, provider, model = await _generate_section_required(
+                llm,
+                prompt=prompt,
+                label=f"business_plan_{title}",
+                warnings=warnings,
+                error_label=f"Business Plan — {title}",
             )
+            outputs.append(f"{heading}\n{text}")
+
+        doc = f"# Business Plan — {company}\n\n" + "\n\n".join(outputs)
+        doc = _strip_business_plan_labels(doc)
+        doc = _strip_date_lines(doc)
 
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
@@ -1544,165 +1534,82 @@ async def generate_blueprint(
     # CLIENT PROPOSAL
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     if payload.type == "client_proposal":
-        client_problem_note = _expand_note(
-            field="problem",
-            text=problem or workspace_context.get("problem", ""),
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
-        client_solution_note = _expand_note(
-            field="solution",
-            text=solution or workspace_context.get("solution", ""),
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
-        client_value_note = _expand_note(
-            field="value_proposition",
-            text=value_prop or workspace_context.get("value_proposition", ""),
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
-        client_target_note = _expand_note(
-            field="target_market",
-            text=target or workspace_context.get("target_market", ""),
-            company=company,
-            industry=industry,
-            target_market=target or workspace_context.get("target_market", ""),
-            pricing_model=pricing_model,
-        )
-        client_constraints_note = (
-            "Key constraints include maintaining service consistency, aligning expectations across stakeholders, and ensuring delivery standards are met without "
-            "adding operational complexity. The proposal is designed to reduce risk while keeping execution simple and reliable."
-        )
-        scope_included_note = (
-            "Discovery and onboarding, service design aligned to your requirements, delivery with clear standards, and ongoing quality assurance."
-        )
-        scope_excluded_note = (
-            "Out‑of‑scope items are any requests that change the agreed service definition, require additional tooling, or introduce new delivery locations without a prior review."
-        )
-        assumptions_note = (
-            "Assumes access to required locations, timely communication on scheduling, and a single point of contact for approvals and feedback."
-        )
-        timeline_note = (
-            "| Phase | Focus | Timeline (days) |\n"
-            "| --- | --- | --- |\n"
-            "| Onboarding and discovery | Confirm objectives, collect requirements, and align stakeholders | Day One to Day Three |\n"
-            "| Initial delivery and refinement | Start delivery, validate standards, and incorporate feedback | Day Four to Day Ten |\n"
-            "| Stabilised ongoing delivery | Maintain consistent delivery with periodic reviews | Day Eleven onward |"
-        )
-        commercial_terms_note = (
-            "Commercial terms are structured around transparent service inclusions, straightforward payment expectations, and fair handling of scope changes."
-        )
-        business_impact_note = (
-            "The proposal is designed to reduce operational friction, improve consistency, and free internal teams from day‑to‑day coordination overhead."
-        )
-        efficiency_note = (
-            "Standardised delivery and clear communication reduce rework, shorten resolution time, and improve predictability for internal stakeholders."
-        )
-        advantage_note = (
-            "The approach emphasises reliability and accountability, which differentiates the service from informal or inconsistent alternatives."
-        )
-        risk_reduction_note = (
-            "Risks are mitigated through documented standards, quality checks, and a structured feedback loop."
-        )
-        company_info_note = f"{company} provides reliable delivery in {industry} with a focus on consistency and professional standards." if industry else f"{company} delivers reliable, standards‑led services with a focus on consistency."
-        terms_note = (
-            "Terms cover confidentiality, reasonable liability limits, and clear cancellation and change procedures to protect both parties."
-        )
-        next_steps_note = (
-            "Confirm scope and expectations, agree the start window, and schedule the onboarding session to begin delivery."
-        )
-        client_name = _safe_text(payload.bill_to) or "Client name to be confirmed"
-        contact_details = _safe_text(getattr(payload, "contact_details", None))
-        raw_inputs = {
-            "company_name":        company,
-            "client_name":         client_name,
-            "proposal_title":      _safe_text(getattr(payload, "proposal_title", None)) or f"Proposal for {client_name}",
-            "contact_details":     contact_details,
-            "summary":             client_value_note or business_impact_note,
-            "client_situation":    client_problem_note,
-            "pain_points":         client_problem_note,
-            "client_goals":        client_target_note,
-            "constraints":         client_constraints_note,
-            "approach":            client_solution_note,
-            "scope_included":      _safe_text(payload.items) or scope_included_note,
-            "scope_exclusions":    _safe_text(getattr(payload, "scope_exclusions", None)) or scope_excluded_note,
-            "assumptions":         _safe_text(getattr(payload, "assumptions", None)) or assumptions_note,
-            "timeline":            _safe_text(getattr(payload, "timeline", None)) or timeline_note,
-            "commercial_terms":    _safe_text(payload.terms) or commercial_terms_note,
-            "business_impact":     client_value_note or business_impact_note,
-            "roi":                 "Value is delivered through reduced rework, clearer expectations, and fewer service disruptions.",
-            "efficiency_gains":    efficiency_note,
-            "competitive_advantage": advantage_note,
-            "risk_reduction":      risk_reduction_note,
-            "company_info":        company_info_note,
-            "deliverables":        "A clear service definition, onboarding plan, delivery checklist, and quality review process.",
-            "terms_and_conditions": terms_note,
-            "next_steps":          next_steps_note,
-        }
+        workspace_profile = ws.data.get("workspace_profile") if ws and isinstance(ws.data, dict) else {}
+        business_profile = ws.data.get("business_profile") if ws and isinstance(ws.data, dict) else {}
 
-        try:
-            doc, provider, model = await _enrich_and_generate(
-                "Client Proposal",
-                raw_inputs,
-                build_client_proposal_prompt,
-                CLIENT_PROPOSAL_TEMPLATE,
-                allow_fallback=False,
-                skip_fill_keys={"contact_details"},
-            )
-        except HTTPException as e:
-            if e.status_code == status.HTTP_502_BAD_GATEWAY:
-                inputs_text = format_inputs_for_prompt(raw_inputs)
-                cover_lines = [
-                    f"Proposal Title — {_safe_text(raw_inputs.get('proposal_title')) or f'Proposal for {client_name}'}",
-                    f"Client — {client_name}",
-                    f"Prepared By — {company}",
-                ]
-                if contact_details:
-                    cover_lines.append(f"Contact Details — {contact_details}")
-                doc, provider, model = await _generate_sections_fallback(
-                    llm,
-                    doc_type="Client Proposal",
-                    headings=CLIENT_PROPOSAL_HEADINGS,
-                    inputs_text=inputs_text,
-                    warnings=warnings,
-                    cover_lines=cover_lines,
-                )
-            else:
-                raise
-        doc = _ensure_client_proposal_format(doc)
-        doc = _strip_date_lines(doc)
-        if not contact_details:
-            doc = _strip_contact_details_line(doc)
-        fallback_doc = _ensure_client_proposal_format(_render_template_with_fallback(CLIENT_PROPOSAL_TEMPLATE, raw_inputs))
-        fallback_doc = _strip_date_lines(fallback_doc)
-        if not contact_details:
-            fallback_doc = _strip_contact_details_line(fallback_doc)
-        preamble, primary_sections = _extract_section_map(doc)
-        fallback_preamble, fallback_sections = _extract_section_map(fallback_doc)
-        if not any(line.startswith("# ") for line in preamble):
-            preamble = [f"# Proposal for {client_name}"]
-        if not preamble and fallback_preamble:
-            preamble = fallback_preamble
+        services = workspace_profile.get("services") if isinstance(workspace_profile, dict) else []
+        services_text = ""
+        if isinstance(services, list):
+            parts = []
+            for s in services:
+                if not isinstance(s, dict):
+                    continue
+                name = _safe_text(s.get("service_name"))
+                desc = _safe_text(s.get("service_description"))
+                cat = _safe_text(s.get("service_category"))
+                row = " - ".join([p for p in [name, cat, desc] if p])
+                if row:
+                    parts.append(row)
+            services_text = "\n".join(parts).strip()
+
+        client_name = _safe_text(payload.bill_to) or "Client name to be confirmed"
+        proposal_title = _safe_text(getattr(payload, "proposal_title", None)) or f"Proposal for {client_name}"
+        contact_details = _safe_text(getattr(payload, "contact_details", None))
+        if not contact_details and isinstance(workspace_profile, dict):
+            contact_parts = [
+                _safe_text(workspace_profile.get("email")),
+                _safe_text(workspace_profile.get("phone_number")),
+                _safe_text(workspace_profile.get("website")),
+            ]
+            contact_details = " | ".join([p for p in contact_parts if p])
+
+        selected_sections = [s for s in (payload.sections or []) if isinstance(s, str)]
+
+        company_profile_text = "\n".join(
+            [t for t in [
+                _safe_text(workspace_profile.get("about_company") if isinstance(workspace_profile, dict) else ""),
+                services_text
+            ] if t]
+        ).strip()
+
+        raw_inputs = {
+            "company_name": company,
+            "client_name": client_name,
+            "proposal_title": proposal_title,
+            "contact_details": contact_details,
+            "objective": objective,
+            "industry": _safe_text(workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else industry),
+            "location": _safe_text(
+                workspace_context.get("location")
+                or (business_profile.get("location") if isinstance(business_profile, dict) else "")
+            ),
+            "executive_summary": "",
+            "client_needs": _safe_text(problem or workspace_context.get("problem", "")),
+            "proposed_solution": _safe_text(solution or services_text or workspace_context.get("solution", "")),
+            "scope_of_work": _safe_text(payload.items),
+            "methodology": _safe_text(getattr(payload, "methodology", None)),
+            "timeline": _safe_text(getattr(payload, "timeline", None)),
+            "pricing_terms": _safe_text(payload.terms),
+            "value_proposition": _safe_text(value_prop or workspace_context.get("value_proposition", "")),
+            "company_profile": company_profile_text,
+            "terms_conditions": _safe_text(getattr(payload, "terms_conditions", None)) or _safe_text(payload.terms),
+            "next_steps": _safe_text(getattr(payload, "next_steps", None)),
+            "selected_sections": ", ".join(selected_sections),
+        }
 
         section_groups = {
             "cover_page": ["## Cover Page"],
             "executive_summary": ["## Executive Summary"],
-            "client_needs": ["## Understanding of Client Needs"],
+            "client_needs": ["## Client Needs / Problem Statement"],
             "proposed_solution": ["## Proposed Solution"],
             "scope_of_work": ["## Scope of Work"],
-            "implementation_plan": ["## Implementation Plan / Timeline"],
+            "methodology": ["## Methodology / Approach"],
+            "timeline": ["## Timeline / Delivery Schedule"],
             "pricing_terms": ["## Pricing and Payment Terms"],
             "value_benefits": ["## Value Proposition / Benefits"],
-            "company_info": ["## Company Information"],
+            "company_profile": ["## Company Profile"],
             "terms_conditions": ["## Terms and Conditions"],
-            "acceptance": ["## Acceptance / Call to Action"],
+            "acceptance": ["## Acceptance / Next Steps"],
         }
 
         requested_sections = [s for s in (payload.sections or []) if s in section_groups]
@@ -1714,30 +1621,45 @@ async def generate_blueprint(
         else:
             headings = CLIENT_PROPOSAL_HEADINGS
 
-        doc = _rebuild_with_headings(
-            preamble=preamble,
-            headings=headings,
-            primary=primary_sections,
-            fallback=fallback_sections,
-        )
         cover_lines = [
-            f"Proposal Title — {_safe_text(raw_inputs.get('proposal_title')) or f'Proposal for {client_name}'}",
-            f"Client — {client_name}",
-            f"Prepared By — {company}",
+            f"Proposal Title — {proposal_title}",
+            f"Prepared by — {company}",
+            f"Prepared for — {client_name}",
         ]
         if contact_details:
             cover_lines.append(f"Contact Details — {contact_details}")
-        if "## Cover Page" in headings:
-            doc = _apply_cover_page(doc, title=f"Proposal for {client_name}", lines=cover_lines)
-        if payload.include_validation_snapshot:
-            snapshot = _render_validation_snapshot(currency=currency, validation=validation)
-            doc = (
-                f"{doc}\n\n## Financial Snapshot\n"
-                f"{snapshot}\n\n"
-                "The figures above reflect the current baseline inputs and can be refined as assumptions are updated."
+
+        inputs_text = format_inputs_for_prompt(raw_inputs)
+        outputs: list[str] = []
+        provider = "mixed"
+        model = "mixed"
+
+        for heading in headings:
+            title = heading.replace("## ", "").strip()
+            if heading == "## Cover Page":
+                cover = "\n".join([l for l in cover_lines if _safe_text(l)])
+                outputs.append(f"{heading}\n{cover}\n\n<div class=\"page-break\"></div>")
+                continue
+
+            prompt = _format_section_prompt(
+                doc_type="Business Proposal",
+                section_title=title,
+                inputs_text=inputs_text,
             )
-        else:
-            doc = _strip_financial_snapshot_section(doc)
+            text, provider, model = await _generate_section_required(
+                llm,
+                prompt=prompt,
+                label=f"business_proposal_{title}",
+                warnings=warnings,
+                error_label=f"Business Proposal — {title}",
+            )
+            outputs.append(f"{heading}\n{text}")
+
+        doc = f"# Business Proposal — {client_name}\n\n" + "\n\n".join(outputs)
+        doc = _ensure_client_proposal_format(doc)
+        if not contact_details:
+            doc = _strip_contact_details_line(doc)
+
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
         )
@@ -1794,7 +1716,7 @@ async def generate_blueprint(
         offer_key = offer_input.strip().lower()
         offer_text = offer_map.get(offer_key, offer_input)
         client_name = _safe_text(payload.bill_to) or target or "Client team"
-        subject_line = _safe_text(getattr(payload, "subject_lines", None))
+        subject_line = _safe_text(getattr(payload, "subject_lines", None)) or objective
         followup_sequence = _safe_text(getattr(payload, "followup_sequence", None))
 
         section_prompts = {
@@ -1840,7 +1762,10 @@ async def generate_blueprint(
                 if sid == "benefits" and text:
                     text = _ensure_bullets(text)
                 if not text:
-                    text = _narrative_fallback(sid)
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="AI generation failed for Sales Letter section draft. Check provider credentials and try again.",
+                    )
                 outputs.append(f"## {section_titles.get(sid, sid)}\n{text}")
 
             doc = f"# Sales Letter — {company}\n{today}\n\n" + "\n\n".join(outputs)
@@ -1857,6 +1782,7 @@ async def generate_blueprint(
             "recipient_block":      f"To: {client_name}",
             "salutation":           client_name,
             "subject_line":         subject_line,
+            "objective":            objective,
             "headline":             _safe_text(getattr(payload, "headline", None)) or "",
             "hook":                 sl_hook_note,
             "problem_statement":    sl_problem_note,

@@ -9,6 +9,7 @@ STRICT REQUIREMENTS:
 - Do NOT fabricate prices, discounts, dates, or numeric claims. Use only supplied figures.
 - Do NOT copy input phrases verbatim. Always paraphrase and expand into professional narrative.
 - Avoid repetition across elements; each line must add new value.
+- If an Objective is provided, treat it as the primary purpose and align the subject line and narrative to it.
 - Use the provided date line exactly; do not add a "Date:" prefix.
 - Include a subject line after the greeting, written in uppercase and **bold**.
 - If a follow-up sequence is provided, include a short paragraph that summarises it in one or two sentences.

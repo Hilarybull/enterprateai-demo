@@ -117,6 +117,9 @@ export default function RegistrationWizard() {
         if (!companyNameTouched && !companyName && workspaceProfile.company_name) {
           setCompanyName(workspaceProfile.company_name);
         }
+        if (!businessDescription && workspaceProfile.about_company) {
+          setBusinessDescription(workspaceProfile.about_company);
+        }
         if (!companyName && reg.company_name) setCompanyName(reg.company_name);
         if (!altName1 && reg.alt_name_1) setAltName1(reg.alt_name_1);
         if (!altName2 && reg.alt_name_2) setAltName2(reg.alt_name_2);
@@ -152,11 +155,16 @@ export default function RegistrationWizard() {
     const timer = setTimeout(async () => {
       try {
         const ws = await apiRequest("/validation/me", "PATCH", {
+          name: companyName.trim() || undefined,
           data: {
             business_profile: {
               business_name: companyName.trim(),
               primary_industry: ideaValidation?.context?.primary_industry || "",
               business_type: ideaValidation?.context?.business_type || ""
+            },
+            workspace_profile: {
+              company_name: companyName.trim(),
+              about_company: businessDescription.trim()
             },
             registration: {
               company_name: companyName.trim(),
