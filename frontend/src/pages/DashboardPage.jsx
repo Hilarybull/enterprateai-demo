@@ -274,9 +274,9 @@ export default function DashboardPage() {
               <Button variant="secondary" onClick={() => navigate("/blueprint")}>
                 Generate Blueprints
               </Button>
-              <Button variant="secondary" onClick={() => navigate("/registration")}>
+              {/*<Button variant="secondary" onClick={() => navigate("/registration")}>
                 Business Registration
-              </Button>
+              </Button>*/}
               <Button variant="secondary" onClick={() => navigate("/simulation")}>
                 Simulation
               </Button>
