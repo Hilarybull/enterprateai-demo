@@ -8,12 +8,13 @@ import { useWorkspaceStore } from "../store/workspace";
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid" },
   { to: "/validation", label: "Idea Validation", subtitle: "Validate business ideas", icon: "bulb" },
-  { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book" },
   { to: "/simulation", label: "Simulation", subtitle: "What-if scenarios", icon: "beaker" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box" },
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash" }
 ];
+
+//  { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc" }
 
 function initialsFromEmail(email) {
   const e = String(email || "").trim();
