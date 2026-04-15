@@ -14,7 +14,7 @@ export const useWorkspaceStore = create(
       draftIdeaValidation: null,
       draftServiceIdea: null,
       validation: null,
-      currency: "USD",
+      currency: "GBP",
       setWorkspaceId: (workspaceId) => set({ workspaceId }),
       setWorkspaceName: (workspaceName) => set({ workspaceName: workspaceName || null }),
       setWorkspaceOwnerEmail: (workspaceOwnerEmail) => set({ workspaceOwnerEmail: workspaceOwnerEmail || null }),
@@ -25,7 +25,7 @@ export const useWorkspaceStore = create(
       setDraftIdeaValidation: (draftIdeaValidation) => set({ draftIdeaValidation }),
       setDraftServiceIdea: (draftServiceIdea) => set({ draftServiceIdea }),
       setValidation: (validation) => set({ validation }),
-      setCurrency: (currency) => set({ currency: currency || "USD" }),
+      setCurrency: (currency) => set({ currency: currency || "GBP" }),
       resetForUser: (email) =>
         set((state) => {
           if (!email) {
@@ -40,7 +40,7 @@ export const useWorkspaceStore = create(
               draftIdeaValidation: null,
               draftServiceIdea: null,
               validation: null,
-              currency: "USD"
+              currency: "GBP"
             };
           }
           if (state.workspaceOwnerEmail && state.workspaceOwnerEmail !== email) {
@@ -55,7 +55,7 @@ export const useWorkspaceStore = create(
               draftIdeaValidation: null,
               draftServiceIdea: null,
               validation: null,
-              currency: "USD"
+              currency: "GBP"
             };
           }
           return { workspaceOwnerEmail: email };
@@ -74,7 +74,7 @@ export const useWorkspaceStore = create(
         draftIdeaValidation: state.draftIdeaValidation,
         draftServiceIdea: state.draftServiceIdea,
         validation: state.validation,
-        currency: state.currency
+        currency: state.currency || "GBP"
       })
     }
   )

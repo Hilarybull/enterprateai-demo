@@ -59,7 +59,7 @@ class BusinessContext(BaseModel):
     primary_industry: str = Field(default="", max_length=80)
     location: str = Field(default="", max_length=80)
     uk_region: str = Field(default="GB-ENG", max_length=16)
-    currency: str = Field(default="USD", max_length=8)
+    currency: str = Field(default="GBP", max_length=8)
     founder_hours_per_week: float = Field(default=40, ge=0, le=168)
     stage: str = Field(default="idea", max_length=32)
 

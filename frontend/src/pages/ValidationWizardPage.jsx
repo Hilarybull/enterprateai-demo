@@ -321,6 +321,36 @@ export default function ValidationWizardPage() {
     form?.demand?.expected_units_per_month
   ]);
 
+  const suggestedDeliveryHours = useMemo(() => {
+    if (!isProductPath) return null;
+    const expectedSales = parseNumber(serviceForm.expected_sales_per_month, 0);
+    const hoursRequired = parseNumber(serviceForm.hours_required_per_sale, 0);
+    if (!expectedSales || !hoursRequired) return null;
+    const raw = expectedSales * hoursRequired;
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    return Math.round(raw * 100) / 100;
+  }, [isProductPath, serviceForm.expected_sales_per_month, serviceForm.hours_required_per_sale]);
+
+  const workforceStatus = useMemo(() => {
+    if (!isProductPath) return null;
+    if (!suggestedDeliveryHours) return null;
+    const available = parseNumber(serviceForm.available_delivery_hours_per_month, 0);
+    if (!available) return null;
+    const diff = Math.round((available - suggestedDeliveryHours) * 100) / 100;
+    if (diff === 0) return { kind: "ok", message: "Enough workforce for your expected demand.", diff };
+    if (diff > 0) return { kind: "more", message: "More than enough workforce for your expected demand.", diff };
+    return { kind: "need", message: "Need more workforce to meet your expected demand.", diff };
+  }, [isProductPath, suggestedDeliveryHours, serviceForm.available_delivery_hours_per_month]);
+
+  useEffect(() => {
+    if (!isProductPath) return;
+    if (!suggestedDeliveryHours) return;
+    const current = String(serviceForm.available_delivery_hours_per_month || "").trim();
+    if (current) return;
+    updateService("available_delivery_hours_per_month", String(suggestedDeliveryHours));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isProductPath, suggestedDeliveryHours]);
+
   useEffect(() => {
     const target = parseNumber(form?.demand?.expected_units_per_month, 0);
     const team = Math.max(1, parseIntSafe(form?.capacity?.team_size, 1));
@@ -1627,8 +1657,36 @@ export default function ValidationWizardPage() {
                             <NumberInput placeholder="0" value={serviceForm.hours_required_per_sale} onChange={(v) => updateService("hours_required_per_sale", v)} />
                           </div>
                           <div>
-                          <FieldLabel info="Total delivery hours available per month.">Available delivery hours per month *</FieldLabel>
-                          <NumberInput placeholder="0" value={serviceForm.available_delivery_hours_per_month} onChange={(v) => updateService("available_delivery_hours_per_month", v)} />
+                          <div className="flex items-center justify-between gap-2">
+                            <FieldLabel info="Total delivery hours available per month. Suggested = expected sales per month × hours required.">
+                              Available delivery hours per month *
+                            </FieldLabel>
+                            {suggestedDeliveryHours ? (
+                              <button
+                                type="button"
+                                onClick={() => updateService("available_delivery_hours_per_month", String(suggestedDeliveryHours))}
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                              >
+                                Use {suggestedDeliveryHours}
+                              </button>
+                            ) : null}
+                          </div>
+                          <NumberInput placeholder={suggestedDeliveryHours ? String(suggestedDeliveryHours) : "0"} value={serviceForm.available_delivery_hours_per_month} onChange={(v) => updateService("available_delivery_hours_per_month", v)} />
+                          {suggestedDeliveryHours ? (
+                            <div className="mt-1 text-[11px] text-slate-500">
+                              Suggested: {suggestedDeliveryHours} hours/month (Expected sales × Hours required).
+                            </div>
+                          ) : null}
+                          {workforceStatus ? (
+                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                              <div className="font-semibold">{workforceStatus.message}</div>
+                              {workforceStatus.kind === "need" ? (
+                                <Button size="sm" variant="secondary" onClick={() => navigate("/simulation?template=tmpl_hire_staff")}>
+                                  Run hire scenario
+                                </Button>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </details>

@@ -186,6 +186,14 @@ export default function BlueprintPage() {
   const [wordCount, setWordCount] = useState("700");
   const sectionDraftsRef = useRef(null);
   const showSectionDrafts = Boolean(selectedDoc && sectionsForDoc(selectedDoc).length);
+  const showSidePanel = isDesktop ? showInputs : true;
+  const effectiveInputsTab = !isDesktop && !showInputs ? "sections" : inputsTab;
+  const mobileSideTabs = showInputs
+    ? [
+        { value: "inputs", label: "Inputs" },
+        { value: "sections", label: "Section drafts" },
+      ]
+    : [{ value: "sections", label: "Section drafts" }];
 
   function SectionTile({ label, selected, snippet, onClick }) {
     return (
@@ -236,7 +244,7 @@ export default function BlueprintPage() {
   const activeDraftBody = activeDraftHeading ? draftSectionMap?.[activeDraftHeading] : "";
   const sectionPreviewHtml =
     activeDraftHeading && activeDraftBody ? buildSectionPreviewHtml(activeDraftHeading, activeDraftBody) : "";
-  const showSectionPreview = inputsTab === "sections" && showSectionDrafts;
+  const showSectionPreview = Boolean(sectionPreviewHtml) && showSectionDrafts && (isDesktop || effectiveInputsTab === "sections");
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
@@ -847,7 +855,7 @@ export default function BlueprintPage() {
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
         sections: sectionsByDoc[selectedDoc] || [],
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
-      }, { timeoutMs: 240000 });
+      }, { timeoutMs: 900000 });
       setDocByType((prev) => ({ ...prev, [selectedDoc]: res }));
       if (res?.document_id) setDocIdByType((prev) => ({ ...prev, [selectedDoc]: res.document_id }));
       setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: "" }));
@@ -952,7 +960,7 @@ export default function BlueprintPage() {
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
         sections: chosen,
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
-      }, { timeoutMs: 240000 });
+      }, { timeoutMs: 900000 });
       const markdown = res?.document_markdown || "";
       setSectionDraftsByDoc((prev) => ({
         ...prev,
@@ -1230,7 +1238,7 @@ export default function BlueprintPage() {
             if (e.target === e.currentTarget) closeModal();
           }}
         >
-          <div className="ea-dialog w-full max-w-[96rem] h-[90vh] overflow-hidden">
+          <div className="ea-dialog w-full max-w-[110rem] h-[94vh] overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
               <div>
                 <div className="text-sm font-semibold text-slate-900">{selectedMeta.title}</div>
@@ -1239,7 +1247,13 @@ export default function BlueprintPage() {
               <div className="flex items-center gap-2">
                 <Button
                   variant="secondary"
-                  onClick={() => setShowInputs((v) => !v)}
+                  onClick={() => {
+                    setShowInputs((v) => {
+                      const next = !v;
+                      if (!isDesktop) setInputsTab(next ? "inputs" : "sections");
+                      return next;
+                    });
+                  }}
                 >
                   {showInputs ? "Hide inputs" : "Edit inputs"}
                 </Button>
@@ -1272,9 +1286,9 @@ export default function BlueprintPage() {
               </div>
             ) : null}
 
-            <div className="flex h-[calc(90vh-64px)] min-h-0 flex-col overflow-hidden lg:flex-row">
-              {showInputs && showSectionDrafts ? (
-                <div className="hidden lg:block order-3 w-[380px] shrink-0 overflow-auto border-l border-slate-200 bg-white p-5">
+            <div className="flex h-[calc(94vh-64px)] min-h-0 flex-col overflow-hidden lg:flex-row">
+              {showSectionDrafts ? (
+                <div className="hidden lg:block order-3 w-[280px] shrink-0 overflow-auto border-l border-slate-200 bg-white p-5">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
                     <div className="text-sm font-semibold text-slate-900">Section drafts</div>
                     <div className="mt-1 text-[11px] text-slate-500">
@@ -1291,15 +1305,6 @@ export default function BlueprintPage() {
                         onClick={() => handleDraftTileClick(section.id)}
                       />
                     ))}
-                  </div>
-                  <div className="mt-3">
-                    <Button
-                      variant="secondary"
-                      disabled={isLoading || !(draftSectionsByDoc[selectedDoc] || []).length}
-                      onClick={() => generateSectionDrafts()}
-                    >
-                      {isLoading ? "Generating..." : "Generate section drafts"}
-                    </Button>
                   </div>
                 </div>
               ) : null}
@@ -1378,21 +1383,18 @@ export default function BlueprintPage() {
                   </div>
                 ) : null}
               </div>
-              {showInputs ? (
-                <div className="order-2 w-full shrink-0 overflow-auto border-t border-slate-200 bg-white p-5 lg:order-1 lg:w-[380px] lg:border-r lg:border-t-0">
+              {showSidePanel ? (
+                <div className="order-2 w-full shrink-0 overflow-auto border-t border-slate-200 bg-white p-5 lg:order-1 lg:w-[280px] lg:border-r lg:border-t-0">
                 {showSectionDrafts && !isDesktop ? (
                   <SegmentedTabs
-                    value={inputsTab}
+                    value={effectiveInputsTab}
                     onChange={setInputsTab}
-                    options={[
-                      { value: "inputs", label: "Inputs" },
-                      { value: "sections", label: "Section drafts" }
-                    ]}
+                    options={mobileSideTabs}
                     size="sm"
                   />
                 ) : null}
 
-                {inputsTab === "sections" && showSectionDrafts && !isDesktop ? (
+                {effectiveInputsTab === "sections" && showSectionDrafts && !isDesktop ? (
                   <div className="mt-4 space-y-3">
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
                       <div className="text-sm font-semibold text-slate-900">Section drafts (standalone)</div>
@@ -1410,15 +1412,6 @@ export default function BlueprintPage() {
                           onClick={() => handleDraftTileClick(section.id)}
                         />
                       ))}
-                    </div>
-                    <div>
-                      <Button
-                        variant="secondary"
-                        disabled={isLoading || !(draftSectionsByDoc[selectedDoc] || []).length}
-                        onClick={() => generateSectionDrafts()}
-                      >
-                        {isLoading ? "Generating..." : "Generate section drafts"}
-                      </Button>
                     </div>
                   </div>
                 ) : (
@@ -1575,15 +1568,6 @@ export default function BlueprintPage() {
                       </div>
                       <div className="mt-2 text-[11px] text-slate-500">
                         Leave unchecked to generate the full document.
-                      </div>
-                      <div className="mt-3">
-                        <Button
-                          variant="secondary"
-                          disabled={isLoading || !(sectionsByDoc[selectedDoc] || []).length}
-                          onClick={generateSectionDrafts}
-                        >
-                          {isLoading ? "Generating..." : "Generate section drafts"}
-                        </Button>
                       </div>
                     </div>
                   ) : null}

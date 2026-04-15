@@ -113,11 +113,46 @@ export default function ResultsPage() {
     setError(null);
     setDecisionNotice(null);
     try {
-      await apiRequest(`/validation/${workspaceId}`, "PATCH", {
+      const patchPayload = {
         data: {
           decision: { status, decided_at: new Date().toISOString() },
-          ...(status === "accepted" && ideaValidation ? { idea_validation: ideaValidation, draft_idea_validation: null } : {})
-        }
+          ...(status === "accepted" && ideaValidation
+            ? { idea_validation: ideaValidation, draft_idea_validation: null }
+            : {}),
+        },
+      };
+
+      // For product/service pathway, only persist to catalogue when the user explicitly accepts.
+      if (status === "accepted" && serviceDraft) {
+        const serviceName = String(serviceDraft.service_name || "").trim() || "Service";
+        const productFromValidation = {
+          id: crypto.randomUUID(),
+          name: serviceName,
+          type: "service",
+          base_price: Number(serviceDraft.price_per_sale || 0),
+          discount: 0,
+          freight_cost: 0,
+          archived: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        const ws = await apiRequest(`/validation/${workspaceId}`, "GET");
+        const existingCatalogue = ws?.data?.catalogue || {};
+        const existingProducts = Array.isArray(existingCatalogue?.products) ? existingCatalogue.products : [];
+        const alreadyExists = existingProducts.some(
+          (p) => String(p?.name || "").trim().toLowerCase() === productFromValidation.name.toLowerCase()
+        );
+        const nextProducts = alreadyExists ? existingProducts : [productFromValidation, ...existingProducts];
+        patchPayload.data.catalogue = {
+          products: nextProducts,
+          customers: Array.isArray(existingCatalogue?.customers) ? existingCatalogue.customers : [],
+          vendors: Array.isArray(existingCatalogue?.vendors) ? existingCatalogue.vendors : [],
+        };
+      }
+
+      await apiRequest(`/validation/${workspaceId}`, "PATCH", {
+        data: patchPayload.data
       });
       setDecision(status);
       setDecisionStatusStore(status);
@@ -151,6 +186,26 @@ export default function ResultsPage() {
     const targetCustomer = serviceDraft?.target_customer_type || "";
     const marketScope = serviceDraft?.target_market_scope ? String(serviceDraft.target_market_scope).replaceAll("_", " ") : "";
     const serviceDesc = String(serviceDraft?.service_description || "").trim();
+
+    const expectedSales = Number(serviceDraft?.expected_sales_per_month || 0);
+    const hoursPerSale = Number(serviceDraft?.hours_required_per_sale || 0);
+    const suggestedHours = expectedSales > 0 && hoursPerSale > 0 ? expectedSales * hoursPerSale : null;
+    const availableHours = Number(serviceDraft?.available_delivery_hours_per_month || 0) || null;
+    let workforceMessage = "";
+    let workforceKind = "default";
+    if (suggestedHours && availableHours != null) {
+      const diff = Math.round((availableHours - suggestedHours) * 100) / 100;
+      if (diff === 0) {
+        workforceMessage = "Enough workforce for your expected demand.";
+        workforceKind = "success";
+      } else if (diff > 0) {
+        workforceMessage = "More than enough workforce for your expected demand.";
+        workforceKind = "default";
+      } else {
+        workforceMessage = "Need more workforce to meet your expected demand.";
+        workforceKind = "warn";
+      }
+    }
     const capacityUtilisationDisplay =
       typeof serviceMetrics.capacity_utilisation === "number"
         ? formatPercent(serviceMetrics.capacity_utilisation)
@@ -167,9 +222,17 @@ export default function ResultsPage() {
             </div>
             <div className="mt-1 text-sm text-slate-600">Service idea viability results.</div>
           </div>
-          <Button variant="secondary" disabled={!workspaceId} onClick={() => navigate(`/validation?workspace_id=${workspaceId}`)}>
-            Modify
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" disabled={!workspaceId} onClick={() => navigate(`/validation?workspace_id=${workspaceId}`)}>
+              Modify
+            </Button>
+            <Button variant="danger" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("rejected")}>
+              Reject
+            </Button>
+            <Button disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("accepted")}>
+              Accept
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
@@ -194,6 +257,26 @@ export default function ResultsPage() {
                 </div>
               </div>
             </SectionCard>
+
+            {suggestedHours ? (
+              <SectionCard title="Workforce check" subtitle="Suggested delivery hours based on your expected demand.">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <StatTile label="Expected sales / month" value={formatNumber(expectedSales)} info="Expected sales volume per month." />
+                  <StatTile label="Hours required / sale" value={formatNumber(hoursPerSale)} info="Hours required to deliver one sale." />
+                  <StatTile label="Suggested hours / month" value={formatNumber(suggestedHours)} info="Expected sales per month × hours required per sale." />
+                  <StatTile label="Available hours / month" value={availableHours == null ? "—" : formatNumber(availableHours)} info="Your available delivery hours per month." />
+                  <StatTile label="Status" value={workforceMessage || "—"} tone={workforceKind} info="Compares available delivery hours with the suggested hours." />
+                </div>
+                {workforceKind === "warn" ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                    <div className="font-semibold">Recommendation: run a hiring scenario to test capacity expansion.</div>
+                    <Button size="sm" variant="secondary" onClick={() => navigate("/simulation?template=tmpl_hire_staff")}>
+                      Run hire scenario
+                    </Button>
+                  </div>
+                ) : null}
+              </SectionCard>
+            ) : null}
             <SectionCard
               title="Viability metrics"
               subtitle="Revenue, costs, and delivery feasibility."

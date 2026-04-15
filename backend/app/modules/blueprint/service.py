@@ -1271,7 +1271,7 @@ async def generate_blueprint(
     model    = "none"
 
     validation: dict | None = None
-    currency      = "USD"
+    currency      = "GBP"
     starting_cash = 0.0
     workspace_context: dict[str, str] = {}
 

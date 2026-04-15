@@ -256,6 +256,17 @@ def recommend_scenarios(risk_signals: List[Dict[str, Any]]) -> List[ScenarioReco
                     priority=3,
                 )
             )
+    # Always recommend at least one scenario to run.
+    if not recommendations:
+        recommendations.append(
+            ScenarioRecommendation(
+                scenario_template_id="tmpl_revenue_drop",
+                scenario_type="revenue_drop",
+                title="Simulate Revenue Drop",
+                trigger_reason="BASELINE_CHECK",
+                priority=1,
+            )
+        )
     return recommendations
 
 

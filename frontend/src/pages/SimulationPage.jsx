@@ -181,6 +181,7 @@ export default function SimulationPage() {
   const [autoProjectionLoading, setAutoProjectionLoading] = useState(false);
   const [scenarioRunningId, setScenarioRunningId] = useState(null);
   const [error, setError] = useState(null);
+  const [prefillDone, setPrefillDone] = useState(false);
 
   const [manualTemplateId, setManualTemplateId] = useState("");
   const [manualName, setManualName] = useState("");
@@ -443,6 +444,22 @@ export default function SimulationPage() {
     setManualParams(buildDefaultParams(template, stateSnapshot, largestClient));
     setTab("manual");
   }
+
+  useEffect(() => {
+    if (prefillDone) return;
+    if (!templates.length) return;
+    const params = new URLSearchParams(window.location.search || "");
+    const templateId = params.get("template");
+    if (!templateId) {
+      setPrefillDone(true);
+      return;
+    }
+    const template = templates.find((t) => t.scenario_template_id === templateId);
+    if (template) {
+      openManualScenario(templateId, template.title);
+    }
+    setPrefillDone(true);
+  }, [prefillDone, templates]);
 
   function describeRisk(risk) {
     const code = risk?.reason_code;
@@ -780,11 +797,12 @@ export default function SimulationPage() {
             <ScenarioOutput
               activeRun={activeRun}
               timeline={timeline}
-              currency={currency}
+              currency={currency || "GBP"}
               decisionSaving={decisionSaving}
               decisionNotice={decisionNotice}
               onDecision={saveDecision}
               hideDecision={isProjection(activeRun)}
+              maxTimelineRows={6}
             />
           </SectionCard>
         </div>
@@ -1070,7 +1088,7 @@ function MetricCard({ title, metrics, currency, isDelta, info }) {
   const rows = [
     ["Monthly revenue", metrics.monthly_revenue],
     ["Monthly costs", metrics.monthly_costs],
-    ["Net profit", metrics.net_profit],
+    ["Profit", metrics.net_profit],
     ["Stability score", metrics.stability_score]
   ];
 
