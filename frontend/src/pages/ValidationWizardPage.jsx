@@ -1674,17 +1674,10 @@ export default function ValidationWizardPage() {
                           <NumberInput placeholder={suggestedDeliveryHours ? String(suggestedDeliveryHours) : "0"} value={serviceForm.available_delivery_hours_per_month} onChange={(v) => updateService("available_delivery_hours_per_month", v)} />
                           {suggestedDeliveryHours ? (
                             <div className="mt-1 text-[11px] text-slate-500">
-                              Suggested: {suggestedDeliveryHours} hours/month (Expected sales × Hours required).
+                              {workforceStatus.message} (Suggested: {suggestedDeliveryHours} hours/month.)
                             </div>
                           ) : null}
-                          {workforceStatus ? (
-                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                              <div className="font-semibold">{workforceStatus.message}</div>
-                              {workforceStatus.kind === "need" ? (
-                                <Button size="sm" variant="secondary" onClick={() => navigate("/simulation?template=tmpl_hire_staff")}>
-                                  Run hire scenario
-                                </Button>
-                              ) : null}
+                
                             </div>
                           ) : null}
                         </div>
