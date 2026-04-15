@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.shared.auth.deps import get_current_user
 from app.modules.scenario_intelligence.schemas import (
+    BusinessStateSnapshot,
     DoNothingRequest,
     DoNothingResponse,
     RecommendationGenerateRequest,
@@ -121,15 +124,28 @@ async def scenario_runs_get(
     timeline = await get_scenario_timeline(scenario_run_id)
     timeline_summary = {f"month_{t['month_index']}": t["state_label"] for t in timeline}
 
+    scenario_snapshot = run.get("scenario_snapshot")
+    risk_signals = []
+    if isinstance(scenario_snapshot, dict):
+        try:
+            scenario_state = BusinessStateSnapshot(**scenario_snapshot)
+            for sig in detect_risks(scenario_state):
+                risk_signals.append(dict(risk_signal_id=str(uuid4()), **sig))
+        except Exception:
+            risk_signals = []
+
     return ScenarioRunResult(
         scenario_run_id=run["scenario_run_id"],
         scenario_name=run["scenario_name"],
         scenario_type=run["scenario_type"],
+        baseline_snapshot=run.get("baseline_snapshot"),
+        scenario_snapshot=scenario_snapshot,
         baseline_metrics=run["baseline_metrics"],
         scenario_metrics=run["scenario_metrics"],
         deltas=run["deltas"],
         state_result=run.get("state_result", "neutral"),
         timeline_summary=timeline_summary,
+        risk_signals=risk_signals,
         recommendations=recs,
     )
 

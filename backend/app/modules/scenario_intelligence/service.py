@@ -12,6 +12,33 @@ from app.modules.scenario_intelligence.schemas import (
 )
 
 ENGINE_VERSION = "scenario_intel_v1.0"
+_MEM_RUNS: Dict[str, Dict[str, Any]] = {}
+_MEM_TIMELINES: Dict[str, List[Dict[str, Any]]] = {}
+_MEM_RECOMMENDATIONS: Dict[str, List[Dict[str, Any]]] = {}
+_MEM_DECISIONS: Dict[str, Dict[str, Any]] = {}
+_MEM_RISK_SIGNALS: List[Dict[str, Any]] = []
+
+
+async def _safe_insert(table: str, docs: Any) -> bool:
+    try:
+        await sb_insert(table, docs)
+        return True
+    except Exception:
+        return False
+
+
+async def _safe_select(table: str, **kwargs) -> List[Dict[str, Any]] | Dict[str, Any] | None:
+    try:
+        return await sb_select(table, **kwargs)
+    except Exception:
+        return None
+
+
+async def _safe_delete(table: str, **kwargs) -> Any:
+    try:
+        return await sb_delete(table, **kwargs)
+    except Exception:
+        return None
 
 
 def _now_iso() -> str:
@@ -381,7 +408,9 @@ async def save_risk_signals(
                 **s,
             )
         )
-    await sb_insert("scenario_risk_signals", docs)
+    stored = await _safe_insert("scenario_risk_signals", docs)
+    if not stored:
+        _MEM_RISK_SIGNALS.extend(docs)
     return _clean_many(docs)
 
 
@@ -430,13 +459,17 @@ async def create_scenario_run(
         state_result=state_result,
     )
 
-    await sb_insert("scenario_runs", run_doc)
+    stored = await _safe_insert("scenario_runs", run_doc)
+    if not stored:
+        _MEM_RUNS[run_id] = run_doc
 
     timeline_docs = [
         dict(scenario_run_id=run_id, created_at=now, **row) for row in timeline
     ]
     if timeline_docs:
-        await sb_insert("scenario_timelines", timeline_docs)
+        stored = await _safe_insert("scenario_timelines", timeline_docs)
+        if not stored:
+            _MEM_TIMELINES[run_id] = timeline_docs
 
     recs = _recommendations_from_result(state_result)
     rec_docs = []
@@ -453,7 +486,9 @@ async def create_scenario_run(
             )
         )
     if rec_docs:
-        await sb_insert("scenario_recommendations", rec_docs)
+        stored = await _safe_insert("scenario_recommendations", rec_docs)
+        if not stored:
+            _MEM_RECOMMENDATIONS[run_id] = rec_docs
 
     return run_doc
 
@@ -485,28 +520,34 @@ def _recommendations_from_result(state_result: str) -> List[Dict[str, Any]]:
 
 
 async def get_scenario_run(run_id: str) -> Dict[str, Any] | None:
-    doc = await sb_select("scenario_runs", filters=[("scenario_run_id", "eq", run_id)], single=True)
-    return _clean(doc)
+    doc = await _safe_select("scenario_runs", filters=[("scenario_run_id", "eq", run_id)], single=True)
+    if doc:
+        return _clean(doc)
+    return _clean(_MEM_RUNS.get(run_id))
 
 
 async def get_scenario_timeline(run_id: str) -> List[Dict[str, Any]]:
-    data = await sb_select(
+    data = await _safe_select(
         "scenario_timelines",
         filters=[("scenario_run_id", "eq", run_id)],
         order="month_index",
         desc=False,
     )
-    return _clean_many(data)
+    if data:
+        return _clean_many(data)
+    return _clean_many(_MEM_TIMELINES.get(run_id, []))
 
 
 async def get_recommendations(run_id: str) -> List[Dict[str, Any]]:
-    data = await sb_select(
+    data = await _safe_select(
         "scenario_recommendations",
         filters=[("scenario_run_id", "eq", run_id)],
         order="priority",
         desc=False,
     )
-    return _clean_many(data)
+    if data:
+        return _clean_many(data)
+    return _clean_many(_MEM_RECOMMENDATIONS.get(run_id, []))
 
 
 async def save_decision(
@@ -530,25 +571,33 @@ async def save_decision(
         reviewed_at=None,
         created_at=now,
     )
-    await sb_insert("scenario_decisions", doc)
+    stored = await _safe_insert("scenario_decisions", doc)
+    if not stored:
+        _MEM_DECISIONS[run_id] = doc
     return _clean(doc)
 
 
 async def scenario_history(tenant_id: str, business_id: str) -> List[Dict[str, Any]]:
     run_list = _clean_many(
-        await sb_select(
+        await _safe_select(
             "scenario_runs",
             filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)],
             order="created_at",
             desc=True,
         )
+        or []
     )
     decision_rows = _clean_many(
-        await sb_select(
+        await _safe_select(
             "scenario_decisions",
             filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)],
         )
+        or []
     )
+    if not run_list:
+        run_list = [r for r in _MEM_RUNS.values() if r.get("tenant_id") == tenant_id and r.get("business_id") == business_id]
+    if not decision_rows:
+        decision_rows = [d for d in _MEM_DECISIONS.values() if d.get("tenant_id") == tenant_id and d.get("business_id") == business_id]
     decision_map: Dict[str, Any] = {}
     for d in decision_rows:
         if d.get("scenario_run_id"):
@@ -569,24 +618,30 @@ async def scenario_history(tenant_id: str, business_id: str) -> List[Dict[str, A
 
 
 async def clear_history(tenant_id: str, business_id: str) -> int:
-    run_rows = await sb_select(
+    run_rows = await _safe_select(
         "scenario_runs",
         filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)],
         columns="scenario_run_id",
     )
+    run_rows = run_rows or []
     run_ids = [r.get("scenario_run_id") for r in run_rows if r.get("scenario_run_id")]
 
-    deleted_runs = await sb_delete(
+    deleted_runs = await _safe_delete(
         "scenario_runs",
         filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)],
     )
 
     if run_ids:
-        await sb_delete("scenario_timelines", filters=[("scenario_run_id", "in", run_ids)])
-        await sb_delete("scenario_recommendations", filters=[("scenario_run_id", "in", run_ids)])
+        await _safe_delete("scenario_timelines", filters=[("scenario_run_id", "in", run_ids)])
+        await _safe_delete("scenario_recommendations", filters=[("scenario_run_id", "in", run_ids)])
 
-    await sb_delete("scenario_decisions", filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)])
-    await sb_delete("scenario_risk_signals", filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)])
+    await _safe_delete("scenario_decisions", filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)])
+    await _safe_delete("scenario_risk_signals", filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)])
+    _MEM_RUNS.clear()
+    _MEM_TIMELINES.clear()
+    _MEM_RECOMMENDATIONS.clear()
+    _MEM_DECISIONS.clear()
+    _MEM_RISK_SIGNALS.clear()
     return len(deleted_runs) if isinstance(deleted_runs, list) else 0
 
 

@@ -25,7 +25,9 @@ class BusinessStateSnapshot(BaseModel):
     costs_monthly: float = Field(default=0, ge=0)
     starting_cash: float = Field(default=0, ge=0)
     top_client_share_pct: float | None = Field(default=None, ge=0, le=100)
-    capacity_utilisation_pct: float | None = Field(default=None, ge=0, le=200)
+    # Some upstream modules may temporarily report extreme utilisation values (e.g. > 200%).
+    # Accept them here to avoid hard failures in simulation flows; UI can clamp for display.
+    capacity_utilisation_pct: float | None = Field(default=None, ge=0, le=10000)
     payment_terms_days: int | None = Field(default=None, ge=0, le=365)
     sales_cycle_days: int | None = Field(default=None, ge=0, le=365)
     clients_count: int | None = Field(default=None, ge=0)
@@ -111,11 +113,14 @@ class ScenarioRunResult(BaseModel):
     scenario_run_id: str
     scenario_name: str
     scenario_type: ScenarioType
+    baseline_snapshot: Dict[str, Any] | None = None
+    scenario_snapshot: Dict[str, Any] | None = None
     baseline_metrics: Dict[str, Any]
     scenario_metrics: Dict[str, Any]
     deltas: Dict[str, Any]
     state_result: Literal["improved", "neutral", "worse"]
     timeline_summary: Dict[str, str]
+    risk_signals: List[RiskSignal] = Field(default_factory=list)
     recommendations: List[Dict[str, Any]]
 
 

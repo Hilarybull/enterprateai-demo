@@ -62,6 +62,10 @@ export default function ValidationWizardPage() {
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
   const setInputs = useWorkspaceStore((s) => s.setInputs);
   const setIdeaValidation = useWorkspaceStore((s) => s.setIdeaValidation);
+  const draftIdeaValidation = useWorkspaceStore((s) => s.draftIdeaValidation);
+  const draftServiceIdea = useWorkspaceStore((s) => s.draftServiceIdea);
+  const setDraftIdeaValidation = useWorkspaceStore((s) => s.setDraftIdeaValidation);
+  const setDraftServiceIdea = useWorkspaceStore((s) => s.setDraftServiceIdea);
   const setValidation = useWorkspaceStore((s) => s.setValidation);
   const setCurrency = useWorkspaceStore((s) => s.setCurrency);
   const authEmail = useAuthStore((s) => s.email);
@@ -73,6 +77,7 @@ export default function ValidationWizardPage() {
   const [savedNotice, setSavedNotice] = useState(null);
   const [existingCatalogue, setExistingCatalogue] = useState({ products: [], customers: [], vendors: [] });
   const [serviceSelection, setServiceSelection] = useState("");
+  const [hasAppliedDrafts, setHasAppliedDrafts] = useState(false);
 
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceNameTouched, setWorkspaceNameTouched] = useState(false);
@@ -229,6 +234,7 @@ export default function ValidationWizardPage() {
         : [],
     [profile.services]
   );
+  const activeWorkspaceId = editingWorkspaceId || storedWorkspaceId;
 
   const isProductPath = form.pathway === "product_service_idea";
   const formBlocks = useMemo(() => {
@@ -337,10 +343,74 @@ export default function ValidationWizardPage() {
   }, [authEmail, isCreateWorkspace, profile.email]);
 
   useEffect(() => {
+    if (isCreateWorkspace || isPrefilling || hasAppliedDrafts) return;
+    const draft = isProductPath ? draftServiceIdea : draftIdeaValidation;
+    if (!draft || typeof draft !== "object") return;
+    if (isProductPath) {
+      setServiceForm((prev) => ({ ...prev, ...draft }));
+    } else {
+      setForm((prev) => ({
+        ...prev,
+        ...draft,
+        context: { ...prev.context, ...draft.context },
+        problem: { ...prev.problem, ...draft.problem },
+        offer: { ...prev.offer, ...draft.offer },
+        demand: { ...prev.demand, ...draft.demand },
+        costs: { ...prev.costs, ...draft.costs },
+        capacity: { ...prev.capacity, ...draft.capacity },
+        cash: { ...prev.cash, ...draft.cash },
+        go_to_market: { ...prev.go_to_market, ...draft.go_to_market }
+      }));
+    }
+    setHasAppliedDrafts(true);
+  }, [draftIdeaValidation, draftServiceIdea, hasAppliedDrafts, isCreateWorkspace, isPrefilling, isProductPath]);
+
+  useEffect(() => {
+    if (!serviceForm.service_name || serviceSelection) return;
+    if (!workspaceServices.length) {
+      setServiceSelection("__other__");
+      return;
+    }
+    const match = workspaceServices.find((s) => s.service_name === serviceForm.service_name);
+    setServiceSelection(match ? match.service_name : "__other__");
+  }, [serviceForm.service_name, serviceSelection, workspaceServices]);
+
+  useEffect(() => {
     const next = form?.context?.currency || "USD";
     setCurrency(next);
     if (isProductPath) setServiceCurrency(next);
   }, [form?.context?.currency, isProductPath, setCurrency]);
+
+  useEffect(() => {
+    if (isCreateWorkspace) return;
+    if (isProductPath) {
+      setDraftServiceIdea(serviceForm);
+    } else {
+      setDraftIdeaValidation(form);
+    }
+  }, [form, isCreateWorkspace, isProductPath, serviceForm, setDraftIdeaValidation, setDraftServiceIdea]);
+
+  useEffect(() => {
+    if (isCreateWorkspace || isPrefilling || !activeWorkspaceId) return;
+    const handle = setTimeout(async () => {
+      try {
+        await apiRequest(
+          `/validation/${activeWorkspaceId}`,
+          "PATCH",
+          {
+            data: {
+              draft_idea_validation: isProductPath ? null : form,
+              draft_service_idea: isProductPath ? serviceForm : null
+            }
+          },
+          { timeoutMs: 120000 }
+        );
+      } catch (e) {
+        console.warn("Draft autosave failed:", e);
+      }
+    }, 800);
+    return () => clearTimeout(handle);
+  }, [activeWorkspaceId, form, isCreateWorkspace, isPrefilling, isProductPath, serviceForm]);
 
   useEffect(() => {
     if (isCreateWorkspace) {
@@ -1062,8 +1132,8 @@ export default function ValidationWizardPage() {
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">
                     {isProductPath ? "Product details" : "Workspace details"}
                   </summary>
-                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    <div className="md:col-span-2 lg:col-span-3">
+                  <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel
                         info={
                           isProductPath
@@ -1075,13 +1145,13 @@ export default function ValidationWizardPage() {
                       </FieldLabel>
                       <Input value={workspaceName} disabled={Boolean(editingWorkspaceId)} onChange={(e) => { setWorkspaceNameTouched(true); setWorkspaceName(e.target.value); }} />
                     </div>
-                    <div className="md:col-span-2 lg:col-span-3">
+                      <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="The name you want to validate. This is required.">
                         {isProductPath ? "Product / service name *" : "Business name *"}
                       </FieldLabel>
                       <Input value={form.context.business_name} onChange={(e) => update("context.business_name", e.target.value)} />
                     </div>
-                    <div className="md:col-span-2 lg:col-span-3">
+                      <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="Short description of what you're building.">
                         {isProductPath ? "What product or service are you building?" : "What are you building?"}
                       </FieldLabel>
@@ -1169,8 +1239,8 @@ export default function ValidationWizardPage() {
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">
                     Workspace profile
                   </summary>
-                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    <div className="md:col-span-2 lg:col-span-3">
+                  <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="Legal or trading name.">Company name *</FieldLabel>
                       <Input value={profile.company_name} onChange={(e) => updateProfile("company_name", e.target.value)} />
                     </div>
@@ -1194,11 +1264,11 @@ export default function ValidationWizardPage() {
                         {PROFILE_INDUSTRIES.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                       </select>
                     </div>
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="Short overview of what you do.">About company *</FieldLabel>
                       <textarea value={profile.about_company} onChange={(e) => updateProfile("about_company", e.target.value)} className="min-h-20 ea-input" />
                     </div>
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel>Tagline</FieldLabel>
                       <Input value={profile.tagline} onChange={(e) => updateProfile("tagline", e.target.value)} />
                     </div>
@@ -1213,7 +1283,7 @@ export default function ValidationWizardPage() {
                       </select>
                     </div>
 
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="Add your services. At least one is required.">Services *</FieldLabel>
                       <div className="space-y-2">
                         {profile.services.map((svc, idx) => (
@@ -1278,7 +1348,7 @@ export default function ValidationWizardPage() {
                       <FieldLabel>Mission</FieldLabel>
                       <Input value={profile.mission} onChange={(e) => updateProfile("mission", e.target.value)} />
                     </div>
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel>Core values (comma separated)</FieldLabel>
                       <Input value={profile.core_values} onChange={(e) => updateProfile("core_values", e.target.value)} />
                     </div>
@@ -1299,11 +1369,11 @@ export default function ValidationWizardPage() {
                       <FieldLabel>Postcode</FieldLabel>
                       <Input value={profile.postcode} onChange={(e) => updateProfile("postcode", e.target.value)} />
                     </div>
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel>Address line 1</FieldLabel>
                       <Input value={profile.address_line_1} onChange={(e) => updateProfile("address_line_1", e.target.value)} />
                     </div>
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel>Address line 2</FieldLabel>
                       <Input value={profile.address_line_2} onChange={(e) => updateProfile("address_line_2", e.target.value)} />
                     </div>
@@ -1375,7 +1445,7 @@ export default function ValidationWizardPage() {
                         {PROFILE_REVENUE_MODEL.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                       </select>
                     </div>
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel>Key offering focus</FieldLabel>
                       <Input value={profile.key_offering_focus} onChange={(e) => updateProfile("key_offering_focus", e.target.value)} />
                     </div>
@@ -1388,8 +1458,8 @@ export default function ValidationWizardPage() {
                   {enabledForms.service_basics ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Service basics</summary>
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-                        <div className="md:col-span-2 lg:col-span-3">
+                      <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        <div className="md:col-span-2 xl:col-span-3">
                           <FieldLabel info="Name of the service idea you want to validate.">Service name *</FieldLabel>
                           {workspaceServices.length ? (
                             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -1435,7 +1505,7 @@ export default function ValidationWizardPage() {
                             <Input value={serviceForm.service_name} onChange={(e) => updateService("service_name", e.target.value)} />
                           )}
                         </div>
-                        <div className="md:col-span-2 lg:col-span-3">
+                        <div className="md:col-span-2 xl:col-span-3">
                           <FieldLabel info="Short description of what the service delivers.">Service description *</FieldLabel>
                           <textarea
                             className="min-h-20 ea-input"
@@ -1465,15 +1535,15 @@ export default function ValidationWizardPage() {
                     </details>
                   ) : null}
 
-                  {enabledForms.revenue_inputs ? (
-                    <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
-                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Revenue inputs</summary>
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-                        <div>
-                          <FieldLabel info="Price charged per sale.">Price per sale *</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
-                          <NumberInput placeholder="0" value={serviceForm.price_per_sale} onChange={(v) => updateService("price_per_sale", v)} />
-                        </div>
+                    {enabledForms.revenue_inputs ? (
+                      <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
+                        <summary className="cursor-pointer text-sm font-semibold text-slate-900">Revenue inputs</summary>
+                        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <div>
+                            <FieldLabel info="Price charged per sale.">Price per sale *</FieldLabel>
+                            <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
+                            <NumberInput placeholder="0" value={serviceForm.price_per_sale} onChange={(v) => updateService("price_per_sale", v)} />
+                          </div>
                         <div>
                           <FieldLabel info="Expected sales volume per month.">Expected sales per month *</FieldLabel>
                           <NumberInput placeholder="0" value={serviceForm.expected_sales_per_month} onChange={(v) => updateService("expected_sales_per_month", v)} />
@@ -1485,7 +1555,7 @@ export default function ValidationWizardPage() {
                   {enabledForms.direct_costs ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4">
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Direct delivery costs</summary>
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                      <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Labour cost to deliver one sale.">Direct labour cost per sale *</FieldLabel>
                           <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
@@ -1518,7 +1588,7 @@ export default function ValidationWizardPage() {
                   {enabledForms.fixed_costs ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4">
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Fixed monthly costs</summary>
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                      <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Recurring software costs per month.">Monthly software cost *</FieldLabel>
                           <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
@@ -1548,15 +1618,15 @@ export default function ValidationWizardPage() {
                     </details>
                   ) : null}
 
-                  {enabledForms.capacity_inputs ? (
-                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Capacity inputs</summary>
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-                        <div>
-                          <FieldLabel info="Hours required to deliver one sale.">Hours required *</FieldLabel>
-                          <NumberInput placeholder="0" value={serviceForm.hours_required_per_sale} onChange={(v) => updateService("hours_required_per_sale", v)} />
-                        </div>
-                        <div>
+                    {enabledForms.capacity_inputs ? (
+                      <details className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <summary className="cursor-pointer text-sm font-semibold text-slate-900">Capacity inputs</summary>
+                        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <div>
+                            <FieldLabel info="Hours required to deliver one sale.">Hours required *</FieldLabel>
+                            <NumberInput placeholder="0" value={serviceForm.hours_required_per_sale} onChange={(v) => updateService("hours_required_per_sale", v)} />
+                          </div>
+                          <div>
                           <FieldLabel info="Total delivery hours available per month.">Available delivery hours per month *</FieldLabel>
                           <NumberInput placeholder="0" value={serviceForm.available_delivery_hours_per_month} onChange={(v) => updateService("available_delivery_hours_per_month", v)} />
                         </div>
@@ -1567,7 +1637,7 @@ export default function ValidationWizardPage() {
                   {enabledForms.demand_inputs ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4">
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Demand evidence</summary>
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                      <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Strength of demand evidence.">Demand evidence type *</FieldLabel>
                           <select value={serviceForm.demand_evidence_type} onChange={(e) => updateService("demand_evidence_type", e.target.value)} className="ea-input">
@@ -1589,7 +1659,7 @@ export default function ValidationWizardPage() {
                   {enabledForms.competition ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4">
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Competitive positioning</summary>
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                      <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Lowest competitor price you see.">Competitor price (low)</FieldLabel>
                           <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
@@ -1615,8 +1685,8 @@ export default function ValidationWizardPage() {
               {enabledForms.offer_demand ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">Offer & demand</summary>
-                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    <div className="md:col-span-2 lg:col-span-3">
+                  <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="Who you're selling to.">Customer segment</FieldLabel>
                       <select value={form.problem.customer_segment_category} onChange={(e) => update("problem.customer_segment_category", e.target.value)} className="ea-input">
                         {CUSTOMER_SEGMENT_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}
@@ -1624,17 +1694,17 @@ export default function ValidationWizardPage() {
                       {form.problem.customer_segment_category === "Other" ? <div className="mt-2"><Input value={form.problem.customer_segment_other} onChange={(e) => update("problem.customer_segment_other", e.target.value)} placeholder="Type customer segment" /></div> : null}
                     </div>
 
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="Short problem statement.">Problem (short)</FieldLabel>
                       <Input value={form.problem.problem_type} onChange={(e) => update("problem.problem_type", e.target.value)} />
                     </div>
 
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="How often does this problem occur?">Frequency</FieldLabel>
                       <Input value={form.problem.frequency} onChange={(e) => update("problem.frequency", e.target.value)} />
                     </div>
 
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="What alternatives do customers use today?">Alternatives</FieldLabel>
                       <Input value={form.problem.alternatives} onChange={(e) => update("problem.alternatives", e.target.value)} />
                     </div>
@@ -1685,7 +1755,7 @@ export default function ValidationWizardPage() {
               {enabledForms.costs ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4">
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">Costs</summary>
-                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                     <div>
                       <FieldLabel info="Variable cost to deliver one unit.">Variable cost / unit</FieldLabel>
                       <NumberInput placeholder="0" value={form.costs.variable_cost_per_unit} onChange={(v) => update("costs.variable_cost_per_unit", v)} />
@@ -1709,7 +1779,7 @@ export default function ValidationWizardPage() {
               {enabledForms.capacity_cash ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4">
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">Capacity & cash</summary>
-                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                     <div>
                       <FieldLabel info="How many people are delivering the work.">Team size</FieldLabel>
                       <NumberInput placeholder="1" value={form.capacity.team_size} onChange={(v) => update("capacity.team_size", v)} />
@@ -1746,7 +1816,7 @@ export default function ValidationWizardPage() {
               {enabledForms.go_to_market ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4">
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">Go-to-market</summary>
-                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                     <div>
                       <FieldLabel info="Who you are primarily selling to.">Target market</FieldLabel>
                       <select value={form.go_to_market.target_market} onChange={(e) => update("go_to_market.target_market", e.target.value)} className="ea-input">
@@ -1763,7 +1833,7 @@ export default function ValidationWizardPage() {
                       <FieldLabel info="Optional: a narrower niche inside your primary industry.">Sub-industry (optional)</FieldLabel>
                       <Input value={form.go_to_market.sub_industry} onChange={(e) => update("go_to_market.sub_industry", e.target.value)} />
                     </div>
-                    <div className="md:col-span-2 lg:col-span-3">
+                    <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="Select the channels you plan to use first.">Go-to-market channels</FieldLabel>
                       <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5">
                         {GTM_CHANNEL_OPTIONS.map((ch) => {

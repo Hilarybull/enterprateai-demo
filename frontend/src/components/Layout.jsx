@@ -14,7 +14,7 @@ const NAV = [
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash" }
 ];
 
-//  { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc" }
+// { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc" }
 
 function initialsFromEmail(email) {
   const e = String(email || "").trim();
@@ -167,6 +167,8 @@ export default function Layout() {
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
   const setWorkspaceLoadedAt = useWorkspaceStore((s) => s.setWorkspaceLoadedAt);
   const setIdeaValidation = useWorkspaceStore((s) => s.setIdeaValidation);
+  const setDraftIdeaValidation = useWorkspaceStore((s) => s.setDraftIdeaValidation);
+  const setDraftServiceIdea = useWorkspaceStore((s) => s.setDraftServiceIdea);
   const setInputs = useWorkspaceStore((s) => s.setInputs);
   const setCurrency = useWorkspaceStore((s) => s.setCurrency);
 
@@ -254,8 +256,10 @@ export default function Layout() {
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
         else setDecisionStatus(null);
-        if (ws?.data?.idea_validation) setIdeaValidation(ws.data.idea_validation);
-        if (ws?.data?.inputs || ws?.data?.assumptions) setInputs(ws.data.inputs || ws.data.assumptions);
+          if (ws?.data?.idea_validation) setIdeaValidation(ws.data.idea_validation);
+          if (ws?.data?.draft_idea_validation) setDraftIdeaValidation(ws.data.draft_idea_validation);
+          if (ws?.data?.draft_service_idea) setDraftServiceIdea(ws.data.draft_service_idea);
+          if (ws?.data?.inputs || ws?.data?.assumptions) setInputs(ws.data.inputs || ws.data.assumptions);
         const currency =
           ws?.data?.idea_validation?.context?.currency ||
           ws?.data?.business_profile?.currency ||
@@ -275,7 +279,7 @@ export default function Layout() {
     return () => {
       cancelled = true;
     };
-  }, [token, setCurrency, setDecisionStatus, setIdeaValidation, setInputs, setWorkspaceId, setWorkspaceName, setWorkspaceLoadedAt]);
+    }, [token, setCurrency, setDecisionStatus, setDraftIdeaValidation, setDraftServiceIdea, setIdeaValidation, setInputs, setWorkspaceId, setWorkspaceName, setWorkspaceLoadedAt]);
 
   const filteredNav = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();

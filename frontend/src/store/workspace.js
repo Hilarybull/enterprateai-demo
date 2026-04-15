@@ -11,6 +11,8 @@ export const useWorkspaceStore = create(
       workspaceLoadedAt: null,
       inputs: null,
       ideaValidation: null,
+      draftIdeaValidation: null,
+      draftServiceIdea: null,
       validation: null,
       currency: "USD",
       setWorkspaceId: (workspaceId) => set({ workspaceId }),
@@ -20,6 +22,8 @@ export const useWorkspaceStore = create(
       setWorkspaceLoadedAt: (workspaceLoadedAt) => set({ workspaceLoadedAt: workspaceLoadedAt || null }),
       setInputs: (inputs) => set({ inputs }),
       setIdeaValidation: (ideaValidation) => set({ ideaValidation }),
+      setDraftIdeaValidation: (draftIdeaValidation) => set({ draftIdeaValidation }),
+      setDraftServiceIdea: (draftServiceIdea) => set({ draftServiceIdea }),
       setValidation: (validation) => set({ validation }),
       setCurrency: (currency) => set({ currency: currency || "USD" }),
       resetForUser: (email) =>
@@ -33,6 +37,8 @@ export const useWorkspaceStore = create(
               workspaceLoadedAt: null,
               inputs: null,
               ideaValidation: null,
+              draftIdeaValidation: null,
+              draftServiceIdea: null,
               validation: null,
               currency: "USD"
             };
@@ -46,6 +52,8 @@ export const useWorkspaceStore = create(
               workspaceLoadedAt: null,
               inputs: null,
               ideaValidation: null,
+              draftIdeaValidation: null,
+              draftServiceIdea: null,
               validation: null,
               currency: "USD"
             };
@@ -63,6 +71,8 @@ export const useWorkspaceStore = create(
         workspaceLoadedAt: state.workspaceLoadedAt,
         inputs: state.inputs,
         ideaValidation: state.ideaValidation,
+        draftIdeaValidation: state.draftIdeaValidation,
+        draftServiceIdea: state.draftServiceIdea,
         validation: state.validation,
         currency: state.currency
       })

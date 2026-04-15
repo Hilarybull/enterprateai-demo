@@ -857,6 +857,8 @@ function ScenarioOutput({
   const base = activeRun.baseline_metrics || {};
   const scenario = activeRun.scenario_metrics || {};
   const deltas = activeRun.deltas || {};
+  const runRisks = Array.isArray(activeRun.risk_signals) ? activeRun.risk_signals : [];
+  const runRecs = Array.isArray(activeRun.recommendations) ? activeRun.recommendations : [];
 
   const timelineRows = maxTimelineRows ? timeline.slice(0, maxTimelineRows) : timeline;
   const isTrimmed = maxTimelineRows && timeline.length > maxTimelineRows;
@@ -892,6 +894,39 @@ function ScenarioOutput({
     });
   }
 
+  function describeScenarioRisk(risk) {
+    const code = risk?.reason_code;
+    const value = risk?.metric_value;
+    if (code === "CLIENT_CONCENTRATION_HIGH") {
+      return {
+        title: "Client concentration risk",
+        detail: value != null ? `Largest client share is about ${value}%.` : "Largest client share is high."
+      };
+    }
+    if (code === "CAPACITY_OVERLOAD") {
+      return {
+        title: "Capacity overload",
+        detail: value != null ? `Capacity utilisation is about ${value}%.` : "Capacity utilisation is high."
+      };
+    }
+    if (code === "NEGATIVE_MARGIN") {
+      return {
+        title: "Negative margin",
+        detail: `Monthly profit is ${formatCurrency(value ?? 0, currency)}.`
+      };
+    }
+    if (code === "LOW_RUNWAY") {
+      return {
+        title: "Low cash runway",
+        detail: value != null ? `Runway is about ${value} months.` : "Runway is low."
+      };
+    }
+    return {
+      title: "Risk signal",
+      detail: `${risk?.risk_type || "Risk"} detected.`
+    };
+  }
+
   return (
     <div className="space-y-3">
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -901,6 +936,55 @@ function ScenarioOutput({
           <div className="mt-1 text-xs text-slate-500">State result: {activeRun.state_result}</div>
         ) : null}
       </div>
+
+      {runRisks.length || runRecs.length ? (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <span>Risk alerts</span>
+              <InfoTip text="Risks detected from the scenario output snapshot." />
+            </div>
+            <div className="mt-3 space-y-2">
+              {runRisks.length ? (
+                runRisks.map((r) => (
+                  <div key={r.risk_signal_id || r.reason_code} className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      {describeScenarioRisk(r).title}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-700">{describeScenarioRisk(r).detail}</div>
+                    {r?.severity ? <div className="mt-1 text-xs text-slate-500">Severity: {r.severity}</div> : null}
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-slate-600">No risks detected for this scenario.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <span>Recommendations</span>
+              <InfoTip text="Recommended actions based on the scenario outcome." />
+            </div>
+            <div className="mt-3 space-y-2">
+              {runRecs.length ? (
+                runRecs.map((rec) => (
+                  <div
+                    key={rec.recommendation_id || rec.title || rec.action_type}
+                    className="rounded-xl border border-slate-200 bg-white p-3"
+                  >
+                    <div className="text-sm font-semibold text-slate-900">{rec.title || "Recommendation"}</div>
+                    {rec.description ? <div className="mt-1 text-xs text-slate-600">{rec.description}</div> : null}
+                    {rec.action_type ? <div className="mt-1 text-[11px] text-slate-500">{rec.action_type}</div> : null}
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-slate-600">No recommendations generated.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {Object.keys(base).length ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">

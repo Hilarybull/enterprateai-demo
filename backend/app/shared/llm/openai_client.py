@@ -181,7 +181,7 @@ class GeminiGenerateClient(LLMClient):
 class AutoLLMClient(LLMClient):
     """
     Picks the best available LLM provider based on configured keys.
-    Order: OpenAI -> Claude -> Gemini -> Noop
+    Order: Claude -> OpenAI -> Gemini -> Noop
 
     This client is resilient: if a configured provider errors (network, auth, quota),
     it falls back to the next configured provider.
@@ -191,11 +191,11 @@ class AutoLLMClient(LLMClient):
         self._settings = get_settings()
         self._clients: list[LLMClient] = []
         has_primary = False
-        if self._settings.openai_api_key:
-            self._clients.append(OpenAIResponsesClient())
-            has_primary = True
         if self._settings.claude_api_key:
             self._clients.append(AnthropicMessagesClient())
+            has_primary = True
+        if self._settings.openai_api_key:
+            self._clients.append(OpenAIResponsesClient())
             has_primary = True
         if self._settings.gemini_api_key and (not has_primary or self._settings.allow_gemini_fallback):
             self._clients.append(GeminiGenerateClient())

@@ -158,6 +158,7 @@ export default function BlueprintPage() {
   const [followupCustom, setFollowupCustom] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
   const [didYouKnowIndex, setDidYouKnowIndex] = useState(0);
   const [error, setError] = useState(null);
   const [docByType, setDocByType] = useState({});
@@ -236,6 +237,19 @@ export default function BlueprintPage() {
   const sectionPreviewHtml =
     activeDraftHeading && activeDraftBody ? buildSectionPreviewHtml(activeDraftHeading, activeDraftBody) : "";
   const showSectionPreview = inputsTab === "sections" && showSectionDrafts;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const update = () => setIsDesktop(Boolean(mq.matches));
+    update();
+    if (mq.addEventListener) {
+      mq.addEventListener("change", update);
+      return () => mq.removeEventListener("change", update);
+    }
+    mq.addListener(update);
+    return () => mq.removeListener(update);
+  }, []);
 
   async function refreshSavedDocs() {
     try {
@@ -492,6 +506,7 @@ export default function BlueprintPage() {
     if (!selectedDoc) return;
     const heading = sectionHeadingMap(selectedDoc)[sectionId];
     const existing = heading ? draftSectionMap[heading] : "";
+    setInputsTab("sections");
     setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: sectionId }));
     if (existing) return;
     setDraftSectionsByDoc((prev) => {
@@ -576,6 +591,36 @@ export default function BlueprintPage() {
     }
     if (current) sections[current] = buffer.join("\n").trim();
     return sections;
+  }
+
+  function htmlToPseudoMarkdown(html) {
+    const source = String(html || "").trim();
+    if (!source) return "";
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(source, "text/html");
+      const parts = [];
+      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT);
+      let node = walker.currentNode;
+      while (node) {
+        const tag = String(node.tagName || "").toLowerCase();
+        if (tag === "h2" || tag === "h3") {
+          const level = tag === "h2" ? "##" : "###";
+          const text = String(node.textContent || "").trim();
+          if (text) parts.push(`${level} ${text}`);
+        } else if (tag === "p") {
+          const text = String(node.textContent || "").trim();
+          if (text) parts.push(text);
+        } else if (tag === "li") {
+          const text = String(node.textContent || "").trim();
+          if (text) parts.push(`- ${text}`);
+        }
+        node = walker.nextNode();
+      }
+      return parts.join("\n\n").trim();
+    } catch {
+      return "";
+    }
   }
 
   function stripMarkdown(text) {
@@ -806,8 +851,10 @@ export default function BlueprintPage() {
       setDocByType((prev) => ({ ...prev, [selectedDoc]: res }));
       if (res?.document_id) setDocIdByType((prev) => ({ ...prev, [selectedDoc]: res.document_id }));
       setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: "" }));
-      if (res?.document_markdown) {
-        setSectionDraftsByDoc((prev) => ({ ...prev, [selectedDoc]: res.document_markdown }));
+      const generatedDraftMarkdown =
+        res?.document_markdown || (res?.document_html ? htmlToPseudoMarkdown(res.document_html) : "");
+      if (generatedDraftMarkdown) {
+        setSectionDraftsByDoc((prev) => ({ ...prev, [selectedDoc]: generatedDraftMarkdown }));
         setDraftSectionsByDoc((prev) => ({
           ...prev,
           [selectedDoc]: (prev[selectedDoc] && prev[selectedDoc].length) ? prev[selectedDoc] : sectionsForDoc(selectedDoc).map((s) => s.id)
@@ -1183,7 +1230,7 @@ export default function BlueprintPage() {
             if (e.target === e.currentTarget) closeModal();
           }}
         >
-          <div className="ea-dialog w-full max-w-7xl h-[90vh] overflow-hidden">
+          <div className="ea-dialog w-full max-w-[96rem] h-[90vh] overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
               <div>
                 <div className="text-sm font-semibold text-slate-900">{selectedMeta.title}</div>
@@ -1226,10 +1273,48 @@ export default function BlueprintPage() {
             ) : null}
 
             <div className="flex h-[calc(90vh-64px)] min-h-0 flex-col overflow-hidden lg:flex-row">
-              <div className="order-1 flex-1 min-h-0 h-full overflow-hidden bg-slate-50 p-5 relative">
+              {showInputs && showSectionDrafts ? (
+                <div className="hidden lg:block order-3 w-[380px] shrink-0 overflow-auto border-l border-slate-200 bg-white p-5">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+                    <div className="text-sm font-semibold text-slate-900">Section drafts</div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Click a section tile to preview. If it has not been generated yet, EnterprateAI will generate it automatically.
+                    </div>
+                  </div>
+                  <div className="mt-4 flex max-h-[520px] flex-col gap-3 overflow-y-auto pr-1">
+                    {sectionsForDoc(selectedDoc).map((section) => (
+                      <SectionTile
+                        key={section.id}
+                        label={section.label}
+                        selected={(draftSectionsByDoc[selectedDoc] || []).includes(section.id)}
+                        snippet={getSectionSnippet(selectedDoc, section.id)}
+                        onClick={() => handleDraftTileClick(section.id)}
+                      />
+                    ))}
+                  </div>
+                  <div className="mt-3">
+                    <Button
+                      variant="secondary"
+                      disabled={isLoading || !(draftSectionsByDoc[selectedDoc] || []).length}
+                      onClick={() => generateSectionDrafts()}
+                    >
+                      {isLoading ? "Generating..." : "Generate section drafts"}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="order-1 flex-1 min-h-0 h-full overflow-hidden bg-slate-50 p-5 relative lg:order-2">
                 {showSectionPreview ? (
                   <div className="flex h-full min-h-0 flex-col gap-3">
-                    <div className="text-sm text-slate-500">Section preview</div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm text-slate-500">Section preview</div>
+                      {selectedDocResult?.document_markdown ? (
+                        <Button variant="secondary" size="sm" onClick={() => setInputsTab("inputs")}>
+                          Back to document
+                        </Button>
+                      ) : null}
+                    </div>
                     <div className="flex-1 min-h-0">
                       {sectionPreviewHtml ? (
                         <DocumentEditor
@@ -1294,8 +1379,8 @@ export default function BlueprintPage() {
                 ) : null}
               </div>
               {showInputs ? (
-                <div className="order-2 w-full shrink-0 overflow-auto border-t border-slate-200 bg-white p-5 lg:w-[380px] lg:border-l lg:border-t-0">
-                {showSectionDrafts ? (
+                <div className="order-2 w-full shrink-0 overflow-auto border-t border-slate-200 bg-white p-5 lg:order-1 lg:w-[380px] lg:border-r lg:border-t-0">
+                {showSectionDrafts && !isDesktop ? (
                   <SegmentedTabs
                     value={inputsTab}
                     onChange={setInputsTab}
@@ -1307,7 +1392,7 @@ export default function BlueprintPage() {
                   />
                 ) : null}
 
-                {inputsTab === "sections" && showSectionDrafts ? (
+                {inputsTab === "sections" && showSectionDrafts && !isDesktop ? (
                   <div className="mt-4 space-y-3">
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
                       <div className="text-sm font-semibold text-slate-900">Section drafts (standalone)</div>
