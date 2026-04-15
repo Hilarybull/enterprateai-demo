@@ -1671,12 +1671,10 @@ export default function ValidationWizardPage() {
                               </button>
                             ) : null}
                           </div>
-                          <NumberInput placeholder={suggestedDeliveryHours ? String(suggestedDeliveryHours) : "0"} value={serviceForm.available_delivery_hours_per_month} onChange={(v) => updateService("available_delivery_hours_per_month", v)} />
+                         <NumberInput placeholder={suggestedDeliveryHours ? String(suggestedDeliveryHours) : "0"} value={serviceForm.available_delivery_hours_per_month} onChange={(v) => updateService("available_delivery_hours_per_month", v)} />
                           {suggestedDeliveryHours ? (
                             <div className="mt-1 text-[11px] text-slate-500">
                               {workforceStatus.message} (Suggested: {suggestedDeliveryHours} hours/month.)
-                            </div>
-                          ) : null}
                             </div>
                           ) : null}
                         </div>
