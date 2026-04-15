@@ -1677,7 +1677,6 @@ export default function ValidationWizardPage() {
                               {workforceStatus.message} (Suggested: {suggestedDeliveryHours} hours/month.)
                             </div>
                           ) : null}
-                
                             </div>
                           ) : null}
                         </div>
