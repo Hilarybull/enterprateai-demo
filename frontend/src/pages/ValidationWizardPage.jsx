@@ -457,7 +457,7 @@ export default function ValidationWizardPage() {
     } catch (err) {
       console.error("Error applying draft:", err);
     }
-  }, [draftIdeaValidation, draftServiceIdea, hasAppliedDrafts, isCreateWorkspace, isPrefilling, isProductPath]);
+  }, [draftIdeaValidation, draftServiceIdea, hasAppliedDrafts, isCreateWorkspace, isPrefilling]);
 
   useEffect(() => {
     if (!isProductPath) return;
