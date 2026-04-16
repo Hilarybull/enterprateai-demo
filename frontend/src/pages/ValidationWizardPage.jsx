@@ -395,25 +395,67 @@ export default function ValidationWizardPage() {
 
   useEffect(() => {
     if (isCreateWorkspace || isPrefilling || hasAppliedDrafts) return;
-    const draft = isProductPath ? draftServiceIdea : draftIdeaValidation;
-    if (!draft || typeof draft !== "object") return;
-    if (isProductPath) {
-      setServiceForm((prev) => ({ ...prev, ...draft }));
-    } else {
-      setForm((prev) => ({
-        ...prev,
-        ...draft,
-        context: { ...prev.context, ...draft.context },
-        problem: { ...prev.problem, ...draft.problem },
-        offer: { ...prev.offer, ...draft.offer },
-        demand: { ...prev.demand, ...draft.demand },
-        costs: { ...prev.costs, ...draft.costs },
-        capacity: { ...prev.capacity, ...draft.capacity },
-        cash: { ...prev.cash, ...draft.cash },
-        go_to_market: { ...prev.go_to_market, ...draft.go_to_market }
-      }));
+    try {
+      const draft = isProductPath ? draftServiceIdea : draftIdeaValidation;
+      if (!draft || typeof draft !== "object") return;
+      if (isProductPath) {
+        const safeServiceDraft = {
+          service_name: draft.service_name ?? "",
+          service_category: draft.service_category ?? "consulting",
+          service_description: draft.service_description ?? "",
+          target_customer_type: draft.target_customer_type ?? "SME",
+          target_market_scope: draft.target_market_scope ?? "local",
+          price_per_sale: draft.price_per_sale ?? "",
+          expected_sales_per_month: draft.expected_sales_per_month ?? "",
+          direct_labour_cost_per_sale: draft.direct_labour_cost_per_sale ?? "",
+          contractor_cost_per_sale: draft.contractor_cost_per_sale ?? "",
+          materials_cost_per_sale: draft.materials_cost_per_sale ?? "",
+          travel_cost_per_sale: draft.travel_cost_per_sale ?? "",
+          other_direct_cost_per_sale: draft.other_direct_cost_per_sale ?? "",
+          monthly_software_cost: draft.monthly_software_cost ?? "",
+          monthly_marketing_cost: draft.monthly_marketing_cost ?? "",
+          monthly_admin_cost: draft.monthly_admin_cost ?? "",
+          monthly_rent_cost: draft.monthly_rent_cost ?? "",
+          monthly_other_fixed_cost: draft.monthly_other_fixed_cost ?? "",
+          hours_required_per_sale: draft.hours_required_per_sale ?? "",
+          available_delivery_hours_per_month: draft.available_delivery_hours_per_month ?? "",
+          demand_evidence_type: draft.demand_evidence_type ?? "assumption_only",
+          number_of_interested_leads: draft.number_of_interested_leads ?? "",
+          number_of_paying_customers: draft.number_of_paying_customers ?? "",
+          competitor_price_low: draft.competitor_price_low ?? "",
+          competitor_price_high: draft.competitor_price_high ?? "",
+          differentiation_level: draft.differentiation_level ?? "medium"
+        };
+        setServiceForm((prev) => ({ ...prev, ...safeServiceDraft }));
+      } else {
+        const safeDraft = {
+          ...draft,
+          context: { ...draft.context ?? {} },
+          problem: { ...draft.problem ?? {} },
+          offer: { ...draft.offer ?? {} },
+          demand: { ...draft.demand ?? {} },
+          costs: { ...draft.costs ?? {} },
+          capacity: { ...draft.capacity ?? {} },
+          cash: { ...draft.cash ?? {} },
+          go_to_market: { ...draft.go_to_market ?? {} }
+        };
+        setForm((prev) => ({
+          ...prev,
+          ...safeDraft,
+          context: { ...prev.context, ...safeDraft.context },
+          problem: { ...prev.problem, ...safeDraft.problem },
+          offer: { ...prev.offer, ...safeDraft.offer },
+          demand: { ...prev.demand, ...safeDraft.demand },
+          costs: { ...prev.costs, ...safeDraft.costs },
+          capacity: { ...prev.capacity, ...safeDraft.capacity },
+          cash: { ...prev.cash, ...safeDraft.cash },
+          go_to_market: { ...prev.go_to_market, ...safeDraft.go_to_market }
+        }));
+      }
+      setHasAppliedDrafts(true);
+    } catch (err) {
+      console.error("Error applying draft:", err);
     }
-    setHasAppliedDrafts(true);
   }, [draftIdeaValidation, draftServiceIdea, hasAppliedDrafts, isCreateWorkspace, isPrefilling, isProductPath]);
 
   useEffect(() => {
@@ -950,8 +992,8 @@ export default function ValidationWizardPage() {
       }
       if (shouldEvaluate) {
         if (isProductPath) {
-          const serviceName = String(serviceForm.service_name || "").trim();
-          const serviceDescription = String(serviceForm.service_description || "").trim();
+          const serviceName = String(serviceForm?.service_name || "").trim();
+          const serviceDescription = String(serviceForm?.service_description || "").trim();
           if (!serviceName) {
             setError("Please enter a product / service name to continue.");
             setIsLoading(false);
@@ -962,73 +1004,81 @@ export default function ValidationWizardPage() {
             setIsLoading(false);
             return;
           }
-          const payloadService = {
-            service_name: serviceName,
-            service_category: String(serviceForm.service_category || "").trim().toLowerCase() || "consulting",
-            service_description: serviceDescription,
-            target_customer_type: String(serviceForm.target_customer_type || "").trim(),
-            target_market_scope: String(serviceForm.target_market_scope || "").trim().toLowerCase(),
-            price_per_sale: parseNumber(serviceForm.price_per_sale, 0),
-            expected_sales_per_month: parseNumber(serviceForm.expected_sales_per_month, 0),
-            direct_labour_cost_per_sale: parseNumber(serviceForm.direct_labour_cost_per_sale, 0),
-            contractor_cost_per_sale: parseNumber(serviceForm.contractor_cost_per_sale, 0),
-            materials_cost_per_sale: parseNumber(serviceForm.materials_cost_per_sale, 0),
-            travel_cost_per_sale: parseNumber(serviceForm.travel_cost_per_sale, 0),
-            other_direct_cost_per_sale: parseNumber(serviceForm.other_direct_cost_per_sale, 0),
-            monthly_software_cost: parseNumber(serviceForm.monthly_software_cost, 0),
-            monthly_marketing_cost: parseNumber(serviceForm.monthly_marketing_cost, 0),
-            monthly_admin_cost: parseNumber(serviceForm.monthly_admin_cost, 0),
-            monthly_rent_cost: parseNumber(serviceForm.monthly_rent_cost, 0),
-            monthly_other_fixed_cost: parseNumber(serviceForm.monthly_other_fixed_cost, 0),
-            hours_required_per_sale: parseNumber(serviceForm.hours_required_per_sale, 0),
-            available_delivery_hours_per_month: parseNumber(serviceForm.available_delivery_hours_per_month, 0),
-            demand_evidence_type: String(serviceForm.demand_evidence_type || "").trim().toLowerCase(),
-            number_of_interested_leads: parseIntSafe(serviceForm.number_of_interested_leads, 0),
-            number_of_paying_customers: parseIntSafe(serviceForm.number_of_paying_customers, 0),
-            competitor_price_low: parseNumber(serviceForm.competitor_price_low, 0),
-            competitor_price_high: parseNumber(serviceForm.competitor_price_high, 0),
-            differentiation_level: String(serviceForm.differentiation_level || "").trim().toLowerCase(),
-          };
-          const result = await apiRequest(
-            "/service-ideas/validate",
-            "POST",
-            payloadService,
-            { timeoutMs: 120000 }
-          );
-          setValidation(result);
+          try {
+            const payloadService = {
+              service_name: serviceName,
+              service_category: String(serviceForm?.service_category || "").trim().toLowerCase() || "consulting",
+              service_description: serviceDescription,
+              target_customer_type: String(serviceForm?.target_customer_type || "").trim(),
+              target_market_scope: String(serviceForm?.target_market_scope || "").trim().toLowerCase(),
+              price_per_sale: parseNumber(serviceForm?.price_per_sale, 0),
+              expected_sales_per_month: parseNumber(serviceForm?.expected_sales_per_month, 0),
+              direct_labour_cost_per_sale: parseNumber(serviceForm?.direct_labour_cost_per_sale, 0),
+              contractor_cost_per_sale: parseNumber(serviceForm?.contractor_cost_per_sale, 0),
+              materials_cost_per_sale: parseNumber(serviceForm?.materials_cost_per_sale, 0),
+              travel_cost_per_sale: parseNumber(serviceForm?.travel_cost_per_sale, 0),
+              other_direct_cost_per_sale: parseNumber(serviceForm?.other_direct_cost_per_sale, 0),
+              monthly_software_cost: parseNumber(serviceForm?.monthly_software_cost, 0),
+              monthly_marketing_cost: parseNumber(serviceForm?.monthly_marketing_cost, 0),
+              monthly_admin_cost: parseNumber(serviceForm?.monthly_admin_cost, 0),
+              monthly_rent_cost: parseNumber(serviceForm?.monthly_rent_cost, 0),
+              monthly_other_fixed_cost: parseNumber(serviceForm?.monthly_other_fixed_cost, 0),
+              hours_required_per_sale: parseNumber(serviceForm?.hours_required_per_sale, 0),
+              available_delivery_hours_per_month: parseNumber(serviceForm?.available_delivery_hours_per_month, 0),
+              demand_evidence_type: String(serviceForm?.demand_evidence_type || "").trim().toLowerCase(),
+              number_of_interested_leads: parseIntSafe(serviceForm?.number_of_interested_leads, 0),
+              number_of_paying_customers: parseIntSafe(serviceForm?.number_of_paying_customers, 0),
+              competitor_price_low: parseNumber(serviceForm?.competitor_price_low, 0),
+              competitor_price_high: parseNumber(serviceForm?.competitor_price_high, 0),
+              differentiation_level: String(serviceForm?.differentiation_level || "").trim().toLowerCase()
+            };
+            const result = await apiRequest(
+              "/service-ideas/validate",
+              "POST",
+              payloadService,
+              { timeoutMs: 120000 }
+            );
+            setValidation(result);
 
-          if (wsId) {
-            const validationId = crypto.randomUUID();
-            try {
-              const ws = await apiRequest(`/validation/${wsId}`, "GET");
-              const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
-              const entry = {
-                id: validationId,
-                created_at: new Date().toISOString(),
-                service_name: payloadService.service_name,
-                payload: payloadService,
-                result,
-                decision_status: null,
-                currency: serviceCurrency || "GBP"
-              };
-              await apiRequest(
-                `/validation/${wsId}`,
-                "PATCH",
-                {
-                  data: {
-                    service_validation_history: [entry, ...history],
-                    active_service_validation_id: validationId,
-                    draft_service_idea: { ...serviceForm, ...payloadService }
-                  }
-                },
-                { timeoutMs: 120000 }
-              );
-              setSavedServiceIdeas([entry, ...history]);
-            } catch (e) {
-              console.warn("Failed to persist service validation history:", e);
+            if (wsId) {
+              const validationId = crypto.randomUUID();
+              try {
+                const ws = await apiRequest(`/validation/${wsId}`, "GET");
+                const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
+                const entry = {
+                  id: validationId,
+                  created_at: new Date().toISOString(),
+                  service_name: payloadService.service_name,
+                  payload: payloadService,
+                  result,
+                  decision_status: null,
+                  currency: serviceCurrency || "GBP"
+                };
+                await apiRequest(
+                  `/validation/${wsId}`,
+                  "PATCH",
+                  {
+                    data: {
+                      service_validation_history: [entry, ...history],
+                      active_service_validation_id: validationId,
+                      draft_service_idea: { ...serviceForm, ...payloadService }
+                    }
+                  },
+                  { timeoutMs: 120000 }
+                );
+                setSavedServiceIdeas([entry, ...history]);
+              } catch (e) {
+                console.warn("Failed to persist service validation history:", e);
+              }
             }
+            navigate("/results");
+          } catch (payloadErr) {
+            const msg = humanizeValidationError(payloadErr);
+            console.error("Service validation payload error:", payloadErr);
+            setError(msg);
+            setIsLoading(false);
+            return;
           }
-          navigate("/results");
         } else {
           const result = await apiRequest(
             "/validation/evaluate",
