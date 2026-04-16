@@ -442,6 +442,7 @@ export default function ValidationWizardPage() {
         setForm((prev) => ({
           ...prev,
           ...safeDraft,
+          pathway: safeDraft.pathway ?? prev.pathway,
           context: { ...prev.context, ...safeDraft.context },
           problem: { ...prev.problem, ...safeDraft.problem },
           offer: { ...prev.offer, ...safeDraft.offer },
