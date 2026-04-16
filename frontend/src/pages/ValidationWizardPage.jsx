@@ -76,6 +76,7 @@ export default function ValidationWizardPage() {
   const [isPrefilling, setIsPrefilling] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
   const [existingCatalogue, setExistingCatalogue] = useState({ products: [], customers: [], vendors: [] });
+  const [savedServiceIdeas, setSavedServiceIdeas] = useState([]);
   const [serviceSelection, setServiceSelection] = useState("");
   const [hasAppliedDrafts, setHasAppliedDrafts] = useState(false);
 
@@ -234,6 +235,26 @@ export default function ValidationWizardPage() {
         : [],
     [profile.services]
   );
+
+  const savedServiceIdeaOptions = useMemo(() => {
+    const names = new Set();
+    const history = Array.isArray(savedServiceIdeas) ? savedServiceIdeas : [];
+    history.forEach((entry) => {
+      const name = String(entry?.service_name || entry?.payload?.service_name || "").trim();
+      if (name) names.add(name);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [savedServiceIdeas]);
+
+  const combinedServiceOptions = useMemo(() => {
+    const names = new Set();
+    workspaceServices.forEach((s) => {
+      const name = String(s?.service_name || "").trim();
+      if (name) names.add(name);
+    });
+    savedServiceIdeaOptions.forEach((name) => names.add(name));
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [savedServiceIdeaOptions, workspaceServices]);
   const activeWorkspaceId = editingWorkspaceId || storedWorkspaceId;
 
   const isProductPath = form.pathway === "product_service_idea";
@@ -396,17 +417,14 @@ export default function ValidationWizardPage() {
   }, [draftIdeaValidation, draftServiceIdea, hasAppliedDrafts, isCreateWorkspace, isPrefilling, isProductPath]);
 
   useEffect(() => {
+    if (!isProductPath) return;
     if (!serviceForm.service_name || serviceSelection) return;
-    if (!workspaceServices.length) {
-      setServiceSelection("__other__");
-      return;
-    }
-    const match = workspaceServices.find((s) => s.service_name === serviceForm.service_name);
-    setServiceSelection(match ? match.service_name : "__other__");
-  }, [serviceForm.service_name, serviceSelection, workspaceServices]);
+    const match = combinedServiceOptions.includes(serviceForm.service_name);
+    setServiceSelection(match ? serviceForm.service_name : "__other__");
+  }, [combinedServiceOptions, isProductPath, serviceForm.service_name, serviceSelection]);
 
   useEffect(() => {
-    const next = form?.context?.currency || "USD";
+    const next = form?.context?.currency || "GBP";
     setCurrency(next);
     if (isProductPath) setServiceCurrency(next);
   }, [form?.context?.currency, isProductPath, setCurrency]);
@@ -480,6 +498,7 @@ export default function ValidationWizardPage() {
         const ws = await apiRequest(`/validation/${wsId}`, "GET");
         const iv = ws?.data?.idea_validation || ws?.data?.draft_idea_validation;
         setExistingCatalogue(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
+        setSavedServiceIdeas(Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : []);
         if (ws?.data?.currency) setServiceCurrency(ws.data.currency);
         if (!iv || typeof iv !== "object") {
           const profile = ws?.data?.business_profile;
@@ -519,14 +538,14 @@ export default function ValidationWizardPage() {
           }
           setWorkspaceId(wsId);
           setWorkspaceNameStore(ws?.name || null);
-          setDecisionStatus(ws?.data?.decision?.status || null);
+          if (!isProductPath) setDecisionStatus(ws?.data?.decision?.status || null);
           setWorkspaceName(ws?.name || "");
           setWorkspaceNameTouched(true);
           return;
         }
         setWorkspaceId(wsId);
         setWorkspaceNameStore(ws?.name || null);
-        setDecisionStatus(ws?.data?.decision?.status || null);
+        if (!isProductPath) setDecisionStatus(ws?.data?.decision?.status || null);
         setIdeaValidation(iv);
         setWorkspaceName(ws?.name || "");
         setWorkspaceNameTouched(true);
@@ -591,7 +610,7 @@ export default function ValidationWizardPage() {
       }
     }
     prefill();
-  }, [BUSINESS_TYPE_OPTIONS, CUSTOMER_SEGMENT_OPTIONS, DELIVERABLE_UNIT_OPTIONS, PRIMARY_INDUSTRY_OPTIONS, editingWorkspaceId, setDecisionStatus, setIdeaValidation, setWorkspaceId, setWorkspaceNameStore, storedWorkspaceId]);
+  }, [BUSINESS_TYPE_OPTIONS, CUSTOMER_SEGMENT_OPTIONS, DELIVERABLE_UNIT_OPTIONS, PRIMARY_INDUSTRY_OPTIONS, editingWorkspaceId, isProductPath, setDecisionStatus, setIdeaValidation, setWorkspaceId, setWorkspaceNameStore, storedWorkspaceId]);
 
   function update(path, value) {
     setForm((prev) => {
@@ -743,29 +762,7 @@ export default function ValidationWizardPage() {
           key_offering_focus: String(profile.key_offering_focus || "").trim() || null
         };
 
-        const existingProducts = Array.isArray(existingCatalogue?.products) ? existingCatalogue.products : [];
-        const serviceProducts = profilePayload.services
-          .filter((s) => s.service_name)
-          .map((s) => ({
-            id: crypto.randomUUID(),
-            name: s.service_name,
-            type: "service",
-            base_price: 0,
-            discount: 0,
-            freight_cost: 0,
-            archived: false,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }));
-        const nextProducts = serviceProducts.reduce((acc, svc) => {
-          const exists = acc.some((p) => String(p?.name || "").trim().toLowerCase() === svc.name.toLowerCase());
-          return exists ? acc : [svc, ...acc];
-        }, existingProducts);
-        const nextCatalogue = {
-          products: nextProducts,
-          customers: Array.isArray(existingCatalogue?.customers) ? existingCatalogue.customers : [],
-          vendors: Array.isArray(existingCatalogue?.vendors) ? existingCatalogue.vendors : []
-        };
+        const nextCatalogue = existingCatalogue || { products: [], customers: [], vendors: [] };
 
         if (wsId) {
           await apiRequest(
@@ -847,56 +844,35 @@ export default function ValidationWizardPage() {
       const fixedMonthly = payload.costs.fixed_costs_monthly + payload.costs.founder_draw_monthly + payload.costs.contractor_costs_monthly;
       const startingCash = Math.max(0, payload.cash.starting_cash - payload.cash.upfront_costs);
       setInputs({ price_per_unit: payload.offer.price_per_unit, units_per_month: payload.demand.expected_units_per_month, fixed_costs_monthly: fixedMonthly, variable_cost_per_unit: payload.costs.variable_cost_per_unit, starting_cash: startingCash });
-      setCurrency(payload.context.currency || "USD");
-      const productFromValidation = isProductPath
-        ? {
-            id: crypto.randomUUID(),
-            name: String(serviceForm.service_name || "Service").trim(),
-            type: "service",
-            base_price: Number(parseNumber(serviceForm.price_per_sale, 0) || 0),
-            discount: 0,
-            freight_cost: 0,
-            archived: false,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }
-        : null;
-      const existingProducts = Array.isArray(existingCatalogue?.products) ? existingCatalogue.products : [];
-      const nextProducts = productFromValidation
-        ? existingProducts.some(
-            (p) =>
-              String(p?.name || "").trim().toLowerCase() === productFromValidation.name.toLowerCase()
-          )
-          ? existingProducts
-          : [productFromValidation, ...existingProducts]
-        : existingProducts;
-      const nextCatalogue = {
-        products: nextProducts,
-        customers: Array.isArray(existingCatalogue?.customers) ? existingCatalogue.customers : [],
-        vendors: Array.isArray(existingCatalogue?.vendors) ? existingCatalogue.vendors : []
+      setCurrency(payload.context.currency || "GBP");
+      const nextCatalogue = existingCatalogue || { products: [], customers: [], vendors: [] };
+      const workspacePatch = {
+        draft_idea_validation: isProductPath ? null : payload,
+        draft_service_idea: isProductPath ? serviceForm : null,
+        ...(isProductPath ? {} : { catalogue: nextCatalogue })
       };
       if (wsId) {
         await apiRequest(
           `/validation/${wsId}`,
           "PATCH",
-          { data: { draft_idea_validation: isProductPath ? null : payload, draft_service_idea: isProductPath ? serviceForm : null, catalogue: nextCatalogue } },
+          { data: workspacePatch },
           { timeoutMs: 120000 }
         );
         setWorkspaceId(wsId);
         setWorkspaceNameStore(wsName);
-        setDecisionStatus(null);
+        if (!isProductPath) setDecisionStatus(null);
         setIdeaValidation(isProductPath ? null : payload);
       } else {
         const ws = await apiRequest(
           "/validation/create",
           "POST",
-          { name: wsName, data: { draft_idea_validation: isProductPath ? null : payload, draft_service_idea: isProductPath ? serviceForm : null, catalogue: nextCatalogue } },
+          { name: wsName, data: workspacePatch },
           { timeoutMs: 120000 }
         );
         wsId = ws.id;
         setWorkspaceId(wsId);
         setWorkspaceNameStore(ws.name || wsName);
-        setDecisionStatus(null);
+        if (!isProductPath) setDecisionStatus(null);
         setIdeaValidation(isProductPath ? null : payload);
       }
 
@@ -998,6 +974,38 @@ export default function ValidationWizardPage() {
             { timeoutMs: 120000 }
           );
           setValidation(result);
+
+          if (wsId) {
+            const validationId = crypto.randomUUID();
+            try {
+              const ws = await apiRequest(`/validation/${wsId}`, "GET");
+              const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
+              const entry = {
+                id: validationId,
+                created_at: new Date().toISOString(),
+                service_name: payloadService.service_name,
+                payload: payloadService,
+                result,
+                decision_status: null,
+                currency: serviceCurrency || "GBP"
+              };
+              await apiRequest(
+                `/validation/${wsId}`,
+                "PATCH",
+                {
+                  data: {
+                    service_validation_history: [entry, ...history],
+                    active_service_validation_id: validationId,
+                    draft_service_idea: { ...serviceForm, ...payloadService }
+                  }
+                },
+                { timeoutMs: 120000 }
+              );
+              setSavedServiceIdeas([entry, ...history]);
+            } catch (e) {
+              console.warn("Failed to persist service validation history:", e);
+            }
+          }
           navigate("/results");
         } else {
           const result = await apiRequest(
@@ -1491,7 +1499,7 @@ export default function ValidationWizardPage() {
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div className="md:col-span-2 xl:col-span-3">
                           <FieldLabel info="Name of the service idea you want to validate.">Service name *</FieldLabel>
-                          {workspaceServices.length ? (
+                          {combinedServiceOptions.length ? (
                             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                               <select
                                 className="ea-input"
@@ -1500,10 +1508,17 @@ export default function ValidationWizardPage() {
                                   const nextValue = e.target.value;
                                   setServiceSelection(nextValue);
                                   if (!nextValue) return;
-                                  if (nextValue === "__other__") {
-                                    updateService("service_name", "");
+                                  if (nextValue === "__other__") return;
+
+                                  const historyEntry = savedServiceIdeas.find(
+                                    (entry) =>
+                                      String(entry?.service_name || entry?.payload?.service_name || "").trim() === nextValue
+                                  );
+                                  if (historyEntry?.payload) {
+                                    setServiceForm((prev) => ({ ...prev, ...historyEntry.payload }));
                                     return;
                                   }
+
                                   const svc = workspaceServices.find((s) => s.service_name === nextValue);
                                   if (svc) {
                                     updateService("service_name", svc.service_name);
@@ -1511,13 +1526,16 @@ export default function ValidationWizardPage() {
                                       updateService("service_description", svc.service_description);
                                     }
                                     if (svc.service_category) updateService("service_category", svc.service_category);
+                                    return;
                                   }
+
+                                  updateService("service_name", nextValue);
                                 }}
                               >
-                                <option value="">Select from workspace services</option>
-                                {workspaceServices.map((svc) => (
-                                  <option key={svc.service_name} value={svc.service_name}>
-                                    {svc.service_name}
+                                <option value="">Select from saved services</option>
+                                {combinedServiceOptions.map((name) => (
+                                  <option key={name} value={name}>
+                                    {name}
                                   </option>
                                 ))}
                                 <option value="__other__">Other (type new)</option>

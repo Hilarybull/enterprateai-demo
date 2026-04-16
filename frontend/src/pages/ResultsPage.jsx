@@ -48,6 +48,7 @@ export default function ResultsPage() {
   const [mfLoading, setMfLoading] = useState(false);
   const [mfError, setMfError] = useState(null);
   const [serviceDraft, setServiceDraft] = useState(null);
+  const isServiceIdeaView = Boolean(validation?.scores && validation?.metrics && validation?.outcome);
 
   useEffect(() => {
     async function loadDecision() {
@@ -58,20 +59,29 @@ export default function ResultsPage() {
         if (ws?.data?.draft_service_idea) {
           setServiceDraft(ws.data.draft_service_idea);
         }
-        const status = ws?.data?.decision?.status;
-        if (status === "accepted" || status === "rejected") {
-          setDecision(status);
-          setDecisionStatusStore(status);
+        if (isServiceIdeaView) {
+          const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
+          const activeId = ws?.data?.active_service_validation_id;
+          const active = activeId ? history.find((h) => h?.id === activeId) : history[0];
+          const status = active?.decision_status;
+          if (status === "accepted" || status === "rejected") setDecision(status);
+          else setDecision(null);
         } else {
-          setDecision(null);
-          setDecisionStatusStore(null);
+          const status = ws?.data?.decision?.status;
+          if (status === "accepted" || status === "rejected") {
+            setDecision(status);
+            setDecisionStatusStore(status);
+          } else {
+            setDecision(null);
+            setDecisionStatusStore(null);
+          }
         }
       } catch {
         // ignore
       }
     }
     loadDecision();
-  }, [workspaceId, setDecisionStatusStore, setWorkspaceName]);
+  }, [isServiceIdeaView, workspaceId, setDecisionStatusStore, setWorkspaceName]);
 
   const mfBusinessName = String(ideaValidation?.context?.business_name || "").trim();
   const mfPrimaryIndustry = String(ideaValidation?.context?.primary_industry || "").trim();
@@ -113,17 +123,29 @@ export default function ResultsPage() {
     setError(null);
     setDecisionNotice(null);
     try {
-      const patchPayload = {
-        data: {
-          decision: { status, decided_at: new Date().toISOString() },
-          ...(status === "accepted" && ideaValidation
-            ? { idea_validation: ideaValidation, draft_idea_validation: null }
-            : {}),
-        },
-      };
+      const patchPayload = { data: {} };
+      if (isServiceIdeaView) {
+        const ws = await apiRequest(`/validation/${workspaceId}`, "GET");
+        const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
+        const activeId = ws?.data?.active_service_validation_id;
+        const active = activeId ? history.find((h) => h?.id === activeId) : history[0];
+        const activeEntryId = active?.id;
+        const nextHistory = history.map((h) => {
+          if (!activeEntryId || h?.id !== activeEntryId) return h;
+          return { ...h, decision_status: status, decided_at: new Date().toISOString() };
+        });
+        patchPayload.data.service_validation_history = nextHistory;
+        if (activeEntryId) patchPayload.data.active_service_validation_id = activeEntryId;
+      } else {
+        patchPayload.data.decision = { status, decided_at: new Date().toISOString() };
+        if (status === "accepted" && ideaValidation) {
+          patchPayload.data.idea_validation = ideaValidation;
+          patchPayload.data.draft_idea_validation = null;
+        }
+      }
 
       // For product/service pathway, only persist to catalogue when the user explicitly accepts.
-      if (status === "accepted" && serviceDraft) {
+      if (isServiceIdeaView && status === "accepted" && serviceDraft) {
         const serviceName = String(serviceDraft.service_name || "").trim() || "Service";
         const productFromValidation = {
           id: crypto.randomUUID(),
@@ -155,7 +177,7 @@ export default function ResultsPage() {
         data: patchPayload.data
       });
       setDecision(status);
-      setDecisionStatusStore(status);
+      if (!isServiceIdeaView) setDecisionStatusStore(status);
       setDecisionNotice(status === "accepted" ? "Validation accepted." : "Validation rejected.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save decision");
