@@ -654,6 +654,13 @@ export default function ValidationWizardPage() {
     prefill();
   }, [BUSINESS_TYPE_OPTIONS, CUSTOMER_SEGMENT_OPTIONS, DELIVERABLE_UNIT_OPTIONS, PRIMARY_INDUSTRY_OPTIONS, editingWorkspaceId, isProductPath, setDecisionStatus, setIdeaValidation, setWorkspaceId, setWorkspaceNameStore, storedWorkspaceId]);
 
+  function selectPathway(value) {
+    setForm((prev) => ({
+      ...prev,
+      pathway: value
+    }));
+  }
+
   function update(path, value) {
     setForm((prev) => {
       const next = structuredClone(prev);
@@ -1170,7 +1177,7 @@ export default function ValidationWizardPage() {
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <button
                     type="button"
-                    onClick={() => update("pathway", "business_idea")}
+                    onClick={() => selectPathway("business_idea")}
                     className={
                       "rounded-2xl border p-4 text-left transition " +
                       (form.pathway === "business_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
@@ -1181,7 +1188,7 @@ export default function ValidationWizardPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => update("pathway", "product_service_idea")}
+                    onClick={() => selectPathway("product_service_idea")}
                     className={
                       "rounded-2xl border p-4 text-left transition " +
                       (form.pathway === "product_service_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
