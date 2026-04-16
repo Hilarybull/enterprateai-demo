@@ -593,6 +593,9 @@ export default function ValidationWizardPage() {
         setWorkspaceNameTouched(true);
         const wp = ws?.data?.workspace_profile;
         const next = structuredClone(iv);
+        if (!next.pathway) {
+          next.pathway = form.pathway || "business_idea";
+        }
         if (wp && typeof wp === "object") {
           setProfile((prev) => ({
             ...prev,
