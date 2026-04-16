@@ -762,7 +762,29 @@ export default function ValidationWizardPage() {
           key_offering_focus: String(profile.key_offering_focus || "").trim() || null
         };
 
-        const nextCatalogue = existingCatalogue || { products: [], customers: [], vendors: [] };
+        const existingProducts = Array.isArray(existingCatalogue?.products) ? existingCatalogue.products : [];
+        const serviceProducts = (profilePayload.services || [])
+          .filter((s) => s?.service_name)
+          .map((s) => ({
+            id: crypto.randomUUID(),
+            name: s.service_name,
+            type: "service",
+            base_price: 0,
+            discount: 0,
+            freight_cost: 0,
+            archived: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }));
+        const nextProducts = serviceProducts.reduce((acc, svc) => {
+          const exists = acc.some((p) => String(p?.name || "").trim().toLowerCase() === svc.name.toLowerCase());
+          return exists ? acc : [svc, ...acc];
+        }, existingProducts);
+        const nextCatalogue = {
+          products: nextProducts,
+          customers: Array.isArray(existingCatalogue?.customers) ? existingCatalogue.customers : [],
+          vendors: Array.isArray(existingCatalogue?.vendors) ? existingCatalogue.vendors : []
+        };
 
         if (wsId) {
           await apiRequest(

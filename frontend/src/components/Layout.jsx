@@ -162,6 +162,7 @@ export default function Layout() {
   const profileRef = useRef(null);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
+  const serviceDecisionStatus = useWorkspaceStore((s) => s.serviceDecisionStatus);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
@@ -173,7 +174,9 @@ export default function Layout() {
   const setCurrency = useWorkspaceStore((s) => s.setCurrency);
 
   const enableHealthCheck = String(import.meta.env.ENABLE_HEALTH_CHECK ?? "false").toLowerCase() === "true";
-  const workspaceDisplayName = decisionStatus === "accepted" && workspaceName ? workspaceName : workspaceName || "My workspace";
+  const acceptedAny = decisionStatus === "accepted" || serviceDecisionStatus === "accepted";
+  const rejectedAny = decisionStatus === "rejected" || serviceDecisionStatus === "rejected";
+  const workspaceDisplayName = acceptedAny && workspaceName ? workspaceName : workspaceName || "My workspace";
   const email = useAuthStore((s) => s.email);
   const profileInitials = initialsFromEmail(email);
 
@@ -335,9 +338,9 @@ export default function Layout() {
           Starter Plan
         </div>
         <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-          {decisionStatus === "accepted"
+          {acceptedAny
             ? "Workspace verified"
-            : decisionStatus === "rejected"
+            : rejectedAny
               ? "Needs review"
               : "Setup in progress"}
         </div>

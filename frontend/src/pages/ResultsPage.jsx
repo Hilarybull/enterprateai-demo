@@ -32,6 +32,7 @@ export default function ResultsPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
   const setDecisionStatusStore = useWorkspaceStore((s) => s.setDecisionStatus);
+  const setServiceDecisionStatusStore = useWorkspaceStore((s) => s.setServiceDecisionStatus);
   const validation = useWorkspaceStore((s) => s.validation);
   const currency = useWorkspaceStore((s) => s.currency);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
@@ -64,8 +65,13 @@ export default function ResultsPage() {
           const activeId = ws?.data?.active_service_validation_id;
           const active = activeId ? history.find((h) => h?.id === activeId) : history[0];
           const status = active?.decision_status;
-          if (status === "accepted" || status === "rejected") setDecision(status);
-          else setDecision(null);
+          if (status === "accepted" || status === "rejected") {
+            setDecision(status);
+            setServiceDecisionStatusStore(status);
+          } else {
+            setDecision(null);
+            setServiceDecisionStatusStore(null);
+          }
         } else {
           const status = ws?.data?.decision?.status;
           if (status === "accepted" || status === "rejected") {
@@ -81,7 +87,7 @@ export default function ResultsPage() {
       }
     }
     loadDecision();
-  }, [isServiceIdeaView, workspaceId, setDecisionStatusStore, setWorkspaceName]);
+  }, [isServiceIdeaView, workspaceId, setDecisionStatusStore, setServiceDecisionStatusStore, setWorkspaceName]);
 
   const mfBusinessName = String(ideaValidation?.context?.business_name || "").trim();
   const mfPrimaryIndustry = String(ideaValidation?.context?.primary_industry || "").trim();
@@ -178,6 +184,7 @@ export default function ResultsPage() {
       });
       setDecision(status);
       if (!isServiceIdeaView) setDecisionStatusStore(status);
+      if (isServiceIdeaView) setServiceDecisionStatusStore(status);
       setDecisionNotice(status === "accepted" ? "Validation accepted." : "Validation rejected.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save decision");
