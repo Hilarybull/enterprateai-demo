@@ -35,6 +35,12 @@ export async function apiRequest(path, method, body, options) {
   }
 
   if (!res.ok) {
+    // Clear invalid token on 401
+    if (res.status === 401) {
+      localStorage.removeItem("ea_token");
+      localStorage.removeItem("ea_email");
+    }
+    
     let message = `Request failed`;
     try {
       const data = await res.json();
