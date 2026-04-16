@@ -592,6 +592,7 @@ export default function ValidationWizardPage() {
         setWorkspaceName(ws?.name || "");
         setWorkspaceNameTouched(true);
         const wp = ws?.data?.workspace_profile;
+        const next = structuredClone(iv);
         if (wp && typeof wp === "object") {
           setProfile((prev) => ({
             ...prev,
@@ -617,7 +618,6 @@ export default function ValidationWizardPage() {
           if (primary?.service_description) updateService("service_description", primary.service_description);
           if (primary?.service_category) updateService("service_category", primary.service_category);
         }
-        const next = structuredClone(iv);
         const bt = String(next?.context?.business_type ?? "").trim();
         next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : "Other";
         next.context.business_type_other = BUSINESS_TYPE_OPTIONS.includes(bt) ? "" : bt;
