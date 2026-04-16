@@ -594,9 +594,7 @@ export default function ValidationWizardPage() {
         setWorkspaceNameTouched(true);
         const wp = ws?.data?.workspace_profile;
         const next = structuredClone(iv);
-        if (!next.pathway) {
-          next.pathway = form.pathway || "business_idea";
-        }
+        next.pathway = form.pathway || next.pathway || "business_idea";
         if (wp && typeof wp === "object") {
           setProfile((prev) => ({
             ...prev,
@@ -656,7 +654,7 @@ export default function ValidationWizardPage() {
       }
     }
     prefill();
-  }, [BUSINESS_TYPE_OPTIONS, CUSTOMER_SEGMENT_OPTIONS, DELIVERABLE_UNIT_OPTIONS, PRIMARY_INDUSTRY_OPTIONS, editingWorkspaceId, isProductPath, setDecisionStatus, setIdeaValidation, setWorkspaceId, setWorkspaceNameStore, storedWorkspaceId]);
+  }, [BUSINESS_TYPE_OPTIONS, CUSTOMER_SEGMENT_OPTIONS, DELIVERABLE_UNIT_OPTIONS, PRIMARY_INDUSTRY_OPTIONS, editingWorkspaceId, setDecisionStatus, setIdeaValidation, setWorkspaceId, setWorkspaceNameStore, storedWorkspaceId]);
 
   function selectPathway(value) {
     setForm((prev) => ({
