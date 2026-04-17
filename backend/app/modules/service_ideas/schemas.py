@@ -42,7 +42,7 @@ class ServiceIdeaValidateRequest(BaseModel):
     monthly_other_fixed_cost: float = Field(ge=0, default=0)
 
     hours_required_per_sale: float = Field(gt=0)
-    available_delivery_hours_per_month: float = Field(ge=0)
+    available_delivery_hours_per_month: float = Field(gt=0)
 
     demand_evidence_type: DemandEvidenceType
     number_of_interested_leads: int = Field(ge=0, default=0)
