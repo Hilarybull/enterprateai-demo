@@ -1355,7 +1355,7 @@ export default function BlueprintPage() {
 
             <div className="flex h-[calc(94vh-64px)] min-h-0 flex-col overflow-hidden lg:flex-row">
               {showSectionDrafts ? (
-                <div className="hidden lg:block order-3 w-[280px] shrink-0 overflow-auto border-l border-slate-200 bg-white p-5">
+                <div className="hidden lg:block order-3 w-[340px] shrink-0 overflow-auto overflow-x-hidden border-l border-slate-200 bg-white p-5">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
                     <div className="text-sm font-semibold text-slate-900">Section drafts</div>
                     <div className="mt-1 text-[11px] text-slate-500">
@@ -1376,7 +1376,7 @@ export default function BlueprintPage() {
                 </div>
               ) : null}
 
-              <div className="order-1 flex-1 min-h-0 h-full overflow-hidden bg-slate-50 p-5 relative lg:order-2">
+              <div className="order-1 flex-1 min-h-0 h-full min-w-0 overflow-hidden bg-slate-50 p-5 relative lg:order-2">
                 {showSectionPreview ? (
                   <div className="flex h-full min-h-0 flex-col gap-3">
                     <div className="flex items-center justify-between gap-2">
@@ -1466,7 +1466,7 @@ export default function BlueprintPage() {
                 ) : null}
               </div>
               {showSidePanel ? (
-                <div className="order-2 w-full shrink-0 overflow-auto border-t border-slate-200 bg-white p-5 lg:order-1 lg:w-[280px] lg:border-r lg:border-t-0">
+                <div className="order-2 w-full shrink-0 overflow-auto overflow-x-hidden border-t border-slate-200 bg-white p-5 lg:order-1 lg:w-[340px] lg:border-r lg:border-t-0">
                 {showSectionDrafts && !isDesktop ? (
                   <SegmentedTabs
                     value={effectiveInputsTab}
@@ -1498,7 +1498,7 @@ export default function BlueprintPage() {
                   </div>
                 ) : (
                 <>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3">
                   <div>
                     <div className="ea-label">Business name</div>
                     <Input
@@ -1537,12 +1537,12 @@ export default function BlueprintPage() {
                       <Input value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder="Paste workspace id" />
                     </div>
                   ) : null}
-                  <div className="md:col-span-2">
+                  <div>
                     <div className="ea-label">Tone</div>
                     <Input value={tone} onChange={(e) => setTone(e.target.value)} placeholder="professional" />
                   </div>
                   {selectedDoc === "business_plan" || selectedDoc === "client_proposal" ? (
-                    <div className="md:col-span-2">
+                    <div>
                       <div className="ea-label">Objective</div>
                       <select
                         value={objectiveChoiceByDoc[selectedDoc] || ""}
@@ -1566,8 +1566,8 @@ export default function BlueprintPage() {
                           placeholder="Type your objective"
                           className="mt-2"
                         />
-                ) : null}
-              </div>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
 
