@@ -192,7 +192,19 @@ function buildPreviewFragment({ title, bodyHtml }) {
   `.trim();
 }
 
-export default function DocumentEditor({ title = "Document", markdown, initialHtml, onHtmlChange, onDownload, onSave }) {
+export default function DocumentEditor({
+  title = "Document",
+  markdown,
+  initialHtml,
+  onHtmlChange,
+  onDownload,
+  onSave,
+  downloadFormats,
+}) {
+  const availableFormats = useMemo(() => {
+    const formats = Array.isArray(downloadFormats) && downloadFormats.length ? downloadFormats : ["pdf", "doc"];
+    return formats.filter((f) => f === "pdf" || f === "doc");
+  }, [downloadFormats]);
   const computedInitialHtml = useMemo(() => {
     if (typeof initialHtml === "string" && initialHtml.trim()) return initialHtml;
     return markdownToHtml(markdown);
@@ -200,7 +212,7 @@ export default function DocumentEditor({ title = "Document", markdown, initialHt
 
   const [html, setHtml] = useState(computedInitialHtml);
   const [showPaginated, setShowPaginated] = useState(false);
-  const [downloadFormat, setDownloadFormat] = useState("pdf");
+  const [downloadFormat, setDownloadFormat] = useState(availableFormats[0] || "pdf");
   const [fontSizeInput, setFontSizeInput] = useState("14");
   const ref = useRef(null);
   const savedRangeRef = useRef(null);
@@ -215,6 +227,12 @@ export default function DocumentEditor({ title = "Document", markdown, initialHt
     }
     savedRangeRef.current = null;
   }, [computedInitialHtml]);
+
+  useEffect(() => {
+    if (!availableFormats.includes(downloadFormat)) {
+      setDownloadFormat(availableFormats[0] || "pdf");
+    }
+  }, [availableFormats, downloadFormat]);
 
   function saveSelection() {
     const el = ref.current;
@@ -464,7 +482,7 @@ export default function DocumentEditor({ title = "Document", markdown, initialHt
               </svg>
             </button>
             <span className="text-xs text-slate-500 dark:text-slate-400">
-              {showPaginated ? "Preview mode (read‑only)" : "Edit mode"}
+              {showPaginated ? "Preview mode (read-only)" : "Edit mode"}
             </span>
           </div>
 
@@ -484,9 +502,10 @@ export default function DocumentEditor({ title = "Document", markdown, initialHt
             className="ea-input h-10 w-[140px]"
             value={downloadFormat}
             onChange={(e) => setDownloadFormat(e.target.value)}
+            disabled={availableFormats.length <= 1}
           >
-            <option value="pdf">PDF</option>
-            <option value="doc">Word</option>
+            {availableFormats.includes("pdf") ? <option value="pdf">PDF</option> : null}
+            {availableFormats.includes("doc") ? <option value="doc">Word</option> : null}
           </select>
 
           <Button
@@ -510,7 +529,7 @@ export default function DocumentEditor({ title = "Document", markdown, initialHt
           ) : (
             <div
               ref={ref}
-              className="ea-doc mx-auto w-full max-w-[1100px] rounded-xl border border-slate-200 bg-white p-8 shadow-sm outline-none dark:border-slate-700 dark:bg-white"
+              className="ea-doc mx-auto w-full max-w-[1400px] rounded-xl border border-slate-200 bg-white p-8 shadow-sm outline-none dark:border-slate-700 dark:bg-white"
               contentEditable
               suppressContentEditableWarning
               onInput={(e) => {

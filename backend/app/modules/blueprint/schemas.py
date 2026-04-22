@@ -35,6 +35,7 @@ class BlueprintGenerateRequest(BaseModel):
     value_proposition: Optional[str] = None
     tone: str = Field(default="professional", max_length=32)
     extra_notes: Optional[str] = None
+    selected_services: Optional[list[str]] = Field(default=None, description="Selected services from workspace.")
 
     bill_to: Optional[str] = None
     items: Optional[str] = None

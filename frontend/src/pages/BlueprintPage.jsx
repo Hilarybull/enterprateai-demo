@@ -147,7 +147,23 @@ export default function BlueprintPage() {
   const [senderPhone, setSenderPhone] = useState("");
   const [senderEmail, setSenderEmail] = useState("");
   const [senderWebsite, setSenderWebsite] = useState("");
+  const [selectedServices, setSelectedServices] = useState([]);
+  const [customServiceName, setCustomServiceName] = useState("");
+  const [customServiceDescription, setCustomServiceDescription] = useState("");
   const [workspaceProfile, setWorkspaceProfile] = useState(null);
+  const [dirtyFields, setDirtyFields] = useState({
+    companyName: false,
+    industry: false,
+    valueProp: false,
+    targetMarket: false,
+    problem: false,
+    solution: false,
+    contactDetails: false,
+    senderEmail: false,
+    senderPhone: false,
+    senderWebsite: false,
+    selectedServices: false,
+  });
   const [objectiveChoiceByDoc, setObjectiveChoiceByDoc] = useState({
     business_plan: BUSINESS_PLAN_OBJECTIVES[0],
     client_proposal: CLIENT_PROPOSAL_OBJECTIVES[0],
@@ -299,11 +315,11 @@ export default function BlueprintPage() {
     const offer = acceptedIdeaValidation.offer || {};
     const prob = acceptedIdeaValidation.problem || {};
 
-    if (!companyName && ctx.business_name) setCompanyName(ctx.business_name);
-    if (!industry) setIndustry(ctx.primary_industry || ctx.business_type || "");
-    if (!targetMarket && prob.customer_segment) setTargetMarket(prob.customer_segment);
-    if (!problem && prob.problem_type) setProblem(prob.problem_type);
-    if (!solution && offer.service_type) setSolution(offer.service_type);
+    if (!dirtyFields.companyName && !companyName && ctx.business_name) setCompanyName(ctx.business_name);
+    if (!dirtyFields.industry && !industry) setIndustry(ctx.primary_industry || ctx.business_type || "");
+    if (!dirtyFields.targetMarket && !targetMarket && prob.customer_segment) setTargetMarket(prob.customer_segment);
+    if (!dirtyFields.problem && !problem && prob.problem_type) setProblem(prob.problem_type);
+    if (!dirtyFields.solution && !solution && offer.service_type) setSolution(offer.service_type);
 
     const pm = String(offer.pricing_model || "").toLowerCase();
     if (pm && (pricingModel === "Subscription" || !pricingModel)) {
@@ -311,7 +327,7 @@ export default function BlueprintPage() {
       else if (pm === "retainer") setPricingModel("Retainer");
       else if (pm === "fixed_job") setPricingModel("One-time");
     }
-  }, [acceptedIdeaValidation, companyName, industry, pricingModel, problem, solution, targetMarket]);
+  }, [acceptedIdeaValidation, companyName, dirtyFields, industry, pricingModel, problem, solution, targetMarket]);
 
   useEffect(() => {
     let alive = true;
@@ -324,24 +340,36 @@ export default function BlueprintPage() {
         const workspaceProfile = ws?.data?.workspace_profile || {};
         const wpServices = Array.isArray(workspaceProfile.services) ? workspaceProfile.services : [];
         setWorkspaceProfile(workspaceProfile || null);
-        if (!companyName && (workspaceProfile.company_name || profile.business_name)) {
+        if (!dirtyFields.companyName && !companyName && (workspaceProfile.company_name || profile.business_name)) {
           setCompanyName(workspaceProfile.company_name || profile.business_name);
         }
-        if (!industry && (workspaceProfile.primary_industry || profile.primary_industry || profile.business_type)) {
+        if (
+          !dirtyFields.industry &&
+          !industry &&
+          (workspaceProfile.primary_industry || profile.primary_industry || profile.business_type)
+        ) {
           setIndustry(workspaceProfile.primary_industry || profile.primary_industry || profile.business_type);
         }
-        if (!valueProp && (workspaceProfile.key_offering_focus || workspaceProfile.tagline || profile.value_proposition)) {
+        if (
+          !dirtyFields.valueProp &&
+          !valueProp &&
+          (workspaceProfile.key_offering_focus || workspaceProfile.tagline || profile.value_proposition)
+        ) {
           setValueProp(workspaceProfile.key_offering_focus || workspaceProfile.tagline || profile.value_proposition);
         }
-        if (!targetMarket && workspaceProfile.target_customer_type) {
+        if (!dirtyFields.targetMarket && !targetMarket && workspaceProfile.target_customer_type) {
           setTargetMarket(workspaceProfile.target_customer_type);
         }
-        if (!solution && wpServices.length) {
+        if (!dirtyFields.solution && !solution && wpServices.length) {
           const joined = wpServices
             .map((s) => String(s?.service_name || "").trim())
             .filter(Boolean)
             .join(" / ");
           if (joined) setSolution(joined);
+          // Also prefill selected services if empty
+          if (!dirtyFields.selectedServices && !selectedServices.length) {
+            setSelectedServices(wpServices.map((s) => String(s?.service_name || "").trim()).filter(Boolean));
+          }
         }
       } catch {
         // ignore
@@ -351,7 +379,17 @@ export default function BlueprintPage() {
     return () => {
       alive = false;
     };
-  }, [acceptedIdeaValidation, companyName, industry, valueProp, workspaceIdStored, targetMarket, solution]);
+  }, [
+    acceptedIdeaValidation,
+    companyName,
+    dirtyFields,
+    industry,
+    selectedServices.length,
+    solution,
+    targetMarket,
+    valueProp,
+    workspaceIdStored,
+  ]);
 
   useEffect(() => {
     let alive = true;
@@ -376,20 +414,21 @@ export default function BlueprintPage() {
   useEffect(() => {
     if (!workspaceProfile || !workspaceCompanyMatches()) return;
     const defaultContact = getWorkspaceContactDetails();
-    if (!contactDetails && defaultContact) setContactDetails(defaultContact);
-    if (!senderEmail && workspaceProfile.email) setSenderEmail(String(workspaceProfile.email));
-    if (!senderPhone && workspaceProfile.phone_number) setSenderPhone(String(workspaceProfile.phone_number));
-    if (!senderWebsite && workspaceProfile.website) setSenderWebsite(String(workspaceProfile.website));
-  }, [workspaceProfile, contactDetails, senderEmail, senderPhone, senderWebsite]);
+    if (!dirtyFields.contactDetails && !contactDetails && defaultContact) setContactDetails(defaultContact);
+    if (!dirtyFields.senderEmail && !senderEmail && workspaceProfile.email) setSenderEmail(String(workspaceProfile.email));
+    if (!dirtyFields.senderPhone && !senderPhone && workspaceProfile.phone_number) setSenderPhone(String(workspaceProfile.phone_number));
+    if (!dirtyFields.senderWebsite && !senderWebsite && workspaceProfile.website) setSenderWebsite(String(workspaceProfile.website));
+  }, [workspaceProfile, dirtyFields, contactDetails, senderEmail, senderPhone, senderWebsite]);
 
   async function syncWorkspaceProfile() {
-    const profile = {
-      business_name: companyName?.trim(),
-      primary_industry: industry?.trim(),
-      business_type: industry?.trim(),
-      value_proposition: valueProp?.trim()
-    };
-    const hasAny = Object.values(profile).some((v) => v && String(v).trim());
+    const profile = {};
+    if (String(companyName || "").trim()) profile.business_name = String(companyName || "").trim();
+    if (String(industry || "").trim()) {
+      profile.primary_industry = String(industry || "").trim();
+      profile.business_type = String(industry || "").trim();
+    }
+    if (String(valueProp || "").trim()) profile.value_proposition = String(valueProp || "").trim();
+    const hasAny = Object.keys(profile).length > 0;
     if (!hasAny) return;
     try {
       const ws = await apiRequest("/validation/me", "PATCH", { data: { business_profile: profile } });
@@ -696,8 +735,10 @@ export default function BlueprintPage() {
     return companyName.trim().toLowerCase() === wsName.toLowerCase();
   }
 
-  function resolveWithWorkspace(value, fallback) {
-    if (String(value || "").trim()) return String(value || "").trim();
+  function resolveWithWorkspace(value, fallback, isDirty = false) {
+    const v = String(value || "").trim();
+    if (isDirty) return v;
+    if (v) return v;
     return workspaceCompanyMatches() ? String(fallback || "").trim() : "";
   }
 
@@ -761,7 +802,7 @@ export default function BlueprintPage() {
     if (!entry) return;
     if (selectedDoc === "client_proposal") {
       setBillTo(`${entry.name}`);
-      if (!targetMarket) setTargetMarket(entry.industry || entry.name);
+      if (!dirtyFields.targetMarket && !targetMarket) setTargetMarket(entry.industry || entry.name);
       if (!terms && entry.payment_terms) {
         const formatted = formatPaymentTerms(entry.payment_terms);
         if (formatted) setTerms(`Payment terms: ${formatted}`);
@@ -769,19 +810,23 @@ export default function BlueprintPage() {
     }
     if (selectedDoc === "sales_letter") {
       setBillTo(`${entry.name}`);
-      if (!targetMarket) setTargetMarket(entry.name);
+      if (!dirtyFields.targetMarket && !targetMarket) setTargetMarket(entry.name);
     }
   }
 
   async function generateSelected() {
-    const resolvedCompanyName = resolveWithWorkspace(companyName, workspaceProfile?.company_name);
-    const resolvedIndustry = resolveWithWorkspace(industry, workspaceProfile?.primary_industry);
-    const resolvedValueProp = resolveWithWorkspace(valueProp, workspaceProfile?.key_offering_focus || workspaceProfile?.tagline);
-    const resolvedTargetMarket = resolveWithWorkspace(targetMarket, workspaceProfile?.target_customer_type);
-    const resolvedContactDetails = resolveWithWorkspace(contactDetails, getWorkspaceContactDetails());
-    const resolvedSenderEmail = resolveWithWorkspace(senderEmail, workspaceProfile?.email);
-    const resolvedSenderPhone = resolveWithWorkspace(senderPhone, workspaceProfile?.phone_number);
-    const resolvedSenderWebsite = resolveWithWorkspace(senderWebsite, workspaceProfile?.website);
+    const resolvedCompanyName = resolveWithWorkspace(companyName, workspaceProfile?.company_name, dirtyFields.companyName);
+    const resolvedIndustry = resolveWithWorkspace(industry, workspaceProfile?.primary_industry, dirtyFields.industry);
+    const resolvedValueProp = resolveWithWorkspace(
+      valueProp,
+      workspaceProfile?.key_offering_focus || workspaceProfile?.tagline,
+      dirtyFields.valueProp
+    );
+    const resolvedTargetMarket = resolveWithWorkspace(targetMarket, workspaceProfile?.target_customer_type, dirtyFields.targetMarket);
+    const resolvedContactDetails = resolveWithWorkspace(contactDetails, getWorkspaceContactDetails(), dirtyFields.contactDetails);
+    const resolvedSenderEmail = resolveWithWorkspace(senderEmail, workspaceProfile?.email, dirtyFields.senderEmail);
+    const resolvedSenderPhone = resolveWithWorkspace(senderPhone, workspaceProfile?.phone_number, dirtyFields.senderPhone);
+    const resolvedSenderWebsite = resolveWithWorkspace(senderWebsite, workspaceProfile?.website, dirtyFields.senderWebsite);
     if (resolvedCompanyName.trim().length < 2) {
       setError("Enter a business name to generate documents.");
       setShowInputs(true);
@@ -805,13 +850,9 @@ export default function BlueprintPage() {
       setShowInputs(true);
       return;
     }
+
     const wantsSnapshot =
       selectedDoc === "business_plan" && (sectionsByDoc[selectedDoc] || []).includes("financial_snapshot");
-    if (wantsSnapshot && !workspaceId.trim() && !workspaceIdStored) {
-      setError("Select a workspace to include the financial snapshot.");
-      setShowInputs(true);
-      return;
-    }
     await syncWorkspaceProfile();
     setIsLoading(true);
     setError(null);
@@ -830,6 +871,16 @@ export default function BlueprintPage() {
         value_proposition: resolvedValueProp,
         tone,
         extra_notes: extraNotes,
+        selected_services: selectedServices
+          .map((s) => {
+            if (s !== "__other__") return s;
+            const name = String(customServiceName || "").trim();
+            const desc = String(customServiceDescription || "").trim();
+            if (!name && !desc) return "";
+            if (name && desc) return `${name}: ${desc}`;
+            return name || desc;
+          })
+          .filter(Boolean),
         bill_to: billTo || customClientName,
         items,
         terms,
@@ -886,14 +937,18 @@ export default function BlueprintPage() {
       setShowInputs(true);
       return;
     }
-    const resolvedCompanyName = resolveWithWorkspace(companyName, workspaceProfile?.company_name);
-    const resolvedIndustry = resolveWithWorkspace(industry, workspaceProfile?.primary_industry);
-    const resolvedValueProp = resolveWithWorkspace(valueProp, workspaceProfile?.key_offering_focus || workspaceProfile?.tagline);
-    const resolvedTargetMarket = resolveWithWorkspace(targetMarket, workspaceProfile?.target_customer_type);
-    const resolvedContactDetails = resolveWithWorkspace(contactDetails, getWorkspaceContactDetails());
-    const resolvedSenderEmail = resolveWithWorkspace(senderEmail, workspaceProfile?.email);
-    const resolvedSenderPhone = resolveWithWorkspace(senderPhone, workspaceProfile?.phone_number);
-    const resolvedSenderWebsite = resolveWithWorkspace(senderWebsite, workspaceProfile?.website);
+    const resolvedCompanyName = resolveWithWorkspace(companyName, workspaceProfile?.company_name, dirtyFields.companyName);
+    const resolvedIndustry = resolveWithWorkspace(industry, workspaceProfile?.primary_industry, dirtyFields.industry);
+    const resolvedValueProp = resolveWithWorkspace(
+      valueProp,
+      workspaceProfile?.key_offering_focus || workspaceProfile?.tagline,
+      dirtyFields.valueProp
+    );
+    const resolvedTargetMarket = resolveWithWorkspace(targetMarket, workspaceProfile?.target_customer_type, dirtyFields.targetMarket);
+    const resolvedContactDetails = resolveWithWorkspace(contactDetails, getWorkspaceContactDetails(), dirtyFields.contactDetails);
+    const resolvedSenderEmail = resolveWithWorkspace(senderEmail, workspaceProfile?.email, dirtyFields.senderEmail);
+    const resolvedSenderPhone = resolveWithWorkspace(senderPhone, workspaceProfile?.phone_number, dirtyFields.senderPhone);
+    const resolvedSenderWebsite = resolveWithWorkspace(senderWebsite, workspaceProfile?.website, dirtyFields.senderWebsite);
     if (resolvedCompanyName.trim().length < 2) {
       setError("Enter a business name to generate document sections.");
       setShowInputs(true);
@@ -935,6 +990,16 @@ export default function BlueprintPage() {
         value_proposition: resolvedValueProp,
         tone,
         extra_notes: extraNotes,
+        selected_services: selectedServices
+          .map((s) => {
+            if (s !== "__other__") return s;
+            const name = String(customServiceName || "").trim();
+            const desc = String(customServiceDescription || "").trim();
+            if (!name && !desc) return "";
+            if (name && desc) return `${name}: ${desc}`;
+            return name || desc;
+          })
+          .filter(Boolean),
         bill_to: billTo || customClientName,
         items,
         terms,
@@ -1069,42 +1134,44 @@ export default function BlueprintPage() {
     setError(null);
     try {
       const token = localStorage.getItem("ea_token");
+      // PDF: if user has unsaved edits, export client-side so the download matches the preview.
       if (format === "pdf") {
-        let html = editedHtmlByType[selectedDoc] || selectedDocResult?.document_html || "";
-        if (!html) {
-          const docUrl = `${getApiBaseUrl()}/blueprint/documents/${docId}/export?format=doc`;
-          const res = await fetch(docUrl, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-          if (!res.ok) {
-            const text = await res.text().catch(() => "");
-            throw new Error(text || "Export failed");
-          }
-          html = await res.text();
+        const editedHtml = String(editedHtmlByType[selectedDoc] || "").trim();
+        if (editedHtml) {
+          const filename = `${selectedMeta?.title || "document"}-${docId}.pdf`;
+          await downloadPdfFromHtml(editedHtml, filename);
+          return;
         }
-        const filename = `${selectedMeta?.title || "document"}-${docId}.pdf`;
-        await downloadPdfFromHtml(html, filename);
-        return;
       }
       const url = `${getApiBaseUrl()}/blueprint/documents/${docId}/export?format=${format}`;
       const res = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error("Document not found. Please regenerate it.");
+        } else if (res.status === 500) {
+          throw new Error("Server error. Please try again.");
+        }
         const text = await res.text().catch(() => "");
-        throw new Error(text || "Export failed");
+        throw new Error(text || "Download failed");
       }
       const blob = await res.blob();
+      if (!blob || blob.size === 0) {
+        throw new Error("Downloaded file is empty");
+      }
       const disposition = res.headers.get("Content-Disposition") || "";
       const match = disposition.match(/filename="(.+?)"/);
-      const filename = match?.[1] || `document.${format === "doc" ? "doc" : "pdf"}`;
+      const filename = match?.[1] || `document-${Date.now()}.${format === "doc" ? "doc" : format}`;
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
       link.download = filename;
       document.body.appendChild(link);
       link.click();
-      link.remove();
-      URL.revokeObjectURL(link.href);
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(link.href), 100);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Export failed");
+      setError(e instanceof Error ? e.message : "Download failed. Please try again.");
     }
   }
 
@@ -1327,7 +1394,22 @@ export default function BlueprintPage() {
                           markdown=""
                           initialHtml={sectionPreviewHtml}
                           onHtmlChange={() => {}}
-                          onDownload={null}
+                          downloadFormats={["pdf"]}
+                          onDownload={async (format) => {
+                            if (format !== "pdf") {
+                              setError("Generate the full document to export Word downloads.");
+                              return;
+                            }
+                            const label =
+                              sectionsForDoc(selectedDoc).find((s) => s.id === activeDraftSectionId)?.label ||
+                              "section";
+                            const safe = String(label)
+                              .toLowerCase()
+                              .replaceAll(" ", "-")
+                              .replaceAll("/", "-")
+                              .replaceAll("&", "and");
+                            await downloadPdfFromHtml(sectionPreviewHtml, `${selectedMeta.title}-${safe}.pdf`);
+                          }}
                           onSave={null}
                         />
                       ) : (
@@ -1419,11 +1501,25 @@ export default function BlueprintPage() {
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
                     <div className="ea-label">Business name</div>
-                    <Input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="e.g., Sparkle Cleaning" />
+                    <Input
+                      value={companyName}
+                      onChange={(e) => {
+                        setDirtyFields((p) => ({ ...p, companyName: true }));
+                        setCompanyName(e.target.value);
+                      }}
+                      placeholder="e.g., Sparkle Cleaning"
+                    />
                   </div>
                   <div>
                     <div className="ea-label">Industry</div>
-                    <Input value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="e.g., Cleaning, Healthcare, Technology" />
+                    <Input
+                      value={industry}
+                      onChange={(e) => {
+                        setDirtyFields((p) => ({ ...p, industry: true }));
+                        setIndustry(e.target.value);
+                      }}
+                      placeholder="e.g., Cleaning, Healthcare, Technology"
+                    />
                   </div>
                   <div>
                     <div className="ea-label">Pricing model</div>
@@ -1532,20 +1628,119 @@ export default function BlueprintPage() {
                     <>
                       <div>
                         <div className="ea-label">Problem</div>
-                        <textarea value={problem} onChange={(e) => setProblem(e.target.value)} className="min-h-20 ea-input" placeholder="What problem are you solving?" />
+                        <textarea
+                          value={problem}
+                          onChange={(e) => {
+                            setDirtyFields((p) => ({ ...p, problem: true }));
+                            setProblem(e.target.value);
+                          }}
+                          className="min-h-20 ea-input"
+                          placeholder="What problem are you solving?"
+                        />
                       </div>
                       <div>
                         <div className="ea-label">Solution</div>
-                        <textarea value={solution} onChange={(e) => setSolution(e.target.value)} className="min-h-20 ea-input" placeholder="What are you building and how does it solve it?" />
+                        <textarea
+                          value={solution}
+                          onChange={(e) => {
+                            setDirtyFields((p) => ({ ...p, solution: true }));
+                            setSolution(e.target.value);
+                          }}
+                          className="min-h-20 ea-input"
+                          placeholder="What are you building and how does it solve it?"
+                        />
                       </div>
+                      
+                      <div className="md:col-span-2">
+                        <div className="ea-label">Services to focus on (optional)</div>
+                        <div className="mt-2 space-y-2 rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+                          {Array.isArray(workspaceProfile?.services) && workspaceProfile.services.length ? (
+                            workspaceProfile.services.map((service) => (
+                              <label key={service.id} className="flex items-center gap-2 text-xs text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedServices.includes(service.service_name)}
+                                  onChange={() => {
+                                    setDirtyFields((p) => ({ ...p, selectedServices: true }));
+                                    setSelectedServices((prev) =>
+                                      prev.includes(service.service_name)
+                                        ? prev.filter((s) => s !== service.service_name)
+                                        : [...prev, service.service_name]
+                                    );
+                                  }}
+                                />
+                                <span>{service.service_name}</span>
+                              </label>
+                            ))
+                          ) : (
+                            <div className="text-xs text-slate-500">
+                              No services found in your workspace yet. You can still add a custom one below.
+                            </div>
+                          )}
+                          <label className="flex items-center gap-2 text-xs text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={selectedServices.includes("__other__")}
+                              onChange={() => {
+                                setDirtyFields((p) => ({ ...p, selectedServices: true }));
+                                setSelectedServices((prev) =>
+                                  prev.includes("__other__")
+                                    ? prev.filter((s) => s !== "__other__")
+                                    : [...prev, "__other__"]
+                                );
+                              }}
+                            />
+                            <span>Other (add a new service)</span>
+                          </label>
+                          {selectedServices.includes("__other__") ? (
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                              <input
+                                type="text"
+                                value={customServiceName}
+                                onChange={(e) => {
+                                  setDirtyFields((p) => ({ ...p, selectedServices: true }));
+                                  setCustomServiceName(e.target.value);
+                                }}
+                                placeholder="Service name"
+                                className="w-full rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                              />
+                              <input
+                                type="text"
+                                value={customServiceDescription}
+                                onChange={(e) => {
+                                  setDirtyFields((p) => ({ ...p, selectedServices: true }));
+                                  setCustomServiceDescription(e.target.value);
+                                }}
+                                placeholder="Service description (optional)"
+                                className="w-full rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                      
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                         <div>
                           <div className="ea-label">Target market</div>
-                          <Input value={targetMarket} onChange={(e) => setTargetMarket(e.target.value)} placeholder="Who is it for?" />
+                          <Input
+                            value={targetMarket}
+                            onChange={(e) => {
+                              setDirtyFields((p) => ({ ...p, targetMarket: true }));
+                              setTargetMarket(e.target.value);
+                            }}
+                            placeholder="Who is it for?"
+                          />
                         </div>
                         <div>
                           <div className="ea-label">Value proposition</div>
-                          <Input value={valueProp} onChange={(e) => setValueProp(e.target.value)} placeholder="Why will they choose you?" />
+                          <Input
+                            value={valueProp}
+                            onChange={(e) => {
+                              setDirtyFields((p) => ({ ...p, valueProp: true }));
+                              setValueProp(e.target.value);
+                            }}
+                            placeholder="Why will they choose you?"
+                          />
                         </div>
                       </div>
                     </>
@@ -1613,7 +1808,14 @@ export default function BlueprintPage() {
                       </div>
                       <div className="md:col-span-2">
                         <div className="ea-label">Contact details (optional)</div>
-                        <Input value={contactDetails} onChange={(e) => setContactDetails(e.target.value)} placeholder="Email, phone, website (no numbers required)" />
+                        <Input
+                          value={contactDetails}
+                          onChange={(e) => {
+                            setDirtyFields((p) => ({ ...p, contactDetails: true }));
+                            setContactDetails(e.target.value);
+                          }}
+                          placeholder="Email, phone, website (optional)"
+                        />
                       </div>
                       <div className="md:col-span-2">
                         <div className="ea-label">Timeline / plan (optional)</div>
@@ -1697,15 +1899,36 @@ export default function BlueprintPage() {
                       </div>
                       <div>
                         <div className="ea-label">Sender email (optional)</div>
-                        <Input value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} placeholder="you@company.com" />
+                        <Input
+                          value={senderEmail}
+                          onChange={(e) => {
+                            setDirtyFields((p) => ({ ...p, senderEmail: true }));
+                            setSenderEmail(e.target.value);
+                          }}
+                          placeholder="you@company.com"
+                        />
                       </div>
                       <div>
                         <div className="ea-label">Sender website (optional)</div>
-                        <Input value={senderWebsite} onChange={(e) => setSenderWebsite(e.target.value)} placeholder="company website" />
+                        <Input
+                          value={senderWebsite}
+                          onChange={(e) => {
+                            setDirtyFields((p) => ({ ...p, senderWebsite: true }));
+                            setSenderWebsite(e.target.value);
+                          }}
+                          placeholder="company website"
+                        />
                       </div>
                       <div className="md:col-span-2">
                         <div className="ea-label">Sender phone (optional)</div>
-                        <Input value={senderPhone} onChange={(e) => setSenderPhone(e.target.value)} placeholder="Phone (optional)" />
+                        <Input
+                          value={senderPhone}
+                          onChange={(e) => {
+                            setDirtyFields((p) => ({ ...p, senderPhone: true }));
+                            setSenderPhone(e.target.value);
+                          }}
+                          placeholder="Phone (optional)"
+                        />
                       </div>
                       <div className="md:col-span-2">
                         <div className="ea-label">Follow-up sequence</div>

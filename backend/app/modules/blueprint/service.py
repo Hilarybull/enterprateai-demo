@@ -209,11 +209,27 @@ def _extract_section_map(doc: str) -> tuple[list[str], dict[str, str]]:
     current_heading: str | None = None
     buffer: list[str] = []
     seen_heading = False
+
+    def _canonical_heading(raw: str) -> str:
+        line = (raw or "").strip()
+        if line.startswith("## "):
+            level = "##"
+            text = line[3:].strip()
+        elif line.startswith("### "):
+            level = "###"
+            text = line[4:].strip()
+        else:
+            return line
+        # Tolerate numbering styles like "1. Executive Summary" or "1) Executive Summary".
+        text = re.sub(r"^\s*\d+\s*[\.\)]\s*", "", text).strip()
+        text = re.sub(r"^\s*\d+\s+", "", text).strip()
+        return f"{level} {text}".strip()
+
     for line in lines:
         if line.startswith("## ") or line.startswith("### "):
             if current_heading is not None:
                 sections[current_heading] = "\n".join(buffer).strip()
-            current_heading = line.strip()
+            current_heading = _canonical_heading(line)
             buffer = []
             seen_heading = True
             continue
@@ -1013,6 +1029,9 @@ def _validation_from_workspace_financials(data: dict) -> dict | None:
     contracts = financials.get("contracts") or []
     if not (isinstance(invoices, list) or isinstance(expenses, list) or isinstance(contracts, list)):
         return None
+    has_any_entries = bool(invoices) or bool(expenses) or bool(contracts)
+    if not has_any_entries:
+        return None
 
     def sum_by(items, key, *, status_key=None, status_value=None):
         total = 0.0
@@ -1036,14 +1055,6 @@ def _validation_from_workspace_financials(data: dict) -> dict | None:
     net = revenue - costs
     margin = (net / revenue) if revenue > 0 else 0.0
 
-    if revenue <= 0 and costs <= 0:
-        return None
-
-    catalogue = data.get("catalogue") if isinstance(data.get("catalogue"), dict) else {}
-    products = catalogue.get("products") if isinstance(catalogue, dict) else []
-    customers = catalogue.get("customers") if isinstance(catalogue, dict) else []
-    vendors = catalogue.get("vendors") if isinstance(catalogue, dict) else []
-
     return {
         "metrics": {
             "revenue_monthly": revenue,
@@ -1052,12 +1063,6 @@ def _validation_from_workspace_financials(data: dict) -> dict | None:
             "margin": margin,
             "break_even_months": None,
             "runway_months": None,
-        }
-        ,
-        "catalogue": {
-            "products": len(products) if isinstance(products, list) else 0,
-            "customers": len(customers) if isinstance(customers, list) else 0,
-            "vendors": len(vendors) if isinstance(vendors, list) else 0,
         }
     }
 
@@ -1284,10 +1289,21 @@ async def generate_blueprint(
                 currency = cur
             starting_cash     = _extract_starting_cash_from_workspace(ws.data)
             workspace_context = _extract_business_context_from_workspace(ws.data)
+            
+            # Add selected services to workspace context if provided
+            if payload.selected_services:
+                workspace_context["selected_services"] = ", ".join(filter(None, payload.selected_services))
+            
             if payload.include_validation_snapshot or payload.type in ("cashflow_analysis", "financial_projection"):
                 validation = await evaluate_validation(user_id=user_id, workspace_id=payload.workspace_id, inputs=None, idea_validation=None)
-        except Exception:
+        except Exception as e:
             validation = None
+            if payload.workspace_id:
+                warnings.append(f"Could not load workspace (ID: {payload.workspace_id}). Proceeding with provided inputs only.")
+    
+    # Verify workspace has business profile if workspace_id provided
+    if payload.workspace_id and not workspace_context:
+        warnings.append("Workspace business profile not fully set up. Please complete your workspace profile.")
 
     if payload.include_validation_snapshot and not validation and ws:
         validation = _validation_from_workspace_financials(ws.data) or validation
@@ -1415,7 +1431,46 @@ async def generate_blueprint(
                     parts.append(row)
             services_text = "\n".join(parts).strip()
 
+        selected_services = [
+            _safe_text(s) for s in (payload.selected_services or []) if isinstance(s, str) and _safe_text(s)
+        ]
+        selected_services_text = ""
+        if selected_services:
+            ws_by_name: dict[str, dict] = {}
+            if isinstance(services, list):
+                for s in services:
+                    if isinstance(s, dict) and _safe_text(s.get("service_name")):
+                        ws_by_name[_safe_text(s.get("service_name")).lower()] = s
+            lines: list[str] = []
+            for item in selected_services:
+                ws_match = ws_by_name.get(item.lower())
+                if ws_match:
+                    name = _safe_text(ws_match.get("service_name"))
+                    desc = _safe_text(ws_match.get("service_description"))
+                    cat = _safe_text(ws_match.get("service_category"))
+                    row = " - ".join([p for p in [name, cat, desc] if p])
+                    lines.append(row or name)
+                else:
+                    lines.append(item)
+            selected_services_text = "\n".join([l for l in lines if _safe_text(l)]).strip()
+
+        section_id_to_title = {
+            "executive_summary": "Executive Summary",
+            "business_overview": "Business Overview",
+            "products_services": "Products and Services",
+            "market_analysis": "Market Analysis",
+            "competitive_analysis": "Competitive Analysis",
+            "business_model": "Business Model",
+            "marketing_sales_strategy": "Marketing and Sales Strategy",
+            "operations_plan": "Operations Plan",
+            "management_organisation": "Management and Organisation",
+            "financial_snapshot": "Financial Snapshot",
+            "funding_requirements": "Funding Requirements",
+            "risk_analysis_mitigation": "Risk Analysis and Mitigation",
+            "conclusion": "Conclusion",
+        }
         selected_sections = [s for s in (payload.sections or []) if isinstance(s, str)]
+        selected_section_titles = [section_id_to_title.get(s, s) for s in selected_sections if _safe_text(s)]
 
         snapshot_text = ""
         if payload.include_validation_snapshot:
@@ -1424,8 +1479,15 @@ async def generate_blueprint(
             else:
                 snapshot_text = "Financial data has not been provided for this section."
 
+        registration_number = _safe_text(
+            workspace_profile.get("registration_number") if isinstance(workspace_profile, dict) else ""
+        )
+        registration_status = "Registered" if registration_number else "Registration details not provided"
+
         raw_inputs = {
             "company_name": company,
+            "registration_status": registration_status,
+            "registration_number": registration_number,
             "legal_structure": _safe_text(workspace_profile.get("business_type") if isinstance(workspace_profile, dict) else ""),
             "primary_industry": _safe_text(workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else industry),
             "secondary_industries": ", ".join(workspace_profile.get("secondary_industries") or []) if isinstance(workspace_profile, dict) else "",
@@ -1435,6 +1497,7 @@ async def generate_blueprint(
             "vision": _safe_text(workspace_profile.get("vision") if isinstance(workspace_profile, dict) else ""),
             "core_values": ", ".join(workspace_profile.get("core_values") or []) if isinstance(workspace_profile, dict) else "",
             "services": services_text,
+            "selected_services_focus": selected_services_text,
             "target_customer_type": _safe_text(workspace_profile.get("target_customer_type") if isinstance(workspace_profile, dict) else ""),
             "primary_revenue_model": _safe_text(workspace_profile.get("primary_revenue_model") if isinstance(workspace_profile, dict) else ""),
             "key_offering_focus": _safe_text(workspace_profile.get("key_offering_focus") if isinstance(workspace_profile, dict) else ""),
@@ -1452,79 +1515,35 @@ async def generate_blueprint(
             "pricing_model": pricing_model,
             "objective": objective,
             "extra_notes": extra,
-            "selected_sections": ", ".join(selected_sections),
+            "selected_section_ids": ", ".join(selected_sections),
+            "selected_sections": ", ".join(selected_section_titles),
             "financial_snapshot": snapshot_text,
         }
 
-        section_groups = {
-            "executive_summary": ["## Executive Summary"],
-            "business_overview": ["## Business Overview"],
-            "products_services": ["## Products and Services"],
-            "market_analysis": ["## Market Analysis"],
-            "competitive_analysis": ["## Competitive Analysis"],
-            "business_model": ["## Business Model"],
-            "marketing_sales_strategy": ["## Marketing and Sales Strategy"],
-            "operations_plan": ["## Operations Plan"],
-            "management_organisation": ["## Management and Organisation"],
-            "financial_snapshot": ["## Financial Snapshot"],
-            "funding_requirements": ["## Funding Requirements"],
-            "risk_analysis_mitigation": ["## Risk Analysis and Mitigation"],
-            "conclusion": ["## Conclusion"],
-        }
-
-        requested_sections = [s for s in (payload.sections or []) if s in section_groups]
-        if requested_sections:
-            selected_headings: set[str] = set()
-            for sid in requested_sections:
-                selected_headings.update(section_groups[sid])
-            headings = [h for h in BUSINESS_PLAN_HEADINGS if h in selected_headings]
-        else:
-            headings = BUSINESS_PLAN_HEADINGS
-
-        if payload.include_validation_snapshot and "## Financial Snapshot" not in headings:
-            insert_at = BUSINESS_PLAN_HEADINGS.index("## Financial Snapshot")
-            headings = [h2 for h2 in headings if h2 != "## Financial Snapshot"]
-            headings.insert(insert_at if insert_at <= len(headings) else len(headings), "## Financial Snapshot")
-
-        if "## Financial Snapshot" in headings and not snapshot_text:
+        # Handle financial snapshot logic
+        if payload.include_validation_snapshot and not snapshot_text:
             raw_inputs["financial_snapshot"] = "Financial data has not been provided for this section."
 
-        if not payload.include_validation_snapshot:
-            headings = [h for h in headings if h != "## Financial Snapshot"]
+        # Use full document generation instead of section-by-section
+        doc, provider, model = await _enrich_and_generate(
+            "Business Plan",
+            raw_inputs,
+            build_business_plan_prompt,
+            None,
+            allow_fallback=False,
+            fill_missing=False,
+        )
 
-        inputs_text = format_inputs_for_prompt(raw_inputs)
-        outputs: list[str] = []
-        provider = "mixed"
-        model = "mixed"
-
-        for heading in headings:
-            title = heading.replace("## ", "").strip()
-            if heading == "## Financial Snapshot":
-                prompt = (
-                    "Write only the Financial Snapshot section for a Business Plan.\n"
-                    "Rules:\n"
-                    "- Use ONLY the provided snapshot data.\n"
-                    "- Do NOT invent or estimate any numbers.\n"
-                    "- If data is missing, write exactly: \"Financial data has not been provided for this section.\"\n"
-                    "- No headings or labels.\n\n"
-                    f"Snapshot data:\n{raw_inputs.get('financial_snapshot','')}\n\n"
-                    f"Inputs:\n{inputs_text}"
-                )
-            else:
-                prompt = _format_section_prompt(doc_type="Business Plan", section_title=title, inputs_text=inputs_text)
-
-            text, provider, model = await _generate_section_required(
-                llm,
-                prompt=prompt,
-                label=f"business_plan_{title}",
-                warnings=warnings,
-                error_label=f"Business Plan — {title}",
+        # Enforce selected sections deterministically when requested.
+        if selected_section_titles:
+            preamble, section_map = _extract_section_map(doc)
+            wanted_headings = [f"## {t}" for t in selected_section_titles]
+            doc = _rebuild_with_headings(
+                preamble=preamble,
+                headings=wanted_headings,
+                primary=section_map,
+                fallback={},
             )
-            outputs.append(f"{heading}\n{text}")
-
-        doc = f"# Business Plan — {company}\n\n" + "\n\n".join(outputs)
-        doc = _strip_business_plan_labels(doc)
-        doc = _strip_date_lines(doc)
 
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
@@ -1552,6 +1571,29 @@ async def generate_blueprint(
                     parts.append(row)
             services_text = "\n".join(parts).strip()
 
+        selected_services = [
+            _safe_text(s) for s in (payload.selected_services or []) if isinstance(s, str) and _safe_text(s)
+        ]
+        selected_services_text = ""
+        if selected_services:
+            ws_by_name: dict[str, dict] = {}
+            if isinstance(services, list):
+                for s in services:
+                    if isinstance(s, dict) and _safe_text(s.get("service_name")):
+                        ws_by_name[_safe_text(s.get("service_name")).lower()] = s
+            lines: list[str] = []
+            for item in selected_services:
+                ws_match = ws_by_name.get(item.lower())
+                if ws_match:
+                    name = _safe_text(ws_match.get("service_name"))
+                    desc = _safe_text(ws_match.get("service_description"))
+                    cat = _safe_text(ws_match.get("service_category"))
+                    row = " - ".join([p for p in [name, cat, desc] if p])
+                    lines.append(row or name)
+                else:
+                    lines.append(item)
+            selected_services_text = "\n".join([l for l in lines if _safe_text(l)]).strip()
+
         client_name = _safe_text(payload.bill_to) or "Client name to be confirmed"
         proposal_title = _safe_text(getattr(payload, "proposal_title", None)) or f"Proposal for {client_name}"
         contact_details = _safe_text(getattr(payload, "contact_details", None))
@@ -1563,7 +1605,27 @@ async def generate_blueprint(
             ]
             contact_details = " | ".join([p for p in contact_parts if p])
 
+        section_id_to_title = {
+            "cover_page": "Cover Page",
+            "executive_summary": "Executive Summary",
+            "client_needs": "Client Needs / Problem Statement",
+            "proposed_solution": "Proposed Solution",
+            "scope_of_work": "Scope of Work",
+            "methodology": "Methodology / Approach",
+            "timeline": "Timeline / Delivery Schedule",
+            "pricing_terms": "Pricing and Payment Terms",
+            "value_benefits": "Value Proposition / Benefits",
+            "company_profile": "Company Profile",
+            "terms_conditions": "Terms and Conditions",
+            "acceptance": "Acceptance / Next Steps",
+        }
         selected_sections = [s for s in (payload.sections or []) if isinstance(s, str)]
+        selected_section_titles = [section_id_to_title.get(s, s) for s in selected_sections if _safe_text(s)]
+
+        registration_number = _safe_text(
+            workspace_profile.get("registration_number") if isinstance(workspace_profile, dict) else ""
+        )
+        registration_status = "Registered" if registration_number else "Registration details not provided"
 
         company_profile_text = "\n".join(
             [t for t in [
@@ -1583,82 +1645,42 @@ async def generate_blueprint(
                 workspace_context.get("location")
                 or (business_profile.get("location") if isinstance(business_profile, dict) else "")
             ),
+            "registration_status": registration_status,
+            "registration_number": registration_number,
             "executive_summary": "",
             "client_needs": _safe_text(problem or workspace_context.get("problem", "")),
-            "proposed_solution": _safe_text(solution or services_text or workspace_context.get("solution", "")),
+            "proposed_solution": _safe_text(solution or selected_services_text or services_text or workspace_context.get("solution", "")),
             "scope_of_work": _safe_text(payload.items),
             "methodology": _safe_text(getattr(payload, "methodology", None)),
             "timeline": _safe_text(getattr(payload, "timeline", None)),
             "pricing_terms": _safe_text(payload.terms),
             "value_proposition": _safe_text(value_prop or workspace_context.get("value_proposition", "")),
             "company_profile": company_profile_text,
+            "selected_services_focus": selected_services_text,
             "terms_conditions": _safe_text(getattr(payload, "terms_conditions", None)) or _safe_text(payload.terms),
             "next_steps": _safe_text(getattr(payload, "next_steps", None)),
-            "selected_sections": ", ".join(selected_sections),
+            "selected_section_ids": ", ".join(selected_sections),
+            "selected_sections": ", ".join(selected_section_titles),
         }
 
-        section_groups = {
-            "cover_page": ["## Cover Page"],
-            "executive_summary": ["## Executive Summary"],
-            "client_needs": ["## Client Needs / Problem Statement"],
-            "proposed_solution": ["## Proposed Solution"],
-            "scope_of_work": ["## Scope of Work"],
-            "methodology": ["## Methodology / Approach"],
-            "timeline": ["## Timeline / Delivery Schedule"],
-            "pricing_terms": ["## Pricing and Payment Terms"],
-            "value_benefits": ["## Value Proposition / Benefits"],
-            "company_profile": ["## Company Profile"],
-            "terms_conditions": ["## Terms and Conditions"],
-            "acceptance": ["## Acceptance / Next Steps"],
-        }
+        doc, provider, model = await _enrich_and_generate(
+            "Business Proposal",
+            raw_inputs,
+            build_client_proposal_prompt,
+            None,
+            allow_fallback=False,
+            fill_missing=False,
+        )
 
-        requested_sections = [s for s in (payload.sections or []) if s in section_groups]
-        if requested_sections:
-            selected_headings: set[str] = set()
-            for sid in requested_sections:
-                selected_headings.update(section_groups[sid])
-            headings = [h for h in CLIENT_PROPOSAL_HEADINGS if h in selected_headings]
-        else:
-            headings = CLIENT_PROPOSAL_HEADINGS
-
-        cover_lines = [
-            f"Proposal Title — {proposal_title}",
-            f"Prepared by — {company}",
-            f"Prepared for — {client_name}",
-        ]
-        if contact_details:
-            cover_lines.append(f"Contact Details — {contact_details}")
-
-        inputs_text = format_inputs_for_prompt(raw_inputs)
-        outputs: list[str] = []
-        provider = "mixed"
-        model = "mixed"
-
-        for heading in headings:
-            title = heading.replace("## ", "").strip()
-            if heading == "## Cover Page":
-                cover = "\n".join([l for l in cover_lines if _safe_text(l)])
-                outputs.append(f"{heading}\n{cover}\n\n<div class=\"page-break\"></div>")
-                continue
-
-            prompt = _format_section_prompt(
-                doc_type="Business Proposal",
-                section_title=title,
-                inputs_text=inputs_text,
+        if selected_section_titles:
+            preamble, section_map = _extract_section_map(doc)
+            wanted_headings = [f"## {t}" for t in selected_section_titles]
+            doc = _rebuild_with_headings(
+                preamble=preamble,
+                headings=wanted_headings,
+                primary=section_map,
+                fallback={},
             )
-            text, provider, model = await _generate_section_required(
-                llm,
-                prompt=prompt,
-                label=f"business_proposal_{title}",
-                warnings=warnings,
-                error_label=f"Business Proposal — {title}",
-            )
-            outputs.append(f"{heading}\n{text}")
-
-        doc = f"# Business Proposal — {client_name}\n\n" + "\n\n".join(outputs)
-        doc = _ensure_client_proposal_format(doc)
-        if not contact_details:
-            doc = _strip_contact_details_line(doc)
 
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)

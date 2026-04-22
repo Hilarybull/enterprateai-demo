@@ -248,7 +248,10 @@ def format_inputs_for_prompt(inputs: dict) -> str:
 
 def build_business_plan_prompt(inputs: dict) -> str:
     formatted = format_inputs_for_prompt(inputs)
-    return BUSINESS_PLAN_PROMPT.format(company_name=inputs.get("company_name", "the company"), formatted_inputs=formatted)
+    return BUSINESS_PLAN_PROMPT.format(
+        company_name=inputs.get("company_name", "the company"),
+        formatted_inputs=formatted,
+    )
 
 
 def build_client_proposal_prompt(inputs: dict) -> str:
