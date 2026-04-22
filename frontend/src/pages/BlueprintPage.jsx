@@ -104,6 +104,128 @@ function pct(n) {
   return `${v}%`;
 }
 
+// FIX 2: Multi-select dropdown component for services
+function ServicesDropdown({ workspaceServices, selectedServices, setSelectedServices, setDirtyFields, customServiceName, setCustomServiceName, customServiceDescription, setCustomServiceDescription }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleService = (name) => {
+    setDirtyFields((p) => ({ ...p, selectedServices: true }));
+    setSelectedServices((prev) =>
+      prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name]
+    );
+  };
+
+  const visibleServices = Array.isArray(workspaceServices) ? workspaceServices : [];
+  const selectedCount = selectedServices.filter(s => s !== "__other__").length;
+  const hasOther = selectedServices.includes("__other__");
+
+  const summaryText = () => {
+    if (!selectedServices.length) return "Select services…";
+    const named = selectedServices.filter(s => s !== "__other__").join(", ");
+    const parts = [];
+    if (named) parts.push(named);
+    if (hasOther) parts.push("Other");
+    return parts.join(", ") || "Select services…";
+  };
+
+  return (
+    <div ref={dropdownRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setIsOpen((v) => !v)}
+        className="ea-input w-full flex items-center justify-between text-left"
+      >
+        <span className="truncate text-sm text-slate-700">{summaryText()}</span>
+        <svg
+          className={`ml-2 h-4 w-4 shrink-0 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          viewBox="0 0 20 20" fill="currentColor"
+        >
+          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-30 mt-1 w-full rounded-xl border border-slate-200 bg-white shadow-lg">
+          <div className="max-h-56 overflow-y-auto p-2 space-y-1">
+            {visibleServices.length === 0 && (
+              <div className="px-3 py-2 text-xs text-slate-400">No workspace services found.</div>
+            )}
+            {visibleServices.map((service) => (
+              <label
+                key={service.id || service.service_name}
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedServices.includes(service.service_name)}
+                  onChange={() => toggleService(service.service_name)}
+                  className="accent-brand-600"
+                />
+                <span>{service.service_name}</span>
+              </label>
+            ))}
+            <label className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer border-t border-slate-100">
+              <input
+                type="checkbox"
+                checked={hasOther}
+                onChange={() => toggleService("__other__")}
+                className="accent-brand-600"
+              />
+              <span>Other (add a new service)</span>
+            </label>
+          </div>
+
+          {hasOther && (
+            <div className="border-t border-slate-100 p-3 space-y-2">
+              <input
+                type="text"
+                value={customServiceName}
+                onChange={(e) => {
+                  setDirtyFields((p) => ({ ...p, selectedServices: true }));
+                  setCustomServiceName(e.target.value);
+                }}
+                placeholder="Service name"
+                className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-brand-400"
+              />
+              <input
+                type="text"
+                value={customServiceDescription}
+                onChange={(e) => {
+                  setDirtyFields((p) => ({ ...p, selectedServices: true }));
+                  setCustomServiceDescription(e.target.value);
+                }}
+                placeholder="Service description (optional)"
+                className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-brand-400"
+              />
+            </div>
+          )}
+
+          <div className="border-t border-slate-100 px-3 py-2 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="rounded-lg bg-slate-900 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-700"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BlueprintPage() {
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
   const setWorkspaceIdStored = useWorkspaceStore((s) => s.setWorkspaceId);
@@ -814,7 +936,39 @@ export default function BlueprintPage() {
     }
   }
 
-  async function generateSelected() {
+  // FIX 3: Helper to build resolved selected_services payload (shared by both generate fns)
+  function resolveSelectedServices() {
+    return selectedServices
+      .map((s) => {
+        if (s !== "__other__") return s;
+        const name = String(customServiceName || "").trim();
+        const desc = String(customServiceDescription || "").trim();
+        if (!name && !desc) return "";
+        if (name && desc) return `${name}: ${desc}`;
+        return name || desc;
+      })
+      .filter(Boolean);
+  }
+
+  // FIX 4: Retry wrapper with exponential backoff for network errors
+  async function apiRequestWithRetry(path, method, body, options = {}, maxRetries = 2) {
+    let lastError;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await apiRequest(path, method, body, options);
+      } catch (e) {
+        lastError = e;
+        const msg = String(e?.message || "").toLowerCase();
+        const isNetwork = msg.includes("network") || msg.includes("failed to fetch") || msg.includes("timeout") || msg.includes("load");
+        if (!isNetwork || attempt === maxRetries) throw e;
+        // Exponential backoff: 1s, 2s
+        await new Promise((res) => setTimeout(res, 1000 * Math.pow(2, attempt)));
+      }
+    }
+    throw lastError;
+  }
+
+	  async function generateSelected() {
     const resolvedCompanyName = resolveWithWorkspace(companyName, workspaceProfile?.company_name, dirtyFields.companyName);
     const resolvedIndustry = resolveWithWorkspace(industry, workspaceProfile?.primary_industry, dirtyFields.industry);
     const resolvedValueProp = resolveWithWorkspace(
@@ -851,14 +1005,23 @@ export default function BlueprintPage() {
       return;
     }
 
+	    // Sections behavior:
+	    // - If user selected specific sections: generate ONLY those, and preview ONLY those.
+	    // - If user selected none: generate full document (all sections), and preview all.
+	    const chosenSections = sectionsByDoc[selectedDoc] || [];
+	    const userSelectedSections = chosenSections.length > 0;
+	    const sectionsPayload = userSelectedSections ? chosenSections : sectionsForDoc(selectedDoc).map((s) => s.id);
+
     const wantsSnapshot =
-      selectedDoc === "business_plan" && (sectionsByDoc[selectedDoc] || []).includes("financial_snapshot");
+      selectedDoc === "business_plan" && sectionsPayload.includes("financial_snapshot");
     await syncWorkspaceProfile();
     setIsLoading(true);
     setError(null);
-      setDocByType((prev) => ({ ...prev, [selectedDoc]: null }));
+    // Don't null-clear docByType here — preserve existing content while loading
+    // so that partial re-generates don't wipe previously generated sections from preview
     try {
-      const res = await apiRequest("/blueprint/generate", "POST", {
+      // FIX 4: Use retry wrapper
+      const res = await apiRequestWithRetry("/blueprint/generate", "POST", {
         type: selectedDoc,
         company_name: resolvedCompanyName,
         industry: resolvedIndustry,
@@ -871,16 +1034,7 @@ export default function BlueprintPage() {
         value_proposition: resolvedValueProp,
         tone,
         extra_notes: extraNotes,
-        selected_services: selectedServices
-          .map((s) => {
-            if (s !== "__other__") return s;
-            const name = String(customServiceName || "").trim();
-            const desc = String(customServiceDescription || "").trim();
-            if (!name && !desc) return "";
-            if (name && desc) return `${name}: ${desc}`;
-            return name || desc;
-          })
-          .filter(Boolean),
+        selected_services: resolveSelectedServices(),
         bill_to: billTo || customClientName,
         items,
         terms,
@@ -904,25 +1058,50 @@ export default function BlueprintPage() {
         objective: getObjectiveValue(selectedDoc),
         subject_lines: getObjectiveValue("sales_letter"),
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
-        sections: sectionsByDoc[selectedDoc] || [],
+        sections: sectionsPayload,
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
       }, { timeoutMs: 900000 });
-      setDocByType((prev) => ({ ...prev, [selectedDoc]: res }));
       if (res?.document_id) setDocIdByType((prev) => ({ ...prev, [selectedDoc]: res.document_id }));
       setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: "" }));
-      const generatedDraftMarkdown =
-        res?.document_markdown || (res?.document_html ? htmlToPseudoMarkdown(res.document_html) : "");
-      if (generatedDraftMarkdown) {
-        setSectionDraftsByDoc((prev) => ({ ...prev, [selectedDoc]: generatedDraftMarkdown }));
-        setDraftSectionsByDoc((prev) => ({
-          ...prev,
-          [selectedDoc]: (prev[selectedDoc] && prev[selectedDoc].length) ? prev[selectedDoc] : sectionsForDoc(selectedDoc).map((s) => s.id)
-        }));
-      }
+	      const incomingMarkdown =
+	        res?.document_markdown || (res?.document_html ? htmlToPseudoMarkdown(res.document_html) : "");
+	      if (incomingMarkdown) {
+	        // Always merge into section drafts so previously generated sections remain available as tiles.
+	        setSectionDraftsByDoc((prev) => {
+	          const merged = mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", incomingMarkdown);
+	          return { ...prev, [selectedDoc]: merged };
+	        });
+	        setDraftSectionsByDoc((prev) => ({
+	          ...prev,
+	          [selectedDoc]: sectionsForDoc(selectedDoc).map((s) => s.id)
+	        }));
+
+	        // Preview behavior depends on whether the user selected sections.
+	        // If they selected specific sections, show ONLY the generated subset.
+	        // If they selected none, the API generated the full document already.
+	        setDocByType((prev) => {
+	          return {
+	            ...prev,
+	            [selectedDoc]: {
+	              ...res,
+	              document_markdown: incomingMarkdown,
+	              document_html: res.document_html || prev[selectedDoc]?.document_html || null,
+	            }
+	          };
+	        });
+	      } else {
+	        setDocByType((prev) => ({ ...prev, [selectedDoc]: res }));
+	      }
       setShowInputs(false);
       refreshSavedDocs();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Blueprint generation failed");
+      const msg = String(e?.message || "").toLowerCase();
+      const isNetwork = msg.includes("network") || msg.includes("failed to fetch") || msg.includes("load");
+      setError(
+        isNetwork
+          ? "Network error — please check your connection and try again. Your inputs are saved."
+          : (e instanceof Error ? e.message : "Blueprint generation failed")
+      );
       setShowInputs(true);
     } finally {
       setIsLoading(false);
@@ -976,7 +1155,8 @@ export default function BlueprintPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await apiRequest("/blueprint/generate", "POST", {
+      // FIX 4: Use retry wrapper
+      const res = await apiRequestWithRetry("/blueprint/generate", "POST", {
         type: selectedDoc,
         company_name: resolvedCompanyName,
         industry: resolvedIndustry,
@@ -990,16 +1170,7 @@ export default function BlueprintPage() {
         value_proposition: resolvedValueProp,
         tone,
         extra_notes: extraNotes,
-        selected_services: selectedServices
-          .map((s) => {
-            if (s !== "__other__") return s;
-            const name = String(customServiceName || "").trim();
-            const desc = String(customServiceDescription || "").trim();
-            if (!name && !desc) return "";
-            if (name && desc) return `${name}: ${desc}`;
-            return name || desc;
-          })
-          .filter(Boolean),
+        selected_services: resolveSelectedServices(),
         bill_to: billTo || customClientName,
         items,
         terms,
@@ -1034,7 +1205,13 @@ export default function BlueprintPage() {
       setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: chosen[0] }));
       setShowInputs(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Section generation failed");
+      const msg = String(e?.message || "").toLowerCase();
+      const isNetwork = msg.includes("network") || msg.includes("failed to fetch") || msg.includes("load");
+      setError(
+        isNetwork
+          ? "Network error — please check your connection and try again. Your inputs are saved."
+          : (e instanceof Error ? e.message : "Section generation failed")
+      );
       setShowInputs(true);
     } finally {
       setIsLoading(false);
@@ -1465,509 +1642,458 @@ export default function BlueprintPage() {
                   </div>
                 ) : null}
               </div>
+
+              {/* FIX 1: Inputs panel — clean single-column layout, no overlapping fields */}
               {showSidePanel ? (
                 <div className="order-2 w-full shrink-0 overflow-auto overflow-x-hidden border-t border-slate-200 bg-white p-5 lg:order-1 lg:w-[340px] lg:border-r lg:border-t-0">
-                {showSectionDrafts && !isDesktop ? (
-                  <SegmentedTabs
-                    value={effectiveInputsTab}
-                    onChange={setInputsTab}
-                    options={mobileSideTabs}
-                    size="sm"
-                  />
-                ) : null}
+                  {showSectionDrafts && !isDesktop ? (
+                    <SegmentedTabs
+                      value={effectiveInputsTab}
+                      onChange={setInputsTab}
+                      options={mobileSideTabs}
+                      size="sm"
+                    />
+                  ) : null}
 
-                {effectiveInputsTab === "sections" && showSectionDrafts && !isDesktop ? (
-                  <div className="mt-4 space-y-3">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
-                      <div className="text-sm font-semibold text-slate-900">Section drafts (standalone)</div>
-                      <div className="mt-1 text-[11px] text-slate-500">
-                        Select sections to draft. Full document generation still uses the selections from the Inputs tab.
+                  {effectiveInputsTab === "sections" && showSectionDrafts && !isDesktop ? (
+                    <div className="mt-4 space-y-3">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+                        <div className="text-sm font-semibold text-slate-900">Section drafts (standalone)</div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          Select sections to draft. Full document generation still uses the selections from the Inputs tab.
+                        </div>
+                      </div>
+                      <div className="flex max-h-[420px] flex-col gap-3 overflow-y-auto pr-1">
+                        {sectionsForDoc(selectedDoc).map((section) => (
+                          <SectionTile
+                            key={section.id}
+                            label={section.label}
+                            selected={(draftSectionsByDoc[selectedDoc] || []).includes(section.id)}
+                            snippet={getSectionSnippet(selectedDoc, section.id)}
+                            onClick={() => handleDraftTileClick(section.id)}
+                          />
+                        ))}
                       </div>
                     </div>
-                    <div className="flex max-h-[420px] flex-col gap-3 overflow-y-auto pr-1">
-                      {sectionsForDoc(selectedDoc).map((section) => (
-                        <SectionTile
-                          key={section.id}
-                          label={section.label}
-                          selected={(draftSectionsByDoc[selectedDoc] || []).includes(section.id)}
-                          snippet={getSectionSnippet(selectedDoc, section.id)}
-                          onClick={() => handleDraftTileClick(section.id)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                <>
-                <div className="grid grid-cols-1 gap-3">
-                  <div>
-                    <div className="ea-label">Business name</div>
-                    <Input
-                      value={companyName}
-                      onChange={(e) => {
-                        setDirtyFields((p) => ({ ...p, companyName: true }));
-                        setCompanyName(e.target.value);
-                      }}
-                      placeholder="e.g., Sparkle Cleaning"
-                    />
-                  </div>
-                  <div>
-                    <div className="ea-label">Industry</div>
-                    <Input
-                      value={industry}
-                      onChange={(e) => {
-                        setDirtyFields((p) => ({ ...p, industry: true }));
-                        setIndustry(e.target.value);
-                      }}
-                      placeholder="e.g., Cleaning, Healthcare, Technology"
-                    />
-                  </div>
-                  <div>
-                    <div className="ea-label">Pricing model</div>
-                    <select value={pricingModel} onChange={(e) => setPricingModel(e.target.value)} className="ea-input">
-                      <option>Subscription</option>
-                      <option>One-time</option>
-                      <option>Usage-based</option>
-                      <option>Hourly</option>
-                      <option>Retainer</option>
-                    </select>
-                  </div>
-                  {showWorkspaceId ? (
-                    <div>
-                      <div className="ea-label">Idea Validation workspace id</div>
-                      <Input value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder="Paste workspace id" />
-                    </div>
-                  ) : null}
-                  <div>
-                    <div className="ea-label">Tone</div>
-                    <Input value={tone} onChange={(e) => setTone(e.target.value)} placeholder="professional" />
-                  </div>
-                  {selectedDoc === "business_plan" || selectedDoc === "client_proposal" ? (
-                    <div>
-                      <div className="ea-label">Objective</div>
-                      <select
-                        value={objectiveChoiceByDoc[selectedDoc] || ""}
-                        onChange={(e) =>
-                          setObjectiveChoiceByDoc((prev) => ({ ...prev, [selectedDoc]: e.target.value }))
-                        }
-                        className="ea-input"
-                      >
-                        {objectivesForDoc(selectedDoc).map((o) => (
-                          <option key={o} value={o}>
-                            {o}
-                          </option>
-                        ))}
-                      </select>
-                      {objectiveChoiceByDoc[selectedDoc] === "Other" ? (
+                  ) : (
+                    <div className="space-y-3">
+                      {/* Core fields */}
+                      <div>
+                        <div className="ea-label">Business name</div>
                         <Input
-                          value={objectiveCustomByDoc[selectedDoc] || ""}
-                          onChange={(e) =>
-                            setObjectiveCustomByDoc((prev) => ({ ...prev, [selectedDoc]: e.target.value }))
-                          }
-                          placeholder="Type your objective"
-                          className="mt-2"
+                          value={companyName}
+                          onChange={(e) => {
+                            setDirtyFields((p) => ({ ...p, companyName: true }));
+                            setCompanyName(e.target.value);
+                          }}
+                          placeholder="e.g., Sparkle Cleaning"
                         />
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
+                      </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-3">
-                  {showProposalExtras || showSalesLetterExtras ? (
-                    <div>
-                      <div className="ea-label">Customer</div>
-                      {(activeCustomers.length || activeVendors.length) ? (
-                        <>
-                          <select
-                            className="ea-input"
-                            value={selectedCustomerId}
-                            onChange={(e) => applyCustomerSelection(e.target.value)}
-                          >
-                            <option value="">Select customer</option>
-                            {activeCustomers.length ? (
-                              <optgroup label="Customers">
-                                {activeCustomers.map((c) => (
-                                  <option key={c.id} value={c.id}>
-                                    {c.name}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            ) : null}
-                            {activeVendors.length ? (
-                              <optgroup label="Vendors">
-                                {activeVendors.map((v) => (
-                                  <option key={v.id} value={v.id}>
-                                    {v.name}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            ) : null}
-                            <option value={OTHER_CUSTOMER_ID}>Other (type a name)</option>
-                          </select>
-                          <div className="mt-1 text-[11px] text-slate-500">
-                            Selecting a customer or vendor will prefill the client details and audience.
-                          </div>
-                        </>
-                      ) : null}
-                      {(!activeCustomers.length && !activeVendors.length) || selectedCustomerId === OTHER_CUSTOMER_ID ? (
-                        <div className="mt-2">
-                          <div className="ea-label">Client name</div>
-                          <Input
-                            value={customClientName}
-                            onChange={(e) => {
-                              setCustomClientName(e.target.value);
-                              setBillTo(e.target.value);
-                            }}
-                            placeholder="Enter client name"
-                          />
+                      <div>
+                        <div className="ea-label">Industry</div>
+                        <Input
+                          value={industry}
+                          onChange={(e) => {
+                            setDirtyFields((p) => ({ ...p, industry: true }));
+                            setIndustry(e.target.value);
+                          }}
+                          placeholder="e.g., Cleaning, Healthcare, Technology"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="ea-label">Pricing model</div>
+                        <select value={pricingModel} onChange={(e) => setPricingModel(e.target.value)} className="ea-input">
+                          <option>Subscription</option>
+                          <option>One-time</option>
+                          <option>Usage-based</option>
+                          <option>Hourly</option>
+                          <option>Retainer</option>
+                        </select>
+                      </div>
+
+                      {showWorkspaceId ? (
+                        <div>
+                          <div className="ea-label">Idea Validation workspace id</div>
+                          <Input value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder="Paste workspace id" />
                         </div>
                       ) : null}
-                    </div>
-                  ) : null}
 
-                  {showCoreNarrative ? (
-                    <>
                       <div>
-                        <div className="ea-label">Problem</div>
-                        <textarea
-                          value={problem}
-                          onChange={(e) => {
-                            setDirtyFields((p) => ({ ...p, problem: true }));
-                            setProblem(e.target.value);
-                          }}
-                          className="min-h-20 ea-input"
-                          placeholder="What problem are you solving?"
-                        />
+                        <div className="ea-label">Tone</div>
+                        <Input value={tone} onChange={(e) => setTone(e.target.value)} placeholder="professional" />
                       </div>
-                      <div>
-                        <div className="ea-label">Solution</div>
-                        <textarea
-                          value={solution}
-                          onChange={(e) => {
-                            setDirtyFields((p) => ({ ...p, solution: true }));
-                            setSolution(e.target.value);
-                          }}
-                          className="min-h-20 ea-input"
-                          placeholder="What are you building and how does it solve it?"
-                        />
-                      </div>
-                      
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Services to focus on (optional)</div>
-                        <div className="mt-2 space-y-2 rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
-                          {Array.isArray(workspaceProfile?.services) && workspaceProfile.services.length ? (
-                            workspaceProfile.services.map((service) => (
-                              <label key={service.id} className="flex items-center gap-2 text-xs text-slate-700">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedServices.includes(service.service_name)}
-                                  onChange={() => {
-                                    setDirtyFields((p) => ({ ...p, selectedServices: true }));
-                                    setSelectedServices((prev) =>
-                                      prev.includes(service.service_name)
-                                        ? prev.filter((s) => s !== service.service_name)
-                                        : [...prev, service.service_name]
-                                    );
-                                  }}
-                                />
-                                <span>{service.service_name}</span>
-                              </label>
-                            ))
-                          ) : (
-                            <div className="text-xs text-slate-500">
-                              No services found in your workspace yet. You can still add a custom one below.
-                            </div>
-                          )}
-                          <label className="flex items-center gap-2 text-xs text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={selectedServices.includes("__other__")}
-                              onChange={() => {
-                                setDirtyFields((p) => ({ ...p, selectedServices: true }));
-                                setSelectedServices((prev) =>
-                                  prev.includes("__other__")
-                                    ? prev.filter((s) => s !== "__other__")
-                                    : [...prev, "__other__"]
-                                );
-                              }}
+
+                      {selectedDoc === "business_plan" || selectedDoc === "client_proposal" ? (
+                        <div>
+                          <div className="ea-label">Objective</div>
+                          <select
+                            value={objectiveChoiceByDoc[selectedDoc] || ""}
+                            onChange={(e) =>
+                              setObjectiveChoiceByDoc((prev) => ({ ...prev, [selectedDoc]: e.target.value }))
+                            }
+                            className="ea-input"
+                          >
+                            {objectivesForDoc(selectedDoc).map((o) => (
+                              <option key={o} value={o}>{o}</option>
+                            ))}
+                          </select>
+                          {objectiveChoiceByDoc[selectedDoc] === "Other" ? (
+                            <Input
+                              value={objectiveCustomByDoc[selectedDoc] || ""}
+                              onChange={(e) =>
+                                setObjectiveCustomByDoc((prev) => ({ ...prev, [selectedDoc]: e.target.value }))
+                              }
+                              placeholder="Type your objective"
+                              className="mt-2"
                             />
-                            <span>Other (add a new service)</span>
-                          </label>
-                          {selectedServices.includes("__other__") ? (
-                            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                              <input
-                                type="text"
-                                value={customServiceName}
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {/* Customer selector */}
+                      {showProposalExtras || showSalesLetterExtras ? (
+                        <div>
+                          <div className="ea-label">Customer</div>
+                          {(activeCustomers.length || activeVendors.length) ? (
+                            <>
+                              <select
+                                className="ea-input"
+                                value={selectedCustomerId}
+                                onChange={(e) => applyCustomerSelection(e.target.value)}
+                              >
+                                <option value="">Select customer</option>
+                                {activeCustomers.length ? (
+                                  <optgroup label="Customers">
+                                    {activeCustomers.map((c) => (
+                                      <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                  </optgroup>
+                                ) : null}
+                                {activeVendors.length ? (
+                                  <optgroup label="Vendors">
+                                    {activeVendors.map((v) => (
+                                      <option key={v.id} value={v.id}>{v.name}</option>
+                                    ))}
+                                  </optgroup>
+                                ) : null}
+                                <option value={OTHER_CUSTOMER_ID}>Other (type a name)</option>
+                              </select>
+                              <div className="mt-1 text-[11px] text-slate-500">
+                                Selecting a customer or vendor will prefill the client details and audience.
+                              </div>
+                            </>
+                          ) : null}
+                          {(!activeCustomers.length && !activeVendors.length) || selectedCustomerId === OTHER_CUSTOMER_ID ? (
+                            <div className="mt-2">
+                              <div className="ea-label">Client name</div>
+                              <Input
+                                value={customClientName}
                                 onChange={(e) => {
-                                  setDirtyFields((p) => ({ ...p, selectedServices: true }));
-                                  setCustomServiceName(e.target.value);
+                                  setCustomClientName(e.target.value);
+                                  setBillTo(e.target.value);
                                 }}
-                                placeholder="Service name"
-                                className="w-full rounded-lg border border-slate-300 px-2 py-1 text-xs"
-                              />
-                              <input
-                                type="text"
-                                value={customServiceDescription}
-                                onChange={(e) => {
-                                  setDirtyFields((p) => ({ ...p, selectedServices: true }));
-                                  setCustomServiceDescription(e.target.value);
-                                }}
-                                placeholder="Service description (optional)"
-                                className="w-full rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                                placeholder="Enter client name"
                               />
                             </div>
                           ) : null}
                         </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                        <div>
-                          <div className="ea-label">Target market</div>
-                          <Input
-                            value={targetMarket}
-                            onChange={(e) => {
-                              setDirtyFields((p) => ({ ...p, targetMarket: true }));
-                              setTargetMarket(e.target.value);
-                            }}
-                            placeholder="Who is it for?"
-                          />
-                        </div>
-                        <div>
-                          <div className="ea-label">Value proposition</div>
-                          <Input
-                            value={valueProp}
-                            onChange={(e) => {
-                              setDirtyFields((p) => ({ ...p, valueProp: true }));
-                              setValueProp(e.target.value);
-                            }}
-                            placeholder="Why will they choose you?"
-                          />
-                        </div>
-                      </div>
-                    </>
-                  ) : null}
+                      ) : null}
 
-                  {selectedDoc && sectionsForDoc(selectedDoc).length ? (
-                    <div ref={sectionDraftsRef} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
-                      <div className="text-sm font-semibold text-slate-900">Sections to generate (optional)</div>
-                      <div className="mt-2 grid grid-cols-1 gap-2">
-                        {sectionsForDoc(selectedDoc).map((section) => (
-                          <label key={section.id} className="flex items-center gap-2 text-xs text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={(sectionsByDoc[selectedDoc] || []).includes(section.id)}
-                              onChange={() => toggleSection(selectedDoc, section.id)}
+                      {/* Core narrative fields */}
+                      {showCoreNarrative ? (
+                        <>
+                          <div>
+                            <div className="ea-label">Problem</div>
+                            <textarea
+                              value={problem}
+                              onChange={(e) => {
+                                setDirtyFields((p) => ({ ...p, problem: true }));
+                                setProblem(e.target.value);
+                              }}
+                              className="min-h-20 ea-input"
+                              placeholder="What problem are you solving?"
                             />
-                            <span>{section.label}</span>
-                          </label>
-                        ))}
-                      </div>
-                      <div className="mt-2 text-[11px] text-slate-500">
-                        Leave unchecked to generate the full document.
-                      </div>
-                    </div>
-                  ) : null}
+                          </div>
 
-                  {showQuoteFields ? (
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                      <div>
-                        <div className="ea-label">Bill to</div>
-                        <Input value={billTo} onChange={(e) => setBillTo(e.target.value)} placeholder="Client name / address" />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="ea-label">Items</div>
-                          <button
-                            type="button"
-                            onClick={addItemLine}
-                            className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                          >
-                            + Add item
-                          </button>
+                          <div>
+                            <div className="ea-label">Solution</div>
+                            <textarea
+                              value={solution}
+                              onChange={(e) => {
+                                setDirtyFields((p) => ({ ...p, solution: true }));
+                                setSolution(e.target.value);
+                              }}
+                              className="min-h-20 ea-input"
+                              placeholder="What are you building and how does it solve it?"
+                            />
+                          </div>
+
+                          <div>
+                            <div className="ea-label">Target market</div>
+                            <Input
+                              value={targetMarket}
+                              onChange={(e) => {
+                                setDirtyFields((p) => ({ ...p, targetMarket: true }));
+                                setTargetMarket(e.target.value);
+                              }}
+                              placeholder="Who is it for?"
+                            />
+                          </div>
+
+                          <div>
+                            <div className="ea-label">Value proposition</div>
+                            <Input
+                              value={valueProp}
+                              onChange={(e) => {
+                                setDirtyFields((p) => ({ ...p, valueProp: true }));
+                                setValueProp(e.target.value);
+                              }}
+                              placeholder="Why will they choose you?"
+                            />
+                          </div>
+
+                          {/* FIX 2: Services as dropdown with checkboxes */}
+                          <div>
+                            <div className="ea-label">Services to focus on (optional)</div>
+                            <ServicesDropdown
+                              workspaceServices={workspaceProfile?.services || []}
+                              selectedServices={selectedServices}
+                              setSelectedServices={setSelectedServices}
+                              setDirtyFields={setDirtyFields}
+                              customServiceName={customServiceName}
+                              setCustomServiceName={setCustomServiceName}
+                              customServiceDescription={customServiceDescription}
+                              setCustomServiceDescription={setCustomServiceDescription}
+                            />
+                          </div>
+                        </>
+                      ) : null}
+
+                      {/* Sections to generate */}
+                      {selectedDoc && sectionsForDoc(selectedDoc).length ? (
+                        <div ref={sectionDraftsRef} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+                          <div className="text-sm font-semibold text-slate-900">Sections to generate (optional)</div>
+                          <div className="mt-2 space-y-2">
+                            {sectionsForDoc(selectedDoc).map((section) => (
+                              <label key={section.id} className="flex items-center gap-2 text-xs text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={(sectionsByDoc[selectedDoc] || []).includes(section.id)}
+                                  onChange={() => toggleSection(selectedDoc, section.id)}
+                                />
+                                <span>{section.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                          <div className="mt-2 text-[11px] text-slate-500">
+                            Leave unchecked to generate the full document.
+                          </div>
                         </div>
-                        <textarea
-                          ref={itemsRef}
-                          value={items}
-                          onChange={(e) => setItems(e.target.value)}
-                          className="min-h-20 ea-input"
-                          placeholder={"One item per line, e.g.\nOffice cleaning (weekly)\nDeep clean (monthly)"}
-                        />
-                        <div className="mt-1 text-[11px] text-slate-500">Each line becomes a separate row in the quotation / invoice table.</div>
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Terms (optional)</div>
-                        <Input value={terms} onChange={(e) => setTerms(e.target.value)} placeholder="Payment terms / quotation terms" />
+                      ) : null}
+
+                      {/* Invoice fields */}
+                      {showQuoteFields ? (
+                        <>
+                          <div>
+                            <div className="ea-label">Bill to</div>
+                            <Input value={billTo} onChange={(e) => setBillTo(e.target.value)} placeholder="Client name / address" />
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="ea-label">Items</div>
+                              <button
+                                type="button"
+                                onClick={addItemLine}
+                                className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                              >
+                                + Add item
+                              </button>
+                            </div>
+                            <textarea
+                              ref={itemsRef}
+                              value={items}
+                              onChange={(e) => setItems(e.target.value)}
+                              className="min-h-20 ea-input"
+                              placeholder={"One item per line, e.g.\nOffice cleaning (weekly)\nDeep clean (monthly)"}
+                            />
+                            <div className="mt-1 text-[11px] text-slate-500">Each line becomes a separate row in the quotation / invoice table.</div>
+                          </div>
+                          <div>
+                            <div className="ea-label">Terms (optional)</div>
+                            <Input value={terms} onChange={(e) => setTerms(e.target.value)} placeholder="Payment terms / quotation terms" />
+                          </div>
+                        </>
+                      ) : null}
+
+                      {/* Proposal extras */}
+                      {showProposalExtras ? (
+                        <>
+                          <div>
+                            <div className="ea-label">Proposal title (optional)</div>
+                            <Input value={proposalTitle} onChange={(e) => setProposalTitle(e.target.value)} placeholder="e.g., Business Proposal" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Contact details (optional)</div>
+                            <Input
+                              value={contactDetails}
+                              onChange={(e) => {
+                                setDirtyFields((p) => ({ ...p, contactDetails: true }));
+                                setContactDetails(e.target.value);
+                              }}
+                              placeholder="Email, phone, website (optional)"
+                            />
+                          </div>
+                          <div>
+                            <div className="ea-label">Timeline / plan (optional)</div>
+                            <textarea value={timeline} onChange={(e) => setTimeline(e.target.value)} className="min-h-16 ea-input" placeholder="Phases and milestones in words" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Assumptions (optional)</div>
+                            <textarea value={assumptions} onChange={(e) => setAssumptions(e.target.value)} className="min-h-16 ea-input" placeholder="Key assumptions" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Exclusions (optional)</div>
+                            <textarea value={scopeExclusions} onChange={(e) => setScopeExclusions(e.target.value)} className="min-h-16 ea-input" placeholder="What is not included" />
+                          </div>
+                        </>
+                      ) : null}
+
+                      {/* Sales letter extras */}
+                      {showSalesLetterExtras ? (
+                        <>
+                          <div>
+                            <div className="ea-label">Target word count</div>
+                            <Input
+                              type="number"
+                              value={wordCount}
+                              onChange={(e) => setWordCount(e.target.value)}
+                              placeholder="e.g., 700"
+                            />
+                          </div>
+                          <div>
+                            <div className="ea-label">Objective</div>
+                            <select
+                              value={objectiveChoiceByDoc.sales_letter}
+                              onChange={(e) =>
+                                setObjectiveChoiceByDoc((prev) => ({ ...prev, sales_letter: e.target.value }))
+                              }
+                              className="ea-input"
+                            >
+                              {SALES_LETTER_OBJECTIVES.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                            </select>
+                            {objectiveChoiceByDoc.sales_letter === "Other" ? (
+                              <Input
+                                value={objectiveCustomByDoc.sales_letter || ""}
+                                onChange={(e) =>
+                                  setObjectiveCustomByDoc((prev) => ({ ...prev, sales_letter: e.target.value }))
+                                }
+                                placeholder="Type your objective"
+                                className="mt-2"
+                              />
+                            ) : null}
+                          </div>
+                          <div>
+                            <div className="ea-label">Headline angle (optional)</div>
+                            <Input value={headline} onChange={(e) => setHeadline(e.target.value)} placeholder="Opening line / headline idea" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Offer (optional)</div>
+                            <Input value={offer} onChange={(e) => setOffer(e.target.value)} placeholder="What the reader gets (no prices)" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Call to action (optional)</div>
+                            <Input value={cta} onChange={(e) => setCta(e.target.value)} placeholder="What should they do next?" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Proof / credibility (optional)</div>
+                            <textarea value={proof} onChange={(e) => setProof(e.target.value)} className="min-h-16 ea-input" placeholder="Experience, results, case study narrative (no numbers)" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Urgency / scarcity (optional)</div>
+                            <Input value={urgency} onChange={(e) => setUrgency(e.target.value)} placeholder="Reason to act soon (no dates)" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Sender name (optional)</div>
+                            <Input value={senderName} onChange={(e) => setSenderName(e.target.value)} placeholder="Your name" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Sender position (optional)</div>
+                            <Input value={senderPosition} onChange={(e) => setSenderPosition(e.target.value)} placeholder="Your role/title" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Sender email (optional)</div>
+                            <Input
+                              value={senderEmail}
+                              onChange={(e) => {
+                                setDirtyFields((p) => ({ ...p, senderEmail: true }));
+                                setSenderEmail(e.target.value);
+                              }}
+                              placeholder="you@company.com"
+                            />
+                          </div>
+                          <div>
+                            <div className="ea-label">Sender phone (optional)</div>
+                            <Input
+                              value={senderPhone}
+                              onChange={(e) => {
+                                setDirtyFields((p) => ({ ...p, senderPhone: true }));
+                                setSenderPhone(e.target.value);
+                              }}
+                              placeholder="Phone (optional)"
+                            />
+                          </div>
+                          <div>
+                            <div className="ea-label">Sender website (optional)</div>
+                            <Input
+                              value={senderWebsite}
+                              onChange={(e) => {
+                                setDirtyFields((p) => ({ ...p, senderWebsite: true }));
+                                setSenderWebsite(e.target.value);
+                              }}
+                              placeholder="company website"
+                            />
+                          </div>
+                          <div>
+                            <div className="ea-label">Follow-up sequence</div>
+                            <select
+                              value={followupChoice}
+                              onChange={(e) => setFollowupChoice(e.target.value)}
+                              className="ea-input"
+                            >
+                              <option value="Quick reminder and recap of the main benefit, inviting a short call">
+                                Quick reminder and recap of the main benefit, inviting a short call
+                              </option>
+                              <option value="Share a practical example of how the process reduces risk and saves time">
+                                Share a practical example of how the process reduces risk and saves time
+                              </option>
+                              <option value="Final check-in offering to hold a slot and answer questions">
+                                Final check-in offering to hold a slot and answer questions
+                              </option>
+                              <option value="Other">Other (type your own)</option>
+                            </select>
+                            {followupChoice === "Other" ? (
+                              <Input
+                                value={followupCustom}
+                                onChange={(e) => setFollowupCustom(e.target.value)}
+                                placeholder="Type a custom follow-up line"
+                                className="mt-2"
+                              />
+                            ) : null}
+                          </div>
+                        </>
+                      ) : null}
+
+                      {/* Extra notes always last */}
+                      <div>
+                        <div className="ea-label">Extra notes (optional)</div>
+                        <textarea value={extraNotes} onChange={(e) => setExtraNotes(e.target.value)} className="min-h-16 ea-input" placeholder="Extra context, audience, constraints, etc." />
                       </div>
                     </div>
-                  ) : null}
-
-                  {showProposalExtras ? (
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Proposal title (optional)</div>
-                        <Input value={proposalTitle} onChange={(e) => setProposalTitle(e.target.value)} placeholder="e.g., Business Proposal" />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Contact details (optional)</div>
-                        <Input
-                          value={contactDetails}
-                          onChange={(e) => {
-                            setDirtyFields((p) => ({ ...p, contactDetails: true }));
-                            setContactDetails(e.target.value);
-                          }}
-                          placeholder="Email, phone, website (optional)"
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Timeline / plan (optional)</div>
-                        <textarea value={timeline} onChange={(e) => setTimeline(e.target.value)} className="min-h-16 ea-input" placeholder="Phases and milestones in words" />
-                      </div>
-                      <div>
-                        <div className="ea-label">Assumptions (optional)</div>
-                        <textarea value={assumptions} onChange={(e) => setAssumptions(e.target.value)} className="min-h-16 ea-input" placeholder="Key assumptions" />
-                      </div>
-                      <div>
-                        <div className="ea-label">Exclusions (optional)</div>
-                        <textarea value={scopeExclusions} onChange={(e) => setScopeExclusions(e.target.value)} className="min-h-16 ea-input" placeholder="What is not included" />
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {showSalesLetterExtras ? (
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                      <div>
-                        <div className="ea-label">Target word count</div>
-                        <Input
-                          type="number"
-                          value={wordCount}
-                          onChange={(e) => setWordCount(e.target.value)}
-                          placeholder="e.g., 700"
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Objective</div>
-                        <select
-                          value={objectiveChoiceByDoc.sales_letter}
-                          onChange={(e) =>
-                            setObjectiveChoiceByDoc((prev) => ({ ...prev, sales_letter: e.target.value }))
-                          }
-                          className="ea-input"
-                        >
-                          {SALES_LETTER_OBJECTIVES.map((o) => (
-                            <option key={o} value={o}>
-                              {o}
-                            </option>
-                          ))}
-                        </select>
-                        {objectiveChoiceByDoc.sales_letter === "Other" ? (
-                          <Input
-                            value={objectiveCustomByDoc.sales_letter || ""}
-                            onChange={(e) =>
-                              setObjectiveCustomByDoc((prev) => ({ ...prev, sales_letter: e.target.value }))
-                            }
-                            placeholder="Type your objective"
-                            className="mt-2"
-                          />
-                        ) : null}
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Headline angle (optional)</div>
-                        <Input value={headline} onChange={(e) => setHeadline(e.target.value)} placeholder="Opening line / headline idea" />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Offer (optional)</div>
-                        <Input value={offer} onChange={(e) => setOffer(e.target.value)} placeholder="What the reader gets (no prices)" />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Call to action (optional)</div>
-                        <Input value={cta} onChange={(e) => setCta(e.target.value)} placeholder="What should they do next?" />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Proof / credibility (optional)</div>
-                        <textarea value={proof} onChange={(e) => setProof(e.target.value)} className="min-h-16 ea-input" placeholder="Experience, results, case study narrative (no numbers)" />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Urgency / scarcity (optional)</div>
-                        <Input value={urgency} onChange={(e) => setUrgency(e.target.value)} placeholder="Reason to act soon (no dates)" />
-                      </div>
-                      <div>
-                        <div className="ea-label">Sender name (optional)</div>
-                        <Input value={senderName} onChange={(e) => setSenderName(e.target.value)} placeholder="Your name" />
-                      </div>
-                      <div>
-                        <div className="ea-label">Sender position (optional)</div>
-                        <Input value={senderPosition} onChange={(e) => setSenderPosition(e.target.value)} placeholder="Your role/title" />
-                      </div>
-                      <div>
-                        <div className="ea-label">Sender email (optional)</div>
-                        <Input
-                          value={senderEmail}
-                          onChange={(e) => {
-                            setDirtyFields((p) => ({ ...p, senderEmail: true }));
-                            setSenderEmail(e.target.value);
-                          }}
-                          placeholder="you@company.com"
-                        />
-                      </div>
-                      <div>
-                        <div className="ea-label">Sender website (optional)</div>
-                        <Input
-                          value={senderWebsite}
-                          onChange={(e) => {
-                            setDirtyFields((p) => ({ ...p, senderWebsite: true }));
-                            setSenderWebsite(e.target.value);
-                          }}
-                          placeholder="company website"
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Sender phone (optional)</div>
-                        <Input
-                          value={senderPhone}
-                          onChange={(e) => {
-                            setDirtyFields((p) => ({ ...p, senderPhone: true }));
-                            setSenderPhone(e.target.value);
-                          }}
-                          placeholder="Phone (optional)"
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="ea-label">Follow-up sequence</div>
-                        <select
-                          value={followupChoice}
-                          onChange={(e) => setFollowupChoice(e.target.value)}
-                          className="ea-input"
-                        >
-                          <option value="Quick reminder and recap of the main benefit, inviting a short call">
-                            Quick reminder and recap of the main benefit, inviting a short call
-                          </option>
-                          <option value="Share a practical example of how the process reduces risk and saves time">
-                            Share a practical example of how the process reduces risk and saves time
-                          </option>
-                          <option value="Final check-in offering to hold a slot and answer questions">
-                            Final check-in offering to hold a slot and answer questions
-                          </option>
-                          <option value="Other">Other (type your own)</option>
-                        </select>
-                        {followupChoice === "Other" ? (
-                          <Input
-                            value={followupCustom}
-                            onChange={(e) => setFollowupCustom(e.target.value)}
-                            placeholder="Type a custom follow-up line"
-                            className="mt-2"
-                          />
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div>
-                    <div className="ea-label">Extra notes (optional)</div>
-                    <textarea value={extraNotes} onChange={(e) => setExtraNotes(e.target.value)} className="min-h-16 ea-input" placeholder="Extra context, audience, constraints, etc." />
-                  </div>
-
-                </div>
-                </>
-                )}
+                  )}
                 </div>
               ) : null}
             </div>
@@ -1976,11 +2102,4 @@ export default function BlueprintPage() {
       ) : null}
     </div>
   );
-}
-
-
-
-
-
-
-
+}     
