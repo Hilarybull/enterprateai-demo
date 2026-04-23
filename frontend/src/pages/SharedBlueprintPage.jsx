@@ -292,22 +292,27 @@ export default function SharedBlueprintPage() {
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="fixed left-0 right-0 top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-6 py-3">
-          <div className="flex items-center">
-            <img
-              src={enterprateLogo}
-              alt="EnterprateAI"
-              className="h-11 w-auto"
-            />
+        <div className="grid w-full grid-cols-[auto,1fr,auto] items-center gap-3 px-4 py-3 sm:px-6">
+          <div className="flex items-center justify-self-start">
+            <div className="h-11 w-11 overflow-hidden">
+              <img
+                src={enterprateLogo}
+                alt="EnterprateAI"
+                className="h-11 w-auto object-left"
+                style={{ objectFit: "none", objectPosition: "left center" }}
+              />
+            </div>
           </div>
 
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 justify-self-center">
             <div className="truncate text-sm font-semibold text-slate-900">{title}</div>
           </div>
 
-          <Button variant="secondary" disabled={loading || downloading || !bodyHtml.trim()} onClick={downloadPdf}>
-            {downloading ? "Preparing..." : "Download PDF"}
-          </Button>
+          <div className="justify-self-end">
+            <Button variant="secondary" disabled={loading || downloading || !bodyHtml.trim()} onClick={downloadPdf}>
+              {downloading ? "Preparing..." : "Download PDF"}
+            </Button>
+          </div>
         </div>
       </div>
 
