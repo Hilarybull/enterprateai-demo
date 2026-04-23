@@ -200,6 +200,13 @@ export default function DocumentEditor({
   onDownload,
   onSave,
   downloadFormats,
+  defaultMode = "edit",
+  compactPreview = false,
+  toolbarRightSlot = null,
+  showSaveButton = true,
+  saveLabel = "Save changes",
+  saveDisabled = false,
+  showEditButton = true,
 }) {
   const availableFormats = useMemo(() => {
     const formats = Array.isArray(downloadFormats) && downloadFormats.length ? downloadFormats : ["pdf", "doc"];
@@ -211,7 +218,7 @@ export default function DocumentEditor({
   }, [initialHtml, markdown]);
 
   const [html, setHtml] = useState(computedInitialHtml);
-  const [showPaginated, setShowPaginated] = useState(false);
+  const [showPaginated, setShowPaginated] = useState(defaultMode === "preview");
   const [downloadFormat, setDownloadFormat] = useState(availableFormats[0] || "pdf");
   const [fontSizeInput, setFontSizeInput] = useState("14");
   const ref = useRef(null);
@@ -226,6 +233,7 @@ export default function DocumentEditor({
       onHtmlChange(computedInitialHtml);
     }
     savedRangeRef.current = null;
+    setShowPaginated(defaultMode === "preview");
   }, [computedInitialHtml]);
 
   useEffect(() => {
@@ -373,10 +381,61 @@ export default function DocumentEditor({
     return buildPreviewFragment({ title, bodyHtml });
   }, [html, title, markdown]);
 
+  const isCompactPreview = Boolean(compactPreview && showPaginated);
+
   return (
     <Card className="h-full min-h-0 flex flex-col">
       <div className="-mx-5 -mt-5 mb-4 border-b border-slate-200 bg-white/80 px-5 py-3 backdrop-blur flex-shrink-0 dark:border-slate-700 dark:bg-slate-900/80">
-        <div className="flex flex-wrap items-center gap-2">
+        {isCompactPreview ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Preview</div>
+            {showEditButton ? (
+              <Button variant="secondary" onClick={() => setShowPaginated(false)}>
+                Edit
+              </Button>
+            ) : null}
+
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {toolbarRightSlot}
+
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  const text = ref.current?.innerText || "";
+                  await navigator.clipboard.writeText(text);
+                }}
+              >
+                Copy
+              </Button>
+
+              <select
+                className="ea-input h-10 w-[140px]"
+                value={downloadFormat}
+                onChange={(e) => setDownloadFormat(e.target.value)}
+                disabled={availableFormats.length <= 1}
+              >
+                {availableFormats.includes("pdf") ? <option value="pdf">PDF</option> : null}
+                {availableFormats.includes("doc") ? <option value="doc">Word</option> : null}
+              </select>
+
+              <Button
+                variant="secondary"
+                disabled={!onDownload}
+                onClick={() => onDownload?.(downloadFormat)}
+              >
+                Download
+              </Button>
+
+              {showSaveButton && typeof onSave === "function" ? (
+                <Button onClick={onSave} disabled={saveDisabled}>
+                  {saveLabel}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <>
+          <div className="flex flex-wrap items-center gap-2">
           <select
             className="ea-input h-10 w-[150px] shrink-0"
             defaultValue="3"
@@ -498,6 +557,9 @@ export default function DocumentEditor({
             Copy
           </Button>
 
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {toolbarRightSlot}
+
           <select
             className="ea-input h-10 w-[140px]"
             value={downloadFormat}
@@ -515,7 +577,16 @@ export default function DocumentEditor({
           >
             Download
           </Button>
+
+            {showSaveButton && typeof onSave === "function" ? (
+              <Button onClick={onSave} disabled={saveDisabled}>
+                {saveLabel}
+              </Button>
+            ) : null}
+          </div>
         </div>
+          </>
+        )}
       </div>
 
       <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200 flex-1 min-h-0 dark:bg-slate-900/60 dark:ring-slate-800">

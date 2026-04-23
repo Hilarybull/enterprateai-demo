@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
+from app.modules.blueprint.exporter import markdown_to_html
 from app.modules.blueprint.repository import create_document
 from app.modules.blueprint.schemas import BlueprintGenerateRequest, BlueprintGenerateResponse
 from app.modules.blueprint.templates import (
@@ -573,6 +574,16 @@ def _strip_cover_section(doc: str) -> str:
     return "\n".join(out).strip()
 
 
+def _strip_preamble_before_first_h2(doc: str) -> str:
+    if not doc:
+        return doc
+    lines = doc.splitlines()
+    idx = next((i for i, l in enumerate(lines) if l.startswith("## ")), None)
+    if idx is None:
+        return doc.strip()
+    return "\n".join(lines[idx:]).strip()
+
+
 def _normalize_sales_letter(
     doc: str,
     *,
@@ -726,8 +737,6 @@ def _normalize_client_proposal_cover_page(
     if not doc:
         return doc
 
-    preamble, sections = _extract_section_map(doc)
-
     def _display_name(value: str) -> str:
         val = _safe_text(value)
         if not val:
@@ -738,33 +747,32 @@ def _normalize_client_proposal_cover_page(
             return val.title()
         return val
 
-    # Ensure a stable title line and a concise cover page block (no long narrative / repetition).
     display_client = _display_name(client_name) or "Client"
-    title = f"# Proposal for {display_client}"
+
+    def _format_service_focus(raw: str) -> str:
+        text = _safe_text(raw)
+        if not text:
+            return ""
+        first = text.splitlines()[0].strip()
+        parts = [p.strip() for p in first.split(" - ") if p.strip()]
+        name = parts[0] if parts else first
+        cat = parts[1] if len(parts) > 1 else ""
+        if cat:
+            return f"{name} ({cat.title()})"
+        return name
+
     cover_lines: list[str] = []
-    safe_proposal_title = _safe_text(proposal_title)
-    if safe_proposal_title:
-        expected = f"Proposal for {_safe_text(client_name)}".strip().lower()
-        if expected and safe_proposal_title.strip().lower() == expected:
-            safe_proposal_title = f"Proposal for {display_client}"
-        cover_lines.append(f"Proposal Title: {safe_proposal_title}")
-    cover_lines.append(f"Prepared by: {_display_name(company_name) or _safe_text(company_name) or 'Prepared by'}")
-    cover_lines.append(f"Prepared for: {display_client}")
-    if _safe_text(selected_services_focus):
-        focus = _safe_text(selected_services_focus).replace(" - ", ", ")
-        cover_lines.append(f"Service focus: {focus}")
+    cover_lines.append(f"**Prepared by:** {_display_name(company_name) or _safe_text(company_name) or 'Prepared by'}")
+    cover_lines.append(f"**Prepared for:** {display_client}")
+    focus = _format_service_focus(selected_services_focus)
+    if focus:
+        cover_lines.append(f"**Service focus:** {focus}")
     if _safe_text(contact_details):
-        cover_lines.append(f"Contact: {_safe_text(contact_details)}")
+        cover_lines.append(f"**Contact:** {_safe_text(contact_details)}")
 
-    cover_body = "\n".join(cover_lines).strip()
-    if cover_body:
-        cover_body = f"{cover_body}\n<div class=\"page-break\"></div>"
-
-    sections["## Cover Page"] = cover_body
-
-    ordered = [h for h in CLIENT_PROPOSAL_HEADINGS if h in sections]
-    rebuilt = "\n\n".join([title, ""] + [f"{h}\n{(sections[h] or '').strip()}".rstrip() for h in ordered]).strip()
-    return rebuilt
+    cleaned = _strip_preamble_before_first_h2(doc)
+    cleaned = _strip_cover_section(cleaned)
+    return _apply_cover_page(cleaned, title=f"Proposal for {display_client}", lines=cover_lines)
 
 
 def _narrative_fallback(title: str) -> str:
@@ -1645,6 +1653,11 @@ async def generate_blueprint(
         }
         title = _default_title(type_to_title.get(payload.type, "Document"), company)
         try:
+            rendered_html = None
+            try:
+                rendered_html = markdown_to_html(resp.document_markdown or "")
+            except Exception:
+                rendered_html = None
             doc_id = await create_document(
                 user_id=user_id,
                 type=payload.type,
@@ -1654,7 +1667,7 @@ async def generate_blueprint(
                 pricing_model=pricing_model or None,
                 workspace_id=_safe_text(payload.workspace_id) or None,
                 document_markdown=resp.document_markdown,
-                document_html=None,
+                document_html=rendered_html,
                 provider=resp.provider,
                 model=resp.model,
             )
@@ -1872,15 +1885,16 @@ async def generate_blueprint(
 
         cover_lines: list[str] = []
         if _safe_text(raw_inputs.get("primary_industry")):
-            cover_lines.append(f"Industry: {_safe_text(raw_inputs.get('primary_industry'))}")
+            cover_lines.append(f"**Industry:** {_safe_text(raw_inputs.get('primary_industry'))}")
         if _safe_text(raw_inputs.get("location")):
-            cover_lines.append(f"Location: {_safe_text(raw_inputs.get('location'))}")
-        if _safe_text(raw_inputs.get("registration_status")):
-            cover_lines.append(f"Registration: {_safe_text(raw_inputs.get('registration_status'))}")
+            cover_lines.append(f"**Location:** {_safe_text(raw_inputs.get('location'))}")
+        if _safe_text(raw_inputs.get("registration_number")):
+            cover_lines.append(f"**Registration:** {_safe_text(raw_inputs.get('registration_number'))}")
         if contact_details:
-            cover_lines.append(f"Contact: {contact_details}")
-        cover_lines.append(f"Prepared on: {today}")
+            cover_lines.append(f"**Contact:** {contact_details}")
+        cover_lines.append(f"**Prepared on:** {today}")
 
+        doc = _strip_preamble_before_first_h2(doc)
         doc = _apply_cover_page(doc, title=f"Business Plan for {company}", lines=cover_lines)
 
         return await _persist_response(

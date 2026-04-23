@@ -1094,32 +1094,27 @@ export default function BlueprintPage() {
             }));
           } else {
             // For sales letters, keep section drafts separate (they are generated via section tiles).
-            // Optionally backfill all section drafts in the background so tiles populate without affecting the full letter view.
-            void (async () => {
-              try {
-                const resDrafts = await apiRequestWithRetry(
-                  "/blueprint/generate",
-                  "POST",
-                  {
-                    ...generateBody,
-                    sections: sectionsForDoc(selectedDoc).map((s) => s.id),
-                  },
-                  { timeoutMs: 900000 }
-                );
-                const draftsMarkdown = resDrafts?.document_markdown || "";
-                if (!draftsMarkdown) return;
-                setSectionDraftsByDoc((prev) => {
-                  const merged = mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", draftsMarkdown);
-                  return { ...prev, [selectedDoc]: merged };
-                });
-                setDraftSectionsByDoc((prev) => ({
-                  ...prev,
-                  [selectedDoc]: sectionsForDoc(selectedDoc).map((s) => s.id)
-                }));
-              } catch {
-                // ignore
-              }
-            })();
+            // Populate them immediately after full letter generation so the right panel always has tiles/snippets.
+            const resDrafts = await apiRequestWithRetry(
+              "/blueprint/generate",
+              "POST",
+              {
+                ...generateBody,
+                sections: sectionsForDoc(selectedDoc).map((s) => s.id),
+              },
+              { timeoutMs: 900000 }
+            );
+            const draftsMarkdown = resDrafts?.document_markdown || "";
+            if (draftsMarkdown) {
+              setSectionDraftsByDoc((prev) => {
+                const merged = mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", draftsMarkdown);
+                return { ...prev, [selectedDoc]: merged };
+              });
+              setDraftSectionsByDoc((prev) => ({
+                ...prev,
+                [selectedDoc]: sectionsForDoc(selectedDoc).map((s) => s.id)
+              }));
+            }
           }
 
 	        // Preview behavior depends on whether the user selected sections.
@@ -1641,6 +1636,10 @@ export default function BlueprintPage() {
                           markdown=""
                           initialHtml={sectionPreviewHtml}
                           onHtmlChange={() => {}}
+                          defaultMode="preview"
+                          compactPreview
+                          showEditButton={false}
+                          showSaveButton={false}
                           downloadFormats={["pdf"]}
                           onDownload={async (format) => {
                             if (format !== "pdf") {
@@ -1668,20 +1667,6 @@ export default function BlueprintPage() {
                   </div>
                 ) : selectedDocResult?.document_markdown ? (
                   <div className="flex h-full min-h-0 flex-col gap-3">
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      {savedNotice ? (
-                        <div className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                          {savedNotice}
-                        </div>
-                      ) : null}
-                      <Button
-                        variant="secondary"
-                        disabled={!docIdByType[selectedDoc] || isSaving}
-                        onClick={saveEdits}
-                      >
-                        {isSaving ? "Saving..." : "Save changes"}
-                      </Button>
-                    </div>
                     <div className="flex-1 min-h-0">
                       <DocumentEditor
                         title={selectedMeta.title}
@@ -1690,6 +1675,17 @@ export default function BlueprintPage() {
                         onHtmlChange={(h) => setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: h }))}
                         onDownload={downloadExport}
                         onSave={saveEdits}
+                        defaultMode="preview"
+                        compactPreview
+                        toolbarRightSlot={
+                          savedNotice ? (
+                            <div className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                              {savedNotice}
+                            </div>
+                          ) : null
+                        }
+                        saveLabel={isSaving ? "Saving..." : "Save changes"}
+                        saveDisabled={!docIdByType[selectedDoc] || isSaving}
                       />
                     </div>
                   </div>
