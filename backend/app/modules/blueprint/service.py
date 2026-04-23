@@ -885,19 +885,60 @@ async def _generate_section_required(
     return text, provider, model
 
 
-def _format_section_prompt(*, doc_type: str, section_title: str, inputs_text: str) -> str:
+def _format_section_prompt(*, doc_type: str, section_title: str, inputs_text: str, target_words: int) -> str:
     return (
-        f"Write only the content for the section titled '{section_title}' in a {doc_type}.\n"
-        "Requirements:\n"
+        f"Write only the section body for '{section_title}' in a {doc_type}.\n"
+        "Requirements (strict):\n"
         "- UK professional English.\n"
-        "- Minimum two full paragraphs.\n"
-        "- No headings, labels, or numbering.\n"
-        "- Use ONLY the provided inputs; do not invent or infer facts.\n"
-        "- If data is missing, write generically without adding facts.\n"
+        f"- Target length: about {int(target_words)} words (adjust to data depth; do not pad with fluff).\n"
+        "- Write in complete prose paragraphs. Bullet points are allowed sparingly, but do not overuse them.\n"
+        "- No headings (no '##' or '###'), labels, or numbering in the output.\n"
+        "- Use ONLY the provided inputs as factual claims. Do not invent, assume, estimate, or infer specific facts.\n"
+        "- If a detail is missing, write generically without adding facts (use careful language such as 'based on available information').\n"
         "- No invented prices, dates, or numeric claims.\n"
         "- Avoid repetition and keep it specific to the inputs.\n\n"
-        f"Inputs:\n{inputs_text}"
+        f"INPUTS:\n{inputs_text}"
     )
+
+
+async def _ensure_section_bodies(
+    llm: LLMClient,
+    *,
+    doc_type: str,
+    wanted_headings: list[str],
+    raw_inputs: dict[str, Any],
+    doc: str,
+    warnings: list[str],
+    target_words: int,
+) -> str:
+    """
+    Ensure all requested H2 sections exist and are substantive.
+    If the full-document LLM output omitted sections (or returned very short ones),
+    generate only the missing bodies and rebuild deterministically.
+    """
+    inputs_text = format_inputs_for_prompt(raw_inputs)
+    preamble, section_map = _extract_section_map(doc)
+    for heading in wanted_headings:
+        body = (section_map.get(heading) or "").strip()
+        # If body is missing or extremely short, regenerate the section body.
+        if len(body.split()) >= 160:
+            continue
+        title = heading.replace("## ", "").strip()
+        prompt = _format_section_prompt(
+            doc_type=doc_type,
+            section_title=title,
+            inputs_text=inputs_text,
+            target_words=target_words,
+        )
+        text, _, _ = await _generate_section_required(
+            llm,
+            prompt=prompt,
+            label=f"{doc_type}_{title}",
+            warnings=warnings,
+            error_label=f"{doc_type} section '{title}'",
+        )
+        section_map[heading] = text.strip()
+    return _rebuild_with_headings(preamble=preamble, headings=wanted_headings, primary=section_map, fallback={})
 
 
 async def _generate_sections_fallback(
@@ -922,7 +963,12 @@ async def _generate_sections_fallback(
             out.append('<div class="page-break"></div>')
             out.append("")
             continue
-        prompt = _format_section_prompt(doc_type=doc_type, section_title=title, inputs_text=inputs_text)
+        prompt = _format_section_prompt(
+            doc_type=doc_type,
+            section_title=title,
+            inputs_text=inputs_text,
+            target_words=450,
+        )
         text, provider, model = await _generate_section(
             llm,
             prompt=prompt,
@@ -1524,7 +1570,7 @@ async def generate_blueprint(
         if payload.include_validation_snapshot and not snapshot_text:
             raw_inputs["financial_snapshot"] = "Financial data has not been provided for this section."
 
-        # Use full document generation instead of section-by-section
+        # Full-document generation first, then backfill any missing sections deterministically.
         doc, provider, model = await _enrich_and_generate(
             "Business Plan",
             raw_inputs,
@@ -1534,16 +1580,17 @@ async def generate_blueprint(
             fill_missing=False,
         )
 
-        # Enforce selected sections deterministically when requested.
-        if selected_section_titles:
-            preamble, section_map = _extract_section_map(doc)
-            wanted_headings = [f"## {t}" for t in selected_section_titles]
-            doc = _rebuild_with_headings(
-                preamble=preamble,
-                headings=wanted_headings,
-                primary=section_map,
-                fallback={},
-            )
+        wanted_titles = selected_section_titles or [h.replace("## ", "").strip() for h in BUSINESS_PLAN_HEADINGS]
+        wanted_headings = [f"## {t}" for t in wanted_titles if _safe_text(t)]
+        doc = await _ensure_section_bodies(
+            llm,
+            doc_type="Business Plan",
+            wanted_headings=wanted_headings,
+            raw_inputs=raw_inputs,
+            doc=doc,
+            warnings=warnings,
+            target_words=750 if len(wanted_headings) <= 2 else 650,
+        )
 
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
@@ -1672,15 +1719,17 @@ async def generate_blueprint(
             fill_missing=False,
         )
 
-        if selected_section_titles:
-            preamble, section_map = _extract_section_map(doc)
-            wanted_headings = [f"## {t}" for t in selected_section_titles]
-            doc = _rebuild_with_headings(
-                preamble=preamble,
-                headings=wanted_headings,
-                primary=section_map,
-                fallback={},
-            )
+        wanted_titles = selected_section_titles or [h.replace("## ", "").strip() for h in CLIENT_PROPOSAL_HEADINGS]
+        wanted_headings = [f"## {t}" for t in wanted_titles if _safe_text(t)]
+        doc = await _ensure_section_bodies(
+            llm,
+            doc_type="Business Proposal",
+            wanted_headings=wanted_headings,
+            raw_inputs=raw_inputs,
+            doc=doc,
+            warnings=warnings,
+            target_words=650 if len(wanted_headings) <= 2 else 520,
+        )
 
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
