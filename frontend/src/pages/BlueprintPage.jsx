@@ -383,11 +383,7 @@ export default function BlueprintPage() {
   const activeDraftBody = activeDraftHeading ? draftSectionMap?.[activeDraftHeading] : "";
   const sectionPreviewHtml =
     activeDraftHeading && activeDraftBody ? buildSectionPreviewHtml(activeDraftHeading, activeDraftBody) : "";
-  const showSectionPreview =
-    Boolean(sectionPreviewHtml) &&
-    Boolean(sectionTabByDoc[selectedDoc]) &&
-    showSectionDrafts &&
-    effectiveInputsTab === "sections";
+  const showSectionPreview = Boolean(activeDraftSectionId);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
@@ -421,6 +417,9 @@ export default function BlueprintPage() {
       setCustomClientName("");
     }
     setInputsTab("inputs");
+    if (selectedDoc) {
+      setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: null }));
+    }
   }, [selectedDoc]);
 
   useEffect(() => {
@@ -595,6 +594,12 @@ export default function BlueprintPage() {
         }
       }));
       setEditedHtmlByType((prev) => ({ ...prev, [type]: doc.document_html || "" }));
+      setSectionDraftsByDoc((prev) => ({ ...prev, [type]: doc.document_markdown || "" }));
+      setDraftSectionsByDoc((prev) => ({
+        ...prev,
+        [type]: sectionsForDoc(type).map((s) => s.id)
+      }));
+      setSectionTabByDoc((prev) => ({ ...prev, [type]: null }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to open saved document");
       setIsModalOpen(true);
@@ -680,7 +685,7 @@ export default function BlueprintPage() {
     if (!selectedDoc) return;
     const heading = sectionHeadingMap(selectedDoc)[sectionId];
     const existing = heading ? draftSectionMap[heading] : "";
-    setInputsTab("sections");
+    if (!isDesktop) setInputsTab("sections");
     setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: sectionId }));
     if (existing) return;
     setDraftSectionsByDoc((prev) => {
@@ -1019,6 +1024,7 @@ export default function BlueprintPage() {
 
     const wantsSnapshot =
       selectedDoc === "business_plan" && sectionsPayload.includes("financial_snapshot");
+    setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: null }));
     await syncWorkspaceProfile();
     setIsLoading(true);
     setError(null);
@@ -1207,8 +1213,6 @@ export default function BlueprintPage() {
         ...prev,
         [selectedDoc]: mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", markdown)
       }));
-      setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: chosen[0] }));
-      setShowInputs(true);
     } catch (e) {
       const msg = String(e?.message || "").toLowerCase();
       const isNetwork = msg.includes("network") || msg.includes("failed to fetch") || msg.includes("load");
@@ -1227,10 +1231,17 @@ export default function BlueprintPage() {
     const docId = selectedDoc ? docIdByType[selectedDoc] : null;
     if (!selectedDoc || !docId) return;
     const html = editedHtmlByType[selectedDoc] || "";
+    const draftsMarkdown =
+      (selectedDoc ? sectionDraftsByDoc[selectedDoc] : "") ||
+      selectedDocResult?.document_markdown ||
+      "";
     setIsSaving(true);
     setError(null);
     try {
-      await apiRequest(`/blueprint/documents/${docId}`, "PATCH", { document_html: html });
+      await apiRequest(`/blueprint/documents/${docId}`, "PATCH", {
+        document_html: html,
+        document_markdown: draftsMarkdown
+      });
       refreshSavedDocs();
       setSavedNotice("Saved");
       setTimeout(() => setSavedNotice(null), 1800);
@@ -1564,7 +1575,11 @@ export default function BlueprintPage() {
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-sm text-slate-500">Section preview</div>
                       {selectedDocResult?.document_markdown ? (
-                        <Button variant="secondary" size="sm" onClick={() => setInputsTab("inputs")}>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: null }))}
+                        >
                           Back to document
                         </Button>
                       ) : null}
