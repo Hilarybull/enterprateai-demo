@@ -1327,7 +1327,11 @@ export default function BlueprintPage() {
   async function copyShareLink() {
     const docId = selectedDoc ? docIdByType[selectedDoc] : null;
     if (!selectedDoc || !docId) {
-      setError("Generate and save a document before sharing.");
+      const warnings = Array.isArray(selectedDocResult?.warnings) ? selectedDocResult.warnings : [];
+      const saveWarning = warnings.find((message) =>
+        String(message || "").toLowerCase().includes("could not save document")
+      );
+      setError(saveWarning || "This document has not been saved yet, so it cannot be shared.");
       return;
     }
     setShareNotice("Creating link...");

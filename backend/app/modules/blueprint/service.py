@@ -1697,8 +1697,9 @@ async def generate_blueprint(
                 model=resp.model,
             )
             resp.document_id = doc_id
-        except Exception:
-            warnings.append("Could not save document; you can still copy/download this preview.")
+        except Exception as e:
+            detail = str(e).strip() or type(e).__name__
+            warnings.append(f"Could not save document: {detail}")
         return resp
 
     # â”€â”€ Helper: enrich â†’ generate â†’ fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
