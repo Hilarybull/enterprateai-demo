@@ -204,6 +204,7 @@ export default function DocumentEditor({
   compactPreview = false,
   toolbarRightSlot = null,
   toolbarBeforeDownloadSlot = null,
+  shareMenuItems = null,
   showSaveButton = true,
   saveLabel = "Save changes",
   saveDisabled = false,
@@ -383,6 +384,29 @@ export default function DocumentEditor({
   }, [html, title, markdown]);
 
   const isCompactPreview = Boolean(compactPreview && showPaginated);
+  const shareItems = useMemo(() => {
+    const base = [
+      {
+        id: "copy_text",
+        label: "Copy text",
+        onClick: async () => {
+          const text = ref.current?.innerText || "";
+          await navigator.clipboard.writeText(text);
+        },
+      },
+    ];
+    const extra = Array.isArray(shareMenuItems) ? shareMenuItems.filter(Boolean) : [];
+    const seen = new Set();
+    const merged = [];
+    for (const it of [...extra, ...base]) {
+      const key = String(it?.id || it?.label || "");
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      if (typeof it?.onClick !== "function" || !it?.label) continue;
+      merged.push(it);
+    }
+    return merged;
+  }, [shareMenuItems]);
 
   return (
     <Card className="h-full min-h-0 flex flex-col">
@@ -399,15 +423,7 @@ export default function DocumentEditor({
             <div className="ml-auto flex flex-wrap items-center gap-2">
               {toolbarRightSlot}
 
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  const text = ref.current?.innerText || "";
-                  await navigator.clipboard.writeText(text);
-                }}
-              >
-                Copy
-              </Button>
+              <ShareMenu items={shareItems} />
 
               <select
                 className="ea-input h-10 w-[140px]"
@@ -550,15 +566,7 @@ export default function DocumentEditor({
 
           <div className="h-6 w-px bg-slate-200" />
 
-          <Button
-            variant="secondary"
-            onClick={async () => {
-              const text = ref.current?.innerText || "";
-              await navigator.clipboard.writeText(text);
-            }}
-          >
-            Copy
-          </Button>
+          <ShareMenu items={shareItems} />
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {toolbarRightSlot}
@@ -621,5 +629,48 @@ export default function DocumentEditor({
         </div>
       </div>
     </Card>
+  );
+}
+
+function ShareMenu({ items }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
+
+  useEffect(() => {
+    function onDown(e) {
+      if (!open) return;
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  if (!safeItems.length) return null;
+
+  return (
+    <div ref={rootRef} className="relative">
+      <Button variant="secondary" onClick={() => setOpen((v) => !v)}>
+        Share
+        <span className="ml-1 text-xs">▾</span>
+      </Button>
+      {open ? (
+        <div className="absolute right-0 z-30 mt-2 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+          {safeItems.map((it) => (
+            <button
+              key={it.id || it.label}
+              type="button"
+              className="w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+              onClick={async () => {
+                setOpen(false);
+                await it.onClick();
+              }}
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }

@@ -309,7 +309,7 @@ export default function BlueprintPage() {
   const [customClientName, setCustomClientName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
-  const [shareModal, setShareModal] = useState({ open: false, url: "", loading: false, error: "" });
+  const [shareNotice, setShareNotice] = useState(null);
   const [sectionsByDoc, setSectionsByDoc] = useState({
     business_plan: [],
     client_proposal: [],
@@ -1292,26 +1292,24 @@ export default function BlueprintPage() {
     }
   }
 
-  async function openShareModal() {
+  async function copyShareLink() {
     const docId = selectedDoc ? docIdByType[selectedDoc] : null;
     if (!selectedDoc || !docId) {
       setError("Generate and save a document before sharing.");
       return;
     }
-    setShareModal({ open: true, url: "", loading: true, error: "" });
+    setShareNotice("Creating link...");
     try {
       const res = await apiRequest(`/blueprint/documents/${docId}/share`, "POST");
       const token = res?.token;
       if (!token) throw new Error("Share link could not be created.");
       const url = `${window.location.origin}/share/${token}`;
-      setShareModal({ open: true, url, loading: false, error: "" });
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch {
-        // ignore clipboard failures; user can still copy manually
-      }
+      await navigator.clipboard.writeText(url);
+      setShareNotice("Link copied");
+      setTimeout(() => setShareNotice(null), 1800);
     } catch (e) {
-      setShareModal({ open: true, url: "", loading: false, error: e instanceof Error ? e.message : "Share failed" });
+      setShareNotice(null);
+      setError(e instanceof Error ? e.message : "Share failed");
     }
   }
 
@@ -1710,21 +1708,26 @@ export default function BlueprintPage() {
                         onSave={saveEdits}
                         defaultMode="preview"
                         compactPreview
-                        toolbarBeforeDownloadSlot={
-                          <Button
-                            variant="secondary"
-                            disabled={!docIdByType[selectedDoc]}
-                            onClick={openShareModal}
-                          >
-                            Share
-                          </Button>
-                        }
+                        shareMenuItems={[
+                          {
+                            id: "copy_link",
+                            label: "Copy link",
+                            onClick: copyShareLink,
+                          },
+                        ]}
                         toolbarRightSlot={
-                          savedNotice ? (
-                            <div className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                              {savedNotice}
-                            </div>
-                          ) : null
+                          <div className="flex items-center gap-2">
+                            {shareNotice ? (
+                              <div className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
+                                {shareNotice}
+                              </div>
+                            ) : null}
+                            {savedNotice ? (
+                              <div className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                                {savedNotice}
+                              </div>
+                            ) : null}
+                          </div>
                         }
                         saveLabel={isSaving ? "Saving..." : "Save changes"}
                         saveDisabled={!docIdByType[selectedDoc] || isSaving}
@@ -2207,63 +2210,6 @@ export default function BlueprintPage() {
             </div>
           </div>
 
-          {shareModal.open ? (
-            <div
-              className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4"
-              onMouseDown={(e) => {
-                if (e.target === e.currentTarget) setShareModal((p) => ({ ...p, open: false, error: "" }));
-              }}
-            >
-              <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">Share link</div>
-                    <div className="mt-1 text-xs text-slate-500">Anyone with this link can view the document.</div>
-                  </div>
-                  <button
-                    type="button"
-                    className="rounded-lg px-2 py-1 text-sm text-slate-600 hover:bg-slate-100"
-                    onClick={() => setShareModal((p) => ({ ...p, open: false, error: "" }))}
-                  >
-                    Close
-                  </button>
-                </div>
-
-                <div className="mt-4">
-                  {shareModal.loading ? (
-                    <div className="flex items-center gap-2 text-sm text-slate-600">
-                      <Spinner size={16} /> Creating share link...
-                    </div>
-                  ) : shareModal.error ? (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                      {shareModal.error}
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <input
-                        value={shareModal.url}
-                        readOnly
-                        className="ea-input flex-1"
-                        onFocus={(e) => e.target.select()}
-                      />
-                      <Button
-                        variant="secondary"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(shareModal.url);
-                          } catch {
-                            // ignore
-                          }
-                        }}
-                      >
-                        Copy
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : null}
         </div>
       ) : null}
     </div>
