@@ -822,7 +822,8 @@ export default function BlueprintPage() {
   }
 
   function buildSectionPreviewHtml(title, body) {
-    const heading = stripMarkdown(title || "");
+    const isSalesLetter = selectedDoc === "sales_letter";
+    const heading = isSalesLetter ? "" : stripMarkdown(title || "");
     const cleaned = String(body || "").replaceAll("\r\n", "\n").trim();
     if (!heading && !cleaned) return "";
     const paragraphs = cleaned.split(/\n{2,}/g).map((p) => p.trim()).filter(Boolean);

@@ -48,6 +48,10 @@ OUTPUT REQUIREMENTS (STRICT)
 - Do NOT output Markdown tables.
 - Insert a page break after the cover page using: <div class="page-break"></div>
 - Avoid unnecessary hyphens in prose.
+- Cover Page must be concise and informational (no long narrative paragraphs):
+  - Include only 4â€“8 short lines (e.g., Proposal Title, Prepared by, Prepared for, Contact, Service focus).
+  - Do NOT include confidentiality statements, disclaimers, or repeated introductions.
+  - Do NOT restate the full proposal context here; keep narrative for the Executive Summary.
 
 COMPREHENSIVENESS STANDARD
 Each generated section must be substantive and decision-ready.
@@ -66,5 +70,5 @@ FINAL CHECK BEFORE OUTPUT (MANDATORY)
 - All claims trace back to INPUTS
 - Output includes only selected sections (if specified)
 - Uses required headings and page breaks
+- No repeated paragraphs or repeated "this proposal" introductions; each section must add new information.
 """
-

@@ -50,16 +50,48 @@ def _expand_note(*, field: str, text: str, company: str, industry: str, target_m
     when inputs are one-liners or when the LLM is unavailable.
     """
     t = _safe_text(text)
+
+    c = company or "the business"
+    i = industry or "the industry"
+    tm = target_market or "the target customer"
+
+    # If the user provided nothing, fall back to a general, non-claiming note that
+    # still gives the generator enough context to produce usable prose.
     if not t:
+        if field == "problem":
+            return (
+                f"In {i}, many {tm} struggle with inconsistency, unclear expectations, and the time cost of managing vendors. "
+                f"When delivery is unpredictable, quality slips, issues take longer to resolve, and teams lose confidence in the provider.\n\n"
+                f"{c} addresses this by defining a clear standard of service and removing uncertainty around what is delivered, when it is delivered, "
+                f"and how quality is verified."
+            )
+        if field == "solution":
+            return (
+                f"{c} is built around a repeatable, standards-based process rather than ad-hoc effort. "
+                f"Each engagement follows the same disciplined sequence so customers know what to expect and can rely on consistent outcomes.\n\n"
+                f"Operationally, delivery is supported by checklists, quality assurance, and clear communication before and after service so issues are caught early "
+                f"and resolved quickly."
+            )
+        if field == "value_proposition":
+            return (
+                f"{c} differentiates by reducing uncertainty for {tm}: clear standards, dependable delivery, and proactive communication. "
+                f"The promise is simple â€” consistent results without extra oversight, and a service experience that is easy to buy, easy to deliver, and easy to measure."
+            )
+        if field == "hook":
+            return (
+                f"What if your next service decision removed the day-to-day hassle, without compromising standards? "
+                f"{c} is designed for {tm} who value predictable outcomes, clear communication, and a provider they can rely on."
+            )
+        if field == "target_market":
+            return (
+                f"{tm} is the focus segment because reliability, speed of response, and consistency matter. "
+                f"Messaging should emphasise clear standards, transparent expectations, and predictable delivery."
+            )
         return ""
 
     # If user gave substantial content, keep it (but we still treat as notes).
     if len(t) >= 120:
         return t
-
-    c = company or "the business"
-    i = industry or "the industry"
-    tm = target_market or "the target customer"
 
     if field == "problem":
         return (
@@ -121,6 +153,51 @@ def _expand_note(*, field: str, text: str, company: str, industry: str, target_m
     # Default: turn the fragment into a usable note.
     return (
         f"{t.capitalize().rstrip('.')} is treated as an initial assumption. {c} will validate it quickly and adjust based on customer feedback and delivery learnings."
+    )
+
+
+def _looks_like_clarification_or_refusal(text: str) -> bool:
+    """
+    Detects common "asking the user for more inputs" or refusal/meta responses that should never
+    appear in generated blueprint content.
+    """
+    val = _safe_text(text).lower()
+    if not val:
+        return True
+
+    needles = (
+        "it looks like your message got cut off",
+        "your message appears to be incomplete",
+        "you didn't include",
+        "could you please share",
+        "please share the relevant inputs",
+        "please provide the relevant business details",
+        "once you provide those details",
+        "i'm sorry, i'm not able",
+        "i'm not able to",
+        "i can't",
+        "i cannot",
+        "as an ai",
+        "outside what i'm built",
+        "falls outside what i'm built",
+        "better results using",
+        "you might find better results",
+        "i'm designed specifically",
+    )
+    return any(n in val for n in needles)
+
+
+def _sales_letter_benefits_fallback(*, company: str, target_market: str) -> str:
+    c = company or "the business"
+    tm = target_market or "your team"
+    return "\n".join(
+        [
+            f"- Consistent outcomes your {tm} can rely on",
+            "- Clear expectations before work begins, so delivery stays predictable",
+            "- Quality checks that reduce rework and prevent issues from slipping through",
+            "- Communication that keeps you informed without adding extra admin",
+            f"- A service experience designed to be easy to buy, easy to deliver, and easy to measure with {c}",
+        ]
     )
 
 
@@ -496,6 +573,43 @@ def _ensure_client_proposal_format(doc: str) -> str:
             lines.insert(exec_idx, "")
 
     return "\n".join(lines)
+
+
+def _normalize_client_proposal_cover_page(
+    doc: str,
+    *,
+    proposal_title: str,
+    company_name: str,
+    client_name: str,
+    contact_details: str,
+    selected_services_focus: str,
+) -> str:
+    if not doc:
+        return doc
+
+    preamble, sections = _extract_section_map(doc)
+
+    # Ensure a stable title line and a concise cover page block (no long narrative / repetition).
+    title = f"# Proposal for {(_safe_text(client_name) or 'Client').strip()}"
+    cover_lines: list[str] = []
+    if _safe_text(proposal_title):
+        cover_lines.append(f"Proposal Title â€” {_safe_text(proposal_title)}")
+    cover_lines.append(f"Prepared by â€” {_safe_text(company_name) or 'Prepared by'}")
+    cover_lines.append(f"Prepared for â€” {_safe_text(client_name) or 'Client name to be confirmed'}")
+    if _safe_text(selected_services_focus):
+        cover_lines.append(f"Service focus â€” {_safe_text(selected_services_focus)}")
+    if _safe_text(contact_details):
+        cover_lines.append(f"Contact â€” {_safe_text(contact_details)}")
+
+    cover_body = "\n".join(cover_lines).strip()
+    if cover_body:
+        cover_body = f"{cover_body}\n<div class=\"page-break\"></div>"
+
+    sections["## Cover Page"] = cover_body
+
+    ordered = [h for h in CLIENT_PROPOSAL_HEADINGS if h in sections]
+    rebuilt = "\n\n".join([title, ""] + [f"{h}\n{(sections[h] or '').strip()}".rstrip() for h in ordered]).strip()
+    return rebuilt
 
 
 def _narrative_fallback(title: str) -> str:
@@ -1730,6 +1844,15 @@ async def generate_blueprint(
             warnings=warnings,
             target_words=650 if len(wanted_headings) <= 2 else 520,
         )
+        doc = _normalize_client_proposal_cover_page(
+            doc,
+            proposal_title=proposal_title,
+            company_name=company,
+            client_name=client_name,
+            contact_details=contact_details,
+            selected_services_focus=selected_services_text,
+        )
+        doc = _ensure_client_proposal_format(doc)
 
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
@@ -1790,18 +1913,25 @@ async def generate_blueprint(
         subject_line = _safe_text(getattr(payload, "subject_lines", None)) or objective
         followup_sequence = _safe_text(getattr(payload, "followup_sequence", None))
 
+        section_guard = (
+            "Write the requested content as final sales-letter copy. "
+            "Do NOT ask the user for more inputs. "
+            "Do NOT mention missing information. "
+            "Do NOT refer to policies, tools, or being an AI. "
+            "If details are limited, write general, non-claiming prose that still reads like a real letter."
+        )
         section_prompts = {
-            "headline": f"Write a {tone} headline line for a sales letter from {company} to {client_name}.",
-            "hook": f"Write a {tone} opening hook for a sales letter from {company} to {client_name}.",
-            "problem": f"Write a concise problem statement for {client_name} based on: {sl_problem_note}",
-            "solution": f"Write a concise solution introduction based on: {sl_solution_note}",
-            "benefits": f"Write bullet-point benefits (no numbers) for: {sl_value_note}",
-            "proof": f"Write a credibility paragraph (no numbers) for {company}. {extra}",
-            "offer": f"Write a single-sentence offer for {company}: {offer_text}",
-            "cta": f"Write a single-sentence call to action for {company}.",
-            "urgency": f"Write a single-sentence urgency line (no dates).",
-            "closing": f"Write a warm closing paragraph for a sales letter.",
-            "followup": f"Summarise this follow-up sequence in one or two sentences: {followup_sequence}",
+            "headline": f"{section_guard} Write a {tone} headline line for a sales letter from {company} to {client_name}.",
+            "hook": f"{section_guard} Write a {tone} opening hook paragraph for a sales letter from {company} to {client_name}. Context: {sl_hook_note}",
+            "problem": f"{section_guard} Write a concise problem statement for {client_name}. Context: {sl_problem_note}",
+            "solution": f"{section_guard} Write a concise solution introduction. Context: {sl_solution_note}",
+            "benefits": f"{section_guard} Write bullet-point benefits (no numbers). Context: {sl_value_note}",
+            "proof": f"{section_guard} Write a credibility paragraph (no numbers) for {company}. {extra}",
+            "offer": f"{section_guard} Write a single-sentence offer for {company}. Context: {offer_text}",
+            "cta": f"{section_guard} Write a single-sentence call to action for {company}.",
+            "urgency": f"{section_guard} Write a single-sentence urgency line (no dates).",
+            "closing": f"{section_guard} Write a warm closing paragraph for a sales letter.",
+            "followup": f"{section_guard} Summarise this follow-up sequence in one or two sentences: {followup_sequence}",
         }
 
         if payload.sections:
@@ -1832,6 +1962,32 @@ async def generate_blueprint(
                 )
                 if sid == "benefits" and text:
                     text = _ensure_bullets(text)
+                if _looks_like_clarification_or_refusal(text):
+                    if sid == "headline":
+                        text = _narrative_fallback("headline")
+                    elif sid == "hook":
+                        text = sl_hook_note
+                    elif sid == "problem":
+                        text = sl_problem_note
+                    elif sid == "solution":
+                        text = sl_solution_note
+                    elif sid == "benefits":
+                        text = _sales_letter_benefits_fallback(company=company, target_market=target)
+                    elif sid == "proof":
+                        text = _narrative_fallback("proof")
+                    elif sid == "offer":
+                        text = _narrative_fallback("offer")
+                    elif sid == "cta":
+                        text = _narrative_fallback("cta")
+                    elif sid == "urgency":
+                        text = _narrative_fallback("urgency")
+                    elif sid == "closing":
+                        text = _narrative_fallback("closing")
+                    elif sid == "followup":
+                        text = (
+                            _safe_text(followup_sequence)
+                            or "We will follow up with a brief reminder and recap of the key value, with a low-commitment invitation to connect."
+                        )
                 if not text:
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1880,6 +2036,9 @@ async def generate_blueprint(
             allow_fallback=False,
             skip_fill_keys={"subject_line", "followup_sequence"},
         )
+        if _looks_like_clarification_or_refusal(doc):
+            warnings.append("Sales letter generation returned meta/clarification text; using deterministic fallback.")
+            doc = _render_template_with_fallback(SALES_LETTER_TEMPLATE, raw_inputs)
         doc = _normalize_sales_letter(
             doc,
             date_line=today,
