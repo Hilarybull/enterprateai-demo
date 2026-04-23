@@ -4,6 +4,7 @@ import Spinner from "../components/Spinner";
 import Button from "../components/Button";
 import { apiRequest } from "../api/client";
 import html2pdf from "html2pdf.js";
+import enterprateLogo from "../enterprate-logo.png";
 
 function escapeHtml(s) {
   return String(s || "")
@@ -290,17 +291,28 @@ export default function SharedBlueprintPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-5xl px-6 py-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-lg font-semibold text-slate-900">{title}</div>
-          </div>
+      <div className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-6 py-4">
           <div className="flex items-center gap-2">
-            <Button variant="secondary" disabled={loading || downloading || !bodyHtml.trim()} onClick={downloadPdf}>
-              {downloading ? "Preparing..." : "Download PDF"}
-            </Button>
+            <img
+              src={enterprateLogo}
+              alt="EnterprateAI"
+              className="h-8 w-8 rounded-lg"
+            />
+            <div className="text-sm font-semibold text-slate-900">EnterprateAI</div>
           </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-slate-900">{title}</div>
+          </div>
+
+          <Button variant="secondary" disabled={loading || downloading || !bodyHtml.trim()} onClick={downloadPdf}>
+            {downloading ? "Preparing..." : "Download PDF"}
+          </Button>
         </div>
+      </div>
+
+      <div className="mx-auto max-w-5xl px-6 py-6">
 
         {loading ? (
           <div className="mt-6 flex items-center justify-center rounded-2xl border border-slate-200 bg-white p-8">
