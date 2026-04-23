@@ -19,6 +19,8 @@ STRICT REQUIREMENTS:
 STYLE:
 - Warm, persuasive, and direct.
 - Short paragraphs that read naturally in a letter format.
+- Do NOT use horizontal rules like --- as separators.
+- Avoid unnecessary hyphens or dashes in prose (prefer full stops and commas).
 
 OUTPUT FORMAT:
 - Valid Markdown only.

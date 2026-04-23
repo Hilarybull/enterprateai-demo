@@ -340,8 +340,14 @@ def _clean_document(doc: str) -> str:
     Light post-processing for readability:
     - collapse excessive blank lines
     - remove consecutive duplicate paragraphs
+    - remove markdown horizontal rules
+    - reduce excessive dash usage in prose
     """
     text = (doc or "").strip()
+    # Remove markdown horizontal rules like "---" that often appear as visual separators.
+    text = re.sub(r"(?m)^\s*([-*_])\1\1+\s*$\n?", "", text)
+    # Replace em dashes with simple punctuation to avoid "dashy" documents.
+    text = text.replace("—", ", ")
     text = re.sub(r"\n{3,}", "\n\n", text)
     parts = [p.strip() for p in text.split("\n\n") if p.strip()]
     cleaned: list[str] = []
@@ -722,17 +728,33 @@ def _normalize_client_proposal_cover_page(
 
     preamble, sections = _extract_section_map(doc)
 
+    def _display_name(value: str) -> str:
+        val = _safe_text(value)
+        if not val:
+            return ""
+        if "@" in val:
+            return val
+        if val == val.lower() or val == val.upper():
+            return val.title()
+        return val
+
     # Ensure a stable title line and a concise cover page block (no long narrative / repetition).
-    title = f"# Proposal for {(_safe_text(client_name) or 'Client').strip()}"
+    display_client = _display_name(client_name) or "Client"
+    title = f"# Proposal for {display_client}"
     cover_lines: list[str] = []
-    if _safe_text(proposal_title):
-        cover_lines.append(f"Proposal Title â€” {_safe_text(proposal_title)}")
-    cover_lines.append(f"Prepared by â€” {_safe_text(company_name) or 'Prepared by'}")
-    cover_lines.append(f"Prepared for â€” {_safe_text(client_name) or 'Client name to be confirmed'}")
+    safe_proposal_title = _safe_text(proposal_title)
+    if safe_proposal_title:
+        expected = f"Proposal for {_safe_text(client_name)}".strip().lower()
+        if expected and safe_proposal_title.strip().lower() == expected:
+            safe_proposal_title = f"Proposal for {display_client}"
+        cover_lines.append(f"Proposal Title: {safe_proposal_title}")
+    cover_lines.append(f"Prepared by: {_display_name(company_name) or _safe_text(company_name) or 'Prepared by'}")
+    cover_lines.append(f"Prepared for: {display_client}")
     if _safe_text(selected_services_focus):
-        cover_lines.append(f"Service focus â€” {_safe_text(selected_services_focus)}")
+        focus = _safe_text(selected_services_focus).replace(" - ", ", ")
+        cover_lines.append(f"Service focus: {focus}")
     if _safe_text(contact_details):
-        cover_lines.append(f"Contact â€” {_safe_text(contact_details)}")
+        cover_lines.append(f"Contact: {_safe_text(contact_details)}")
 
     cover_body = "\n".join(cover_lines).strip()
     if cover_body:
@@ -1839,6 +1861,28 @@ async def generate_blueprint(
             target_words=750 if len(wanted_headings) <= 2 else 650,
         )
 
+        contact_details = ""
+        if isinstance(workspace_profile, dict):
+            contact_parts = [
+                _safe_text(workspace_profile.get("email")),
+                _safe_text(workspace_profile.get("phone_number")),
+                _safe_text(workspace_profile.get("website")),
+            ]
+            contact_details = " | ".join([p for p in contact_parts if p])
+
+        cover_lines: list[str] = []
+        if _safe_text(raw_inputs.get("primary_industry")):
+            cover_lines.append(f"Industry: {_safe_text(raw_inputs.get('primary_industry'))}")
+        if _safe_text(raw_inputs.get("location")):
+            cover_lines.append(f"Location: {_safe_text(raw_inputs.get('location'))}")
+        if _safe_text(raw_inputs.get("registration_status")):
+            cover_lines.append(f"Registration: {_safe_text(raw_inputs.get('registration_status'))}")
+        if contact_details:
+            cover_lines.append(f"Contact: {contact_details}")
+        cover_lines.append(f"Prepared on: {today}")
+
+        doc = _apply_cover_page(doc, title=f"Business Plan for {company}", lines=cover_lines)
+
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
         )
@@ -2185,11 +2229,11 @@ async def generate_blueprint(
             subject_line=subject_line,
         )
         signature_lines = [
-            _safe_text(getattr(payload, "sender_name", None)) or "Client Services Team",
-            _safe_text(getattr(payload, "sender_position", None)) or "Client Services",
+            _safe_text(getattr(payload, "sender_name", None)) or "",
+            _safe_text(getattr(payload, "sender_position", None)) or "",
             company,
-            _safe_text(getattr(payload, "sender_phone", None)) or "",
             _safe_text(getattr(payload, "sender_email", None)) or "",
+            _safe_text(getattr(payload, "sender_phone", None)) or "",
             _safe_text(getattr(payload, "sender_website", None)) or "",
         ]
         doc = _inject_signature_block(doc, signature_lines)

@@ -52,7 +52,8 @@ OUTPUT REQUIREMENTS (STRICT)
 - Prefer prose paragraphs; use bullet points sparingly.
 - Do NOT output Markdown tables.
 - Insert a page break between major sections using: <div class="page-break"></div>
-- Avoid unnecessary hyphens in prose.
+- Do NOT use horizontal rules like --- as separators.
+- Avoid unnecessary hyphens or dashes in prose (prefer full stops and commas).
 
 COMPREHENSIVENESS STANDARD
 Each generated section must be comprehensive and specific to the INPUTS.
@@ -74,4 +75,3 @@ FINAL CHECK BEFORE OUTPUT (MANDATORY)
 - Output includes only selected sections (if specified)
 - Uses required headings and page breaks
 """
-

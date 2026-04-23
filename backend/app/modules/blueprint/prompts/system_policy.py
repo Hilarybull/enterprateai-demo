@@ -36,6 +36,8 @@ DEPTH AND READABILITY
 - Prefer short paragraphs. Use bullet lists only where they improve clarity.
 - Avoid overly generic filler; anchor each paragraph in the specific inputs provided.
 - Do not repeat the same paragraph across multiple sections.
+- Do not use Markdown horizontal rules (---) or decorative separators.
+- Avoid heavy use of hyphens or dashes in prose; prefer full stops and commas.
 
 ALLOWED NARRATIVE ENHANCEMENT
 - You may add general, non-claiming context that does not introduce new facts.
