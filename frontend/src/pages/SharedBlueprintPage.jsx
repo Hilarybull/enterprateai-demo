@@ -294,12 +294,12 @@ export default function SharedBlueprintPage() {
       <div className="fixed left-0 right-0 top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="grid w-full grid-cols-[auto,1fr,auto] items-center gap-3 px-4 py-3 sm:px-6">
           <div className="flex items-center justify-self-start">
-            <div className="h-11 w-11 overflow-hidden">
+            <div className="h-10 w-10 overflow-hidden sm:h-12 sm:w-12">
               <img
                 src={enterprateLogo}
                 alt="EnterprateAI"
-                className="h-11 w-auto object-left"
-                style={{ objectFit: "none", objectPosition: "left center" }}
+                className="h-full w-full object-cover"
+                style={{ objectPosition: "left center" }}
               />
             </div>
           </div>
