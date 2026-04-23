@@ -1095,27 +1095,32 @@ export default function BlueprintPage() {
             }));
           } else {
             // For sales letters, keep section drafts separate (they are generated via section tiles).
-            // Populate them immediately after full letter generation so the right panel always has tiles/snippets.
-            const resDrafts = await apiRequestWithRetry(
-              "/blueprint/generate",
-              "POST",
-              {
-                ...generateBody,
-                sections: sectionsForDoc(selectedDoc).map((s) => s.id),
-              },
-              { timeoutMs: 900000 }
-            );
-            const draftsMarkdown = resDrafts?.document_markdown || "";
-            if (draftsMarkdown) {
-              setSectionDraftsByDoc((prev) => {
-                const merged = mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", draftsMarkdown);
-                return { ...prev, [selectedDoc]: merged };
-              });
-              setDraftSectionsByDoc((prev) => ({
-                ...prev,
-                [selectedDoc]: sectionsForDoc(selectedDoc).map((s) => s.id)
-              }));
-            }
+            // Populate drafts best-effort; do not block or fail the full letter preview if drafts fail.
+            void (async () => {
+              try {
+                const resDrafts = await apiRequestWithRetry(
+                  "/blueprint/generate",
+                  "POST",
+                  {
+                    ...generateBody,
+                    sections: sectionsForDoc(selectedDoc).map((s) => s.id),
+                  },
+                  { timeoutMs: 900000 }
+                );
+                const draftsMarkdown = resDrafts?.document_markdown || "";
+                if (!draftsMarkdown) return;
+                setSectionDraftsByDoc((prev) => {
+                  const merged = mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", draftsMarkdown);
+                  return { ...prev, [selectedDoc]: merged };
+                });
+                setDraftSectionsByDoc((prev) => ({
+                  ...prev,
+                  [selectedDoc]: sectionsForDoc(selectedDoc).map((s) => s.id)
+                }));
+              } catch {
+                // ignore
+              }
+            })();
           }
 
 	        // Preview behavior depends on whether the user selected sections.

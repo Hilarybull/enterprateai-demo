@@ -2204,6 +2204,33 @@ async def generate_blueprint(
                             _safe_text(followup_sequence)
                             or "We will follow up with a brief reminder and recap of the key value, with a low-commitment invitation to connect."
                         )
+                if not _safe_text(text):
+                    # Never hard-fail section drafts; fall back to deterministic copy so the UI can still populate tiles.
+                    if sid == "headline":
+                        text = _narrative_fallback("headline")
+                    elif sid == "hook":
+                        text = sl_hook_note
+                    elif sid == "problem":
+                        text = sl_problem_note
+                    elif sid == "solution":
+                        text = sl_solution_note
+                    elif sid == "benefits":
+                        text = _sales_letter_benefits_fallback(company=company, target_market=target)
+                    elif sid == "proof":
+                        text = _narrative_fallback("proof")
+                    elif sid == "offer":
+                        text = _narrative_fallback("offer")
+                    elif sid == "cta":
+                        text = _narrative_fallback("cta")
+                    elif sid == "urgency":
+                        text = _narrative_fallback("urgency")
+                    elif sid == "closing":
+                        text = _narrative_fallback("closing")
+                    elif sid == "followup":
+                        text = (
+                            _safe_text(followup_sequence)
+                            or "We will follow up with a brief reminder and recap of the key value, with a low-commitment invitation to connect."
+                        )
                 text = _clean_sales_letter_snippet(
                     sid=sid,
                     text=text,
@@ -2211,11 +2238,8 @@ async def generate_blueprint(
                     client_name=client_name,
                     target_market=target,
                 )
-                if not text:
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail="AI generation failed for Sales Letter section draft. Check provider credentials and try again.",
-                    )
+                if not _safe_text(text):
+                    text = _strict_fallback_text()
                 outputs.append(f"## {section_titles.get(sid, sid)}\n{text}")
 
             doc = f"# Sales Letter — {company}\n{today}\n\n" + "\n\n".join(outputs)
