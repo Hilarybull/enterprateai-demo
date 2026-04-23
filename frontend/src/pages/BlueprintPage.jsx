@@ -409,10 +409,21 @@ export default function BlueprintPage() {
   async function refreshSavedDocs() {
     try {
       const res = await apiRequest("/blueprint/documents?limit=30", "GET");
-      setSavedDocs(Array.isArray(res) ? res : []);
+      const docs = Array.isArray(res) ? res : [];
+      setSavedDocs(docs);
+      return docs;
     } catch {
       // ignore
+      return [];
     }
+  }
+
+  function expectedDocumentTitle(docId, company) {
+    const name = String(company || "").trim() || "Untitled";
+    if (docId === "business_plan") return `Business Plan — ${name}`;
+    if (docId === "client_proposal") return `Business Proposal — ${name}`;
+    if (docId === "sales_letter") return `Sales Letter — ${name}`;
+    return `Document — ${name}`;
   }
 
   useEffect(() => {
@@ -1111,7 +1122,25 @@ export default function BlueprintPage() {
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
       };
       const res = await apiRequestWithRetry("/blueprint/generate", "POST", generateBody, { timeoutMs: 900000 });
-      if (res?.document_id) setDocIdByType((prev) => ({ ...prev, [selectedDoc]: res.document_id }));
+      let resolvedDocumentId = res?.document_id || null;
+      if (!resolvedDocumentId) {
+        const latestDocs = await refreshSavedDocs();
+        const expectedTitle = expectedDocumentTitle(selectedDoc, resolvedCompanyName);
+        const matchedDoc =
+          latestDocs.find((doc) =>
+            doc?.type === selectedDoc &&
+            String(doc?.title || "").trim() === expectedTitle &&
+            String(doc?.company_name || "").trim().toLowerCase() === resolvedCompanyName.trim().toLowerCase()
+          ) ||
+          latestDocs.find((doc) =>
+            doc?.type === selectedDoc &&
+            String(doc?.company_name || "").trim().toLowerCase() === resolvedCompanyName.trim().toLowerCase()
+          );
+        resolvedDocumentId = matchedDoc?.id || null;
+      }
+      if (resolvedDocumentId) {
+        setDocIdByType((prev) => ({ ...prev, [selectedDoc]: resolvedDocumentId }));
+      }
       setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: "" }));
 	      const incomingMarkdown =
 	        res?.document_markdown || (res?.document_html ? htmlToPseudoMarkdown(res.document_html) : "");
@@ -1164,14 +1193,28 @@ export default function BlueprintPage() {
 	            ...prev,
 	            [selectedDoc]: {
 	              ...res,
+	              document_id: resolvedDocumentId,
 	              document_markdown: incomingMarkdown,
 	              document_html: (res.document_html ?? null),
 	            }
 	          };
 	        });
 	      } else {
-	        setDocByType((prev) => ({ ...prev, [selectedDoc]: res }));
+	        setDocByType((prev) => ({
+            ...prev,
+            [selectedDoc]: {
+              ...res,
+              document_id: resolvedDocumentId,
+            },
+          }));
 	      }
+      if (!resolvedDocumentId) {
+        const warnings = Array.isArray(res?.warnings) ? res.warnings : [];
+        const saveWarning = warnings.find((message) =>
+          String(message || "").toLowerCase().includes("could not save document")
+        );
+        if (saveWarning) setError(saveWarning);
+      }
       setShowInputs(false);
       refreshSavedDocs();
     } catch (e) {
