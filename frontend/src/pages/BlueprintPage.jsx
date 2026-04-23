@@ -1017,11 +1017,14 @@ export default function BlueprintPage() {
     }
 
 	    // Sections behavior:
-	    // - If user selected specific sections: generate ONLY those, and preview ONLY those.
-	    // - If user selected none: generate full document (all sections), and preview all.
+	    // - For narrative docs (business plan / proposal): allow section-scoped generation.
+	    // - For sales letters: always generate the full letter (section drafts are handled separately).
 	    const chosenSections = sectionsByDoc[selectedDoc] || [];
 	    const userSelectedSections = chosenSections.length > 0;
-	    const sectionsPayload = userSelectedSections ? chosenSections : sectionsForDoc(selectedDoc).map((s) => s.id);
+	    const sectionsPayload =
+	      selectedDoc === "sales_letter"
+	        ? null
+	        : (userSelectedSections ? chosenSections : sectionsForDoc(selectedDoc).map((s) => s.id));
 
     const wantsSnapshot =
       selectedDoc === "business_plan" && sectionsPayload.includes("financial_snapshot");
@@ -1033,7 +1036,7 @@ export default function BlueprintPage() {
     // so that partial re-generates don't wipe previously generated sections from preview
     try {
       // FIX 4: Use retry wrapper
-      const res = await apiRequestWithRetry("/blueprint/generate", "POST", {
+      const generateBody = {
         type: selectedDoc,
         company_name: resolvedCompanyName,
         industry: resolvedIndustry,
@@ -1072,21 +1075,52 @@ export default function BlueprintPage() {
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
         sections: sectionsPayload,
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
-      }, { timeoutMs: 900000 });
+      };
+      const res = await apiRequestWithRetry("/blueprint/generate", "POST", generateBody, { timeoutMs: 900000 });
       if (res?.document_id) setDocIdByType((prev) => ({ ...prev, [selectedDoc]: res.document_id }));
       setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: "" }));
 	      const incomingMarkdown =
 	        res?.document_markdown || (res?.document_html ? htmlToPseudoMarkdown(res.document_html) : "");
 	      if (incomingMarkdown) {
-	        // Always merge into section drafts so previously generated sections remain available as tiles.
-	        setSectionDraftsByDoc((prev) => {
-	          const merged = mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", incomingMarkdown);
-	          return { ...prev, [selectedDoc]: merged };
-	        });
-	        setDraftSectionsByDoc((prev) => ({
-	          ...prev,
-	          [selectedDoc]: sectionsForDoc(selectedDoc).map((s) => s.id)
-	        }));
+          if (selectedDoc !== "sales_letter") {
+            // Always merge into section drafts so previously generated sections remain available as tiles.
+            setSectionDraftsByDoc((prev) => {
+              const merged = mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", incomingMarkdown);
+              return { ...prev, [selectedDoc]: merged };
+            });
+            setDraftSectionsByDoc((prev) => ({
+              ...prev,
+              [selectedDoc]: sectionsForDoc(selectedDoc).map((s) => s.id)
+            }));
+          } else {
+            // For sales letters, keep section drafts separate (they are generated via section tiles).
+            // Optionally backfill all section drafts in the background so tiles populate without affecting the full letter view.
+            void (async () => {
+              try {
+                const resDrafts = await apiRequestWithRetry(
+                  "/blueprint/generate",
+                  "POST",
+                  {
+                    ...generateBody,
+                    sections: sectionsForDoc(selectedDoc).map((s) => s.id),
+                  },
+                  { timeoutMs: 900000 }
+                );
+                const draftsMarkdown = resDrafts?.document_markdown || "";
+                if (!draftsMarkdown) return;
+                setSectionDraftsByDoc((prev) => {
+                  const merged = mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", draftsMarkdown);
+                  return { ...prev, [selectedDoc]: merged };
+                });
+                setDraftSectionsByDoc((prev) => ({
+                  ...prev,
+                  [selectedDoc]: sectionsForDoc(selectedDoc).map((s) => s.id)
+                }));
+              } catch {
+                // ignore
+              }
+            })();
+          }
 
 	        // Preview behavior depends on whether the user selected sections.
 	        // If they selected specific sections, show ONLY the generated subset.
@@ -1386,6 +1420,21 @@ export default function BlueprintPage() {
           return next;
         });
         setEditedHtmlByType((prev) => {
+          const next = { ...prev };
+          delete next[typeHint];
+          return next;
+        });
+        setSectionDraftsByDoc((prev) => {
+          const next = { ...prev };
+          delete next[typeHint];
+          return next;
+        });
+        setDraftSectionsByDoc((prev) => {
+          const next = { ...prev };
+          delete next[typeHint];
+          return next;
+        });
+        setSectionTabByDoc((prev) => {
           const next = { ...prev };
           delete next[typeHint];
           return next;

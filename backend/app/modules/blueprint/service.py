@@ -201,6 +201,139 @@ def _sales_letter_benefits_fallback(*, company: str, target_market: str) -> str:
     )
 
 
+def _strip_md_noise_lines(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            out.append("")
+            continue
+        if stripped in {"---", "***"}:
+            continue
+        if re.match(r"^\s*#{1,6}\s+", stripped):
+            continue
+        out.append(line.rstrip())
+    # collapse blank lines
+    cleaned: list[str] = []
+    for line in out:
+        if not line.strip():
+            if cleaned and cleaned[-1] == "":
+                continue
+            cleaned.append("")
+        else:
+            cleaned.append(line.strip())
+    while cleaned and cleaned[0] == "":
+        cleaned.pop(0)
+    while cleaned and cleaned[-1] == "":
+        cleaned.pop()
+    return cleaned
+
+
+def _strip_salutation_and_signoff(text: str) -> str:
+    if not text:
+        return text
+    lines = text.splitlines()
+    # Remove a leading "Dear ..." block if present.
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines) and re.match(r"^\s*dear\b", lines[i], re.IGNORECASE):
+        i += 1
+        while i < len(lines) and lines[i].strip():
+            i += 1
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+        lines = lines[i:]
+
+    # Remove common sign-off blocks at the end.
+    signoff_idx = None
+    for j, line in enumerate(lines):
+        if re.match(r"^\s*(warm|kind|best)\s+regards\b", line, re.IGNORECASE):
+            signoff_idx = j
+            break
+        if re.match(r"^\s*sincerely\b", line, re.IGNORECASE):
+            signoff_idx = j
+            break
+    if signoff_idx is not None:
+        lines = lines[:signoff_idx]
+
+    return "\n".join(lines).strip()
+
+
+def _first_sentence(text: str) -> str:
+    val = _safe_text(text)
+    if not val:
+        return ""
+    compact = re.sub(r"\s+", " ", val).strip()
+    m = re.search(r"([.!?])\s", compact)
+    if not m:
+        return compact
+    end = m.end(1)
+    return compact[:end].strip()
+
+
+def _clean_sales_letter_snippet(*, sid: str, text: str, company: str, client_name: str, target_market: str) -> str:
+    raw = _safe_text(text)
+    if not raw:
+        return ""
+
+    # Remove obvious meta/prefaces.
+    raw = re.sub(r"^\s*here is (a|the)\b.*?\n+", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"^\s*sales letter\s*[:\u2014-].*?\n+", "", raw, flags=re.IGNORECASE)
+
+    raw = _strip_salutation_and_signoff(raw)
+    lines = _strip_md_noise_lines(raw.splitlines())
+    cleaned = "\n".join(lines).strip()
+
+    # Benefits should be bullets only.
+    if sid == "benefits":
+        bullet_lines = [l for l in cleaned.splitlines() if l.strip().startswith(("- ", "• "))]
+        if bullet_lines:
+            return _ensure_bullets("\n".join(bullet_lines))
+        return _sales_letter_benefits_fallback(company=company, target_market=target_market)
+
+    # Keep these as a single sentence.
+    if sid in {"offer", "cta", "urgency"}:
+        return _first_sentence(cleaned)
+
+    return cleaned
+
+
+def _clean_sales_letter_full_text(text: str) -> str:
+    raw = _safe_text(text)
+    if not raw:
+        return ""
+
+    # Remove obvious headings and separators the model sometimes injects.
+    raw = re.sub(r"^\s*sales letter\s*[:\u2014-].*?$", "", raw, flags=re.IGNORECASE | re.MULTILINE)
+    raw = raw.replace("\r\n", "\n")
+
+    raw = _strip_salutation_and_signoff(raw)
+
+    lines = _strip_md_noise_lines(raw.splitlines())
+    label_only = {
+        "headline",
+        "opening / hook",
+        "opening/hook",
+        "hook",
+        "problem statement",
+        "solution introduction",
+        "benefits",
+        "proof / credibility",
+        "offer",
+        "call to action",
+        "urgency / scarcity",
+        "closing",
+        "follow-up summary",
+    }
+    filtered: list[str] = []
+    for line in lines:
+        stripped = line.strip().strip(":").lower()
+        if stripped in label_only:
+            continue
+        filtered.append(line)
+
+    return "\n".join(filtered).strip()
 
 def _clean_document(doc: str) -> str:
     """
@@ -1960,8 +2093,6 @@ async def generate_blueprint(
                     label=f"sales_letter_{sid}",
                     warnings=warnings,
                 )
-                if sid == "benefits" and text:
-                    text = _ensure_bullets(text)
                 if _looks_like_clarification_or_refusal(text):
                     if sid == "headline":
                         text = _narrative_fallback("headline")
@@ -1988,6 +2119,13 @@ async def generate_blueprint(
                             _safe_text(followup_sequence)
                             or "We will follow up with a brief reminder and recap of the key value, with a low-commitment invitation to connect."
                         )
+                text = _clean_sales_letter_snippet(
+                    sid=sid,
+                    text=text,
+                    company=company,
+                    client_name=client_name,
+                    target_market=target,
+                )
                 if not text:
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
@@ -2036,6 +2174,7 @@ async def generate_blueprint(
             allow_fallback=False,
             skip_fill_keys={"subject_line", "followup_sequence"},
         )
+        doc = _clean_sales_letter_full_text(doc)
         if _looks_like_clarification_or_refusal(doc):
             warnings.append("Sales letter generation returned meta/clarification text; using deterministic fallback.")
             doc = _render_template_with_fallback(SALES_LETTER_TEMPLATE, raw_inputs)
