@@ -103,3 +103,16 @@ class BlueprintDocumentUpdateRequest(BaseModel):
     title: Optional[str] = None
     document_markdown: Optional[str] = None
     document_html: Optional[str] = None
+
+
+class BlueprintShareLinkResponse(BaseModel):
+    token: str = Field(min_length=16, max_length=256)
+
+
+class BlueprintSharedDocument(BaseModel):
+    type: BlueprintType
+    title: str
+    company_name: str
+    document_markdown: str
+    document_html: Optional[str] = None
+    updated_at: datetime

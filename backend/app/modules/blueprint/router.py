@@ -10,8 +10,11 @@ from app.modules.blueprint.schemas import (
     BlueprintDocumentUpdateRequest,
     BlueprintGenerateRequest,
     BlueprintGenerateResponse,
+    BlueprintShareLinkResponse,
+    BlueprintSharedDocument,
 )
 from app.modules.blueprint.service import generate_blueprint
+from app.modules.blueprint.share_repository import create_share_token, get_shared_document_by_token, revoke_share_tokens
 from app.shared.auth.deps import get_current_user
 
 router = APIRouter(prefix="/blueprint", tags=["blueprint"])
@@ -66,6 +69,36 @@ async def blueprint_documents_delete(
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return None
+
+
+@router.post("/documents/{document_id}/share", response_model=BlueprintShareLinkResponse)
+async def blueprint_documents_share_create(
+    document_id: str,
+    user=Depends(get_current_user),
+) -> BlueprintShareLinkResponse:
+    token = await create_share_token(user_id=user["id"], document_id=document_id)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return BlueprintShareLinkResponse(token=token)
+
+
+@router.delete("/documents/{document_id}/share", status_code=status.HTTP_204_NO_CONTENT)
+async def blueprint_documents_share_revoke(
+    document_id: str,
+    user=Depends(get_current_user),
+) -> None:
+    ok = await revoke_share_tokens(user_id=user["id"], document_id=document_id)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
+    return None
+
+
+@router.get("/share/{token}", response_model=BlueprintSharedDocument)
+async def blueprint_shared_document_get(token: str) -> BlueprintSharedDocument:
+    doc = await get_shared_document_by_token(token=token)
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
+    return doc
 
 
 @router.get("/documents/{document_id}/export")

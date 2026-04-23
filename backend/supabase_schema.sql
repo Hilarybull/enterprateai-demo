@@ -88,6 +88,21 @@ create table if not exists blueprint_documents (
   updated_at timestamptz default now()
 );
 
+create table if not exists blueprint_document_shares (
+  id uuid primary key default gen_random_uuid(),
+  user_id text references users(id) on delete cascade,
+  document_id text references blueprint_documents(id) on delete cascade,
+  token text unique not null,
+  revoked boolean not null default false,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  last_accessed_at timestamptz,
+  expires_at timestamptz
+);
+
+create index if not exists blueprint_document_shares_token_idx on blueprint_document_shares(token);
+create index if not exists blueprint_document_shares_document_idx on blueprint_document_shares(document_id);
+
 create table if not exists upgrade_clicks (
   id uuid primary key default gen_random_uuid(),
   user_id text,

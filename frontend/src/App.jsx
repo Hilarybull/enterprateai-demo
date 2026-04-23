@@ -13,6 +13,7 @@ import RegistrationPage from "./pages/RegistrationPage";
 import CataloguePage from "./pages/CataloguePage";
 import FinancialsPage from "./pages/FinancialsPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import SharedBlueprintPage from "./pages/SharedBlueprintPage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -38,6 +39,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/share/:token" element={<SharedBlueprintPage />} />
       <Route
         path="/"
         element={

@@ -203,6 +203,7 @@ export default function DocumentEditor({
   defaultMode = "edit",
   compactPreview = false,
   toolbarRightSlot = null,
+  toolbarBeforeDownloadSlot = null,
   showSaveButton = true,
   saveLabel = "Save changes",
   saveDisabled = false,
@@ -418,6 +419,8 @@ export default function DocumentEditor({
                 {availableFormats.includes("doc") ? <option value="doc">Word</option> : null}
               </select>
 
+              {toolbarBeforeDownloadSlot}
+
               <Button
                 variant="secondary"
                 disabled={!onDownload}
@@ -569,6 +572,8 @@ export default function DocumentEditor({
             {availableFormats.includes("pdf") ? <option value="pdf">PDF</option> : null}
             {availableFormats.includes("doc") ? <option value="doc">Word</option> : null}
           </select>
+
+          {toolbarBeforeDownloadSlot}
 
           <Button
             variant="secondary"
