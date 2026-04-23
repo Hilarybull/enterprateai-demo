@@ -373,16 +373,21 @@ export default function BlueprintPage() {
     if (!selectedDoc || !sectionDraftsByDoc[selectedDoc]) return {};
     return extractSections(sectionDraftsByDoc[selectedDoc]);
   }, [selectedDoc, sectionDraftsByDoc]);
-  const activeDraftSectionId = selectedDoc
-    ? sectionTabByDoc[selectedDoc] || (draftSectionsByDoc[selectedDoc] || [])[0]
-    : null;
+  // Only enter "section preview" mode when the user explicitly selects a section tile.
+  // Do not auto-preview the first section on desktop after generating, otherwise the main
+  // document preview appears to show just one section.
+  const activeDraftSectionId = selectedDoc ? sectionTabByDoc[selectedDoc] || null : null;
   const activeDraftHeading = selectedDoc && activeDraftSectionId
     ? sectionHeadingMap(selectedDoc)[activeDraftSectionId]
     : null;
   const activeDraftBody = activeDraftHeading ? draftSectionMap?.[activeDraftHeading] : "";
   const sectionPreviewHtml =
     activeDraftHeading && activeDraftBody ? buildSectionPreviewHtml(activeDraftHeading, activeDraftBody) : "";
-  const showSectionPreview = Boolean(sectionPreviewHtml) && showSectionDrafts && (isDesktop || effectiveInputsTab === "sections");
+  const showSectionPreview =
+    Boolean(sectionPreviewHtml) &&
+    Boolean(sectionTabByDoc[selectedDoc]) &&
+    showSectionDrafts &&
+    effectiveInputsTab === "sections";
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
