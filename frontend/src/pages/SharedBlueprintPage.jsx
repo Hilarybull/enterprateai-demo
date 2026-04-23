@@ -160,6 +160,42 @@ export default function SharedBlueprintPage() {
   const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
+    // The main app uses a fixed-layout shell with `body { overflow-hidden; }`.
+    // Shared documents should use normal browser scrolling, so we temporarily
+    // override overflow/height for this route.
+    const root = document.getElementById("root");
+    const prev = {
+      htmlOverflow: document.documentElement.style.overflow,
+      htmlHeight: document.documentElement.style.height,
+      bodyOverflow: document.body.style.overflow,
+      bodyOverflowY: document.body.style.overflowY,
+      bodyHeight: document.body.style.height,
+      rootHeight: root?.style.height,
+      rootMinHeight: root?.style.minHeight,
+    };
+    document.documentElement.style.overflow = "auto";
+    document.documentElement.style.height = "auto";
+    document.body.style.overflow = "auto";
+    document.body.style.overflowY = "auto";
+    document.body.style.height = "auto";
+    if (root) {
+      root.style.height = "auto";
+      root.style.minHeight = "100vh";
+    }
+    return () => {
+      document.documentElement.style.overflow = prev.htmlOverflow;
+      document.documentElement.style.height = prev.htmlHeight;
+      document.body.style.overflow = prev.bodyOverflow;
+      document.body.style.overflowY = prev.bodyOverflowY;
+      document.body.style.height = prev.bodyHeight;
+      if (root) {
+        root.style.height = prev.rootHeight || "";
+        root.style.minHeight = prev.rootMinHeight || "";
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     async function run() {
       if (!token) {
