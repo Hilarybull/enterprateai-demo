@@ -1037,6 +1037,7 @@ export default function BlueprintPage() {
     try {
       // FIX 4: Use retry wrapper
       const generateBody = {
+        document_id: docIdByType[selectedDoc] || null,
         type: selectedDoc,
         company_name: resolvedCompanyName,
         industry: resolvedIndustry,
@@ -1260,7 +1261,10 @@ export default function BlueprintPage() {
   async function saveEdits() {
     const docId = selectedDoc ? docIdByType[selectedDoc] : null;
     if (!selectedDoc || !docId) return;
-    const html = editedHtmlByType[selectedDoc] || "";
+    const html =
+      (editedHtmlByType[selectedDoc] && String(editedHtmlByType[selectedDoc]).trim()
+        ? editedHtmlByType[selectedDoc]
+        : (selectedDocResult?.document_html || ""));
     const draftsMarkdown =
       (selectedDoc ? sectionDraftsByDoc[selectedDoc] : "") ||
       selectedDocResult?.document_markdown ||

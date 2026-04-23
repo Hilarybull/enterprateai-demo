@@ -7,8 +7,12 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.modules.blueprint.exporter import markdown_to_html
-from app.modules.blueprint.repository import create_document
-from app.modules.blueprint.schemas import BlueprintGenerateRequest, BlueprintGenerateResponse
+from app.modules.blueprint.repository import create_document, update_document
+from app.modules.blueprint.schemas import (
+    BlueprintDocumentUpdateRequest,
+    BlueprintGenerateRequest,
+    BlueprintGenerateResponse,
+)
 from app.modules.blueprint.templates import (
     BUSINESS_PLAN_TEMPLATE,
     CASHFLOW_ANALYSIS_TEMPLATE,
@@ -1658,6 +1662,22 @@ async def generate_blueprint(
                 rendered_html = markdown_to_html(resp.document_markdown or "")
             except Exception:
                 rendered_html = None
+
+            requested_id = _safe_text(getattr(payload, "document_id", None))
+            if requested_id:
+                patched = await update_document(
+                    user_id=user_id,
+                    document_id=requested_id,
+                    patch=BlueprintDocumentUpdateRequest(
+                        title=title,
+                        document_markdown=resp.document_markdown,
+                        document_html=rendered_html,
+                    ),
+                )
+                if patched:
+                    resp.document_id = patched.id
+                    return resp
+
             doc_id = await create_document(
                 user_id=user_id,
                 type=payload.type,

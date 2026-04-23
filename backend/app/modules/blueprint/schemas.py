@@ -19,6 +19,7 @@ BlueprintType = Literal[
 
 
 class BlueprintGenerateRequest(BaseModel):
+    document_id: Optional[str] = Field(default=None, description="Optional existing blueprint document id to update instead of creating a new one.")
     type: BlueprintType
     company_name: str = Field(min_length=2, max_length=64)
     workspace_id: Optional[str] = Field(default=None, description="Optional idea-validation workspace id to pull deterministic metrics.")
