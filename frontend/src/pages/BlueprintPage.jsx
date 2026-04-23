@@ -34,6 +34,7 @@ const DOCUMENTS = [
 ];
 
 const BUSINESS_PLAN_SECTIONS = [
+  { id: "cover_page", label: "Cover page" },
   { id: "executive_summary", label: "Executive summary" },
   { id: "business_overview", label: "Business overview" },
   { id: "products_services", label: "Products & services" },
@@ -372,7 +373,13 @@ export default function BlueprintPage() {
   const OTHER_CUSTOMER_ID = "__other__";
   const draftSectionMap = useMemo(() => {
     if (!selectedDoc || !sectionDraftsByDoc[selectedDoc]) return {};
-    return extractSections(sectionDraftsByDoc[selectedDoc]);
+    const markdown = sectionDraftsByDoc[selectedDoc];
+    const base = extractSections(markdown);
+    if (selectedDoc === "client_proposal" || selectedDoc === "business_plan") {
+      const cover = extractCoverPage(markdown);
+      if (cover) base["Cover Page"] = cover;
+    }
+    return base;
   }, [selectedDoc, sectionDraftsByDoc]);
   // Only enter "section preview" mode when the user explicitly selects a section tile.
   // Do not auto-preview the first section on desktop after generating, otherwise the main
@@ -706,6 +713,7 @@ export default function BlueprintPage() {
   function sectionHeadingMap(docId) {
     if (docId === "business_plan") {
       return {
+        cover_page: "Cover Page",
         executive_summary: "Executive Summary",
         business_overview: "Business Overview",
         products_services: "Products and Services",
@@ -773,6 +781,22 @@ export default function BlueprintPage() {
     return sections;
   }
 
+  function extractCoverPage(markdown) {
+    const s = String(markdown || "");
+    const start = s.indexOf('<div class="cover-page">');
+    if (start === -1) return "";
+    const tail = s.slice(start);
+    const pageBreakIdx = tail.indexOf('<div class="page-break"></div>');
+    if (pageBreakIdx !== -1) return tail.slice(0, pageBreakIdx).trim();
+    const altBreakIdx = tail.indexOf("<div class='page-break'></div>");
+    if (altBreakIdx !== -1) return tail.slice(0, altBreakIdx).trim();
+    const headingMatch = tail.match(/\n##\s+/);
+    if (headingMatch && typeof headingMatch.index === "number" && headingMatch.index > 0) {
+      return tail.slice(0, headingMatch.index).trim();
+    }
+    return tail.trim();
+  }
+
   function htmlToPseudoMarkdown(html) {
     const source = String(html || "").trim();
     if (!source) return "";
@@ -807,6 +831,7 @@ export default function BlueprintPage() {
     const raw = String(text || "");
     if (!raw) return "";
     return raw
+      .replace(/<[^>]+>/g, " ")
       .replace(/```[\s\S]*?```/g, " ")
       .replace(/`([^`]+)`/g, "$1")
       .replace(/^#{1,6}\s+/gm, "")
@@ -827,6 +852,7 @@ export default function BlueprintPage() {
     const heading = isSalesLetter ? "" : stripMarkdown(title || "");
     const cleaned = String(body || "").replaceAll("\r\n", "\n").trim();
     if (!heading && !cleaned) return "";
+    if (cleaned.includes('<div class="cover-page">')) return cleaned;
     const paragraphs = cleaned.split(/\n{2,}/g).map((p) => p.trim()).filter(Boolean);
     const parts = [];
     if (heading) {
@@ -900,6 +926,12 @@ export default function BlueprintPage() {
   function mergeSectionDrafts(docId, existingMarkdown, incomingMarkdown) {
     const existing = extractSections(existingMarkdown || "");
     const incoming = extractSections(incomingMarkdown || "");
+    if (docId === "client_proposal" || docId === "business_plan") {
+      const coverExisting = extractCoverPage(existingMarkdown);
+      const coverIncoming = extractCoverPage(incomingMarkdown);
+      if (coverExisting) existing["Cover Page"] = coverExisting;
+      if (coverIncoming) incoming["Cover Page"] = coverIncoming;
+    }
     const merged = { ...existing, ...incoming };
     const headingMap = sectionHeadingMap(docId);
     const orderedHeadings = sectionsForDoc(docId)

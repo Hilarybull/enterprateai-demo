@@ -291,15 +291,14 @@ export default function SharedBlueprintPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-6 py-4">
-          <div className="flex items-center gap-2">
+      <div className="fixed left-0 right-0 top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-6 py-3">
+          <div className="flex items-center">
             <img
               src={enterprateLogo}
               alt="EnterprateAI"
-              className="h-8 w-8 rounded-lg"
+              className="h-11 w-auto"
             />
-            <div className="text-sm font-semibold text-slate-900">EnterprateAI</div>
           </div>
 
           <div className="min-w-0 flex-1">
@@ -312,7 +311,7 @@ export default function SharedBlueprintPage() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-5xl px-6 py-6">
+      <div className="mx-auto max-w-5xl px-6 pb-6 pt-24">
 
         {loading ? (
           <div className="mt-6 flex items-center justify-center rounded-2xl border border-slate-200 bg-white p-8">
