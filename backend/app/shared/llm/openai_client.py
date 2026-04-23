@@ -206,7 +206,12 @@ class AutoLLMClient(LLMClient):
         last_err: Exception | None = None
         for c in self._clients:
             try:
-                return await c.generate_text(system=system, prompt=prompt)
+                res = await c.generate_text(system=system, prompt=prompt)
+                # Some providers can return an HTTP 200 but our parsing yields empty text.
+                # Treat that as a failure so we can fall back to the next configured provider.
+                if not (res.text or "").strip() and not isinstance(c, NoopLLMClient):
+                    raise RuntimeError(f"{res.provider} returned empty text")
+                return res
             except Exception as e:
                 last_err = e
                 continue
