@@ -1127,7 +1127,7 @@ export default function BlueprintPage() {
 	            [selectedDoc]: {
 	              ...res,
 	              document_markdown: incomingMarkdown,
-	              document_html: res.document_html || prev[selectedDoc]?.document_html || null,
+	              document_html: (res.document_html ?? null),
 	            }
 	          };
 	        });

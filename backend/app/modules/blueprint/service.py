@@ -6,7 +6,6 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
-from app.modules.blueprint.exporter import markdown_to_html
 from app.modules.blueprint.repository import create_document, update_document
 from app.modules.blueprint.schemas import (
     BlueprintDocumentUpdateRequest,
@@ -586,6 +585,16 @@ def _strip_preamble_before_first_h2(doc: str) -> str:
     if idx is None:
         return doc.strip()
     return "\n".join(lines[idx:]).strip()
+
+
+def _filter_to_wanted_headings(doc: str, wanted_headings: list[str]) -> str:
+    if not doc:
+        return doc
+    wanted = [h for h in (wanted_headings or []) if isinstance(h, str) and h.startswith("## ")]
+    if not wanted:
+        return doc.strip()
+    preamble, sections = _extract_section_map(doc)
+    return _rebuild_with_headings(preamble=preamble, headings=wanted, primary=sections, fallback={}).strip()
 
 
 def _normalize_sales_letter(
@@ -1657,12 +1666,6 @@ async def generate_blueprint(
         }
         title = _default_title(type_to_title.get(payload.type, "Document"), company)
         try:
-            rendered_html = None
-            try:
-                rendered_html = markdown_to_html(resp.document_markdown or "")
-            except Exception:
-                rendered_html = None
-
             requested_id = _safe_text(getattr(payload, "document_id", None))
             if requested_id:
                 patched = await update_document(
@@ -1671,7 +1674,9 @@ async def generate_blueprint(
                     patch=BlueprintDocumentUpdateRequest(
                         title=title,
                         document_markdown=resp.document_markdown,
-                        document_html=rendered_html,
+                        # Clear any previously saved edited HTML so previews don't show stale content
+                        # after a regenerate. Export will fall back to markdown when HTML is empty.
+                        document_html="",
                     ),
                 )
                 if patched:
@@ -1687,7 +1692,7 @@ async def generate_blueprint(
                 pricing_model=pricing_model or None,
                 workspace_id=_safe_text(payload.workspace_id) or None,
                 document_markdown=resp.document_markdown,
-                document_html=rendered_html,
+                document_html=None,
                 provider=resp.provider,
                 model=resp.model,
             )
@@ -1893,6 +1898,7 @@ async def generate_blueprint(
             warnings=warnings,
             target_words=750 if len(wanted_headings) <= 2 else 650,
         )
+        doc = _filter_to_wanted_headings(doc, wanted_headings)
 
         contact_details = ""
         if isinstance(workspace_profile, dict):
@@ -2055,6 +2061,7 @@ async def generate_blueprint(
             warnings=warnings,
             target_words=650 if len(wanted_headings) <= 2 else 520,
         )
+        doc = _filter_to_wanted_headings(doc, wanted_headings)
         doc = _normalize_client_proposal_cover_page(
             doc,
             proposal_title=proposal_title,
