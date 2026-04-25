@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import re
+from html import escape
 from datetime import datetime
 from typing import Any
 
@@ -702,15 +703,48 @@ def _strip_contact_details_line(doc: str) -> str:
     return "\n".join(cleaned).strip()
 
 
-def _build_cover_page(title: str, lines: list[str]) -> str:
+def _build_cover_page(title: str, lines: list[str], logo_data_url: str | None = None) -> str:
     clean_lines = [l for l in lines if isinstance(l, str) and l.strip()]
+    logo_html = ""
+    if _safe_text(logo_data_url):
+        logo_html = f'<img class="document-logo" src="{escape(_safe_text(logo_data_url), quote=True)}" alt="Company logo" />\n\n'
     body = "\n".join(clean_lines)
-    return f"<div class=\"cover-page\">\n# {title}\n\n{body}\n</div>\n\n<div class=\"page-break\"></div>"
+    return f"<div class=\"cover-page\">\n{logo_html}# {title}\n\n{body}\n</div>\n\n<div class=\"page-break\"></div>"
 
 
-def _apply_cover_page(doc: str, *, title: str, lines: list[str]) -> str:
+def _strip_duplicate_title_after_cover(doc: str, title: str) -> str:
+    if not doc:
+        return doc
+    lines = doc.splitlines()
+    title_variants = {
+        title.strip().lower(),
+        f"# {title}".strip().lower(),
+        "cover page",
+        "cover page:",
+    }
+    idx = 0
+    while idx < len(lines) and not lines[idx].strip():
+        idx += 1
+    while idx < len(lines):
+        stripped = lines[idx].strip()
+        if not stripped:
+            idx += 1
+            continue
+        lower = stripped.lower()
+        if lower in title_variants:
+            idx += 1
+            continue
+        if re.match(r"^\*+.*\*+$", stripped) and stripped.strip("* ").lower() == title.strip().lower():
+            idx += 1
+            continue
+        break
+    return "\n".join(lines[idx:]).strip()
+
+
+def _apply_cover_page(doc: str, *, title: str, lines: list[str], logo_data_url: str | None = None) -> str:
     cleaned = _strip_cover_section(doc)
-    cover = _build_cover_page(title, lines)
+    cleaned = _strip_duplicate_title_after_cover(cleaned, title)
+    cover = _build_cover_page(title, lines, logo_data_url=logo_data_url)
     return f"{cover}\n\n{cleaned}".strip()
 
 
@@ -746,6 +780,7 @@ def _normalize_client_proposal_cover_page(
     client_name: str,
     contact_details: str,
     selected_services_focus: str,
+    logo_data_url: str | None = None,
 ) -> str:
     if not doc:
         return doc
@@ -785,7 +820,12 @@ def _normalize_client_proposal_cover_page(
 
     cleaned = _strip_preamble_before_first_h2(doc)
     cleaned = _strip_cover_section(cleaned)
-    return _apply_cover_page(cleaned, title=f"Proposal for {display_client}", lines=cover_lines)
+    return _apply_cover_page(
+        cleaned,
+        title=f"Proposal for {display_client}",
+        lines=cover_lines,
+        logo_data_url=logo_data_url,
+    )
 
 
 def _narrative_fallback(title: str) -> str:
@@ -1615,6 +1655,7 @@ async def generate_blueprint(
     currency      = "GBP"
     starting_cash = 0.0
     workspace_context: dict[str, str] = {}
+    workspace_logo_data_url = _safe_text(getattr(payload, "logo_data_url", None))
 
     ws: Any | None = None
     if payload.workspace_id and user_id:
@@ -1636,6 +1677,9 @@ async def generate_blueprint(
             validation = None
             if payload.workspace_id:
                 warnings.append(f"Could not load workspace (ID: {payload.workspace_id}). Proceeding with provided inputs only.")
+    if not workspace_logo_data_url and ws and isinstance(ws.data, dict):
+        workspace_profile = ws.data.get("workspace_profile") if isinstance(ws.data.get("workspace_profile"), dict) else {}
+        workspace_logo_data_url = _safe_text(workspace_profile.get("logo_data_url"))
     
     # Verify workspace has business profile if workspace_id provided
     if payload.workspace_id and not workspace_context:
@@ -1889,17 +1933,21 @@ async def generate_blueprint(
         )
 
         wanted_titles = selected_section_titles or [h.replace("## ", "").strip() for h in BUSINESS_PLAN_HEADINGS]
+        wanted_titles = [title for title in wanted_titles if _safe_text(title).lower() != "cover page"]
         wanted_headings = [f"## {t}" for t in wanted_titles if _safe_text(t)]
-        doc = await _ensure_section_bodies(
-            llm,
-            doc_type="Business Plan",
-            wanted_headings=wanted_headings,
-            raw_inputs=raw_inputs,
-            doc=doc,
-            warnings=warnings,
-            target_words=750 if len(wanted_headings) <= 2 else 650,
-        )
-        doc = _filter_to_wanted_headings(doc, wanted_headings)
+        if wanted_headings:
+            doc = await _ensure_section_bodies(
+                llm,
+                doc_type="Business Plan",
+                wanted_headings=wanted_headings,
+                raw_inputs=raw_inputs,
+                doc=doc,
+                warnings=warnings,
+                target_words=750 if len(wanted_headings) <= 2 else 650,
+            )
+            doc = _filter_to_wanted_headings(doc, wanted_headings)
+        else:
+            doc = ""
 
         contact_details = ""
         if isinstance(workspace_profile, dict):
@@ -1922,7 +1970,12 @@ async def generate_blueprint(
         cover_lines.append(f"**Prepared on:** {today}")
 
         doc = _strip_preamble_before_first_h2(doc)
-        doc = _apply_cover_page(doc, title=f"Business Plan for {company}", lines=cover_lines)
+        doc = _apply_cover_page(
+            doc,
+            title=f"Business Plan for {company}",
+            lines=cover_lines,
+            logo_data_url=workspace_logo_data_url,
+        )
 
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
@@ -2052,17 +2105,21 @@ async def generate_blueprint(
         )
 
         wanted_titles = selected_section_titles or [h.replace("## ", "").strip() for h in CLIENT_PROPOSAL_HEADINGS]
+        wanted_titles = [title for title in wanted_titles if _safe_text(title).lower() != "cover page"]
         wanted_headings = [f"## {t}" for t in wanted_titles if _safe_text(t)]
-        doc = await _ensure_section_bodies(
-            llm,
-            doc_type="Business Proposal",
-            wanted_headings=wanted_headings,
-            raw_inputs=raw_inputs,
-            doc=doc,
-            warnings=warnings,
-            target_words=650 if len(wanted_headings) <= 2 else 520,
-        )
-        doc = _filter_to_wanted_headings(doc, wanted_headings)
+        if wanted_headings:
+            doc = await _ensure_section_bodies(
+                llm,
+                doc_type="Business Proposal",
+                wanted_headings=wanted_headings,
+                raw_inputs=raw_inputs,
+                doc=doc,
+                warnings=warnings,
+                target_words=650 if len(wanted_headings) <= 2 else 520,
+            )
+            doc = _filter_to_wanted_headings(doc, wanted_headings)
+        else:
+            doc = ""
         doc = _normalize_client_proposal_cover_page(
             doc,
             proposal_title=proposal_title,
@@ -2070,6 +2127,7 @@ async def generate_blueprint(
             client_name=client_name,
             contact_details=contact_details,
             selected_services_focus=selected_services_text,
+            logo_data_url=workspace_logo_data_url,
         )
         doc = _ensure_client_proposal_format(doc)
 
@@ -2128,7 +2186,8 @@ async def generate_blueprint(
         }
         offer_key = offer_input.strip().lower()
         offer_text = offer_map.get(offer_key, offer_input)
-        client_name = _safe_text(payload.bill_to) or target or "Client team"
+        contact_name = _safe_text(getattr(payload, "contact_name", None))
+        client_name = contact_name or _safe_text(payload.bill_to) or target or "Client team"
         subject_line = _safe_text(getattr(payload, "subject_lines", None)) or objective
         followup_sequence = _safe_text(getattr(payload, "followup_sequence", None))
 
@@ -2343,7 +2402,7 @@ async def generate_blueprint(
             f"Client — {_safe_text(payload.bill_to) or 'Client name to be confirmed'}",
             f"Prepared By — {company}",
         ]
-        doc = _apply_cover_page(doc, title=f"Sales Quotation — {company}", lines=cover_lines)
+        doc = _apply_cover_page(doc, title=f"Sales Quotation — {company}", lines=cover_lines, logo_data_url=workspace_logo_data_url)
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
         )
@@ -2366,7 +2425,7 @@ async def generate_blueprint(
             "Report — Cash Flow Forecast",
             f"Period — {fields.get('period', 'Current assumptions')}",
         ]
-        doc = _apply_cover_page(doc, title=f"Cash Flow Forecast — {company}", lines=cover_lines)
+        doc = _apply_cover_page(doc, title=f"Cash Flow Forecast — {company}", lines=cover_lines, logo_data_url=workspace_logo_data_url)
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider="deterministic", model="none", warnings=warnings)
         )
@@ -2383,7 +2442,7 @@ async def generate_blueprint(
             "Report — Financial Projection",
             "Period — Baseline projection",
         ]
-        doc = _apply_cover_page(doc, title=f"Financial Projection — {company}", lines=cover_lines)
+        doc = _apply_cover_page(doc, title=f"Financial Projection — {company}", lines=cover_lines, logo_data_url=workspace_logo_data_url)
         return await _persist_response(
             BlueprintGenerateResponse(document_markdown=doc, provider="deterministic", model="none", warnings=warnings)
         )
@@ -2415,7 +2474,7 @@ async def generate_blueprint(
         f"Client — {_safe_text(payload.bill_to) or 'Client name to be confirmed'}",
         f"Prepared By — {company}",
     ]
-    doc = _apply_cover_page(doc, title=f"Invoice — {company}", lines=cover_lines)
+    doc = _apply_cover_page(doc, title=f"Invoice — {company}", lines=cover_lines, logo_data_url=workspace_logo_data_url)
     return await _persist_response(
         BlueprintGenerateResponse(document_markdown=doc, provider=provider, model=model, warnings=warnings)
     )

@@ -57,6 +57,56 @@ async def create_document(
     return rows[0]["id"]
 
 
+async def save_document(
+    *,
+    user_id: str,
+    type: BlueprintType,
+    title: str,
+    company_name: str,
+    industry: Optional[str],
+    pricing_model: Optional[str],
+    workspace_id: Optional[str],
+    document_markdown: str,
+    document_html: Optional[str],
+    provider: Optional[str],
+    model: Optional[str],
+    document_id: Optional[str] = None,
+) -> str:
+    if document_id:
+        rows = await sb_update(
+            "blueprint_documents",
+            filters=[("id", "eq", document_id), ("user_id", "eq", user_id)],
+            payload={
+                "type": type,
+                "title": title,
+                "company_name": company_name,
+                "industry": industry,
+                "pricing_model": pricing_model,
+                "workspace_id": workspace_id,
+                "document_markdown": document_markdown,
+                "document_html": document_html,
+                "provider": provider,
+                "model": model,
+                "updated_at": _now().isoformat(),
+            },
+        )
+        if rows:
+            return rows[0]["id"]
+    return await create_document(
+        user_id=user_id,
+        type=type,
+        title=title,
+        company_name=company_name,
+        industry=industry,
+        pricing_model=pricing_model,
+        workspace_id=workspace_id,
+        document_markdown=document_markdown,
+        document_html=document_html,
+        provider=provider,
+        model=model,
+    )
+
+
 async def list_documents(
     *,
     user_id: str,

@@ -1,17 +1,146 @@
 from __future__ import annotations
 
 from io import BytesIO
+from html import escape
 import re
 
-from markdown import markdown as md
 from html2text import HTML2Text
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
 
+def _inline_format(text: str) -> str:
+    return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text or "")
+
+
+def _parse_table_row(line: str) -> list[str] | None:
+    trimmed = (line or "").strip()
+    if "|" not in trimmed:
+        return None
+    raw_cells = trimmed.removeprefix("|").removesuffix("|").split("|")
+    cells = [cell.strip() for cell in raw_cells]
+    return cells or None
+
+
+def _is_table_separator(line: str) -> bool:
+    cells = _parse_table_row(line)
+    if not cells:
+        return False
+    return all(re.match(r"^:?-{3,}:?$", cell or "") for cell in cells)
+
+
 def markdown_to_html(markdown_text: str) -> str:
-    return md(markdown_text or "", extensions=["tables", "sane_lists"])
+    lines = str(markdown_text or "").replace("\r\n", "\n").split("\n")
+    html: list[str] = []
+    in_list = False
+
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            html.append("</ul>")
+            in_list = False
+
+    idx = 0
+    while idx < len(lines):
+        raw = lines[idx]
+        line = raw.rstrip()
+        trimmed = line.strip()
+
+        if not trimmed:
+            close_list()
+            idx += 1
+            continue
+
+        if trimmed in {'<div class="cover-page">', "<div class='cover-page'>"}:
+            close_list()
+            html.append('<div class="cover-page">')
+            idx += 1
+            continue
+
+        if trimmed == "</div>":
+            close_list()
+            html.append("</div>")
+            idx += 1
+            continue
+
+        if trimmed in {'<div class="page-break"></div>', "<div class='page-break'></div>"}:
+            close_list()
+            html.append('<div class="page-break"></div>')
+            idx += 1
+            continue
+
+        if re.match(r"^<img\b", trimmed, re.IGNORECASE):
+            close_list()
+            html.append(trimmed)
+            idx += 1
+            continue
+
+        if trimmed.startswith('<p class="subject-line">') and trimmed.endswith("</p>"):
+            close_list()
+            html.append(trimmed)
+            idx += 1
+            continue
+
+        if line.startswith("# "):
+            close_list()
+            html.append(f"<h1>{_inline_format(escape(line[2:].strip()))}</h1>")
+            idx += 1
+            continue
+        if line.startswith("## "):
+            close_list()
+            html.append(f"<h2>{_inline_format(escape(line[3:].strip()))}</h2>")
+            idx += 1
+            continue
+        if line.startswith("### "):
+            close_list()
+            html.append(f"<h3>{_inline_format(escape(line[4:].strip()))}</h3>")
+            idx += 1
+            continue
+
+        header_row = _parse_table_row(line)
+        next_line = lines[idx + 1] if idx + 1 < len(lines) else ""
+        if header_row and _is_table_separator(next_line):
+            close_list()
+            html.append("<table><thead><tr>")
+            for cell in header_row:
+                html.append(f"<th>{_inline_format(escape(cell))}</th>")
+            html.append("</tr></thead><tbody>")
+            idx += 2
+            while idx < len(lines):
+                body_line = lines[idx].rstrip()
+                if not body_line.strip():
+                    break
+                body_row = _parse_table_row(body_line)
+                if not body_row:
+                    break
+                html.append("<tr>")
+                for cell in body_row:
+                    html.append(f"<td>{_inline_format(escape(cell))}</td>")
+                html.append("</tr>")
+                idx += 1
+            html.append("</tbody></table>")
+            continue
+
+        bullet = None
+        for prefix in ("- ", "* ", "• ", "– "):
+            if line.startswith(prefix):
+                bullet = line[len(prefix):].strip()
+                break
+        if bullet is not None:
+            if not in_list:
+                html.append("<ul>")
+                in_list = True
+            html.append(f"<li>{_inline_format(escape(bullet))}</li>")
+            idx += 1
+            continue
+
+        close_list()
+        html.append(f"<p>{_inline_format(escape(trimmed))}</p>")
+        idx += 1
+
+    close_list()
+    return "".join(html)
 
 
 def _normalize_breaks(html: str) -> str:
@@ -70,6 +199,7 @@ def render_export_html(title: str, body_html: str) -> str:
         text-align: center;
       }}
       .cover-page p {{ margin: 6px 0; }}
+      .document-logo {{ display: block; max-width: 180px; max-height: 90px; width: auto; height: auto; margin: 0 auto 20px; object-fit: contain; }}
       @media print {{
         .page-wrap {{ padding: 0; }}
         .page {{ border: none; border-radius: 0; width: auto; min-height: auto; padding: 16mm; }}
@@ -118,6 +248,7 @@ def render_pdf_html(title: str, body_html: str) -> str:
       th {{ background: #f8fafc; font-weight: bold; }}
       .cover-page {{ text-align: center; margin-top: 180px; }}
       .cover-page p {{ margin: 6px 0; }}
+      .document-logo {{ display: block; max-width: 160px; max-height: 80px; width: auto; height: auto; margin: 0 auto 18px; object-fit: contain; }}
     </style>
   </head>
   <body>

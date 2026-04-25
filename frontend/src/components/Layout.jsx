@@ -4,6 +4,7 @@ import { useAuthStore } from "../store/auth";
 import { apiRequest, getApiBaseUrl } from "../api/client";
 import logoUrl from "../enterprate-logo.png";
 import { useWorkspaceStore } from "../store/workspace";
+import BusinessAssistant from "./BusinessAssistant";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid" },
@@ -161,10 +162,12 @@ export default function Layout() {
   const [theme, setTheme] = useState(() => localStorage.getItem("ea_theme") || "system");
   const profileRef = useRef(null);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
+  const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
   const serviceDecisionStatus = useWorkspaceStore((s) => s.serviceDecisionStatus);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
+  const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
   const setWorkspaceLoadedAt = useWorkspaceStore((s) => s.setWorkspaceLoadedAt);
   const setIdeaValidation = useWorkspaceStore((s) => s.setIdeaValidation);
@@ -255,6 +258,7 @@ export default function Layout() {
         if (cancelled || !ws) return;
         setWorkspaceId(ws.id || null);
         setWorkspaceName(ws.name || null);
+        setWorkspaceLogo(ws?.data?.workspace_profile?.logo_data_url || null);
         setWorkspaceLoadedAt(new Date().toISOString());
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
@@ -273,6 +277,7 @@ export default function Layout() {
         if (msg.startsWith("HTTP 404:")) {
           setWorkspaceId(null);
           setWorkspaceName(null);
+          setWorkspaceLogo(null);
           setDecisionStatus(null);
         }
       }
@@ -282,7 +287,7 @@ export default function Layout() {
     return () => {
       cancelled = true;
     };
-    }, [token, setCurrency, setDecisionStatus, setDraftIdeaValidation, setDraftServiceIdea, setIdeaValidation, setInputs, setWorkspaceId, setWorkspaceName, setWorkspaceLoadedAt]);
+    }, [token, setCurrency, setDecisionStatus, setDraftIdeaValidation, setDraftServiceIdea, setIdeaValidation, setInputs, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, setWorkspaceLoadedAt]);
 
   const filteredNav = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
@@ -396,9 +401,15 @@ export default function Layout() {
                   onClick={() => setProfileOpen((v) => !v)}
                   className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
                 >
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-white">
-                    {profileInitials}
-                  </span>
+                  {workspaceLogo ? (
+                    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white">
+                      <img src={workspaceLogo} alt={workspaceDisplayName || "Workspace logo"} className="h-full w-full object-contain" />
+                    </span>
+                  ) : (
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-white">
+                      {profileInitials}
+                    </span>
+                  )}
                 </button>
                 {profileOpen ? (
                   <div className="absolute right-0 top-12 z-30 w-56 rounded-2xl border border-slate-200 bg-white p-2 text-xs shadow-xl dark:border-slate-800 dark:bg-slate-900">
@@ -468,6 +479,7 @@ export default function Layout() {
               <Outlet />
             </div>
           </div>
+          <BusinessAssistant />
         </main>
       </div>
     </div>

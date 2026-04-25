@@ -11,6 +11,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import { BlueprintIllustration, IllustrationCard } from "../components/Illustrations";
 import SegmentedTabs from "../components/SegmentedTabs";
+import { imageFileToDataUrl } from "../lib/files";
 
 const DOCUMENTS = [
   {
@@ -84,8 +85,6 @@ const BUSINESS_PLAN_OBJECTIVES = ["Standard"];
 const CLIENT_PROPOSAL_OBJECTIVES = ["Sales Proposal"];
 
 const SALES_LETTER_OBJECTIVES = [
-  "A reliable, no-drama way to keep standards consistent",
-  "Consistent results without extra oversight",
   "Reduce rework and keep delivery on track",
   "Build trust with predictable service quality",
   "Other"
@@ -229,8 +228,10 @@ function ServicesDropdown({ workspaceServices, selectedServices, setSelectedServ
 
 export default function BlueprintPage() {
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
+  const workspaceLogoStored = useWorkspaceStore((s) => s.workspaceLogo);
   const setWorkspaceIdStored = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceNameStored = useWorkspaceStore((s) => s.setWorkspaceName);
+  const setWorkspaceLogoStored = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
   const [selectedDoc, setSelectedDoc] = useState(null);
@@ -270,10 +271,12 @@ export default function BlueprintPage() {
   const [senderPhone, setSenderPhone] = useState("");
   const [senderEmail, setSenderEmail] = useState("");
   const [senderWebsite, setSenderWebsite] = useState("");
+  const [contactName, setContactName] = useState("");
   const [selectedServices, setSelectedServices] = useState([]);
   const [customServiceName, setCustomServiceName] = useState("");
   const [customServiceDescription, setCustomServiceDescription] = useState("");
   const [workspaceProfile, setWorkspaceProfile] = useState(null);
+  const [documentLogo, setDocumentLogo] = useState("");
   const [dirtyFields, setDirtyFields] = useState({
     companyName: false,
     industry: false,
@@ -372,15 +375,15 @@ export default function BlueprintPage() {
   const acceptedIdeaValidation = decisionStatus === "accepted" ? ideaValidation : null;
   const OTHER_CUSTOMER_ID = "__other__";
   const draftSectionMap = useMemo(() => {
-    if (!selectedDoc || !sectionDraftsByDoc[selectedDoc]) return {};
-    const markdown = sectionDraftsByDoc[selectedDoc];
+    if (!selectedDoc) return {};
+    const markdown = sectionDraftsByDoc[selectedDoc] || "";
     const base = extractSections(markdown);
     if (selectedDoc === "client_proposal" || selectedDoc === "business_plan") {
-      const cover = extractCoverPage(markdown);
+      const cover = extractCoverPage(selectedDocResult?.document_markdown || "") || extractCoverPage(markdown);
       if (cover) base["Cover Page"] = cover;
     }
     return base;
-  }, [selectedDoc, sectionDraftsByDoc]);
+  }, [selectedDoc, sectionDraftsByDoc, selectedDocResult?.document_markdown]);
   // Only enter "section preview" mode when the user explicitly selects a section tile.
   // Do not auto-preview the first section on desktop after generating, otherwise the main
   // document preview appears to show just one section.
@@ -408,8 +411,9 @@ export default function BlueprintPage() {
 
   async function refreshSavedDocs() {
     try {
-      const res = await apiRequest("/blueprint/documents?limit=30", "GET");
-      const docs = Array.isArray(res) ? res : [];
+      const res = await apiRequest("/blueprint/documents?limit=100", "GET");
+      const allowedTypes = new Set(DOCUMENTS.map((doc) => doc.id));
+      const docs = (Array.isArray(res) ? res : []).filter((doc) => allowedTypes.has(doc?.type));
       setSavedDocs(docs);
       return docs;
     } catch {
@@ -483,8 +487,15 @@ export default function BlueprintPage() {
         if (!alive) return;
         const profile = ws?.data?.business_profile || {};
         const workspaceProfile = ws?.data?.workspace_profile || {};
+        const persistedDrafts = ws?.data?.blueprint_section_drafts || {};
         const wpServices = Array.isArray(workspaceProfile.services) ? workspaceProfile.services : [];
         setWorkspaceProfile(workspaceProfile || null);
+        if (persistedDrafts && typeof persistedDrafts === "object") {
+          setSectionDraftsByDoc((prev) => ({ ...prev, ...persistedDrafts }));
+        }
+        if (!documentLogo && (workspaceProfile?.logo_data_url || workspaceLogoStored)) {
+          setDocumentLogo(String(workspaceProfile?.logo_data_url || workspaceLogoStored || ""));
+        }
         if (!dirtyFields.companyName && !companyName && (workspaceProfile.company_name || profile.business_name)) {
           setCompanyName(workspaceProfile.company_name || profile.business_name);
         }
@@ -534,6 +545,8 @@ export default function BlueprintPage() {
     targetMarket,
     valueProp,
     workspaceIdStored,
+    documentLogo,
+    workspaceLogoStored,
   ]);
 
   useEffect(() => {
@@ -565,18 +578,56 @@ export default function BlueprintPage() {
     if (!dirtyFields.senderWebsite && !senderWebsite && workspaceProfile.website) setSenderWebsite(String(workspaceProfile.website));
   }, [workspaceProfile, dirtyFields, contactDetails, senderEmail, senderPhone, senderWebsite]);
 
-  async function syncWorkspaceProfile() {
-    const profile = {};
-    if (String(companyName || "").trim()) profile.business_name = String(companyName || "").trim();
-    if (String(industry || "").trim()) {
-      profile.primary_industry = String(industry || "").trim();
-      profile.business_type = String(industry || "").trim();
+  async function persistWorkspaceLogo(nextLogo) {
+    if (!workspaceProfile || !String(workspaceProfile.company_name || "").trim()) {
+      setDocumentLogo(nextLogo || "");
+      setWorkspaceLogoStored(nextLogo || null);
+      setSavedNotice("Logo applied to this document. Save a full workspace profile to make it permanent.");
+      return;
     }
-    if (String(valueProp || "").trim()) profile.value_proposition = String(valueProp || "").trim();
-    const hasAny = Object.keys(profile).length > 0;
+    const nextProfile = { ...(workspaceProfile || {}), logo_data_url: nextLogo || null };
+    setWorkspaceProfile(nextProfile);
+    setDocumentLogo(nextLogo || "");
+    setWorkspaceLogoStored(nextLogo || null);
+    try {
+      const ws = await apiRequest("/validation/me", "PATCH", { data: { workspace_profile: nextProfile } });
+      if (ws?.id) setWorkspaceIdStored(ws.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save workspace logo.");
+    }
+  }
+
+  async function handleDocumentLogoChange(file) {
+    if (!file) return;
+    try {
+      const dataUrl = await imageFileToDataUrl(file);
+      await persistWorkspaceLogo(dataUrl);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load logo.");
+    }
+  }
+
+  async function syncWorkspaceProfile() {
+    const businessProfile = {};
+    if (String(companyName || "").trim()) businessProfile.business_name = String(companyName || "").trim();
+    if (String(industry || "").trim()) {
+      businessProfile.primary_industry = String(industry || "").trim();
+      businessProfile.business_type = String(industry || "").trim();
+    }
+    if (String(valueProp || "").trim()) businessProfile.value_proposition = String(valueProp || "").trim();
+    const workspaceProfilePatch =
+      workspaceProfile && typeof workspaceProfile === "object"
+        ? { ...workspaceProfile, logo_data_url: documentLogo || workspaceProfile.logo_data_url || null }
+        : null;
+    const hasAny = Object.keys(businessProfile).length > 0 || Boolean(workspaceProfilePatch);
     if (!hasAny) return;
     try {
-      const ws = await apiRequest("/validation/me", "PATCH", { data: { business_profile: profile } });
+      const ws = await apiRequest("/validation/me", "PATCH", {
+        data: {
+          ...(Object.keys(businessProfile).length ? { business_profile: businessProfile } : {}),
+          ...(workspaceProfilePatch ? { workspace_profile: workspaceProfilePatch } : {})
+        }
+      });
       if (ws?.id) {
         setWorkspaceIdStored(ws.id);
         if (ws?.name) setWorkspaceNameStored(ws.name);
@@ -691,6 +742,14 @@ export default function BlueprintPage() {
     return [];
   }
 
+  function generationSectionsForDoc(docId) {
+    const allSections = sectionsForDoc(docId);
+    if (docId === "business_plan" || docId === "client_proposal") {
+      return allSections.filter((section) => section.id !== "cover_page");
+    }
+    return allSections;
+  }
+
   function toggleDraftSection(docId, sectionId) {
     setDraftSectionsByDoc((prev) => {
       const current = prev[docId] || [];
@@ -706,6 +765,7 @@ export default function BlueprintPage() {
     const existing = heading ? draftSectionMap[heading] : "";
     if (!isDesktop) setInputsTab("sections");
     setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: sectionId }));
+    if ((selectedDoc === "business_plan" || selectedDoc === "client_proposal") && sectionId === "cover_page") return;
     if (existing) return;
     setDraftSectionsByDoc((prev) => {
       const current = prev[selectedDoc] || [];
@@ -861,7 +921,12 @@ export default function BlueprintPage() {
   function buildSectionPreviewHtml(title, body) {
     const isSalesLetter = selectedDoc === "sales_letter";
     const heading = isSalesLetter ? "" : stripMarkdown(title || "");
-    const cleaned = String(body || "").replaceAll("\r\n", "\n").trim();
+    const cleaned = String(body || "")
+      .replaceAll("\r\n", "\n")
+      .replace(/^##\s*cover page\s*$/gim, "")
+      .replace(/^###\s*cover page\s*$/gim, "")
+      .replace(/^cover_page\s*$/gim, "")
+      .trim();
     if (!heading && !cleaned) return "";
     if (cleaned.includes('<div class="cover-page">')) return cleaned;
     const paragraphs = cleaned.split(/\n{2,}/g).map((p) => p.trim()).filter(Boolean);
@@ -926,12 +991,18 @@ export default function BlueprintPage() {
   }
 
   function getSectionSnippet(docId, sectionId) {
+    if ((docId === "business_plan" || docId === "client_proposal") && sectionId === "cover_page") {
+      const cover = extractCoverPage(docByType?.[docId]?.document_markdown || "");
+      const flatCover = stripMarkdown(cover);
+      if (!flatCover) return "";
+      return flatCover.length > 120 ? `${flatCover.slice(0, 120)}...` : flatCover;
+    }
     const heading = sectionHeadingMap(docId)[sectionId];
     const body = heading ? draftSectionMap[heading] : "";
     if (!body) return "";
     const flat = stripMarkdown(body);
     if (!flat) return "";
-    return flat.length > 120 ? `${flat.slice(0, 120)}…` : flat;
+    return flat.length > 120 ? `${flat.slice(0, 120)}...` : flat;
   }
 
   function mergeSectionDrafts(docId, existingMarkdown, incomingMarkdown) {
@@ -987,6 +1058,7 @@ export default function BlueprintPage() {
     }
     if (selectedDoc === "sales_letter") {
       setBillTo(`${entry.name}`);
+      if (!String(contactName || "").trim()) setContactName(entry.name);
       if (!dirtyFields.targetMarket && !targetMarket) setTargetMarket(entry.name);
     }
   }
@@ -1063,16 +1135,17 @@ export default function BlueprintPage() {
 	    // Sections behavior:
 	    // - For narrative docs (business plan / proposal): allow section-scoped generation.
 	    // - For sales letters: always generate the full letter (section drafts are handled separately).
-	    const chosenSections = sectionsByDoc[selectedDoc] || [];
+	    const chosenSections = (sectionsByDoc[selectedDoc] || []).filter((sectionId) => sectionId !== "cover_page");
 	    const userSelectedSections = chosenSections.length > 0;
 	    const sectionsPayload =
 	      selectedDoc === "sales_letter"
 	        ? null
-	        : (userSelectedSections ? chosenSections : sectionsForDoc(selectedDoc).map((s) => s.id));
+	        : (userSelectedSections ? chosenSections : generationSectionsForDoc(selectedDoc).map((s) => s.id));
 
     const wantsSnapshot =
       selectedDoc === "business_plan" && sectionsPayload.includes("financial_snapshot");
     setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: null }));
+    const chosen = (sectionsByDoc[selectedDoc] || []).filter((sectionId) => sectionId !== "cover_page");
     await syncWorkspaceProfile();
     setIsLoading(true);
     setError(null);
@@ -1084,6 +1157,7 @@ export default function BlueprintPage() {
         document_id: docIdByType[selectedDoc] || null,
         type: selectedDoc,
         company_name: resolvedCompanyName,
+        logo_data_url: documentLogo || workspaceProfile?.logo_data_url || workspaceLogoStored || null,
         industry: resolvedIndustry,
         pricing_model: pricingModel,
         workspace_id: (workspaceId || workspaceIdStored || "").trim() || null,
@@ -1115,6 +1189,7 @@ export default function BlueprintPage() {
         sender_phone: resolvedSenderPhone,
         sender_email: resolvedSenderEmail,
         sender_website: resolvedSenderWebsite,
+        contact_name: contactName,
         objective: getObjectiveValue(selectedDoc),
         subject_lines: getObjectiveValue("sales_letter"),
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
@@ -1156,21 +1231,19 @@ export default function BlueprintPage() {
               [selectedDoc]: sectionsForDoc(selectedDoc).map((s) => s.id)
             }));
           } else {
-            // For sales letters, keep section drafts separate (they are generated via section tiles).
-            // Populate drafts best-effort; do not block or fail the full letter preview if drafts fail.
-            void (async () => {
-              try {
-                const resDrafts = await apiRequestWithRetry(
-                  "/blueprint/generate",
-                  "POST",
-                  {
-                    ...generateBody,
-                    sections: sectionsForDoc(selectedDoc).map((s) => s.id),
-                  },
-                  { timeoutMs: 900000 }
-                );
-                const draftsMarkdown = resDrafts?.document_markdown || "";
-                if (!draftsMarkdown) return;
+            try {
+              const resDrafts = await apiRequestWithRetry(
+                "/blueprint/generate",
+                "POST",
+                {
+                  ...generateBody,
+                  document_id: null,
+                  sections: sectionsForDoc(selectedDoc).map((s) => s.id),
+                },
+                { timeoutMs: 900000 }
+              );
+              const draftsMarkdown = resDrafts?.document_markdown || "";
+              if (draftsMarkdown) {
                 setSectionDraftsByDoc((prev) => {
                   const merged = mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", draftsMarkdown);
                   return { ...prev, [selectedDoc]: merged };
@@ -1179,10 +1252,10 @@ export default function BlueprintPage() {
                   ...prev,
                   [selectedDoc]: sectionsForDoc(selectedDoc).map((s) => s.id)
                 }));
-              } catch {
-                // ignore
               }
-            })();
+            } catch {
+              // Keep the full document visible even if section-draft backfill fails.
+            }
           }
 
 	        // Preview behavior depends on whether the user selected sections.
@@ -1282,6 +1355,7 @@ export default function BlueprintPage() {
       const res = await apiRequestWithRetry("/blueprint/generate", "POST", {
         type: selectedDoc,
         company_name: resolvedCompanyName,
+        logo_data_url: documentLogo || workspaceProfile?.logo_data_url || workspaceLogoStored || null,
         industry: resolvedIndustry,
         pricing_model: pricingModel,
         workspace_id: (workspaceId || workspaceIdStored || "").trim() || null,
@@ -1314,6 +1388,7 @@ export default function BlueprintPage() {
         sender_phone: resolvedSenderPhone,
         sender_email: resolvedSenderEmail,
         sender_website: resolvedSenderWebsite,
+        contact_name: contactName,
         objective: getObjectiveValue(selectedDoc),
         subject_lines: getObjectiveValue("sales_letter"),
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
@@ -1346,17 +1421,30 @@ export default function BlueprintPage() {
       (editedHtmlByType[selectedDoc] && String(editedHtmlByType[selectedDoc]).trim()
         ? editedHtmlByType[selectedDoc]
         : (selectedDocResult?.document_html || ""));
-    const draftsMarkdown =
-      (selectedDoc ? sectionDraftsByDoc[selectedDoc] : "") ||
-      selectedDocResult?.document_markdown ||
-      "";
+    const draftsMarkdown = (selectedDoc ? sectionDraftsByDoc[selectedDoc] : "") || "";
+    const fullDocumentMarkdown = selectedDocResult?.document_markdown || draftsMarkdown || "";
     setIsSaving(true);
     setError(null);
     try {
       await apiRequest(`/blueprint/documents/${docId}`, "PATCH", {
         document_html: html,
-        document_markdown: draftsMarkdown
+        document_markdown: fullDocumentMarkdown
       });
+      if (workspaceIdStored) {
+        const ws = await apiRequest("/validation/me", "GET");
+        const existingDrafts =
+          ws?.data?.blueprint_section_drafts && typeof ws.data.blueprint_section_drafts === "object"
+            ? ws.data.blueprint_section_drafts
+            : {};
+        await apiRequest("/validation/me", "PATCH", {
+          data: {
+            blueprint_section_drafts: {
+              ...existingDrafts,
+              [selectedDoc]: draftsMarkdown
+            }
+          }
+        });
+      }
       refreshSavedDocs();
       setSavedNotice("Saved");
       setTimeout(() => setSavedNotice(null), 1800);
@@ -1416,6 +1504,7 @@ export default function BlueprintPage() {
           th { background: #f8fafc; font-weight: 700; }
           .cover-page { min-height: 70vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
           .cover-page p { margin: 6px 0; }
+          .document-logo { display: block; max-width: 180px; max-height: 90px; width: auto; height: auto; margin: 0 auto 20px; object-fit: contain; }
           .page-break { page-break-after: always; break-after: page; height: 1px; }
         </style>
       `;
@@ -1516,6 +1605,19 @@ export default function BlueprintPage() {
     setError(null);
     try {
       await apiRequest(`/blueprint/documents/${docId}`, "DELETE");
+      if (workspaceIdStored) {
+        try {
+          const ws = await apiRequest("/validation/me", "GET");
+          const existingDrafts =
+            ws?.data?.blueprint_section_drafts && typeof ws.data.blueprint_section_drafts === "object"
+              ? { ...ws.data.blueprint_section_drafts }
+              : {};
+          delete existingDrafts[typeHint];
+          await apiRequest("/validation/me", "PATCH", { data: { blueprint_section_drafts: existingDrafts } });
+        } catch {
+          // ignore draft cleanup failures
+        }
+      }
       setSavedDocs((prev) => prev.filter((d) => d.id !== docId));
       if (typeHint) {
         setDocByType((prev) => ({ ...prev, [typeHint]: null }));
@@ -1893,6 +1995,56 @@ export default function BlueprintPage() {
                       </div>
 
                       <div>
+                        <div className="ea-label">Logo</div>
+                        <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-3">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                              {documentLogo || workspaceProfile?.logo_data_url || workspaceLogoStored ? (
+                                <img
+                                  src={documentLogo || workspaceProfile?.logo_data_url || workspaceLogoStored}
+                                  alt="Document logo"
+                                  className="h-full w-full object-contain"
+                                />
+                              ) : (
+                                <span className="text-[11px] font-semibold text-slate-400">No logo</span>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-semibold text-slate-900">Document logo</div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                Use your workspace logo on cover pages and supporting financial documents. You can replace it here.
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <label className="inline-flex cursor-pointer items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+                              Upload logo
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  void handleDocumentLogoChange(file);
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
+                            {(documentLogo || workspaceProfile?.logo_data_url || workspaceLogoStored) ? (
+                              <Button
+                                variant="ghost"
+                                onClick={() => {
+                                  void persistWorkspaceLogo(null);
+                                }}
+                              >
+                                Remove
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
                         <div className="ea-label">Pricing model</div>
                         <select value={pricingModel} onChange={(e) => setPricingModel(e.target.value)} className="ea-input">
                           <option>Subscription</option>
@@ -2066,7 +2218,7 @@ export default function BlueprintPage() {
                         <div ref={sectionDraftsRef} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
                           <div className="text-sm font-semibold text-slate-900">Sections to generate (optional)</div>
                           <div className="mt-2 space-y-2">
-                            {sectionsForDoc(selectedDoc).map((section) => (
+                            {generationSectionsForDoc(selectedDoc).map((section) => (
                               <label key={section.id} className="flex items-center gap-2 text-xs text-slate-700">
                                 <input
                                   type="checkbox"
@@ -2189,6 +2341,14 @@ export default function BlueprintPage() {
                           <div>
                             <div className="ea-label">Headline angle (optional)</div>
                             <Input value={headline} onChange={(e) => setHeadline(e.target.value)} placeholder="Opening line / headline idea" />
+                          </div>
+                          <div>
+                            <div className="ea-label">Contact name</div>
+                            <Input
+                              value={contactName}
+                              onChange={(e) => setContactName(e.target.value)}
+                              placeholder="Who should the letter address directly?"
+                            />
                           </div>
                           <div>
                             <div className="ea-label">Offer (optional)</div>

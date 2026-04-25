@@ -22,6 +22,7 @@ class BlueprintGenerateRequest(BaseModel):
     document_id: Optional[str] = Field(default=None, description="Optional existing blueprint document id to update instead of creating a new one.")
     type: BlueprintType
     company_name: str = Field(min_length=2, max_length=64)
+    logo_data_url: Optional[str] = Field(default=None, max_length=2_000_000)
     workspace_id: Optional[str] = Field(default=None, description="Optional idea-validation workspace id to pull deterministic metrics.")
     include_validation_snapshot: bool = Field(
         default=False,
@@ -59,6 +60,7 @@ class BlueprintGenerateRequest(BaseModel):
     sender_phone: Optional[str] = None
     sender_email: Optional[str] = None
     sender_website: Optional[str] = None
+    contact_name: Optional[str] = None
     objective: Optional[str] = None
     subject_lines: Optional[str] = None
     followup_sequence: Optional[str] = None
@@ -107,6 +109,22 @@ class BlueprintDocumentUpdateRequest(BaseModel):
 
 class BlueprintShareLinkResponse(BaseModel):
     token: str = Field(min_length=16, max_length=256)
+
+
+class BlueprintFinancialShareRequest(BaseModel):
+    document_id: Optional[str] = None
+    type: Literal["sales_quotation", "invoice_template"]
+    title: str = Field(min_length=2, max_length=120)
+    company_name: str = Field(min_length=2, max_length=120)
+    workspace_id: Optional[str] = None
+    industry: Optional[str] = Field(default=None, max_length=80)
+    pricing_model: Optional[str] = Field(default=None, max_length=40)
+    document_markdown: str = Field(min_length=1)
+    document_html: Optional[str] = None
+
+
+class BlueprintFinancialShareResponse(BlueprintShareLinkResponse):
+    document_id: str
 
 
 class BlueprintSharedDocument(BaseModel):

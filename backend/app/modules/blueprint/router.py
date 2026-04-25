@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from app.modules.blueprint.repository import delete_document, get_document, list_documents, update_document
+from app.modules.blueprint.repository import delete_document, get_document, list_documents, save_document, update_document
 from app.modules.blueprint.exporter import html_to_pdf, markdown_to_html, render_export_html, render_pdf_html
 from app.modules.blueprint.schemas import (
     BlueprintDocument,
     BlueprintDocumentListItem,
     BlueprintDocumentUpdateRequest,
+    BlueprintFinancialShareRequest,
+    BlueprintFinancialShareResponse,
     BlueprintGenerateRequest,
     BlueprintGenerateResponse,
     BlueprintShareLinkResponse,
@@ -80,6 +82,31 @@ async def blueprint_documents_share_create(
     if not token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return BlueprintShareLinkResponse(token=token)
+
+
+@router.post("/financial-documents/share", response_model=BlueprintFinancialShareResponse)
+async def blueprint_financial_documents_share(
+    payload: BlueprintFinancialShareRequest,
+    user=Depends(get_current_user),
+) -> BlueprintFinancialShareResponse:
+    document_id = await save_document(
+        user_id=user["id"],
+        document_id=payload.document_id,
+        type=payload.type,
+        title=payload.title,
+        company_name=payload.company_name,
+        industry=payload.industry,
+        pricing_model=payload.pricing_model,
+        workspace_id=payload.workspace_id,
+        document_markdown=payload.document_markdown,
+        document_html=payload.document_html,
+        provider="financials",
+        model="workspace",
+    )
+    token = await create_share_token(user_id=user["id"], document_id=document_id)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return BlueprintFinancialShareResponse(token=token, document_id=document_id)
 
 
 @router.delete("/documents/{document_id}/share", status_code=status.HTTP_204_NO_CONTENT)

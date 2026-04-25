@@ -130,8 +130,9 @@ export default function ResultsPage() {
     setDecisionNotice(null);
     try {
       const patchPayload = { data: {} };
+      const ws = await apiRequest(`/validation/${workspaceId}`, "GET");
+      const validationHistory = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
       if (isServiceIdeaView) {
-        const ws = await apiRequest(`/validation/${workspaceId}`, "GET");
         const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
         const activeId = ws?.data?.active_service_validation_id;
         const active = activeId ? history.find((h) => h?.id === activeId) : history[0];
@@ -142,8 +143,15 @@ export default function ResultsPage() {
         });
         patchPayload.data.service_validation_history = nextHistory;
         if (activeEntryId) patchPayload.data.active_service_validation_id = activeEntryId;
+        patchPayload.data.validation_history = validationHistory.map((entry) =>
+          entry?.id === activeEntryId ? { ...entry, status, decided_at: new Date().toISOString() } : entry
+        );
       } else {
+        const activeValidationId = ws?.data?.active_validation_id;
         patchPayload.data.decision = { status, decided_at: new Date().toISOString() };
+        patchPayload.data.validation_history = validationHistory.map((entry) =>
+          entry?.id === activeValidationId ? { ...entry, status, decided_at: new Date().toISOString() } : entry
+        );
         if (status === "accepted" && ideaValidation) {
           patchPayload.data.idea_validation = ideaValidation;
           patchPayload.data.draft_idea_validation = null;
@@ -165,7 +173,6 @@ export default function ResultsPage() {
           updated_at: new Date().toISOString(),
         };
 
-        const ws = await apiRequest(`/validation/${workspaceId}`, "GET");
         const existingCatalogue = ws?.data?.catalogue || {};
         const existingProducts = Array.isArray(existingCatalogue?.products) ? existingCatalogue.products : [];
         const alreadyExists = existingProducts.some(

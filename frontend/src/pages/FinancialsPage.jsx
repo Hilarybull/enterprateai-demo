@@ -17,13 +17,16 @@ import { formatCurrency } from "../lib/format";
 export default function FinancialsPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
+  const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
   const currency = useWorkspaceStore((s) => s.currency);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
+  const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [shareNotice, setShareNotice] = useState(null);
 
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -44,6 +47,7 @@ export default function FinancialsPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [previewInvoiceId, setPreviewInvoiceId] = useState(null);
   const [previewQuoteId, setPreviewQuoteId] = useState(null);
+  const [shareMenu, setShareMenu] = useState(null);
   const ARCHIVE_WARNING_DAYS = 60;
   const ARCHIVE_EXPIRE_DAYS = 90;
 
@@ -86,6 +90,24 @@ export default function FinancialsPage() {
       </div>
     );
   }
+
+  useEffect(() => {
+    if (!shareMenu) return;
+    function handleClick(event) {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-financial-share-menu]")) return;
+      setShareMenu(null);
+    }
+    function handleResize() {
+      setShareMenu(null);
+    }
+    document.addEventListener("mousedown", handleClick);
+    window.addEventListener("resize", handleResize);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [shareMenu]);
 
   function ActionMenu({ items }) {
     const [open, setOpen] = useState(false);
@@ -159,6 +181,7 @@ export default function FinancialsPage() {
         const cat = ws?.data?.catalogue || {};
         const fin = ws?.data?.financials || {};
         const integ = ws?.data?.integrations || {};
+        setWorkspaceLogo(ws?.data?.workspace_profile?.logo_data_url || null);
         setProducts(Array.isArray(cat.products) ? cat.products : []);
         setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
         setVendors(Array.isArray(cat.vendors) ? cat.vendors : []);
@@ -189,7 +212,7 @@ export default function FinancialsPage() {
     return () => {
       alive = false;
     };
-  }, [workspaceId, setWorkspaceId, setWorkspaceName]);
+  }, [workspaceId, setWorkspaceId, setWorkspaceLogo, setWorkspaceName]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -342,6 +365,16 @@ export default function FinancialsPage() {
     return str || "Payment terms";
   }
 
+  function renderDocBranding(subtitle) {
+    return `
+      <div class="brand-block">
+        ${workspaceLogo ? `<img src="${workspaceLogo}" alt="Company logo" />` : ""}
+        <h2>${workspaceName || "EnterprateAI"}</h2>
+        <div class="muted">${subtitle}</div>
+      </div>
+    `;
+  }
+
   function matchByName(list, value) {
     const needle = String(value || "").trim().toLowerCase();
     if (!needle) return null;
@@ -373,6 +406,9 @@ export default function FinancialsPage() {
     *{color:#0f172a !important;}
     body{font-family:Inter, Arial, sans-serif; background:#ffffff; padding:32px; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;}
     .header{display:flex; justify-content:space-between; align-items:flex-start;}
+    .brand-block{text-align:left;}
+    .brand-block img{display:block; max-width:180px; max-height:72px; width:auto; height:auto; object-fit:contain; object-position:left center; margin:0 0 14px 0;}
+    .brand-block h2{margin:0 0 4px;}
     .muted{color:#1f2937; font-size:12px;}
     .card{border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-top:16px;}
     table{width:100%; border-collapse:collapse; margin-top:16px;}
@@ -383,10 +419,7 @@ export default function FinancialsPage() {
 </head>
 <body>
   <div class="header">
-    <div>
-      <h2>${workspaceName || "EnterprateAI"}</h2>
-      <div class="muted">Invoice</div>
-    </div>
+    ${renderDocBranding("Invoice")}
       <div class="right">
         <div class="muted">Invoice ID</div>
         <div>${invoice?.invoice_id || invoice?.id || ""}</div>
@@ -428,6 +461,9 @@ export default function FinancialsPage() {
     *{color:#0f172a !important;}
     body{font-family:Inter, Arial, sans-serif; background:#ffffff; padding:32px; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;}
     .header{display:flex; justify-content:space-between; align-items:flex-start;}
+    .brand-block{text-align:left;}
+    .brand-block img{display:block; max-width:180px; max-height:72px; width:auto; height:auto; object-fit:contain; object-position:left center; margin:0 0 14px 0;}
+    .brand-block h2{margin:0 0 4px;}
     .muted{color:#1f2937; font-size:12px;}
     .card{border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-top:16px;}
     table{width:100%; border-collapse:collapse; margin-top:16px;}
@@ -438,10 +474,7 @@ export default function FinancialsPage() {
 </head>
 <body>
   <div class="header">
-    <div>
-      <h2>${workspaceName || "EnterprateAI"}</h2>
-      <div class="muted">Sales quotation</div>
-    </div>
+    ${renderDocBranding("Sales quotation")}
       <div class="right">
         <div class="muted">Quotation ID</div>
         <div>${quote?.quotation_id || quote?.id || ""}</div>
@@ -519,6 +552,127 @@ export default function FinancialsPage() {
     const html = buildQuoteHtml(quote, customer, product);
     const filename = `quotation-${quote?.quotation_id || quote?.id || "draft"}.pdf`;
     downloadPdfFile(html, filename);
+  }
+
+  async function createFinancialShareLink(kind, record, customer, product) {
+    if (!record) return;
+    setError(null);
+    setShareNotice("Creating link...");
+    try {
+      const isInvoice = kind === "invoice";
+      const html = isInvoice ? buildInvoiceHtml(record, customer, product) : buildQuoteHtml(record, customer, product);
+      const titlePrefix = isInvoice ? "Invoice" : "Sales Quotation";
+      const shareIdField = "share_document_id";
+      const res = await apiRequest("/blueprint/financial-documents/share", "POST", {
+        document_id: record?.[shareIdField] || null,
+        type: isInvoice ? "invoice_template" : "sales_quotation",
+        title: `${titlePrefix} — ${record?.invoice_id || record?.quotation_id || record?.id || workspaceName || "Document"}`,
+        company_name: workspaceName || "EnterprateAI",
+        workspace_id: workspaceId || null,
+        document_markdown: html,
+        document_html: html,
+      });
+      const token = res?.token;
+      const documentId = res?.document_id;
+      if (!token || !documentId) throw new Error("Share link could not be created.");
+
+      if (documentId !== record?.[shareIdField]) {
+        if (isInvoice) {
+          const nextInvoices = invoices.map((item) =>
+            item.id === record.id ? { ...item, [shareIdField]: documentId } : item
+          );
+          setInvoices(nextInvoices);
+          await persist({ invoices: nextInvoices, quotes, expenses, contracts });
+        } else {
+          const nextQuotes = quotes.map((item) =>
+            item.id === record.id ? { ...item, [shareIdField]: documentId } : item
+          );
+          setQuotes(nextQuotes);
+          await persist({ invoices, quotes: nextQuotes, expenses, contracts });
+        }
+      }
+
+      const url = `${window.location.origin}/share/${token}`;
+      return url;
+    } catch (e) {
+      setShareNotice(null);
+      setError(e instanceof Error ? e.message : "Share failed.");
+      return null;
+    }
+  }
+
+  async function shareFinancialDocument(kind, record, customer, product, mode = "copy") {
+    const url = await createFinancialShareLink(kind, record, customer, product);
+    if (!url) return;
+    if (mode === "mail") {
+      const isInvoice = kind === "invoice";
+      const recipient = encodeURIComponent(customer?.email || "");
+      const reference = isInvoice
+        ? record?.invoice_id || record?.id || ""
+        : record?.quotation_id || record?.id || "";
+      const subject = encodeURIComponent(`${isInvoice ? "Invoice" : "Quotation"} ${reference}`);
+      const body = encodeURIComponent(
+        `Hi${customer?.name ? ` ${customer.name}` : ""},\n\nHere is your shared document link:\n${url}\n\nThank you.`
+      );
+      window.location.href = `mailto:${recipient}?subject=${subject}&body=${body}`;
+      setShareNotice("Mail draft opened");
+      setTimeout(() => setShareNotice(null), 1800);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareNotice("Link copied");
+      setTimeout(() => setShareNotice(null), 1800);
+    } catch (e) {
+      setShareNotice(null);
+      setError(e instanceof Error ? e.message : "Share failed.");
+    }
+  }
+
+  function addFinancialShareAction(items, kind, record, customer, product) {
+    const shareItem = {
+      label: "Share",
+      onClick: async () => {
+        await shareFinancialDocument(kind, record, customer, product, "copy");
+      }
+    };
+    const deleteIndex = items.findIndex((item) => item?.tone === "danger" || item?.label === "Delete");
+    if (deleteIndex === -1) return [...items, shareItem];
+    return [...items.slice(0, deleteIndex), shareItem, ...items.slice(deleteIndex)];
+  }
+
+  function openShareMenu(event, kind, record, customer, product) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setShareMenu({
+      key: `${kind}:${record?.id || ""}`,
+      kind,
+      record,
+      customer,
+      product,
+      top: rect.bottom + 8,
+      right: window.innerWidth - rect.right,
+    });
+  }
+
+  function ShareDropdown({ kind, record, customer, product }) {
+    const menuKey = `${kind}:${record?.id || ""}`;
+    const isOpen = shareMenu?.key === menuKey;
+    return (
+      <div>
+        <Button
+          variant="secondary"
+          onClick={(event) => {
+            if (isOpen) {
+              setShareMenu(null);
+              return;
+            }
+            openShareMenu(event, kind, record, customer, product);
+          }}
+        >
+          Share
+        </Button>
+      </div>
+    );
   }
 
   function sendInvoice(invoice, customer) {
@@ -1178,7 +1332,7 @@ export default function FinancialsPage() {
                         </div>
                       </div>
                       <ActionMenu
-                        items={[
+                        items={addFinancialShareAction([
                           {
                             label: "Edit",
                             onClick: () => {
@@ -1208,7 +1362,7 @@ export default function FinancialsPage() {
                             tone: "danger",
                             onClick: () => deleteItem("invoice", inv.id)
                           }
-                        ]}
+                        ], "invoice", inv, customer, product)}
                       />
                     </div>
                   );
@@ -1375,7 +1529,7 @@ export default function FinancialsPage() {
                         </div>
                       </div>
                       <ActionMenu
-                        items={[
+                        items={addFinancialShareAction([
                           {
                             label: "Edit",
                             onClick: () => {
@@ -1410,7 +1564,7 @@ export default function FinancialsPage() {
                             tone: "danger",
                             onClick: () => deleteItem("quote", quote.id)
                           }
-                        ]}
+                        ], "quote", quote, customer, product)}
                       />
                     </div>
                   );
@@ -1899,7 +2053,10 @@ export default function FinancialsPage() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setPreviewInvoiceId(null);
+            if (e.target === e.currentTarget) {
+              setShareMenu(null);
+              setPreviewInvoiceId(null);
+            }
           }}
         >
           <div className="ea-dialog w-full max-w-3xl max-h-[90vh] overflow-hidden bg-white">
@@ -1909,12 +2066,7 @@ export default function FinancialsPage() {
                 <div className="text-xs text-slate-600">Generated from your catalogue and invoice inputs.</div>
               </div>
               <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => sendInvoice(previewInvoice, previewCustomer)}
-                >
-                  Send
-                </Button>
+                <ShareDropdown kind="invoice" record={previewInvoice} customer={previewCustomer} product={previewProduct} />
                 <Button
                   variant="secondary"
                   onClick={() => downloadInvoice(previewInvoice, previewCustomer, previewProduct)}
@@ -1923,7 +2075,10 @@ export default function FinancialsPage() {
                 </Button>
                 <button
                   type="button"
-                  onClick={() => setPreviewInvoiceId(null)}
+                  onClick={() => {
+                    setShareMenu(null);
+                    setPreviewInvoiceId(null);
+                  }}
                   className="rounded-lg px-2 py-1 text-sm text-slate-600 hover:bg-slate-100"
                 >
                   Close
@@ -1932,7 +2087,10 @@ export default function FinancialsPage() {
             </div>
             <div className="max-h-[calc(90vh-64px)] overflow-auto p-6 text-sm text-slate-700">
               <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
+                <div className="flex min-w-0 max-w-[240px] flex-col items-start">
+                  {workspaceLogo ? (
+                    <img src={workspaceLogo} alt="Company logo" className="mb-3 block h-auto max-h-20 w-auto max-w-full self-start object-contain object-left" />
+                  ) : null}
                   <div className="text-lg font-semibold text-slate-900">{workspaceName || "EnterprateAI"}</div>
                   <div className="text-xs text-slate-500">Invoice</div>
                 </div>
@@ -1985,7 +2143,10 @@ export default function FinancialsPage() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setPreviewQuoteId(null);
+            if (e.target === e.currentTarget) {
+              setShareMenu(null);
+              setPreviewQuoteId(null);
+            }
           }}
         >
           <div className="ea-dialog w-full max-w-3xl max-h-[90vh] overflow-hidden bg-white">
@@ -1995,12 +2156,7 @@ export default function FinancialsPage() {
                 <div className="text-xs text-slate-600">Generated from your catalogue and quotation inputs.</div>
               </div>
               <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => sendQuote(previewQuote, previewQuoteCustomer)}
-                >
-                  Send
-                </Button>
+                <ShareDropdown kind="quote" record={previewQuote} customer={previewQuoteCustomer} product={previewQuoteProduct} />
                 <Button
                   variant="secondary"
                   onClick={() => downloadQuote(previewQuote, previewQuoteCustomer, previewQuoteProduct)}
@@ -2009,7 +2165,10 @@ export default function FinancialsPage() {
                 </Button>
                 <button
                   type="button"
-                  onClick={() => setPreviewQuoteId(null)}
+                  onClick={() => {
+                    setShareMenu(null);
+                    setPreviewQuoteId(null);
+                  }}
                   className="rounded-lg px-2 py-1 text-sm text-slate-600 hover:bg-slate-100"
                 >
                   Close
@@ -2018,7 +2177,10 @@ export default function FinancialsPage() {
             </div>
             <div className="max-h-[calc(90vh-64px)] overflow-auto p-6 text-sm text-slate-700">
               <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
+                <div className="flex min-w-0 max-w-[240px] flex-col items-start">
+                  {workspaceLogo ? (
+                    <img src={workspaceLogo} alt="Company logo" className="mb-3 block h-auto max-h-20 w-auto max-w-full self-start object-contain object-left" />
+                  ) : null}
                   <div className="text-lg font-semibold text-slate-900">{workspaceName || "EnterprateAI"}</div>
                   <div className="text-xs text-slate-500">Sales quotation</div>
                 </div>
@@ -2064,6 +2226,43 @@ export default function FinancialsPage() {
               </div>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {shareMenu ? (
+        <div
+          data-financial-share-menu
+          className="fixed z-[120] min-w-[170px] rounded-2xl border border-slate-200 bg-white p-1 shadow-2xl"
+          style={{ top: `${shareMenu.top}px`, right: `${Math.max(12, shareMenu.right)}px` }}
+        >
+          <button
+            type="button"
+            onClick={async () => {
+              const { kind, record, customer, product } = shareMenu;
+              setShareMenu(null);
+              await shareFinancialDocument(kind, record, customer, product, "copy");
+            }}
+            className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+          >
+            Copy link
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const { kind, record, customer, product } = shareMenu;
+              setShareMenu(null);
+              await shareFinancialDocument(kind, record, customer, product, "mail");
+            }}
+            className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+          >
+            Via mail
+          </button>
+        </div>
+      ) : null}
+
+      {shareNotice ? (
+        <div className="fixed left-1/2 top-4 z-[130] -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-2xl">
+          {shareNotice}
         </div>
       ) : null}
     </div>

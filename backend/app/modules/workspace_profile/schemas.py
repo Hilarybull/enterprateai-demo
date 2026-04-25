@@ -38,6 +38,7 @@ class ServiceEntry(BaseModel):
 class WorkspaceProfile(BaseModel):
     # A. Company Identity
     company_name: str = Field(min_length=2, max_length=120)
+    logo_data_url: str | None = Field(default=None, max_length=2_000_000)
     legal_name: str | None = Field(default=None, max_length=160)
     registration_number: str | None = Field(default=None, max_length=64)
     business_type: BusinessType

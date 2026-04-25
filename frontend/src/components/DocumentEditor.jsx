@@ -70,6 +70,12 @@ function markdownToHtml(md) {
       continue;
     }
 
+    if (/^<img\b/i.test(trimmed)) {
+      closeList();
+      html += trimmed;
+      continue;
+    }
+
     if (
       trimmed.startsWith("<p class=\"subject-line\">") &&
       trimmed.endsWith("</p>")
@@ -185,6 +191,7 @@ function buildPreviewFragment({ title, bodyHtml }) {
       .subject-line { text-align: center; margin: 8px 0 14px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
       .cover-page { min-height: 70vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
       .cover-page p { margin: 6px 0; }
+      .document-logo { display: block; max-width: 180px; max-height: 90px; width: auto; height: auto; margin: 0 auto 20px; object-fit: contain; }
     </style>
     <div class="page-wrap" aria-label="${escapeHtml(title || "Document")}">
       ${pageHtml}
@@ -385,12 +392,17 @@ export default function DocumentEditor({
 
   const isCompactPreview = Boolean(compactPreview && showPaginated);
   const shareItems = useMemo(() => {
+    const extractText = () => {
+      const container = document.createElement("div");
+      container.innerHTML = getBodyHtml();
+      return String(container.innerText || container.textContent || "").trim();
+    };
     const base = [
       {
         id: "copy_text",
         label: "Copy text",
         onClick: async () => {
-          const text = ref.current?.innerText || "";
+          const text = (ref.current?.innerText || "").trim() || extractText();
           await navigator.clipboard.writeText(text);
         },
       },

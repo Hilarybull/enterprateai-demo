@@ -6,6 +6,7 @@ export const useWorkspaceStore = create(
     (set) => ({
       workspaceId: null,
       workspaceName: null,
+      workspaceLogo: null,
       workspaceOwnerEmail: null,
       decisionStatus: null, // accepted | rejected | null
       serviceDecisionStatus: null, // accepted | rejected | null
@@ -18,6 +19,7 @@ export const useWorkspaceStore = create(
       currency: "GBP",
       setWorkspaceId: (workspaceId) => set({ workspaceId: workspaceId ?? null }),
       setWorkspaceName: (workspaceName) => set({ workspaceName: workspaceName || null }),
+      setWorkspaceLogo: (workspaceLogo) => set({ workspaceLogo: workspaceLogo || null }),
       setWorkspaceOwnerEmail: (workspaceOwnerEmail) => set({ workspaceOwnerEmail: workspaceOwnerEmail || null }),
       setDecisionStatus: (decisionStatus) => set({ decisionStatus: decisionStatus || null }),
       setServiceDecisionStatus: (serviceDecisionStatus) => set({ serviceDecisionStatus: serviceDecisionStatus || null }),
@@ -34,6 +36,7 @@ export const useWorkspaceStore = create(
             return {
               workspaceId: null,
               workspaceName: null,
+              workspaceLogo: null,
               workspaceOwnerEmail: null,
               decisionStatus: null,
               serviceDecisionStatus: null,
@@ -50,6 +53,7 @@ export const useWorkspaceStore = create(
             return {
               workspaceId: null,
               workspaceName: null,
+              workspaceLogo: null,
               workspaceOwnerEmail: email,
               decisionStatus: null,
               serviceDecisionStatus: null,
@@ -70,6 +74,7 @@ export const useWorkspaceStore = create(
       partialize: (state) => ({
         workspaceId: state.workspaceId,
         workspaceName: state.workspaceName,
+        workspaceLogo: state.workspaceLogo,
         workspaceOwnerEmail: state.workspaceOwnerEmail,
         decisionStatus: state.decisionStatus,
         serviceDecisionStatus: state.serviceDecisionStatus,

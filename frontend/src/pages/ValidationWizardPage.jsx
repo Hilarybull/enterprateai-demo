@@ -5,12 +5,14 @@ import InlineAlert from "../components/InlineAlert";
 import Input from "../components/Input";
 import SectionCard from "../components/SectionCard";
 import Spinner from "../components/Spinner";
+import SegmentedTabs from "../components/SegmentedTabs";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
 import InfoTip from "../components/InfoTip";
 import NumberInput, { parseIntSafe, parseNumber } from "../components/NumberInput";
 import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
+import { imageFileToDataUrl } from "../lib/files";
 
 function humanizeValidationError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
@@ -59,6 +61,7 @@ export default function ValidationWizardPage() {
 
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceNameStore = useWorkspaceStore((s) => s.setWorkspaceName);
+  const setWorkspaceLogoStore = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
   const setInputs = useWorkspaceStore((s) => s.setInputs);
   const setIdeaValidation = useWorkspaceStore((s) => s.setIdeaValidation);
@@ -77,8 +80,11 @@ export default function ValidationWizardPage() {
   const [savedNotice, setSavedNotice] = useState(null);
   const [existingCatalogue, setExistingCatalogue] = useState({ products: [], customers: [], vendors: [] });
   const [savedServiceIdeas, setSavedServiceIdeas] = useState([]);
+  const [validationHistory, setValidationHistory] = useState([]);
   const [serviceSelection, setServiceSelection] = useState("");
   const [hasAppliedDrafts, setHasAppliedDrafts] = useState(false);
+  const [contentTab, setContentTab] = useState("builder");
+  const [historyFilter, setHistoryFilter] = useState("all");
 
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceNameTouched, setWorkspaceNameTouched] = useState(false);
@@ -194,6 +200,7 @@ export default function ValidationWizardPage() {
   const [serviceCurrency, setServiceCurrency] = useState("GBP");
   const [profile, setProfile] = useState(() => ({
     company_name: "",
+    logo_data_url: "",
     legal_name: "",
     registration_number: "",
     business_type: "limited_company",
@@ -255,6 +262,19 @@ export default function ValidationWizardPage() {
     savedServiceIdeaOptions.forEach((name) => names.add(name));
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [savedServiceIdeaOptions, workspaceServices]);
+  const historyCounts = useMemo(
+    () => ({
+      all: validationHistory.length,
+      pending: validationHistory.filter((entry) => entry.status === "pending").length,
+      accepted: validationHistory.filter((entry) => entry.status === "accepted").length,
+      rejected: validationHistory.filter((entry) => entry.status === "rejected").length,
+    }),
+    [validationHistory]
+  );
+  const filteredValidationHistory = useMemo(() => {
+    if (historyFilter === "all") return validationHistory;
+    return validationHistory.filter((entry) => entry.status === historyFilter);
+  }, [historyFilter, validationHistory]);
   const activeWorkspaceId = editingWorkspaceId || storedWorkspaceId;
 
   const isProductPath = form.pathway === "product_service_idea";
@@ -542,6 +562,11 @@ export default function ValidationWizardPage() {
         const iv = ws?.data?.idea_validation || ws?.data?.draft_idea_validation;
         setExistingCatalogue(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
         setSavedServiceIdeas(Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : []);
+        setValidationHistory(
+          (Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [])
+            .map(normaliseValidationHistoryEntry)
+            .filter(Boolean)
+        );
         if (ws?.data?.currency) setServiceCurrency(ws.data.currency);
         if (!iv || typeof iv !== "object") {
           const profile = ws?.data?.business_profile;
@@ -554,6 +579,7 @@ export default function ValidationWizardPage() {
           }
           const wp = ws?.data?.workspace_profile;
           if (wp && typeof wp === "object") {
+            setWorkspaceLogoStore(wp.logo_data_url || null);
             setProfile((prev) => ({
               ...prev,
               ...wp,
@@ -596,6 +622,7 @@ export default function ValidationWizardPage() {
         const next = structuredClone(iv);
         next.pathway = form.pathway || next.pathway || "business_idea";
         if (wp && typeof wp === "object") {
+          setWorkspaceLogoStore(wp.logo_data_url || null);
           setProfile((prev) => ({
             ...prev,
             ...wp,
@@ -696,6 +723,166 @@ export default function ValidationWizardPage() {
     });
   }
 
+  async function handleProfileLogoChange(file) {
+    if (!file) return;
+    try {
+      const dataUrl = await imageFileToDataUrl(file);
+      updateProfile("logo_data_url", dataUrl);
+      setWorkspaceLogoStore(dataUrl);
+      setSavedNotice("Logo ready to save.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load logo.");
+    }
+  }
+
+  function clearProfileLogo() {
+    updateProfile("logo_data_url", "");
+    setWorkspaceLogoStore(null);
+  }
+
+  function normaliseValidationHistoryEntry(entry) {
+    if (!entry || typeof entry !== "object") return null;
+    const id = String(entry.id || "").trim();
+    if (!id) return null;
+    return {
+      id,
+      type: String(entry.type || "validation"),
+      title: String(entry.title || entry.service_name || "Validation"),
+      created_at: entry.created_at || new Date().toISOString(),
+      status: entry.status || entry.decision_status || "pending",
+      summary: String(entry.summary || entry.outcome || "").trim(),
+      score: typeof entry.score === "number" ? entry.score : null,
+      payload: entry.payload || null,
+      result: entry.result || null,
+    };
+  }
+
+  function hydrateBusinessFormForEditor(source) {
+    const next = structuredClone(source || form);
+    next.pathway = "business_idea";
+    next.context ||= {};
+    next.problem ||= {};
+    next.offer ||= {};
+    next.demand ||= {};
+    next.costs ||= {};
+    next.capacity ||= {};
+    next.cash ||= {};
+    next.go_to_market ||= {};
+
+    const bt = String(next?.context?.business_type ?? "").trim();
+    next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : bt ? "Other" : "Technology";
+    next.context.business_type_other = BUSINESS_TYPE_OPTIONS.includes(bt) ? "" : bt;
+
+    const pi = String(next?.context?.primary_industry ?? "").trim();
+    next.context.primary_industry_category = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? pi : pi ? "Other" : "IT";
+    next.context.primary_industry_other = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? "" : pi;
+
+    const cs = String(next?.problem?.customer_segment ?? "").trim();
+    next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "SMEs";
+    next.problem.customer_segment_other = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? "" : cs;
+
+    const du = String(next?.offer?.deliverable_unit ?? "").trim();
+    next.offer.deliverable_unit_category = DELIVERABLE_UNIT_OPTIONS.includes(du) ? du : du ? "Other" : "unit";
+    next.offer.deliverable_unit_other = DELIVERABLE_UNIT_OPTIONS.includes(du) ? "" : du;
+
+    next.context.founder_hours_per_week = String(next.context?.founder_hours_per_week ?? "40");
+    next.offer.price_per_unit = String(next.offer?.price_per_unit ?? "");
+    next.demand.expected_units_per_month = String(next.demand?.expected_units_per_month ?? "");
+    next.demand.expected_customers = String(next.demand?.expected_customers ?? "");
+    next.demand.sales_cycle_days = String(next.demand?.sales_cycle_days ?? "");
+    next.demand.payment_terms_days = String(next.demand?.payment_terms_days ?? "14");
+    next.costs.variable_cost_per_unit = String(next.costs?.variable_cost_per_unit ?? "");
+    next.costs.fixed_costs_monthly = String(next.costs?.fixed_costs_monthly ?? "");
+    next.costs.founder_draw_monthly = String(next.costs?.founder_draw_monthly ?? "");
+    next.costs.contractor_costs_monthly = String(next.costs?.contractor_costs_monthly ?? "");
+    next.capacity.team_size = String(next.capacity?.team_size ?? "1");
+    next.capacity.capacity_units_per_person_per_month = String(next.capacity?.capacity_units_per_person_per_month ?? "");
+    next.cash.starting_cash = String(next.cash?.starting_cash ?? "");
+    next.cash.upfront_costs = String(next.cash?.upfront_costs ?? "");
+    return next;
+  }
+
+  async function editHistoryEntry(entry) {
+    if (!activeWorkspaceId) return;
+    setError(null);
+    try {
+      const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+      const data = ws?.data || {};
+      setWorkspaceId(activeWorkspaceId);
+      setWorkspaceNameStore(ws?.name || null);
+      setWorkspaceName(ws?.name || "");
+      setWorkspaceNameTouched(true);
+
+      if (entry.type === "service_validation") {
+        const serviceHistory = Array.isArray(data.service_validation_history) ? data.service_validation_history : [];
+        const serviceEntry = serviceHistory.find((item) => item?.id === entry.id);
+        const payload = serviceEntry?.payload || entry.payload || data.draft_service_idea;
+        if (!payload || typeof payload !== "object") {
+          setError("We could not find the saved service inputs for this history item.");
+          return;
+        }
+        setForm((prev) => ({ ...prev, pathway: "product_service_idea" }));
+        setServiceForm((prev) => ({ ...prev, ...payload }));
+        setServiceCurrency(serviceEntry?.currency || data.currency || serviceCurrency || "GBP");
+        setDraftServiceIdea(payload);
+        setValidation(serviceEntry?.result || entry.result || null);
+        await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
+          data: {
+            active_service_validation_id: entry.id,
+            draft_service_idea: payload,
+          }
+        });
+      } else {
+        const payload = entry.payload || data.draft_idea_validation || data.idea_validation;
+        if (!payload || typeof payload !== "object") {
+          setError("We could not find the saved business inputs for this history item.");
+          return;
+        }
+        const hydrated = hydrateBusinessFormForEditor(payload);
+        setForm(hydrated);
+        setDraftIdeaValidation(payload);
+        setValidation(entry.result || null);
+        await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
+          data: {
+            active_validation_id: entry.id,
+            draft_idea_validation: payload,
+          }
+        });
+      }
+
+      setContentTab("builder");
+      setMode("fill");
+      setSavedNotice("Validation inputs loaded. You can continue editing from here.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load this validation history item.");
+    }
+  }
+
+  async function deleteHistoryEntry(entryId) {
+    if (!activeWorkspaceId) return;
+    const ok = window.confirm("Delete this validation history item?");
+    if (!ok) return;
+    setError(null);
+    try {
+      const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+      const existing = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
+      const serviceExisting = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
+      const nextHistory = existing.filter((item) => item?.id !== entryId);
+      const nextServiceHistory = serviceExisting.filter((item) => item?.id !== entryId);
+      await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
+        data: {
+          validation_history: nextHistory,
+          service_validation_history: nextServiceHistory,
+        }
+      });
+      setValidationHistory(nextHistory.map(normaliseValidationHistoryEntry).filter(Boolean));
+      setSavedServiceIdeas(nextServiceHistory);
+      setSavedNotice("Validation history deleted.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not delete validation history item.");
+    }
+  }
+
   function validateProfileDraft() {
     if (!enabledForms.workspace_profile) return null;
     if (!String(profile.company_name || "").trim()) return "Company name is required in the workspace profile.";
@@ -773,6 +960,7 @@ export default function ValidationWizardPage() {
         const profilePayload = {
           ...profile,
           company_name: String(profile.company_name || "").trim(),
+          logo_data_url: String(profile.logo_data_url || "").trim() || null,
           legal_name: String(profile.legal_name || "").trim() || null,
           registration_number: String(profile.registration_number || "").trim() || null,
           about_company: String(profile.about_company || "").trim(),
@@ -856,6 +1044,7 @@ export default function ValidationWizardPage() {
 
         setWorkspaceId(wsId);
         setWorkspaceNameStore(wsName);
+        setWorkspaceLogoStore(profilePayload.logo_data_url || null);
         setDecisionStatus(null);
         setIdeaValidation(null);
 
@@ -953,6 +1142,7 @@ export default function ValidationWizardPage() {
         const profilePayload = {
           ...profile,
           company_name: String(profile.company_name || "").trim(),
+          logo_data_url: String(profile.logo_data_url || "").trim() || null,
           legal_name: String(profile.legal_name || "").trim() || null,
           registration_number: String(profile.registration_number || "").trim() || null,
           about_company: String(profile.about_company || "").trim(),
@@ -998,6 +1188,7 @@ export default function ValidationWizardPage() {
           { workspace_id: wsId, profile: profilePayload },
           { timeoutMs: 120000 }
         );
+        setWorkspaceLogoStore(profilePayload.logo_data_url || null);
       }
       if (shouldEvaluate) {
         if (isProductPath) {
@@ -1054,6 +1245,7 @@ export default function ValidationWizardPage() {
               try {
                 const ws = await apiRequest(`/validation/${wsId}`, "GET");
                 const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
+                const validationHistoryExisting = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
                 const entry = {
                   id: validationId,
                   created_at: new Date().toISOString(),
@@ -1068,6 +1260,20 @@ export default function ValidationWizardPage() {
                   "PATCH",
                   {
                     data: {
+                      validation_history: [
+                        {
+                          id: validationId,
+                          type: "service_validation",
+                          title: payloadService.service_name,
+                          created_at: entry.created_at,
+                          status: "pending",
+                          score: typeof result?.scores?.viability_score === "number" ? result.scores.viability_score : null,
+                          summary: String(result?.outcome || "").trim() || "Service validation completed",
+                          payload: payloadService,
+                          result,
+                        },
+                        ...validationHistoryExisting
+                      ],
                       service_validation_history: [entry, ...history],
                       active_service_validation_id: validationId,
                       draft_service_idea: { ...serviceForm, ...payloadService }
@@ -1076,6 +1282,18 @@ export default function ValidationWizardPage() {
                   { timeoutMs: 120000 }
                 );
                 setSavedServiceIdeas([entry, ...history]);
+                setValidationHistory([
+                  normaliseValidationHistoryEntry({
+                    id: validationId,
+                    type: "service_validation",
+                    title: payloadService.service_name,
+                    created_at: entry.created_at,
+                    status: "pending",
+                    score: typeof result?.scores?.viability_score === "number" ? result.scores.viability_score : null,
+                    summary: String(result?.outcome || "").trim() || "Service validation completed"
+                  }),
+                  ...validationHistoryExisting.map(normaliseValidationHistoryEntry).filter(Boolean)
+                ].filter(Boolean));
               } catch (e) {
                 console.warn("Failed to persist service validation history:", e);
               }
@@ -1096,6 +1314,33 @@ export default function ValidationWizardPage() {
             { timeoutMs: 120000 }
           );
           setValidation(result);
+          if (wsId) {
+            const validationId = crypto.randomUUID();
+            try {
+              const ws = await apiRequest(`/validation/${wsId}`, "GET");
+              const existing = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
+              const nextEntry = {
+                id: validationId,
+                type: "business_validation",
+                title: String(payload?.context?.business_name || wsName || "Business validation"),
+                created_at: new Date().toISOString(),
+                status: "pending",
+                score: typeof result?.score === "number" ? result.score : null,
+                summary: String(result?.classification || result?.outcome || "Business validation completed"),
+                payload,
+                result,
+              };
+              await apiRequest(`/validation/${wsId}`, "PATCH", {
+                data: {
+                  validation_history: [nextEntry, ...existing],
+                  active_validation_id: validationId,
+                }
+              }, { timeoutMs: 120000 });
+              setValidationHistory([normaliseValidationHistoryEntry(nextEntry), ...existing.map(normaliseValidationHistoryEntry).filter(Boolean)].filter(Boolean));
+            } catch (historyErr) {
+              console.warn("Failed to persist validation history:", historyErr);
+            }
+          }
           navigate("/results");
         }
       } else {
@@ -1142,6 +1387,18 @@ export default function ValidationWizardPage() {
         </div>
         {!isCreateWorkspace ? (
           <div className="flex items-center gap-2">
+            <div className="w-[220px] max-w-full">
+              <SegmentedTabs
+                ariaLabel="Validation content tabs"
+                value={contentTab}
+                onChange={setContentTab}
+                size="sm"
+                options={[
+                  { value: "builder", label: "Builder" },
+                  { value: "history", label: "History" }
+                ]}
+              />
+            </div>
             <div className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
               Sections selected: {selectedCount} / {formBlocks.length}
             </div>
@@ -1169,7 +1426,87 @@ export default function ValidationWizardPage() {
           </div>
         ) : null}
 
-        {mode === "select" && !isCreateWorkspace ? (
+        {contentTab === "history" && !isCreateWorkspace ? (
+          <SectionCard
+            title="Validation history"
+            subtitle="Track previous validations and their current status."
+          >
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                {[
+                  { key: "all", label: "All" },
+                  { key: "pending", label: "Pending" },
+                  { key: "accepted", label: "Accepted" },
+                  { key: "rejected", label: "Rejected" },
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setHistoryFilter(item.key)}
+                    className={
+                      "rounded-2xl border p-4 text-left transition " +
+                      (historyFilter === item.key
+                        ? "border-brand-300 bg-brand-50 text-brand-900"
+                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50")
+                    }
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.label}</div>
+                    <div className="mt-2 text-2xl font-semibold">{historyCounts[item.key]}</div>
+                  </button>
+                ))}
+              </div>
+
+              {filteredValidationHistory.length ? (
+                filteredValidationHistory.map((entry) => {
+                  const badgeClass =
+                    entry.status === "accepted"
+                      ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                      : entry.status === "rejected"
+                        ? "bg-rose-50 text-rose-700 ring-rose-200"
+                        : "bg-amber-50 text-amber-700 ring-amber-200";
+                  return (
+                    <div key={entry.id} className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-sm font-semibold text-slate-900">{entry.title}</div>
+                          <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ring-1 ${badgeClass}`}>
+                            {String(entry.status || "pending").toUpperCase()}
+                          </span>
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">
+                            {entry.type === "service_validation" ? "Service" : "Business"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {new Date(entry.created_at).toLocaleString()}
+                        </div>
+                        {entry.summary ? (
+                          <div className="mt-2 text-sm text-slate-600">{entry.summary}</div>
+                        ) : null}
+                        {typeof entry.score === "number" ? (
+                          <div className="mt-2 text-xs font-semibold text-slate-500">Score: {entry.score}</div>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button variant="secondary" onClick={() => editHistoryEntry(entry)}>
+                          Continue editing
+                        </Button>
+                        <Button variant="ghost" onClick={() => deleteHistoryEntry(entry.id)}>
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5 text-sm text-slate-500">
+                  {validationHistory.length
+                    ? "No items match this filter yet."
+                    : "No validation history yet. Run a validation and it will appear here."}
+                </div>
+              )}
+            </div>
+          </SectionCard>
+        ) : mode === "select" && !isCreateWorkspace ? (
           <>
             {!fromOtherModule ? (
               <SectionCard
@@ -1362,6 +1699,53 @@ export default function ValidationWizardPage() {
                     <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="Legal or trading name.">Company name *</FieldLabel>
                       <Input value={profile.company_name} onChange={(e) => updateProfile("company_name", e.target.value)} />
+                    </div>
+                    <div className="md:col-span-2 xl:col-span-3">
+                      <FieldLabel info="This logo becomes the workspace logo and is reused in documents where needed.">
+                        Workspace logo
+                      </FieldLabel>
+                      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4">
+                        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                              {profile.logo_data_url ? (
+                                <img src={profile.logo_data_url} alt="Workspace logo preview" className="h-full w-full object-contain" />
+                              ) : (
+                                <span className="text-xs font-semibold text-slate-400">No logo</span>
+                              )}
+                            </div>
+                            <div className="space-y-1">
+                              <div className="text-sm font-semibold text-slate-900">Brand your workspace once</div>
+                              <div className="text-sm text-slate-600">
+                                Upload a PNG, JPG, or SVG logo to use across your workspace and generated documents.
+                              </div>
+                              <div className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500">
+                                Used in workspace profile, blueprints, and financial documents
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label className="inline-flex cursor-pointer items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+                              Upload logo
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  void handleProfileLogoChange(file);
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
+                            {profile.logo_data_url ? (
+                              <Button variant="ghost" onClick={clearProfileLogo}>
+                                Remove
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     <div>
                       <FieldLabel>Legal name</FieldLabel>
@@ -2010,6 +2394,7 @@ export default function ValidationWizardPage() {
           </SectionCard>
         )}
 
+        {contentTab === "builder" ? (
         <div className="sticky bottom-0 z-20 -mx-6 mt-4 border-t border-slate-200 bg-transparent px-6 py-3">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-2">
             <div>
@@ -2061,6 +2446,7 @@ export default function ValidationWizardPage() {
             </div>
           ) : null}
         </div>
+        ) : null}
       </div>
     </div>
   );

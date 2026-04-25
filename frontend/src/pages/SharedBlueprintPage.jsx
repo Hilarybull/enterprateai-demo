@@ -4,7 +4,7 @@ import Spinner from "../components/Spinner";
 import Button from "../components/Button";
 import { apiRequest } from "../api/client";
 import html2pdf from "html2pdf.js";
-import enterprateLogo from "../enterprate-logo.png";
+import enterprateLogo from "../logo.png";
 
 function escapeHtml(s) {
   return String(s || "")
@@ -298,7 +298,7 @@ export default function SharedBlueprintPage() {
               <img
                 src={enterprateLogo}
                 alt="EnterprateAI"
-                className="block h-8 w-auto max-w-[120px] object-contain sm:h-10 sm:max-w-[168px]"
+                className="block h-8 w-auto max-w-[140px] object-contain sm:h-10 sm:max-w-[220px]"
               />
             </div>
           </div>
