@@ -145,21 +145,25 @@ function markdownToHtml(md) {
   return html;
 }
 
-function extractHtmlBody(html) {
-  const source = String(html || "").trim();
-  if (!source) return "";
-  try {
-    const parser = new DOMParser();
-    const parsed = parser.parseFromString(source, "text/html");
-    return parsed.body?.innerHTML?.trim() || source;
-  } catch {
-    return source;
-  }
-}
-
 function looksLikeHtmlDocument(value) {
   const source = String(value || "").trim().toLowerCase();
   return source.startsWith("<!doctype html") || source.startsWith("<html") || source.includes("<body");
+}
+
+function parseHtmlDocument(html) {
+  const source = String(html || "").trim();
+  if (!source) return { bodyHtml: "", styleHtml: "" };
+  try {
+    const parser = new DOMParser();
+    const parsed = parser.parseFromString(source, "text/html");
+    const styleHtml = Array.from(parsed.head?.querySelectorAll("style, link[rel='stylesheet']") || [])
+      .map((node) => node.outerHTML)
+      .join("\n");
+    const bodyHtml = parsed.body?.innerHTML?.trim() || source;
+    return { bodyHtml, styleHtml };
+  } catch {
+    return { bodyHtml: source, styleHtml: "" };
+  }
 }
 
 function safeFilename(title) {
@@ -240,46 +244,60 @@ export default function SharedBlueprintPage() {
   }, [token]);
 
   const title = doc?.title || "Document";
-  const bodyHtml = useMemo(() => {
+  const renderedDoc = useMemo(() => {
     const html = String(doc?.document_html || "").trim();
     const markdown = String(doc?.document_markdown || "").trim();
     if (html) {
-      return looksLikeHtmlDocument(html) ? extractHtmlBody(html) : html;
+      if (looksLikeHtmlDocument(html)) {
+        const parsed = parseHtmlDocument(html);
+        return { ...parsed, isFullHtml: true };
+      }
+      return { bodyHtml: html, styleHtml: "", isFullHtml: false };
     }
     if (looksLikeHtmlDocument(markdown)) {
-      return extractHtmlBody(markdown);
+      const parsed = parseHtmlDocument(markdown);
+      return { ...parsed, isFullHtml: true };
     }
-    return markdownToHtml(markdown);
+    return { bodyHtml: markdownToHtml(markdown), styleHtml: "", isFullHtml: false };
   }, [doc?.document_html, doc?.document_markdown]);
+  const bodyHtml = renderedDoc.bodyHtml;
+  const styleHtml = renderedDoc.styleHtml;
+  const isFullHtml = renderedDoc.isFullHtml;
 
   async function downloadPdf() {
     if (!bodyHtml.trim()) return;
     setDownloading(true);
     try {
       const container = document.createElement("div");
-      const pdfStyles = `
-        <style>
-          * { box-sizing: border-box; }
-          :root { color-scheme: light; }
-          body { margin: 0; padding: 0; }
-          .pdf-doc { width: 100%; max-width: 190mm; padding: 14mm 10mm; font-family: "Inter", "Segoe UI", Arial, sans-serif; background: #ffffff; margin: 0 auto; box-sizing: border-box; }
-          .pdf-doc, .pdf-doc * { color: #0f172a !important; }
-          h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }
-          h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
-          h3 { font-size: 14px; font-weight: 800; margin: 16px 0 6px; }
-          p, li { font-size: 12.5px; line-height: 1.7; orphans: 3; widows: 3; }
-          ul { margin: 8px 0 0 18px; padding: 0; }
-          li { margin: 6px 0; }
-          table { width: 100%; border-collapse: collapse; margin: 12px 0 6px; font-size: 12.5px; }
-          th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
-          th { background: #f8fafc; font-weight: 700; }
-          .subject-line { text-align: center; margin: 8px 0 14px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
-          .cover-page { min-height: 70vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
-          .cover-page p { margin: 6px 0; }
-          .page-break { page-break-after: always; break-after: page; height: 1px; }
-        </style>
-      `;
-      container.innerHTML = `${pdfStyles}<div class="pdf-doc">${bodyHtml}</div>`;
+      const pdfStyles = isFullHtml
+        ? `<style>
+            * { box-sizing: border-box; }
+            body { margin: 0; padding: 0; background: #ffffff; }
+            .pdf-doc { width: 100%; max-width: 190mm; padding: 14mm 10mm; margin: 0 auto; background: #ffffff; }
+          </style>${styleHtml}`
+        : `
+          <style>
+            * { box-sizing: border-box; }
+            :root { color-scheme: light; }
+            body { margin: 0; padding: 0; }
+            .pdf-doc { width: 100%; max-width: 190mm; padding: 14mm 10mm; font-family: "Inter", "Segoe UI", Arial, sans-serif; background: #ffffff; margin: 0 auto; box-sizing: border-box; }
+            .pdf-doc, .pdf-doc * { color: #0f172a !important; }
+            h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }
+            h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
+            h3 { font-size: 14px; font-weight: 800; margin: 16px 0 6px; }
+            p, li { font-size: 12.5px; line-height: 1.7; orphans: 3; widows: 3; }
+            ul { margin: 8px 0 0 18px; padding: 0; }
+            li { margin: 6px 0; }
+            table { width: 100%; border-collapse: collapse; margin: 12px 0 6px; font-size: 12.5px; }
+            th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
+            th { background: #f8fafc; font-weight: 700; }
+            .subject-line { text-align: center; margin: 8px 0 14px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+            .cover-page { min-height: 70vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
+            .cover-page p { margin: 6px 0; }
+            .page-break { page-break-after: always; break-after: page; height: 1px; }
+          </style>
+        `;
+      container.innerHTML = `${pdfStyles}<div class="pdf-doc ${isFullHtml ? "shared-native-doc" : ""}">${bodyHtml}</div>`;
       container.style.width = "210mm";
       container.style.padding = "0";
       container.style.boxSizing = "border-box";
@@ -353,24 +371,27 @@ export default function SharedBlueprintPage() {
             {error}
           </div>
         ) : doc?.document_markdown ? (
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
-            <style>{`
-              .shared-doc h1 { text-align: center; font-size: 28px; font-weight: 800; margin: 0 0 16px; letter-spacing: -0.02em; }
-              .shared-doc h2 { font-size: 18px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
-              .shared-doc h3 { font-size: 15px; font-weight: 800; margin: 16px 0 6px; }
-              .shared-doc p, .shared-doc li { font-size: 14.5px; line-height: 1.85; color: #111827; }
-              .shared-doc ul { margin: 8px 0 0 20px; padding: 0; }
-              .shared-doc li { margin: 6px 0; }
-              .shared-doc strong { color: #0f172a; }
-              .shared-doc table { width: 100%; border-collapse: collapse; margin: 14px 0 8px; font-size: 14px; }
-              .shared-doc th, .shared-doc td { border: 1px solid #e5e7eb; padding: 10px 12px; text-align: left; vertical-align: top; }
-              .shared-doc th { background: #f8fafc; font-weight: 800; }
-              .shared-doc .subject-line { text-align: center; margin: 10px 0 14px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
-              .shared-doc .cover-page { min-height: 50vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
-              .shared-doc .cover-page p { margin: 6px 0; }
-              .shared-doc .page-break { height: 1px; margin: 26px 0; background: #e5e7eb; }
-            `}</style>
-            <div className="shared-doc" dangerouslySetInnerHTML={{ __html: bodyHtml }} />
+          <div className={`mt-6 rounded-2xl border border-slate-200 bg-white shadow-sm ${isFullHtml ? "px-3 py-3 sm:px-6 sm:py-6" : "px-6 py-6"}`}>
+            {isFullHtml ? <div dangerouslySetInnerHTML={{ __html: styleHtml }} /> : null}
+            {!isFullHtml ? (
+              <style>{`
+                .shared-doc h1 { text-align: center; font-size: 28px; font-weight: 800; margin: 0 0 16px; letter-spacing: -0.02em; }
+                .shared-doc h2 { font-size: 18px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
+                .shared-doc h3 { font-size: 15px; font-weight: 800; margin: 16px 0 6px; }
+                .shared-doc p, .shared-doc li { font-size: 14.5px; line-height: 1.85; color: #111827; }
+                .shared-doc ul { margin: 8px 0 0 20px; padding: 0; }
+                .shared-doc li { margin: 6px 0; }
+                .shared-doc strong { color: #0f172a; }
+                .shared-doc table { width: 100%; border-collapse: collapse; margin: 14px 0 8px; font-size: 14px; }
+                .shared-doc th, .shared-doc td { border: 1px solid #e5e7eb; padding: 10px 12px; text-align: left; vertical-align: top; }
+                .shared-doc th { background: #f8fafc; font-weight: 800; }
+                .shared-doc .subject-line { text-align: center; margin: 10px 0 14px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+                .shared-doc .cover-page { min-height: 50vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
+                .shared-doc .cover-page p { margin: 6px 0; }
+                .shared-doc .page-break { height: 1px; margin: 26px 0; background: #e5e7eb; }
+              `}</style>
+            ) : null}
+            <div className={isFullHtml ? "shared-native-doc" : "shared-doc"} dangerouslySetInnerHTML={{ __html: bodyHtml }} />
           </div>
         ) : (
           <div className="mt-6 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
