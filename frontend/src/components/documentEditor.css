@@ -180,5 +180,31 @@
 
 .dark .ea-doc th,
 .dark .ea-doc td {
-  border-color: #cbd5f5;
+  border-color: #475569;
+}
+
+.dark .ea-doc h1,
+.dark .ea-doc h2,
+.dark .ea-doc h3,
+.dark .ea-doc strong {
+  color: #f8fafc;
+}
+
+.dark .ea-doc p,
+.dark .ea-doc li {
+  color: #cbd5e1;
+}
+
+.dark .ea-doc th {
+  background: #111827;
+  color: #e5e7eb;
+}
+
+.dark .ea-doc .page-break {
+  border-top-color: #334155;
+}
+
+.dark .ea-doc .page-break::after {
+  background: #0f172a;
+  color: #94a3b8;
 }

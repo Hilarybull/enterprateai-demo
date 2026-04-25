@@ -175,6 +175,7 @@ function buildPreviewFragment({ title, bodyHtml }) {
         color: #0f172a;
         margin: 0 auto;
         box-sizing: border-box;
+        box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
       }
       h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }
       h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
@@ -192,6 +193,21 @@ function buildPreviewFragment({ title, bodyHtml }) {
       .cover-page { min-height: 70vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
       .cover-page p { margin: 6px 0; }
       .document-logo { display: block; max-width: 180px; max-height: 90px; width: auto; height: auto; margin: 0 auto 20px; object-fit: contain; }
+      .dark .page {
+        background: #0f172a;
+        border-color: #334155;
+        color: #e5e7eb;
+        box-shadow: 0 18px 40px rgba(2, 6, 23, 0.45);
+      }
+      .dark .page h1,
+      .dark .page h2,
+      .dark .page h3,
+      .dark .page strong { color: #f8fafc; }
+      .dark .page p,
+      .dark .page li { color: #cbd5e1; }
+      .dark .page th,
+      .dark .page td { border-color: #475569; }
+      .dark .page th { background: #111827; color: #e5e7eb; }
     </style>
     <div class="page-wrap" aria-label="${escapeHtml(title || "Document")}">
       ${pageHtml}
@@ -618,14 +634,13 @@ export default function DocumentEditor({
         <div className="h-full min-h-0 overflow-auto rounded-2xl pr-1">
           {showPaginated ? (
             <div
-              className="h-full min-h-0 overflow-auto rounded-xl border border-slate-200 bg-white dark:border-slate-700"
-              style={{ color: "#0f172a" }}
+              className="h-full min-h-0 overflow-auto rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950"
               dangerouslySetInnerHTML={{ __html: paginatedHtml }}
             />
           ) : (
             <div
               ref={ref}
-              className="ea-doc mx-auto w-full max-w-[1400px] rounded-xl border border-slate-200 bg-white p-8 shadow-sm outline-none dark:border-slate-700 dark:bg-white"
+              className="ea-doc mx-auto w-full max-w-[1400px] rounded-xl border border-slate-200 bg-white p-8 shadow-sm outline-none dark:border-slate-700 dark:bg-slate-950"
               contentEditable
               suppressContentEditableWarning
               onInput={(e) => {
