@@ -139,12 +139,12 @@ function SidebarLink({ item, onClick, forceInactive }) {
           : "text-slate-700 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-200 dark:hover:bg-slate-900")
       }
     >
-      <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-slate-700 ring-1 ring-slate-200 group-hover:bg-slate-50 group-[.active]:bg-gradient-to-br group-[.active]:from-brand-50 group-[.active]:to-accent-50">
+      <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-slate-700 ring-1 ring-slate-200 group-hover:bg-slate-50 group-[.active]:bg-gradient-to-br group-[.active]:from-brand-50 group-[.active]:to-accent-50 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-800 dark:group-hover:bg-slate-800 dark:group-[.active]:from-slate-800 dark:group-[.active]:to-slate-700">
         <Icon name={item.icon} className="h-5 w-5" />
       </div>
       <div className="min-w-0">
         <div className="truncate text-[13px] font-semibold">{item.label}</div>
-        <div className="truncate text-[11px] text-slate-500 [@media(max-height:780px)]:hidden">{item.subtitle}</div>
+        <div className="truncate text-[11px] text-slate-500 dark:text-slate-400 [@media(max-height:780px)]:hidden">{item.subtitle}</div>
       </div>
     </NavLink>
   );
@@ -300,7 +300,7 @@ export default function Layout() {
 
   const Sidebar = (
     <aside className="flex h-full w-[260px] flex-col border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[280px] lg:px-5">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto object-contain sm:h-8" />
@@ -311,7 +311,7 @@ export default function Layout() {
         </button>
       </div>
 
-      <nav className="ea-scroll mt-5 flex-1 space-y-1 overflow-auto pr-1">
+      <nav className="ea-scroll mt-6 flex-1 space-y-1 overflow-auto pr-1">
         {filteredNav.map((item) => (
           <SidebarLink
             key={item.to}

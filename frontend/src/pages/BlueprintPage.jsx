@@ -1805,10 +1805,10 @@ export default function BlueprintPage() {
 
             <div className="flex h-[calc(94vh-64px)] min-h-0 flex-col overflow-hidden lg:flex-row">
               {showSectionDrafts ? (
-                <div className="hidden lg:block order-3 w-[340px] shrink-0 overflow-auto overflow-x-hidden border-l border-slate-200 bg-white p-5">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
-                    <div className="text-sm font-semibold text-slate-900">Section drafts</div>
-                    <div className="mt-1 text-[11px] text-slate-500">
+                <div className="hidden lg:block order-3 w-[340px] shrink-0 overflow-auto overflow-x-hidden border-l border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950/60">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-700 dark:bg-slate-900/80">
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Section drafts</div>
+                    <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                       Click a section tile to preview. If it has not been generated yet, EnterprateAI will generate it automatically.
                     </div>
                   </div>
@@ -1937,7 +1937,7 @@ export default function BlueprintPage() {
 
               {/* FIX 1: Inputs panel — clean single-column layout, no overlapping fields */}
               {showSidePanel ? (
-                <div className="order-2 w-full shrink-0 overflow-auto overflow-x-hidden border-t border-slate-200 bg-white p-5 lg:order-1 lg:w-[340px] lg:border-r lg:border-t-0">
+                <div className="order-2 w-full shrink-0 overflow-auto overflow-x-hidden border-t border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950/60 lg:order-1 lg:w-[340px] lg:border-r lg:border-t-0">
                   {showSectionDrafts && !isDesktop ? (
                     <SegmentedTabs
                       value={effectiveInputsTab}
@@ -1949,9 +1949,9 @@ export default function BlueprintPage() {
 
                   {effectiveInputsTab === "sections" && showSectionDrafts && !isDesktop ? (
                     <div className="mt-4 space-y-3">
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
-                        <div className="text-sm font-semibold text-slate-900">Section drafts (standalone)</div>
-                        <div className="mt-1 text-[11px] text-slate-500">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-700 dark:bg-slate-900/80">
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Section drafts (standalone)</div>
+                        <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                           Select sections to draft. Full document generation still uses the selections from the Inputs tab.
                         </div>
                       </div>
@@ -2215,11 +2215,11 @@ export default function BlueprintPage() {
 
                       {/* Sections to generate */}
                       {selectedDoc && sectionsForDoc(selectedDoc).length ? (
-                        <div ref={sectionDraftsRef} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
-                          <div className="text-sm font-semibold text-slate-900">Sections to generate (optional)</div>
+                        <div ref={sectionDraftsRef} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-700 dark:bg-slate-900/80">
+                          <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Sections to generate (optional)</div>
                           <div className="mt-2 space-y-2">
                             {generationSectionsForDoc(selectedDoc).map((section) => (
-                              <label key={section.id} className="flex items-center gap-2 text-xs text-slate-700">
+                              <label key={section.id} className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
                                 <input
                                   type="checkbox"
                                   checked={(sectionsByDoc[selectedDoc] || []).includes(section.id)}
@@ -2229,7 +2229,7 @@ export default function BlueprintPage() {
                               </label>
                             ))}
                           </div>
-                          <div className="mt-2 text-[11px] text-slate-500">
+                          <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
                             Leave unchecked to generate the full document.
                           </div>
                         </div>
