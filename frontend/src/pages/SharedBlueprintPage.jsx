@@ -145,6 +145,23 @@ function markdownToHtml(md) {
   return html;
 }
 
+function extractHtmlBody(html) {
+  const source = String(html || "").trim();
+  if (!source) return "";
+  try {
+    const parser = new DOMParser();
+    const parsed = parser.parseFromString(source, "text/html");
+    return parsed.body?.innerHTML?.trim() || source;
+  } catch {
+    return source;
+  }
+}
+
+function looksLikeHtmlDocument(value) {
+  const source = String(value || "").trim().toLowerCase();
+  return source.startsWith("<!doctype html") || source.startsWith("<html") || source.includes("<body");
+}
+
 function safeFilename(title) {
   const base = String(title || "document")
     .toLowerCase()
@@ -223,7 +240,17 @@ export default function SharedBlueprintPage() {
   }, [token]);
 
   const title = doc?.title || "Document";
-  const bodyHtml = useMemo(() => markdownToHtml(doc?.document_markdown || ""), [doc?.document_markdown]);
+  const bodyHtml = useMemo(() => {
+    const html = String(doc?.document_html || "").trim();
+    const markdown = String(doc?.document_markdown || "").trim();
+    if (html) {
+      return looksLikeHtmlDocument(html) ? extractHtmlBody(html) : html;
+    }
+    if (looksLikeHtmlDocument(markdown)) {
+      return extractHtmlBody(markdown);
+    }
+    return markdownToHtml(markdown);
+  }, [doc?.document_html, doc?.document_markdown]);
 
   async function downloadPdf() {
     if (!bodyHtml.trim()) return;

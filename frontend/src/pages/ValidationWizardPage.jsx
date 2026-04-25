@@ -852,7 +852,6 @@ export default function ValidationWizardPage() {
 
       setContentTab("builder");
       setMode("fill");
-      setSavedNotice("Validation inputs loaded. You can continue editing from here.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load this validation history item.");
     }
@@ -1488,7 +1487,7 @@ export default function ValidationWizardPage() {
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <Button variant="secondary" onClick={() => editHistoryEntry(entry)}>
-                          Continue editing
+                          Modify
                         </Button>
                         <Button variant="ghost" onClick={() => deleteHistoryEntry(entry.id)}>
                           Delete

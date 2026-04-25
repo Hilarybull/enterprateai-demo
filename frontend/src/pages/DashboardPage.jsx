@@ -18,6 +18,7 @@ function sumBy(list, key) {
 export default function DashboardPage() {
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+  const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
   const validation = useWorkspaceStore((s) => s.validation);
   const currency = useWorkspaceStore((s) => s.currency);
 
@@ -138,6 +139,13 @@ export default function DashboardPage() {
       <PageHeader
         title="Business Intelligence Dashboard"
         description="Live overview of revenue, risks, and next actions across your modules."
+        leadingVisual={
+          workspaceLogo ? (
+            <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+              <img src={workspaceLogo} alt="Workspace logo" className="h-full w-full object-contain" />
+            </div>
+          ) : null
+        }
         actions={
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => navigate("/validation")}>
