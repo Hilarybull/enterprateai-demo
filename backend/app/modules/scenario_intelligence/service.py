@@ -94,6 +94,12 @@ def _state_label(score: float) -> str:
     return "risk"
 
 
+def _month_span_from_days(days: int | None, fallback: int = 1, cap: int = 3) -> int:
+    if days is None:
+        return fallback
+    return max(1, min(cap, int(round(max(1, days) / 30.0)) or fallback))
+
+
 def _templates() -> List[ScenarioTemplate]:
     return [
         ScenarioTemplate(
@@ -209,6 +215,54 @@ def detect_risks(state: BusinessStateSnapshot) -> List[Dict[str, Any]]:
             )
         )
 
+    if int(state.overdue_receivables_count or 0) > 0:
+        signals.append(
+            dict(
+                risk_type="overdue_receivables",
+                severity="high",
+                metric_name="overdue_receivables_count",
+                metric_value=int(state.overdue_receivables_count or 0),
+                threshold_value=0,
+                reason_code="OVERDUE_RECEIVABLES",
+            )
+        )
+
+    if int(state.approaching_receivables_count or 0) > 0:
+        signals.append(
+            dict(
+                risk_type="receivables_approaching_due",
+                severity="medium",
+                metric_name="approaching_receivables_count",
+                metric_value=int(state.approaching_receivables_count or 0),
+                threshold_value=0,
+                reason_code="RECEIVABLES_APPROACHING_DUE",
+            )
+        )
+
+    if int(state.overdue_payables_count or 0) > 0:
+        signals.append(
+            dict(
+                risk_type="payables_pressure",
+                severity="medium",
+                metric_name="overdue_payables_count",
+                metric_value=int(state.overdue_payables_count or 0),
+                threshold_value=0,
+                reason_code="PAYABLE_PRESSURE",
+            )
+        )
+
+    if int(state.approaching_payables_count or 0) > 0:
+        signals.append(
+            dict(
+                risk_type="payables_approaching_due",
+                severity="low",
+                metric_name="approaching_payables_count",
+                metric_value=int(state.approaching_payables_count or 0),
+                threshold_value=0,
+                reason_code="PAYABLES_APPROACHING_DUE",
+            )
+        )
+
     return signals
 
 
@@ -241,7 +295,7 @@ def recommend_scenarios(risk_signals: List[Dict[str, Any]]) -> List[ScenarioReco
                 ScenarioRecommendation(
                     scenario_template_id="tmpl_price_increase",
                     scenario_type="price_change",
-                    title="Simulate Price Increase",
+                    title="Simulate a margin recovery move",
                     trigger_reason=code,
                     priority=2,
                 )
@@ -249,9 +303,49 @@ def recommend_scenarios(risk_signals: List[Dict[str, Any]]) -> List[ScenarioReco
         if code == "LOW_RUNWAY":
             recommendations.append(
                 ScenarioRecommendation(
-                    scenario_template_id="tmpl_revenue_drop",
-                    scenario_type="revenue_drop",
-                    title="Simulate Revenue Drop",
+                    scenario_template_id="tmpl_payment_delay",
+                    scenario_type="payment_delay",
+                    title="Simulate slower collections",
+                    trigger_reason=code,
+                    priority=1,
+                )
+            )
+        if code == "OVERDUE_RECEIVABLES":
+            recommendations.append(
+                ScenarioRecommendation(
+                    scenario_template_id="tmpl_payment_delay",
+                    scenario_type="payment_delay",
+                    title="Simulate delayed customer payment",
+                    trigger_reason=code,
+                    priority=1,
+                )
+            )
+        if code == "PAYABLE_PRESSURE":
+            recommendations.append(
+                ScenarioRecommendation(
+                    scenario_template_id="tmpl_cost_increase",
+                    scenario_type="cost_increase",
+                    title="Simulate cost pressure escalation",
+                    trigger_reason=code,
+                    priority=3,
+                )
+            )
+        if code == "RECEIVABLES_APPROACHING_DUE":
+            recommendations.append(
+                ScenarioRecommendation(
+                    scenario_template_id="tmpl_payment_delay",
+                    scenario_type="payment_delay",
+                    title="Simulate receivables slipping past terms",
+                    trigger_reason=code,
+                    priority=2,
+                )
+            )
+        if code == "PAYABLES_APPROACHING_DUE":
+            recommendations.append(
+                ScenarioRecommendation(
+                    scenario_template_id="tmpl_cost_increase",
+                    scenario_type="cost_increase",
+                    title="Simulate payables maturing on time",
                     trigger_reason=code,
                     priority=3,
                 )
@@ -272,7 +366,8 @@ def recommend_scenarios(risk_signals: List[Dict[str, Any]]) -> List[ScenarioReco
 
 def _apply_scenario(state: BusinessStateSnapshot, scenario_type: str, params: Dict[str, Any]) -> BusinessStateSnapshot:
     revenue = float(state.revenue_monthly)
-    costs = float(state.costs_monthly)
+    expenses = float(state.expenses_monthly or max(float(state.costs_monthly) - float(state.cost_of_sales_monthly or 0), 0.0))
+    cost_of_sales = float(state.cost_of_sales_monthly or 0.0)
     starting_cash = float(state.starting_cash)
 
     if scenario_type == "client_loss":
@@ -286,30 +381,101 @@ def _apply_scenario(state: BusinessStateSnapshot, scenario_type: str, params: Di
         revenue = max(0.0, revenue * (1.0 + change_pct / 100.0))
     elif scenario_type == "cost_increase":
         inc_pct = float(params.get("cost_increase_pct") or 0.0)
-        costs = max(0.0, costs * (1.0 + inc_pct / 100.0))
+        expenses = max(0.0, expenses * (1.0 + inc_pct / 100.0))
+        cost_of_sales = max(0.0, cost_of_sales * (1.0 + inc_pct / 100.0))
     elif scenario_type == "hire_staff":
         add_cost = float(params.get("employee_monthly_cost") or 0.0)
         employee_count = int(params.get("employee_count") or 1)
-        costs = max(0.0, costs + (add_cost * max(1, employee_count)))
+        expenses = max(0.0, expenses + (add_cost * max(1, employee_count)))
     elif scenario_type == "contractor_addition":
         add_cost = float(params.get("contractor_monthly_cost") or 0.0)
-        costs = max(0.0, costs + add_cost)
+        expenses = max(0.0, expenses + add_cost)
     elif scenario_type == "service_launch":
         uplift = float(params.get("revenue_uplift_pct") or 0.0)
         cost_up = float(params.get("cost_uplift_pct") or 0.0)
         revenue = max(0.0, revenue * (1.0 + uplift / 100.0))
-        costs = max(0.0, costs * (1.0 + cost_up / 100.0))
+        expenses = max(0.0, expenses * (1.0 + cost_up / 100.0))
+        cost_of_sales = max(0.0, cost_of_sales * (1.0 + cost_up / 100.0))
 
     return BusinessStateSnapshot(
         revenue_monthly=revenue,
-        costs_monthly=costs,
+        expenses_monthly=expenses,
+        cost_of_sales_monthly=cost_of_sales,
+        costs_monthly=expenses + cost_of_sales,
+        accrued_revenue_total=state.accrued_revenue_total,
+        accrued_expenses_total=state.accrued_expenses_total,
+        accrued_cost_of_sales_total=state.accrued_cost_of_sales_total,
         starting_cash=starting_cash,
         top_client_share_pct=state.top_client_share_pct,
         capacity_utilisation_pct=state.capacity_utilisation_pct,
         payment_terms_days=state.payment_terms_days,
         sales_cycle_days=state.sales_cycle_days,
         clients_count=state.clients_count,
+        approaching_receivables_count=state.approaching_receivables_count,
+        overdue_receivables_count=state.overdue_receivables_count,
+        approaching_payables_count=state.approaching_payables_count,
+        overdue_payables_count=state.overdue_payables_count,
     )
+
+
+def _monthly_projection_values(
+    state: BusinessStateSnapshot,
+    scenario_type: str,
+    params: Dict[str, Any],
+    month_index: int,
+) -> Tuple[float, float, float]:
+    base_revenue = float(state.revenue_monthly or 0.0)
+    base_expenses = float(state.expenses_monthly or max(float(state.costs_monthly) - float(state.cost_of_sales_monthly or 0), 0.0))
+    base_cost_of_sales = float(state.cost_of_sales_monthly or 0.0)
+
+    revenue = base_revenue
+    expenses = base_expenses
+    cost_of_sales = base_cost_of_sales
+
+    sales_ramp_months = _month_span_from_days(state.sales_cycle_days, fallback=1, cap=3)
+    pricing_ramp_months = max(1, min(2, sales_ramp_months))
+    cost_ramp_months = 2
+
+    if scenario_type == "client_loss":
+        loss_pct = float(params.get("client_loss_pct") or state.top_client_share_pct or 0.0)
+        progress = min(1.0, month_index / float(sales_ramp_months))
+        multiplier = max(0.0, 1.0 - ((loss_pct / 100.0) * progress))
+        sticky_factor = max(0.35, 1.0 - ((loss_pct / 100.0) * min(1.0, max(0, month_index - 1) / 2.0)))
+        revenue *= multiplier
+        cost_of_sales *= sticky_factor
+    elif scenario_type == "revenue_drop":
+        drop_pct = float(params.get("revenue_drop_pct") or 0.0)
+        progress = min(1.0, month_index / float(sales_ramp_months))
+        multiplier = max(0.0, 1.0 - ((drop_pct / 100.0) * progress))
+        revenue *= multiplier
+        cost_of_sales *= multiplier
+    elif scenario_type == "price_change":
+        change_pct = float(params.get("price_change_pct") or 0.0)
+        effective_month = max(1, int(params.get("effective_month") or 1))
+        if month_index >= effective_month:
+            progress = min(1.0, ((month_index - effective_month) + 1) / float(pricing_ramp_months))
+            revenue *= 1.0 + ((change_pct / 100.0) * progress)
+    elif scenario_type == "cost_increase":
+        inc_pct = float(params.get("cost_increase_pct") or 0.0)
+        progress = min(1.0, month_index / float(cost_ramp_months))
+        multiplier = 1.0 + ((inc_pct / 100.0) * progress)
+        expenses *= multiplier
+        cost_of_sales *= multiplier
+    elif scenario_type == "hire_staff":
+        add_cost = float(params.get("employee_monthly_cost") or 0.0)
+        employee_count = max(1, int(params.get("employee_count") or 1))
+        expenses += add_cost * employee_count
+    elif scenario_type == "contractor_addition":
+        expenses += float(params.get("contractor_monthly_cost") or 0.0)
+    elif scenario_type == "service_launch":
+        uplift = float(params.get("revenue_uplift_pct") or 0.0)
+        cost_up = float(params.get("cost_uplift_pct") or 0.0)
+        progress = min(1.0, month_index / 3.0)
+        revenue *= 1.0 + ((uplift / 100.0) * progress)
+        expenses *= 1.0 + ((cost_up / 100.0) * progress)
+        cost_of_sales *= 1.0 + ((cost_up / 100.0) * progress)
+
+    return revenue, expenses, cost_of_sales
 
 
 def _timeline(
@@ -323,22 +489,33 @@ def _timeline(
     scenario_state = _apply_scenario(state, scenario_type, params)
 
     delay_months = int(params.get("delay_months") or 0)
+    payment_term_months = _month_span_from_days(state.payment_terms_days, fallback=1, cap=6)
+    receivables_queue = [0.0] * max(1, delay_months + payment_term_months)
+    payables_queue = [0.0] * max(1, payment_term_months)
 
     cash = float(scenario_state.starting_cash)
     timeline: List[Dict[str, Any]] = []
 
     for m in range(1, months + 1):
-        revenue = float(scenario_state.revenue_monthly)
-        costs = float(scenario_state.costs_monthly)
+        revenue, expenses, cost_of_sales = _monthly_projection_values(state, scenario_type, params, m)
+        costs = expenses + cost_of_sales
         profit = revenue - costs
 
-        collected_revenue = 0.0 if scenario_type == "payment_delay" and m <= delay_months else revenue
-        cash = max(0.0, cash + collected_revenue - costs)
+        receivables_queue.append(revenue)
+        collected_revenue = receivables_queue.pop(0)
+        payables_queue.append(costs)
+        paid_costs = payables_queue.pop(0)
+        cash = max(0.0, cash + collected_revenue - paid_costs)
 
         score = _stability_score(
             BusinessStateSnapshot(
                 revenue_monthly=revenue,
+                expenses_monthly=expenses,
+                cost_of_sales_monthly=cost_of_sales,
                 costs_monthly=costs,
+                accrued_revenue_total=state.accrued_revenue_total,
+                accrued_expenses_total=state.accrued_expenses_total,
+                accrued_cost_of_sales_total=state.accrued_cost_of_sales_total,
                 starting_cash=cash,
                 top_client_share_pct=scenario_state.top_client_share_pct,
                 capacity_utilisation_pct=scenario_state.capacity_utilisation_pct,
@@ -352,6 +529,8 @@ def _timeline(
             dict(
                 month_index=m,
                 revenue=round(revenue, 2),
+                expenses=round(expenses, 2),
+                cost_of_sales=round(cost_of_sales, 2),
                 costs=round(costs, 2),
                 profit=round(profit, 2),
                 cash_balance=round(cash, 2),
@@ -367,11 +546,15 @@ def _timeline(
 
 def _snapshot_metrics(state: BusinessStateSnapshot) -> Dict[str, Any]:
     revenue = float(state.revenue_monthly)
+    expenses = float(state.expenses_monthly or 0)
+    cost_of_sales = float(state.cost_of_sales_monthly or 0)
     costs = float(state.costs_monthly)
     net = revenue - costs
     stability = _stability_score(state)
     return dict(
         monthly_revenue=round(revenue, 2),
+        monthly_expenses=round(expenses, 2),
+        monthly_cost_of_sales=round(cost_of_sales, 2),
         monthly_costs=round(costs, 2),
         net_profit=round(net, 2),
         stability_score=round(stability, 2),
@@ -482,7 +665,9 @@ async def create_scenario_run(
         if not stored:
             _MEM_TIMELINES[run_id] = timeline_docs
 
-    recs = _recommendations_from_result(state_result)
+    scenario_snapshot = _apply_scenario(state, scenario_type, params)
+    run_risks = detect_risks(scenario_snapshot)
+    recs = _recommendations_from_result(state_result, scenario_type, run_risks)
     rec_docs = []
     for idx, rec in enumerate(recs, 1):
         rec_docs.append(
@@ -492,6 +677,7 @@ async def create_scenario_run(
                 action_type=rec["action_type"],
                 title=rec["title"],
                 description=rec.get("description"),
+                scenario_template_id=rec.get("scenario_template_id"),
                 priority=idx,
                 created_at=now,
             )
@@ -504,13 +690,75 @@ async def create_scenario_run(
     return run_doc
 
 
-def _recommendations_from_result(state_result: str) -> List[Dict[str, Any]]:
+def _recommendations_from_result(
+    state_result: str,
+    scenario_type: str,
+    risk_signals: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    scenario_follow_ups = recommend_scenarios(risk_signals)
+    seen_templates = set()
+    filtered_follow_ups: List[ScenarioRecommendation] = []
+    for rec in scenario_follow_ups:
+        if rec.scenario_type == scenario_type:
+            continue
+        if rec.scenario_template_id in seen_templates:
+            continue
+        seen_templates.add(rec.scenario_template_id)
+        filtered_follow_ups.append(rec)
+    scenario_follow_ups = filtered_follow_ups
+
+    if not scenario_follow_ups:
+        fallback_by_scenario = {
+            "client_loss": [
+                dict(
+                    action_type="run_next_scenario",
+                    title="Simulate slower customer payments",
+                    description="Client concentration remains high after this run. Compare the effect of delayed collections on cash.",
+                    scenario_template_id="tmpl_payment_delay",
+                ),
+                dict(
+                    action_type="run_next_scenario",
+                    title="Simulate a margin recovery move",
+                    description="Test whether pricing or margin improvement offsets concentration risk.",
+                    scenario_template_id="tmpl_price_increase",
+                ),
+            ],
+            "payment_delay": [
+                dict(
+                    action_type="run_next_scenario",
+                    title="Simulate cost pressure escalation",
+                    description="Compare delayed collections against a higher-cost environment.",
+                    scenario_template_id="tmpl_cost_increase",
+                ),
+            ],
+            "cost_increase": [
+                dict(
+                    action_type="run_next_scenario",
+                    title="Simulate a margin recovery move",
+                    description="Test whether a pricing response can absorb the cost increase.",
+                    scenario_template_id="tmpl_price_increase",
+                ),
+            ],
+        }
+        if scenario_type in fallback_by_scenario:
+            return fallback_by_scenario[scenario_type]
+
+    if scenario_follow_ups:
+        return [
+            dict(
+                action_type="run_next_scenario",
+                title=rec.title,
+                description=f"Triggered by {rec.trigger_reason.lower().replace('_', ' ')} in this run's output.",
+                scenario_template_id=rec.scenario_template_id,
+            )
+            for rec in scenario_follow_ups[:3]
+        ]
     if state_result == "improved":
         return [
             dict(
                 action_type="pricing_action",
-                title="Scenario appears safe",
-                description="Projected stability improves. Proceed and monitor cash weekly.",
+                title="Scenario appears viable",
+                description=f"This {scenario_type.replace('_', ' ')} run improves stability. Proceed carefully and monitor cash weekly.",
             )
         ]
     if state_result == "worse":
@@ -518,14 +766,14 @@ def _recommendations_from_result(state_result: str) -> List[Dict[str, Any]]:
             dict(
                 action_type="risk_mitigation",
                 title="Scenario increases risk",
-                description="Consider delaying or adjusting scope before execution.",
+                description=f"This {scenario_type.replace('_', ' ')} run worsens the business state. Adjust the plan before acting on it.",
             )
         ]
     return [
         dict(
             action_type="monitor",
             title="Scenario is neutral",
-            description="Impact is minimal. Run a second variant to confirm.",
+            description="Impact is limited. Run a follow-up scenario to compare a stronger intervention.",
         )
     ]
 
@@ -666,16 +914,28 @@ async def do_nothing_projection(
     projection_id = str(uuid4())
     months = max(1, min(12, int(timeline_months)))
     cash = float(state.starting_cash)
+    payment_term_months = _month_span_from_days(state.payment_terms_days, fallback=1, cap=6)
+    receivables_queue = [0.0] * max(1, payment_term_months)
+    payables_queue = [0.0] * max(1, payment_term_months)
     forecast: List[Dict[str, Any]] = []
     for m in range(1, months + 1):
-        revenue = float(state.revenue_monthly)
-        costs = float(state.costs_monthly)
+        revenue, expenses, cost_of_sales = _monthly_projection_values(state, "do_nothing_projection", {}, m)
+        costs = expenses + cost_of_sales
         profit = revenue - costs
-        cash = max(0.0, cash + profit)
+        receivables_queue.append(revenue)
+        collected_revenue = receivables_queue.pop(0)
+        payables_queue.append(costs)
+        paid_costs = payables_queue.pop(0)
+        cash = max(0.0, cash + collected_revenue - paid_costs)
         score = _stability_score(
             BusinessStateSnapshot(
                 revenue_monthly=revenue,
+                expenses_monthly=expenses,
+                cost_of_sales_monthly=cost_of_sales,
                 costs_monthly=costs,
+                accrued_revenue_total=state.accrued_revenue_total,
+                accrued_expenses_total=state.accrued_expenses_total,
+                accrued_cost_of_sales_total=state.accrued_cost_of_sales_total,
                 starting_cash=cash,
                 top_client_share_pct=state.top_client_share_pct,
                 capacity_utilisation_pct=state.capacity_utilisation_pct,
@@ -688,6 +948,8 @@ async def do_nothing_projection(
             dict(
                 month_index=m,
                 revenue=round(revenue, 2),
+                expenses=round(expenses, 2),
+                cost_of_sales=round(cost_of_sales, 2),
                 costs=round(costs, 2),
                 profit=round(profit, 2),
                 cash_balance=round(cash, 2),

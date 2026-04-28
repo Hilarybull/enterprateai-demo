@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.modules.blueprint.repository import delete_document, get_document, list_documents, save_document, update_document
-from app.modules.blueprint.exporter import html_to_pdf, markdown_to_html, render_export_html, render_pdf_html
+from app.modules.blueprint.exporter import extract_export_body, html_to_pdf, markdown_to_html, render_export_html, render_pdf_html
 from app.modules.blueprint.schemas import (
     BlueprintDocument,
     BlueprintDocumentListItem,
@@ -128,6 +128,41 @@ async def blueprint_shared_document_get(token: str) -> BlueprintSharedDocument:
     return doc
 
 
+@router.get("/share/{token}/export")
+async def blueprint_shared_document_export(
+    token: str,
+    format: str = Query(default="pdf", pattern="^(pdf|doc)$"),
+):
+    doc = await get_shared_document_by_token(token=token)
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
+
+    title = doc.title or doc.type or "document"
+    raw_html = doc.document_html or markdown_to_html(doc.document_markdown or "")
+    body_html = extract_export_body(raw_html)
+    html = render_export_html(title=title, body_html=body_html)
+
+    safe_name = "".join(ch for ch in title.lower().replace(" ", "-") if ch.isalnum() or ch in "-_")
+    safe_name = safe_name or "document"
+
+    if format == "doc":
+        return Response(
+            content=html,
+            media_type="application/msword",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}.doc"'},
+        )
+
+    pdf_html = render_pdf_html(title=title, body_html=body_html)
+    pdf_bytes = html_to_pdf(pdf_html)
+    if not pdf_bytes:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="PDF export failed")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.pdf"'},
+    )
+
+
 @router.get("/documents/{document_id}/export")
 async def blueprint_documents_export(
     document_id: str,
@@ -139,7 +174,8 @@ async def blueprint_documents_export(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     title = doc.title or doc.type or "document"
-    body_html = doc.document_html or markdown_to_html(doc.document_markdown or "")
+    raw_html = doc.document_html or markdown_to_html(doc.document_markdown or "")
+    body_html = extract_export_body(raw_html)
     html = render_export_html(title=title, body_html=body_html)
 
     safe_name = "".join(ch for ch in title.lower().replace(" ", "-") if ch.isalnum() or ch in "-_")

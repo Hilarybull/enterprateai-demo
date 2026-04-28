@@ -13,6 +13,7 @@ import { FinancialIllustration, IllustrationCard } from "../components/Illustrat
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { formatCurrency } from "../lib/format";
+import { getProductCostOfSales } from "../lib/financialIntelligence";
 
 export default function FinancialsPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -55,13 +56,17 @@ export default function FinancialsPage() {
     invoice_id: "",
     customer_id: "",
     product_id: "",
-    quantity: "1"
+    quantity: "1",
+    unit_price: "",
+    unit_cost_of_sales: ""
   });
   const [quoteForm, setQuoteForm] = useState({
     quotation_id: "",
     customer_id: "",
     product_id: "",
     quantity: "1",
+    unit_price: "",
+    unit_cost_of_sales: "",
     validity_days: "30"
   });
   const [expenseForm, setExpenseForm] = useState({
@@ -78,6 +83,7 @@ export default function FinancialsPage() {
     payment_terms: "",
     discount: "",
     freight: "",
+    cost_of_sales: "",
     start_date: "",
     end_date: "",
     status: "pending"
@@ -354,6 +360,10 @@ export default function FinancialsPage() {
     return Math.max(0, base - discount + freight);
   }
 
+  function getProductDefaultCost(product) {
+    return getProductCostOfSales(product);
+  }
+
   function formatMoney(value) {
     return formatCurrency(Number(value || 0), currency || "GBP");
   }
@@ -397,6 +407,9 @@ export default function FinancialsPage() {
   }
 
   function buildInvoiceHtml(invoice, customer, product) {
+    const subtotal = Number(invoice?.subtotal_amount || 0);
+    const costOfSales = Number(invoice?.cost_of_sales || 0);
+    const grandTotal = Number(invoice?.total_amount || subtotal + costOfSales);
     return `<!doctype html>
 <html>
   <head>
@@ -435,23 +448,31 @@ export default function FinancialsPage() {
   </div>
   <table>
     <thead>
-      <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Total</th></tr>
+      <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Subtotal</th></tr>
     </thead>
     <tbody>
       <tr>
         <td>${product?.name || invoice?.product_name || "Product / Service"}</td>
         <td class="right">${invoice?.quantity || 0}</td>
         <td class="right">${formatMoney(invoice?.unit_price || 0)}</td>
-        <td class="right"><strong>${formatMoney(invoice?.total_amount || 0)}</strong></td>
+        <td class="right"><strong>${formatMoney(subtotal)}</strong></td>
       </tr>
     </tbody>
   </table>
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; gap:12px;"><span>Subtotal</span><strong>${formatMoney(subtotal)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-top:8px;"><span>Cost of sales</span><strong>${formatMoney(costOfSales)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-top:12px; padding-top:12px; border-top:1px solid #e2e8f0;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
+  </div>
   <div class="muted" style="margin-top:16px;">Thank you for your business.</div>
 </body>
 </html>`;
   }
 
   function buildQuoteHtml(quote, customer, product) {
+    const subtotal = Number(quote?.subtotal_amount || 0);
+    const costOfSales = Number(quote?.cost_of_sales || 0);
+    const grandTotal = Number(quote?.total_amount || subtotal + costOfSales);
     return `<!doctype html>
 <html>
   <head>
@@ -490,17 +511,22 @@ export default function FinancialsPage() {
   </div>
   <table>
     <thead>
-      <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Total</th></tr>
+      <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Subtotal</th></tr>
     </thead>
     <tbody>
       <tr>
         <td>${product?.name || quote?.product_name || "Product / Service"}</td>
         <td class="right">${quote?.quantity || 0}</td>
         <td class="right">${formatMoney(quote?.unit_price || 0)}</td>
-        <td class="right"><strong>${formatMoney(quote?.total_amount || 0)}</strong></td>
+        <td class="right"><strong>${formatMoney(subtotal)}</strong></td>
       </tr>
     </tbody>
   </table>
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; gap:12px;"><span>Subtotal</span><strong>${formatMoney(subtotal)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-top:8px;"><span>Cost of sales</span><strong>${formatMoney(costOfSales)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-top:12px; padding-top:12px; border-top:1px solid #e2e8f0;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
+  </div>
   <div class="muted" style="margin-top:16px;">This quotation is valid for ${quote?.validity_days || 30} days unless otherwise stated.</div>
 </body>
 </html>`;
@@ -692,12 +718,12 @@ export default function FinancialsPage() {
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", product_id: "", quantity: "1" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", product_id: "", quantity: "1", unit_price: "", unit_cost_of_sales: "" });
     setEditingInvoiceId(null);
   }
 
   function resetQuoteForm() {
-    setQuoteForm({ quotation_id: "", customer_id: "", product_id: "", quantity: "1", validity_days: "30" });
+    setQuoteForm({ quotation_id: "", customer_id: "", product_id: "", quantity: "1", unit_price: "", unit_cost_of_sales: "", validity_days: "30" });
     setEditingQuoteId(null);
   }
 
@@ -715,6 +741,7 @@ export default function FinancialsPage() {
       payment_terms: "",
       discount: "",
       freight: "",
+      cost_of_sales: "",
       start_date: "",
       end_date: "",
       status: "pending"
@@ -735,8 +762,15 @@ export default function FinancialsPage() {
     setError(null);
     const customer = resolveCustomer(invoiceForm.customer_id);
     const product = resolveProduct(invoiceForm.product_id);
-    const unitPrice = getProductPrice(product);
-    const total = Number((unitPrice * qty).toFixed(2));
+    const unitPrice = Number(invoiceForm.unit_price || 0);
+    const unitCostOfSales = Number(invoiceForm.unit_cost_of_sales || 0);
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      setError("Invoice unit price must be a positive number.");
+      return;
+    }
+    const subtotal = Number((unitPrice * qty).toFixed(2));
+    const totalCostOfSales = Number((unitCostOfSales * qty).toFixed(2));
+    const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
     const next = invoices.map((i) => ({ ...i }));
     const payload = {
       id: editingInvoiceId || crypto.randomUUID(),
@@ -747,7 +781,10 @@ export default function FinancialsPage() {
       product_name: product?.name || String(invoiceForm.product_id || "").trim(),
       quantity: qty,
       unit_price: unitPrice,
-      total_amount: total,
+      unit_cost_of_sales: Number(unitCostOfSales.toFixed(2)),
+      subtotal_amount: subtotal,
+      cost_of_sales: totalCostOfSales,
+      total_amount: grandTotal,
       status: editingInvoiceId ? next.find((i) => i.id === editingInvoiceId)?.status || "pending" : "pending",
       updated_at: new Date().toISOString()
     };
@@ -775,8 +812,15 @@ export default function FinancialsPage() {
     setError(null);
     const customer = resolveCustomer(quoteForm.customer_id);
     const product = resolveProduct(quoteForm.product_id);
-    const unitPrice = getProductPrice(product);
-    const total = Number((unitPrice * qty).toFixed(2));
+    const unitPrice = Number(quoteForm.unit_price || 0);
+    const unitCostOfSales = Number(quoteForm.unit_cost_of_sales || 0);
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      setError("Quotation unit price must be a positive number.");
+      return;
+    }
+    const subtotal = Number((unitPrice * qty).toFixed(2));
+    const totalCostOfSales = Number((unitCostOfSales * qty).toFixed(2));
+    const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
     const validity = Math.max(1, parseInt(String(quoteForm.validity_days || "30"), 10) || 30);
     const next = quotes.map((q) => ({ ...q }));
     const payload = {
@@ -788,7 +832,10 @@ export default function FinancialsPage() {
       product_name: product?.name || String(quoteForm.product_id || "").trim(),
       quantity: qty,
       unit_price: unitPrice,
-      total_amount: total,
+      unit_cost_of_sales: Number(unitCostOfSales.toFixed(2)),
+      subtotal_amount: subtotal,
+      cost_of_sales: totalCostOfSales,
+      total_amount: grandTotal,
       validity_days: validity,
       status: editingQuoteId ? next.find((q) => q.id === editingQuoteId)?.status || "draft" : "draft",
       updated_at: new Date().toISOString()
@@ -849,7 +896,9 @@ export default function FinancialsPage() {
         : resolveVendor(contractForm.counterparty_id);
     const product = resolveProduct(contractForm.product_id);
     const defaultPrice = getProductPrice(product);
+    const defaultCostOfSales = getProductDefaultCost(product);
     const rawPrice = contractForm.price !== "" ? Number(contractForm.price) : defaultPrice;
+    const rawCostOfSales = contractForm.cost_of_sales !== "" ? Number(contractForm.cost_of_sales) : defaultCostOfSales;
     if (!Number.isFinite(rawPrice) || rawPrice <= 0) {
       setError("Contract price must be a positive number.");
       return;
@@ -864,6 +913,7 @@ export default function FinancialsPage() {
       product_id: product?.id || contractForm.product_id,
       product_name: product?.name || String(contractForm.product_id || "").trim(),
       price: Number(rawPrice.toFixed(2)),
+      cost_of_sales: Number((Number.isFinite(rawCostOfSales) ? rawCostOfSales : 0).toFixed(2)),
       payment_terms: contractForm.payment_terms || "",
       discount: Number(contractForm.discount || 0),
       freight: Number(contractForm.freight || 0),
@@ -999,11 +1049,17 @@ export default function FinancialsPage() {
 
   const requiresCatalogue = !activeProducts.length || !activeCustomers.length || !activeVendors.length;
   const selectedProduct = resolveProduct(invoiceForm.product_id);
-  const invoiceUnitPrice = getProductPrice(selectedProduct);
-  const invoiceTotal = Number(((Number(invoiceForm.quantity || 0) || 0) * invoiceUnitPrice).toFixed(2));
+  const invoiceUnitPrice = Number(invoiceForm.unit_price || 0);
+  const invoiceUnitCostOfSales = Number(invoiceForm.unit_cost_of_sales || 0);
+  const invoiceSubtotal = Number(((Number(invoiceForm.quantity || 0) || 0) * invoiceUnitPrice).toFixed(2));
+  const invoiceCostOfSalesTotal = Number(((Number(invoiceForm.quantity || 0) || 0) * invoiceUnitCostOfSales).toFixed(2));
+  const invoiceGrandTotal = Number((invoiceSubtotal + invoiceCostOfSalesTotal).toFixed(2));
   const selectedQuoteProduct = resolveProduct(quoteForm.product_id);
-  const quoteUnitPrice = getProductPrice(selectedQuoteProduct);
-  const quoteTotal = Number(((Number(quoteForm.quantity || 0) || 0) * quoteUnitPrice).toFixed(2));
+  const quoteUnitPrice = Number(quoteForm.unit_price || 0);
+  const quoteUnitCostOfSales = Number(quoteForm.unit_cost_of_sales || 0);
+  const quoteSubtotal = Number(((Number(quoteForm.quantity || 0) || 0) * quoteUnitPrice).toFixed(2));
+  const quoteCostOfSalesTotal = Number(((Number(quoteForm.quantity || 0) || 0) * quoteUnitCostOfSales).toFixed(2));
+  const quoteGrandTotal = Number((quoteSubtotal + quoteCostOfSalesTotal).toFixed(2));
   const previewInvoice = activeInvoices.find((inv) => inv.id === previewInvoiceId) || null;
   const previewCustomer = previewInvoice ? resolveCustomer(previewInvoice.customer_id, previewInvoice.customer_name) : null;
   const previewProduct = previewInvoice ? resolveProduct(previewInvoice.product_id, previewInvoice.product_name) : null;
@@ -1270,10 +1326,18 @@ export default function FinancialsPage() {
                 list="financial-products"
                 placeholder={activeProducts.length ? "Select or type product" : "Type product"}
                 value={invoiceForm.product_id}
-                onChange={(e) => setInvoiceForm((f) => ({ ...f, product_id: e.target.value }))}
+                onChange={(e) => {
+                  const product = resolveProduct(e.target.value);
+                  setInvoiceForm((f) => ({
+                    ...f,
+                    product_id: product?.name || e.target.value,
+                    unit_price: product ? String(getProductPrice(product)) : f.unit_price,
+                    unit_cost_of_sales: product ? String(getProductDefaultCost(product)) : f.unit_cost_of_sales
+                  }));
+                }}
               />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <div className="ea-label">Quantity *</div>
                 <Input
@@ -1284,13 +1348,39 @@ export default function FinancialsPage() {
                 />
               </div>
               <div>
-                <div className="ea-label">Unit price (derived)</div>
-                <Input value={formatMoney(invoiceUnitPrice)} disabled />
+                <div className="ea-label">Unit price</div>
+                <Input
+                  type="number"
+                  min="0"
+                  value={invoiceForm.unit_price}
+                  placeholder={String(invoiceUnitPrice || 0)}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, unit_price: e.target.value }))}
+                />
+              </div>
+              <div>
+                <div className="ea-label">Unit cost of sales</div>
+                <Input
+                  type="number"
+                  min="0"
+                  value={invoiceForm.unit_cost_of_sales}
+                  placeholder={String(invoiceUnitCostOfSales || 0)}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, unit_cost_of_sales: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <div className="ea-label">Subtotal</div>
+                <Input value={formatMoney(invoiceSubtotal)} disabled />
+              </div>
+              <div>
+                <div className="ea-label">Total cost of sales</div>
+                <Input value={formatMoney(invoiceCostOfSalesTotal)} disabled />
               </div>
             </div>
             <div>
-              <div className="ea-label">Total amount</div>
-              <Input value={formatMoney(invoiceTotal)} disabled />
+              <div className="ea-label">Grand Total</div>
+              <Input value={formatMoney(invoiceGrandTotal)} disabled />
             </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertInvoice}>{editingInvoiceId ? "Update invoice" : "Add invoice"}</Button>
@@ -1328,7 +1418,7 @@ export default function FinancialsPage() {
                           {customer?.name || "Customer"} • {product?.name || "Product"}
                         </div>
                         <div className="text-xs text-slate-500">
-                          Qty {inv.quantity} • Total {formatMoney(inv.total_amount)} • Status {inv.status}
+                          Qty {inv.quantity} • Grand Total {formatMoney(inv.total_amount)} • Status {inv.status}
                         </div>
                       </div>
                       <ActionMenu
@@ -1341,7 +1431,9 @@ export default function FinancialsPage() {
                                   invoice_id: inv.invoice_id || "",
                                   customer_id: inv.customer_name || inv.customer_id,
                                   product_id: inv.product_name || inv.product_id,
-                                  quantity: String(inv.quantity || 1)
+                                  quantity: String(inv.quantity || 1),
+                                  unit_price: String(inv.unit_price || ""),
+                                  unit_cost_of_sales: String(inv.unit_cost_of_sales || "")
                                 });
                             }
                           },
@@ -1456,10 +1548,18 @@ export default function FinancialsPage() {
                 list="financial-products"
                 placeholder={activeProducts.length ? "Select or type product" : "Type product"}
                 value={quoteForm.product_id}
-                onChange={(e) => setQuoteForm((f) => ({ ...f, product_id: e.target.value }))}
+                onChange={(e) => {
+                  const product = resolveProduct(e.target.value);
+                  setQuoteForm((f) => ({
+                    ...f,
+                    product_id: product?.name || e.target.value,
+                    unit_price: product ? String(getProductPrice(product)) : f.unit_price,
+                    unit_cost_of_sales: product ? String(getProductDefaultCost(product)) : f.unit_cost_of_sales
+                  }));
+                }}
               />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <div className="ea-label">Quantity *</div>
                 <Input
@@ -1470,8 +1570,24 @@ export default function FinancialsPage() {
                 />
               </div>
               <div>
-                <div className="ea-label">Unit price (derived)</div>
-                <Input value={formatMoney(quoteUnitPrice)} disabled />
+                <div className="ea-label">Unit price</div>
+                <Input
+                  type="number"
+                  min="0"
+                  value={quoteForm.unit_price}
+                  placeholder={String(quoteUnitPrice || 0)}
+                  onChange={(e) => setQuoteForm((f) => ({ ...f, unit_price: e.target.value }))}
+                />
+              </div>
+              <div>
+                <div className="ea-label">Unit cost of sales</div>
+                <Input
+                  type="number"
+                  min="0"
+                  value={quoteForm.unit_cost_of_sales}
+                  placeholder={String(quoteUnitCostOfSales || 0)}
+                  onChange={(e) => setQuoteForm((f) => ({ ...f, unit_cost_of_sales: e.target.value }))}
+                />
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1485,9 +1601,19 @@ export default function FinancialsPage() {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <div className="ea-label">Subtotal</div>
+                <Input value={formatMoney(quoteSubtotal)} disabled />
+              </div>
+              <div>
+                <div className="ea-label">Total cost of sales</div>
+                <Input value={formatMoney(quoteCostOfSalesTotal)} disabled />
+              </div>
+            </div>
             <div>
-              <div className="ea-label">Total amount</div>
-              <Input value={formatMoney(quoteTotal)} disabled />
+              <div className="ea-label">Grand Total</div>
+              <Input value={formatMoney(quoteGrandTotal)} disabled />
             </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertQuote}>{editingQuoteId ? "Update quotation" : "Add quotation"}</Button>
@@ -1525,7 +1651,7 @@ export default function FinancialsPage() {
                           {customer?.name || "Customer"} • {product?.name || "Product"}
                         </div>
                         <div className="text-xs text-slate-500">
-                          Qty {quote.quantity} • Total {formatMoney(quote.total_amount)} • Status {quote.status || "draft"}
+                          Qty {quote.quantity} • Grand Total {formatMoney(quote.total_amount)} • Status {quote.status || "draft"}
                         </div>
                       </div>
                       <ActionMenu
@@ -1539,6 +1665,8 @@ export default function FinancialsPage() {
                                   customer_id: quote.customer_name || quote.customer_id,
                                   product_id: quote.product_name || quote.product_id,
                                   quantity: String(quote.quantity || 1),
+                                  unit_price: String(quote.unit_price || ""),
+                                  unit_cost_of_sales: String(quote.unit_cost_of_sales || ""),
                                   validity_days: String(quote.validity_days || "30")
                                 });
                             }
@@ -1856,13 +1984,14 @@ export default function FinancialsPage() {
                   const product = resolveProduct(e.target.value);
                   setContractForm((f) => ({
                     ...f,
-                    product_id: product?.id || e.target.value,
-                    price: product ? String(getProductPrice(product)) : f.price
+                    product_id: product?.name || e.target.value,
+                    price: product ? String(getProductPrice(product)) : f.price,
+                    cost_of_sales: product ? String(getProductDefaultCost(product)) : f.cost_of_sales
                   }));
                 }}
               />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <div className="ea-label">Price *</div>
                 <Input
@@ -1870,6 +1999,15 @@ export default function FinancialsPage() {
                   min="0"
                   value={contractForm.price}
                   onChange={(e) => setContractForm((f) => ({ ...f, price: e.target.value }))}
+                />
+              </div>
+              <div>
+                <div className="ea-label">Cost of sales</div>
+                <Input
+                  type="number"
+                  min="0"
+                  value={contractForm.cost_of_sales}
+                  onChange={(e) => setContractForm((f) => ({ ...f, cost_of_sales: e.target.value }))}
                 />
               </div>
               <div>
@@ -1965,6 +2103,7 @@ export default function FinancialsPage() {
                                 counterparty_id: contract.counterparty_name || contract.counterparty_id,
                                 product_id: contract.product_name || contract.product_id,
                                 price: String(contract.price || ""),
+                                cost_of_sales: String(contract.cost_of_sales || ""),
                                 payment_terms: String(contract.payment_terms || ""),
                                 discount: String(contract.discount || ""),
                                 freight: String(contract.freight || ""),
@@ -2111,7 +2250,9 @@ export default function FinancialsPage() {
                 </div>
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Invoice summary</div>
-                  <div className="mt-2 text-xs text-slate-500">Total amount</div>
+                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500"><span>Subtotal</span><span>{formatMoney(previewInvoice.subtotal_amount)}</span></div>
+                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500"><span>Cost of sales</span><span>{formatMoney(previewInvoice.cost_of_sales)}</span></div>
+                  <div className="mt-3 text-xs text-slate-500">Grand Total</div>
                   <div className="text-lg font-semibold text-slate-900">{formatMoney(previewInvoice.total_amount)}</div>
                 </div>
               </div>
@@ -2121,13 +2262,13 @@ export default function FinancialsPage() {
                   <div className="col-span-6">Item</div>
                   <div className="col-span-2 text-right">Qty</div>
                   <div className="col-span-2 text-right">Unit</div>
-                  <div className="col-span-2 text-right">Total</div>
+                  <div className="col-span-2 text-right">Subtotal</div>
                 </div>
                 <div className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
-                  <div className="col-span-6">{previewProduct?.name || "Product / Service"}</div>
+                  <div className="col-span-6">{previewProduct?.name || previewInvoice.product_name || "Product / Service"}</div>
                   <div className="col-span-2 text-right">{previewInvoice.quantity}</div>
                   <div className="col-span-2 text-right">{formatMoney(previewInvoice.unit_price)}</div>
-                  <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(previewInvoice.total_amount)}</div>
+                  <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(previewInvoice.subtotal_amount)}</div>
                 </div>
               </div>
 
@@ -2201,7 +2342,9 @@ export default function FinancialsPage() {
                   </div>
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Quotation summary</div>
-                  <div className="mt-2 text-xs text-slate-500">Total amount</div>
+                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500"><span>Subtotal</span><span>{formatMoney(previewQuote.subtotal_amount)}</span></div>
+                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500"><span>Cost of sales</span><span>{formatMoney(previewQuote.cost_of_sales)}</span></div>
+                  <div className="mt-3 text-xs text-slate-500">Grand Total</div>
                   <div className="text-lg font-semibold text-slate-900">{formatMoney(previewQuote.total_amount)}</div>
                 </div>
               </div>
@@ -2211,13 +2354,13 @@ export default function FinancialsPage() {
                   <div className="col-span-6">Item</div>
                   <div className="col-span-2 text-right">Qty</div>
                   <div className="col-span-2 text-right">Unit</div>
-                  <div className="col-span-2 text-right">Total</div>
+                  <div className="col-span-2 text-right">Subtotal</div>
                 </div>
                 <div className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
-                  <div className="col-span-6">{previewQuoteProduct?.name || "Product / Service"}</div>
+                  <div className="col-span-6">{previewQuoteProduct?.name || previewQuote.product_name || "Product / Service"}</div>
                   <div className="col-span-2 text-right">{previewQuote.quantity}</div>
                   <div className="col-span-2 text-right">{formatMoney(previewQuote.unit_price)}</div>
-                  <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(previewQuote.total_amount)}</div>
+                  <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(previewQuote.subtotal_amount)}</div>
                 </div>
               </div>
 

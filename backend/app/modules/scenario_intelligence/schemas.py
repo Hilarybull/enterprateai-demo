@@ -22,7 +22,12 @@ ScenarioMode = Literal["adaptive", "manual", "adaptive_or_manual"]
 
 class BusinessStateSnapshot(BaseModel):
     revenue_monthly: float = Field(default=0, ge=0)
+    expenses_monthly: float = Field(default=0, ge=0)
+    cost_of_sales_monthly: float = Field(default=0, ge=0)
     costs_monthly: float = Field(default=0, ge=0)
+    accrued_revenue_total: float | None = Field(default=0, ge=0)
+    accrued_expenses_total: float | None = Field(default=0, ge=0)
+    accrued_cost_of_sales_total: float | None = Field(default=0, ge=0)
     starting_cash: float = Field(default=0, ge=0)
     top_client_share_pct: float | None = Field(default=None, ge=0, le=100)
     # Some upstream modules may temporarily report extreme utilisation values (e.g. > 200%).
@@ -31,6 +36,10 @@ class BusinessStateSnapshot(BaseModel):
     payment_terms_days: int | None = Field(default=None, ge=0, le=365)
     sales_cycle_days: int | None = Field(default=None, ge=0, le=365)
     clients_count: int | None = Field(default=None, ge=0)
+    approaching_receivables_count: int | None = Field(default=0, ge=0)
+    overdue_receivables_count: int | None = Field(default=0, ge=0)
+    approaching_payables_count: int | None = Field(default=0, ge=0)
+    overdue_payables_count: int | None = Field(default=0, ge=0)
 
 
 class RiskDetectionRequest(BaseModel):
@@ -127,6 +136,8 @@ class ScenarioRunResult(BaseModel):
 class ScenarioTimelineEntry(BaseModel):
     month_index: int
     revenue: float
+    expenses: float
+    cost_of_sales: float
     costs: float
     profit: float
     cash_balance: float

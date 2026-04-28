@@ -147,6 +147,16 @@ def _normalize_breaks(html: str) -> str:
     return (html or "").replace('<div class="page-break"></div>', '<div class="page-break"></div>')
 
 
+def extract_export_body(html: str) -> str:
+    source = str(html or "").strip()
+    if not source:
+        return ""
+    body_match = re.search(r"<body[^>]*>(.*)</body>", source, flags=re.IGNORECASE | re.DOTALL)
+    if body_match:
+        return body_match.group(1).strip()
+    return source
+
+
 def render_export_html(title: str, body_html: str) -> str:
     safe_title = title or "EnterprateAI Document"
     html = _normalize_breaks(body_html or "")

@@ -9,7 +9,7 @@ class BusinessAssistantMessage(BaseModel):
 
 
 class BusinessAssistantChatRequest(BaseModel):
-    messages: list[BusinessAssistantMessage] = Field(default_factory=list, min_length=1, max_length=12)
+    messages: list[BusinessAssistantMessage] = Field(default_factory=list, min_length=1, max_length=40)
 
 
 class BusinessAssistantChatResponse(BaseModel):

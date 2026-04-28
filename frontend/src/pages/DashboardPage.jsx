@@ -10,10 +10,7 @@ import Spinner from "../components/Spinner";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { formatCurrency, formatNumber } from "../lib/format";
-
-function sumBy(list, key) {
-  return (list || []).reduce((acc, item) => acc + Number(item?.[key] || 0), 0);
-}
+import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -49,7 +46,7 @@ export default function DashboardPage() {
           invoices: data?.financials?.invoices || [],
           expenses: data?.financials?.expenses || [],
           contracts: data?.financials?.contracts || [],
-          quotations: data?.financials?.quotations || [],
+          quotations: data?.financials?.quotes || data?.financials?.quotations || [],
           catalogue: data?.catalogue || { products: [], customers: [], vendors: [] }
         });
       } catch (e) {
@@ -65,63 +62,21 @@ export default function DashboardPage() {
     };
   }, [workspaceId]);
 
-  const metrics = useMemo(() => {
-    const invoices = Array.isArray(snapshot.invoices) ? snapshot.invoices : [];
-    const expenses = Array.isArray(snapshot.expenses) ? snapshot.expenses : [];
-    const contracts = Array.isArray(snapshot.contracts) ? snapshot.contracts : [];
-    const quotations = Array.isArray(snapshot.quotations) ? snapshot.quotations : [];
-    const paidInvoices = invoices.filter((i) => i.status === "paid");
-    const pendingInvoices = invoices.filter((i) => i.status !== "paid");
-    const paidExpenses = expenses.filter((e) => e.status === "paid");
-    const unpaidExpenses = expenses.filter((e) => e.status !== "paid");
-    const signedContracts = contracts.filter((c) => c.status === "signed");
-    const salesContracts = signedContracts.filter((c) => c.contract_type !== "purchase");
-    const purchaseContracts = signedContracts.filter((c) => c.contract_type === "purchase");
-
-    const revenue = sumBy(paidInvoices, "total_amount") + sumBy(salesContracts, "price");
-    const costs = sumBy(paidExpenses, "price") + sumBy(purchaseContracts, "price");
-    const flags = Array.isArray(validation?.flags) ? validation.flags : [];
-    const dynamicRisks = [];
-    if (sumBy(paidInvoices, "total_amount") < sumBy(unpaidExpenses, "price")) {
-      dynamicRisks.push("Revenue below unpaid expenses (Financials)");
-    }
-    if (costs > revenue && (revenue > 0 || costs > 0)) {
-      dynamicRisks.push("Costs exceed revenue (Financials)");
-    }
-    if (pendingInvoices.length && !paidInvoices.length) {
-      dynamicRisks.push("No paid invoices yet (Financials)");
-    }
-    if (quotations.length && !invoices.length) {
-      dynamicRisks.push("Quotes issued but no invoices sent (Financials)");
-    }
-    if (signedContracts.length && !invoices.length) {
-      dynamicRisks.push("Signed contracts not invoiced yet (Financials)");
-    }
-    if (!snapshot.catalogue.products?.length) {
-      dynamicRisks.push("No active products/services (Catalogue)");
-    }
-    if (!snapshot.catalogue.customers?.length) {
-      dynamicRisks.push("No customers saved (Catalogue)");
-    }
-    const riskItems = [
-      ...flags.map((f) => `${String(f?.code || f?.title || f || "").replace(/_/g, " ").trim()} (Validation)`),
-      ...dynamicRisks
-    ].filter(Boolean);
-    const riskCount = riskItems.length;
-
-    return {
-      revenue,
-      costs,
-      pendingInvoices: pendingInvoices.length,
-      paidInvoices: paidInvoices.length,
-      paidExpenses: paidExpenses.length,
-      quotations: quotations.length,
-      contracts: contracts.length,
-      unpaidExpenses: unpaidExpenses.length,
-      riskCount,
-      riskItems
-    };
-  }, [snapshot, validation]);
+  const metrics = useMemo(
+    () =>
+      buildFinancialIntelligence({
+        catalogue: snapshot.catalogue,
+        financials: {
+          invoices: snapshot.invoices,
+          quotes: snapshot.quotations,
+          expenses: snapshot.expenses,
+          contracts: snapshot.contracts,
+        },
+        validation,
+      }),
+    [snapshot, validation]
+  );
+  const primaryRecommendation = metrics.recommendations[0] || null;
 
   if (!workspaceId) {
     return (
@@ -164,21 +119,21 @@ export default function DashboardPage() {
       ) : (
         <>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatTile label="Revenue (paid)" value={formatCurrency(metrics.revenue, currency)} />
-            <StatTile label="Expenses (paid)" value={formatCurrency(metrics.costs, currency)} tone="warn" />
-            <StatTile label="Pending invoices" value={formatNumber(metrics.pendingInvoices)} />
+            <StatTile label="Total Revenue" value={formatCurrency(metrics.totalRevenue, currency)} />
+            <StatTile label="Expenses + cost of sales" value={formatCurrency(metrics.totalCosts, currency)} tone="warn" />
+            <StatTile label="Pending invoices" value={formatNumber(metrics.pendingInvoices.length)} />
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm text-slate-900 dark:text-slate-100 min-h-[124px] flex flex-col">
               <div className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-500">
                 <div>Active risks</div>
               </div>
               <div className="mt-1 text-[20px] font-semibold tracking-tight text-slate-900">
-                {metrics.riskCount ? formatNumber(metrics.riskCount) : "No active risks"}
+                {metrics.riskItems.length ? formatNumber(metrics.riskItems.length) : "No active risks"}
               </div>
               {metrics.riskItems?.length ? (
                 <div className="mt-2 text-xs text-slate-500 max-h-16 overflow-auto pr-1">
                   {metrics.riskItems.map((risk, idx) => (
-                    <div key={`${risk}-${idx}`} className="truncate">
-                      {risk}
+                    <div key={`${risk.reason_code}-${idx}`} className="truncate">
+                      {risk.title}
                     </div>
                   ))}
                 </div>
@@ -190,12 +145,21 @@ export default function DashboardPage() {
             <SectionCard title="Recommended next step" subtitle="Based on your latest validation and financials.">
               <div className="space-y-3 text-sm text-slate-600">
                 <div>
-                  {validation
-                    ? "Run a simulation to see the impact of your latest numbers on cash, profit, and runway."
-                    : "Complete wokspace to unlock recommendations and scenario insights."}
+                  {primaryRecommendation
+                    ? primaryRecommendation.subtitle
+                    : "Complete your workspace to unlock scenario recommendations based on current risk signals."}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => navigate("/simulation")}>
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      navigate(
+                        primaryRecommendation?.scenario_template_id
+                          ? `/simulation?template=${primaryRecommendation.scenario_template_id}`
+                          : "/simulation"
+                      )
+                    }
+                  >
                     Run scenario
                   </Button>
                 </div>
@@ -211,27 +175,27 @@ export default function DashboardPage() {
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between">
                     <span>Paid invoices</span>
-                    <span className="font-semibold text-slate-900">{metrics.paidInvoices}</span>
+                    <span className="font-semibold text-slate-900">{metrics.paidInvoices.length}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Pending invoices</span>
-                    <span className="font-semibold text-slate-900">{metrics.pendingInvoices}</span>
+                    <span className="font-semibold text-slate-900">{metrics.pendingInvoices.length}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Quotations</span>
-                    <span className="font-semibold text-slate-900">{metrics.quotations}</span>
+                    <span className="font-semibold text-slate-900">{metrics.quotes.length}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Contracts</span>
-                    <span className="font-semibold text-slate-900">{metrics.contracts}</span>
+                    <span className="font-semibold text-slate-900">{metrics.contracts.length}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Paid expenses</span>
-                    <span className="font-semibold text-slate-900">{metrics.paidExpenses}</span>
+                    <span className="font-semibold text-slate-900">{metrics.paidExpenses.length}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span>Unpaid expenses</span>
-                    <span className="font-semibold text-slate-900">{metrics.unpaidExpenses}</span>
+                    <span>Overdue payables</span>
+                    <span className="font-semibold text-slate-900">{metrics.overduePendingExpenses.length}</span>
                   </div>
                 </div>
                 <div className="mt-auto">

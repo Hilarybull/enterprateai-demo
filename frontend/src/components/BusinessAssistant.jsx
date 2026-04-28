@@ -32,13 +32,14 @@ export default function BusinessAssistant() {
     if (!question) return;
 
     const nextMessages = [...messages, { role: "user", content: question }];
-    setMessages(nextMessages);
+    const trimmedMessages = nextMessages.slice(-20);
+    setMessages(trimmedMessages);
     setInput("");
     setLoading(true);
 
     try {
       const res = await apiRequest("/business-assistant/chat", "POST", {
-        messages: nextMessages.map((message) => ({
+        messages: trimmedMessages.map((message) => ({
           role: message.role,
           content: message.content,
         })),
@@ -68,7 +69,7 @@ export default function BusinessAssistant() {
   return (
     <>
       {open ? (
-        <div className="fixed inset-x-2 bottom-2 z-40 flex h-[min(720px,calc(100vh-1rem))] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950 sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[440px]">
+        <div className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] z-40 flex h-[min(720px,calc(100vh-6rem))] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950 sm:inset-x-auto sm:bottom-20 sm:right-4 sm:w-[420px] lg:bottom-4 lg:w-[440px]">
           <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-brand-50 via-white to-accent-50 px-4 py-3 dark:border-slate-800 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
             <div className="flex items-start gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-sm">
@@ -172,12 +173,13 @@ export default function BusinessAssistant() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-30 flex items-center gap-2 rounded-full bg-brand-600 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-brand-700"
+        className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] right-3 z-30 flex items-center gap-2 rounded-full bg-brand-600 px-3 py-3 text-sm font-semibold text-white shadow-lg hover:bg-brand-700 sm:bottom-4 sm:right-4 sm:px-4"
       >
         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
-        Ask about your business
+        <span className="hidden sm:inline">Ask about your business</span>
+        <span className="sm:hidden">Ask</span>
       </button>
     </>
   );

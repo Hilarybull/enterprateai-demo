@@ -38,6 +38,7 @@ export default function CataloguePage() {
     name: "",
     type: "service",
     base_price: "",
+    cost_of_sales: "",
     discount: "",
     freight_cost: ""
   });
@@ -157,6 +158,7 @@ export default function CataloguePage() {
         name: String(name).trim(),
         type: String(type).trim() === "product" ? "product" : "service",
         base_price: Number(basePrice || 0),
+        cost_of_sales: Number(row.cost_of_sales || row.cost_of_service || row.unit_cost || 0),
         discount: Number(row.discount || 0),
         freight_cost: Number(row.freight_cost || row.freight || 0),
         archived: false,
@@ -324,7 +326,7 @@ export default function CataloguePage() {
   }
 
   function resetProductForm() {
-    setProductForm({ name: "", type: "service", base_price: "", discount: "", freight_cost: "" });
+    setProductForm({ name: "", type: "service", base_price: "", cost_of_sales: "", discount: "", freight_cost: "" });
     setEditingProductId(null);
   }
   function resetCustomerForm() {
@@ -356,6 +358,7 @@ export default function CataloguePage() {
       name: productForm.name.trim(),
       type: productForm.type,
       base_price: Number(productForm.base_price || 0),
+      cost_of_sales: Number(productForm.cost_of_sales || 0),
       discount: Number(productForm.discount || 0),
       freight_cost: Number(productForm.freight_cost || 0),
       archived: false,
@@ -775,7 +778,16 @@ export default function CataloguePage() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <div className="ea-label">Cost of sales / service</div>
+                <Input
+                  type="number"
+                  min="0"
+                  value={productForm.cost_of_sales}
+                  onChange={(e) => setProductForm((p) => ({ ...p, cost_of_sales: e.target.value }))}
+                />
+              </div>
               <div>
                 <div className="ea-label">Discount (optional)</div>
                 <Input
@@ -812,7 +824,7 @@ export default function CataloguePage() {
               accept=".csv"
               onChange={(e) => handleProductImport(e.target.files?.[0])}
             />
-            <div className="mt-1 text-xs text-slate-500">Headers: product_name, product_type, base_price, discount, freight_cost.</div>
+            <div className="mt-1 text-xs text-slate-500">Headers: product_name, product_type, base_price, cost_of_sales, discount, freight_cost.</div>
           </div>
         </SectionCard>
 
@@ -836,7 +848,7 @@ export default function CataloguePage() {
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-900">{p.name}</div>
                       <div className="text-xs text-slate-500">
-                        {p.type} • Base {p.base_price} • Discount {p.discount || 0} • Freight {p.freight_cost || 0}
+                        {p.type} • Base {p.base_price} • Cost of sales {p.cost_of_sales || 0} • Discount {p.discount || 0} • Freight {p.freight_cost || 0}
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -848,6 +860,7 @@ export default function CataloguePage() {
                             name: p.name,
                             type: p.type,
                             base_price: String(p.base_price ?? ""),
+                            cost_of_sales: String(p.cost_of_sales ?? ""),
                             discount: String(p.discount ?? ""),
                             freight_cost: String(p.freight_cost ?? "")
                           });

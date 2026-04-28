@@ -562,11 +562,7 @@ export default function ValidationWizardPage() {
         const iv = ws?.data?.idea_validation || ws?.data?.draft_idea_validation;
         setExistingCatalogue(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
         setSavedServiceIdeas(Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : []);
-        setValidationHistory(
-          (Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [])
-            .map(normaliseValidationHistoryEntry)
-            .filter(Boolean)
-        );
+        setValidationHistory(buildUnifiedValidationHistory(ws?.data || {}));
         if (ws?.data?.currency) setServiceCurrency(ws.data.currency);
         if (!iv || typeof iv !== "object") {
           const profile = ws?.data?.business_profile;
@@ -757,6 +753,50 @@ export default function ValidationWizardPage() {
     };
   }
 
+  function buildUnifiedValidationHistory(data) {
+    const validationHistory = Array.isArray(data?.validation_history) ? data.validation_history : [];
+    const serviceHistory = Array.isArray(data?.service_validation_history) ? data.service_validation_history : [];
+    const merged = new Map();
+
+    validationHistory.forEach((entry) => {
+      const normalized = normaliseValidationHistoryEntry(entry);
+      if (normalized) merged.set(normalized.id, normalized);
+    });
+
+    serviceHistory.forEach((entry) => {
+      const normalized = normaliseValidationHistoryEntry({
+        id: entry?.id,
+        type: "service_validation",
+        title: entry?.service_name || entry?.payload?.service_name || "Service validation",
+        created_at: entry?.created_at,
+        status: entry?.status || entry?.decision_status || "pending",
+        summary: entry?.summary || entry?.result?.outcome || "Service validation completed",
+        score: typeof entry?.result?.scores?.viability_score === "number" ? entry.result.scores.viability_score : null,
+        payload: entry?.payload || null,
+        result: entry?.result || null,
+      });
+      if (!normalized) return;
+      if (!merged.has(normalized.id)) {
+        merged.set(normalized.id, normalized);
+        return;
+      }
+      const existing = merged.get(normalized.id);
+      merged.set(normalized.id, {
+        ...normalized,
+        ...existing,
+        type: existing?.type || normalized.type,
+        title: existing?.title || normalized.title,
+        status: existing?.status || normalized.status || "pending",
+        payload: existing?.payload || normalized.payload || null,
+        result: existing?.result || normalized.result || null,
+      });
+    });
+
+    return Array.from(merged.values()).sort(
+      (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+  }
+
   function hydrateBusinessFormForEditor(source) {
     const next = structuredClone(source || form);
     next.pathway = "business_idea";
@@ -874,7 +914,12 @@ export default function ValidationWizardPage() {
           service_validation_history: nextServiceHistory,
         }
       });
-      setValidationHistory(nextHistory.map(normaliseValidationHistoryEntry).filter(Boolean));
+      setValidationHistory(
+        buildUnifiedValidationHistory({
+          validation_history: nextHistory,
+          service_validation_history: nextServiceHistory,
+        })
+      );
       setSavedServiceIdeas(nextServiceHistory);
       setSavedNotice("Validation history deleted.");
     } catch (e) {
@@ -1281,18 +1326,25 @@ export default function ValidationWizardPage() {
                   { timeoutMs: 120000 }
                 );
                 setSavedServiceIdeas([entry, ...history]);
-                setValidationHistory([
-                  normaliseValidationHistoryEntry({
-                    id: validationId,
-                    type: "service_validation",
-                    title: payloadService.service_name,
-                    created_at: entry.created_at,
-                    status: "pending",
-                    score: typeof result?.scores?.viability_score === "number" ? result.scores.viability_score : null,
-                    summary: String(result?.outcome || "").trim() || "Service validation completed"
-                  }),
-                  ...validationHistoryExisting.map(normaliseValidationHistoryEntry).filter(Boolean)
-                ].filter(Boolean));
+                setValidationHistory(
+                  buildUnifiedValidationHistory({
+                    validation_history: [
+                      {
+                        id: validationId,
+                        type: "service_validation",
+                        title: payloadService.service_name,
+                        created_at: entry.created_at,
+                        status: "pending",
+                        score: typeof result?.scores?.viability_score === "number" ? result.scores.viability_score : null,
+                        summary: String(result?.outcome || "").trim() || "Service validation completed",
+                        payload: payloadService,
+                        result,
+                      },
+                      ...validationHistoryExisting
+                    ],
+                    service_validation_history: [entry, ...history],
+                  })
+                );
               } catch (e) {
                 console.warn("Failed to persist service validation history:", e);
               }

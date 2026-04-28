@@ -70,7 +70,7 @@ async def get_shared_document_by_token(*, token: str) -> BlueprintSharedDocument
     )
     if not doc:
         return None
-    if not (doc.get("document_markdown") or "").strip():
+    if not str(doc.get("document_markdown") or "").strip() and not str(doc.get("document_html") or "").strip():
         return None
 
     # Best-effort access tracking (ignore failures).
@@ -91,4 +91,3 @@ async def get_shared_document_by_token(*, token: str) -> BlueprintSharedDocument
         document_html=doc.get("document_html"),
         updated_at=doc.get("updated_at"),
     )
-

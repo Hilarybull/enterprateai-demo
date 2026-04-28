@@ -12,6 +12,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
 import { formatCurrency, formatNumber } from "../lib/format";
 import InfoTip from "../components/InfoTip";
+import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 
 const FieldLabel = ({ children, info }) => (
   <div className="ea-label flex items-center gap-2">
@@ -19,6 +20,13 @@ const FieldLabel = ({ children, info }) => (
     {info ? <InfoTip text={info} /> : null}
   </div>
 );
+
+function asNonEmptyString(value, fallback) {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (value == null) return fallback;
+  const coerced = String(value).trim();
+  return coerced || fallback;
+}
 
 export default function SimulationPage() {
   const simulationEnabled = true;
@@ -30,11 +38,11 @@ export default function SimulationPage() {
   const currency = useWorkspaceStore((s) => s.currency);
   const email = useAuthStore((s) => s.email);
 
-  const tenantId = email || "ten_default";
-  const businessId = workspaceId || "biz_unknown";
+  const tenantId = asNonEmptyString(email, "ten_default");
+  const businessId = asNonEmptyString(workspaceId, "biz_unknown");
   const [registrationStatus, setRegistrationStatus] = useState({ status: "not_started" });
   const isRegistered = registrationStatus?.status === "registered";
-  const stateVersion = isRegistered ? validation?.rubric_version || "state_v1.0" : "state_v1.0";
+  const stateVersion = isRegistered ? asNonEmptyString(validation?.rubric_version, "state_v1.0") : "state_v1.0";
 
   const [catalogueData, setCatalogueData] = useState({ products: [], customers: [], vendors: [] });
   const [financialsData, setFinancialsData] = useState({ invoices: [], expenses: [], contracts: [] });
@@ -56,119 +64,20 @@ export default function SimulationPage() {
     }
   }
 
-  const stateSnapshot = useMemo(() => {
-    const metrics = isRegistered ? validation?.metrics || {} : {};
-    const customers = Array.isArray(catalogueData?.customers)
-      ? catalogueData.customers.filter((c) => !c.archived)
-      : [];
-    const invoices = Array.isArray(financialsData?.invoices)
-      ? financialsData.invoices.filter((i) => !i.archived)
-      : [];
-    const expenses = Array.isArray(financialsData?.expenses)
-      ? financialsData.expenses.filter((e) => !e.archived)
-      : [];
-    const contracts = Array.isArray(financialsData?.contracts)
-      ? financialsData.contracts.filter((c) => !c.archived)
-      : [];
+  const financialInsights = useMemo(
+    () =>
+      buildFinancialIntelligence({
+        catalogue: catalogueData,
+        financials: financialsData,
+        validation: isRegistered ? validation : acceptedIdeaValidation,
+        inputs,
+      }),
+    [acceptedIdeaValidation, catalogueData, financialsData, inputs, isRegistered, validation]
+  );
 
-    const paidInvoices = invoices.filter((i) => i.status === "paid");
-    const paidExpenses = expenses.filter((e) => e.status === "paid");
-    const signedContracts = contracts.filter((c) => c.status === "signed");
-    const salesContracts = signedContracts.filter((c) => c.contract_type !== "purchase");
-    const purchaseContracts = signedContracts.filter((c) => c.contract_type === "purchase");
+  const stateSnapshot = financialInsights.stateSnapshot;
 
-    const revenueFromInvoices = paidInvoices.reduce((sum, i) => sum + Number(i.total_amount || 0), 0);
-    const costsFromExpenses = paidExpenses.reduce((sum, e) => sum + Number(e.price || 0), 0);
-    const contractRevenue = salesContracts.reduce((sum, c) => sum + Number(c.price || 0), 0);
-    const contractCosts = purchaseContracts.reduce((sum, c) => sum + Number(c.price || 0), 0);
-
-    const revenueMonthly =
-      paidInvoices.length || contractRevenue > 0
-        ? revenueFromInvoices + contractRevenue
-        : Number(metrics.revenue_monthly || 0);
-    const costsMonthly =
-      paidExpenses.length || contractCosts > 0
-        ? costsFromExpenses + contractCosts
-        : Number(metrics.costs_monthly || 0);
-
-    const customerTotals = paidInvoices.reduce((acc, i) => {
-      const key = i.customer_id || "unknown";
-      acc[key] = (acc[key] || 0) + Number(i.total_amount || 0);
-      return acc;
-    }, {});
-    salesContracts.forEach((c) => {
-      const key = c.counterparty_id || "contract";
-      customerTotals[key] = (customerTotals[key] || 0) + Number(c.price || 0);
-    });
-    const maxCustomer = Object.values(customerTotals).reduce((max, val) => Math.max(max, Number(val || 0)), 0);
-    const topClientShare =
-      (paidInvoices.length || salesContracts.length) && revenueMonthly > 0
-        ? Math.min(100, Math.round((maxCustomer / revenueMonthly) * 100))
-        : isRegistered ? acceptedIdeaValidation?.concentration?.top_client_share_pct ?? null : null;
-
-    const termValues = customers
-      .map((c) => Number(c.payment_terms))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    const paymentTerms =
-      termValues.length > 0
-        ? Math.round(termValues.reduce((a, b) => a + b, 0) / termValues.length)
-        : isRegistered ? metrics.payment_terms_days ?? null : null;
-
-    const customerIds = new Set([
-      ...customers.map((c) => c.id).filter(Boolean),
-      ...paidInvoices.map((i) => i.customer_id).filter(Boolean),
-      ...salesContracts.map((c) => c.counterparty_id).filter(Boolean)
-    ]);
-    const clientsCount =
-      customerIds.size > 0
-        ? customerIds.size
-        : isRegistered
-          ? acceptedIdeaValidation?.concentration?.clients_count ?? null
-          : null;
-
-    return {
-      revenue_monthly: Math.max(0, Number(revenueMonthly || 0)),
-      costs_monthly: Math.max(0, Number(costsMonthly || 0)),
-      starting_cash: Number(inputs?.starting_cash || 0),
-      top_client_share_pct: topClientShare,
-      capacity_utilisation_pct: isRegistered ? metrics.capacity?.utilization ?? null : null,
-      payment_terms_days: paymentTerms,
-      sales_cycle_days: isRegistered ? metrics.sales_cycle_days ?? null : null,
-      clients_count: clientsCount
-    };
-  }, [acceptedIdeaValidation, inputs, validation, catalogueData, financialsData, isRegistered]);
-
-  const largestClient = useMemo(() => {
-    const customers = Array.isArray(catalogueData?.customers)
-      ? catalogueData.customers.filter((c) => !c.archived)
-      : [];
-    const invoices = Array.isArray(financialsData?.invoices)
-      ? financialsData.invoices.filter((i) => !i.archived)
-      : [];
-    const contracts = Array.isArray(financialsData?.contracts)
-      ? financialsData.contracts.filter((c) => !c.archived && c.status === "signed" && c.contract_type !== "purchase")
-      : [];
-    const paidInvoices = invoices.filter((i) => i.status === "paid");
-    const totals = paidInvoices.reduce((acc, i) => {
-      const key = i.customer_id || "unknown";
-      acc[key] = (acc[key] || 0) + Number(i.total_amount || 0);
-      return acc;
-    }, {});
-    contracts.forEach((c) => {
-      const key = c.counterparty_id || "contract";
-      totals[key] = (totals[key] || 0) + Number(c.price || 0);
-    });
-    const entries = Object.entries(totals);
-    if (!entries.length) return null;
-    const [topId, topValue] = entries.sort((a, b) => Number(b[1]) - Number(a[1]))[0];
-    const customer = customers.find((c) => c.id === topId);
-    const name = customer?.name || "Largest client";
-    const share =
-      stateSnapshot?.revenue_monthly && stateSnapshot.revenue_monthly > 0
-        ? Math.min(100, Math.round((Number(topValue) / stateSnapshot.revenue_monthly) * 100))
-        : null;
-    return { id: topId, name, share };
-  }, [catalogueData, financialsData, stateSnapshot]);
+  const largestClient = financialInsights.largestClient;
 
   const [tab, setTab] = useState("adaptive"); // dashboard | manual
   const [templates, setTemplates] = useState([]);
@@ -198,6 +107,7 @@ export default function SimulationPage() {
   const [autoProjectionDone, setAutoProjectionDone] = useState(false);
   const [autoSignalsDone, setAutoSignalsDone] = useState(false);
   const lastSnapshotHashRef = useRef("");
+  const lastSignalsSnapshotHashRef = useRef("");
 
   const canRun = Boolean(workspaceId);
 
@@ -248,6 +158,8 @@ export default function SimulationPage() {
   useEffect(() => {
     setAutoProjectionDone(false);
     setAutoSignalsDone(false);
+    lastSnapshotHashRef.current = "";
+    lastSignalsSnapshotHashRef.current = "";
   }, [workspaceId]);
 
   useEffect(() => {
@@ -271,17 +183,21 @@ export default function SimulationPage() {
         state_version: stateVersion,
         state: stateSnapshot
       });
-      const risks = riskRes?.risk_signals || [];
+      const risks = riskRes?.risk_signals?.length ? riskRes.risk_signals : financialInsights.riskItems;
       setRiskSignals(risks);
       const recRes = await apiRequest("/v1/scenario-intelligence/recommendations/generate", "POST", {
         tenant_id: tenantId,
         business_id: businessId,
         state_version: stateVersion,
-        risk_signal_ids: risks.map((r) => r.risk_signal_id),
+        risk_signal_ids: risks
+          .map((r) => (typeof r?.risk_signal_id === "string" ? r.risk_signal_id.trim() : ""))
+          .filter(Boolean),
         state: stateSnapshot
       });
-      setRecommendations(recRes?.recommended_scenarios || []);
+      setRecommendations(recRes?.recommended_scenarios?.length ? recRes.recommended_scenarios : financialInsights.recommendations);
     } catch (e) {
+      setRiskSignals(financialInsights.riskItems);
+      setRecommendations(financialInsights.recommendations);
       setError(e instanceof Error ? e.message : "Failed to load recommendations.");
     } finally {
       setLoading(false);
@@ -300,9 +216,9 @@ export default function SimulationPage() {
         tenant_id: tenantId,
         business_id: businessId,
         state_version: stateVersion,
-        scenario_template_id: templateId,
-        scenario_mode: mode,
-        scenario_name: nameOverride || template?.title || "Scenario run",
+        scenario_template_id: asNonEmptyString(templateId, "tmpl_revenue_drop"),
+        scenario_mode: mode === "adaptive" ? "adaptive" : "manual",
+        scenario_name: asNonEmptyString(nameOverride || template?.title, "Scenario run"),
         parameters: {
           timeline_months: 6,
           ...(params || {})
@@ -384,11 +300,13 @@ export default function SimulationPage() {
   }, [tab, canRun, autoProjectionDone, loading, snapshotHash]);
 
   useEffect(() => {
-    if (!canRun || tab !== "adaptive" || autoSignalsDone) return;
+    if (!canRun || tab !== "adaptive") return;
     if (loading) return;
+    if (snapshotHash === lastSignalsSnapshotHashRef.current && autoSignalsDone) return;
+    lastSignalsSnapshotHashRef.current = snapshotHash;
     loadSignals();
     setAutoSignalsDone(true);
-  }, [tab, canRun, autoSignalsDone, loading]);
+  }, [tab, canRun, autoSignalsDone, loading, snapshotHash]);
 
   async function saveDecision(status, recommendationId) {
     if (!activeRun?.scenario_run_id || !canRun) return;
@@ -488,9 +406,33 @@ export default function SimulationPage() {
         detail: `Cash runway is about ${value ?? "—"} months.`
       };
     }
+    if (code === "OVERDUE_RECEIVABLES") {
+      return {
+        title: "Overdue receivables",
+        detail: risk?.detail || "Some pending invoices are outside payment terms."
+      };
+    }
+    if (code === "RECEIVABLES_APPROACHING_DUE") {
+      return {
+        title: "Receivables approaching due date",
+        detail: risk?.detail || "Some pending invoices are close to payment-term expiry."
+      };
+    }
+    if (code === "PAYABLE_PRESSURE") {
+      return {
+        title: "Payables pressure",
+        detail: risk?.detail || "Some expenses are outside expected payment timing."
+      };
+    }
+    if (code === "PAYABLES_APPROACHING_DUE") {
+      return {
+        title: "Payables approaching due date",
+        detail: risk?.detail || "Some payables are close to term expiry."
+      };
+    }
     return {
-      title: "Risk signal",
-      detail: `${risk?.risk_type || "Risk"} detected.`
+      title: risk?.title || "Risk signal",
+      detail: risk?.detail || `${risk?.risk_type || "Risk"} detected.`
     };
   }
 
@@ -506,6 +448,9 @@ export default function SimulationPage() {
     }
     if (rec?.scenario_template_id === "tmpl_revenue_drop") {
       return "Stress‑test revenue decline impact.";
+    }
+    if (rec?.scenario_template_id === "tmpl_payment_delay") {
+      return "Measure the effect of slower collections on cash.";
     }
     return "Run this scenario to see the impact.";
   }
@@ -939,6 +884,18 @@ function ScenarioOutput({
         detail: value != null ? `Runway is about ${value} months.` : "Runway is low."
       };
     }
+    if (code === "OVERDUE_RECEIVABLES") {
+      return {
+        title: "Overdue receivables",
+        detail: value != null ? `${value} receivable item(s) are outside payment terms.` : "Receivables are overdue."
+      };
+    }
+    if (code === "PAYABLE_PRESSURE") {
+      return {
+        title: "Payables pressure",
+        detail: value != null ? `${value} payable item(s) are overdue.` : "Payables are overdue."
+      };
+    }
     return {
       title: "Risk signal",
       detail: `${risk?.risk_type || "Risk"} detected.`
@@ -952,6 +909,13 @@ function ScenarioOutput({
         <div className="mt-1 text-lg font-semibold text-slate-900">{activeRun.scenario_name}</div>
         {activeRun.state_result ? (
           <div className="mt-1 text-xs text-slate-500">State result: {activeRun.state_result}</div>
+        ) : null}
+        {(activeRun?.baseline_snapshot?.accrued_revenue_total || activeRun?.baseline_snapshot?.accrued_cost_of_sales_total) ? (
+          <div className="mt-2 text-xs text-slate-500">
+            Current accrued revenue: {formatCurrency(activeRun?.baseline_snapshot?.accrued_revenue_total || 0, currency)}
+            {" • "}
+            Current accrued cost of sales: {formatCurrency(activeRun?.baseline_snapshot?.accrued_cost_of_sales_total || 0, currency)}
+          </div>
         ) : null}
       </div>
 
@@ -994,6 +958,20 @@ function ScenarioOutput({
                     <div className="text-sm font-semibold text-slate-900">{rec.title || "Recommendation"}</div>
                     {rec.description ? <div className="mt-1 text-xs text-slate-600">{rec.description}</div> : null}
                     {rec.action_type ? <div className="mt-1 text-[11px] text-slate-500">{rec.action_type}</div> : null}
+                    {rec.scenario_template_id ? (
+                      <div className="mt-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            const url = `/simulation?template=${rec.scenario_template_id}`;
+                            window.location.href = url;
+                          }}
+                        >
+                          Run recommended scenario
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 ))
               ) : (
@@ -1037,8 +1015,10 @@ function ScenarioOutput({
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-2 py-2 text-left">Month</th>
-                  <th className="px-2 py-2 text-left">Revenue</th>
-                  <th className="px-2 py-2 text-left">Costs</th>
+                  <th className="px-2 py-2 text-left">Run-rate revenue</th>
+                  <th className="px-2 py-2 text-left">Expenses</th>
+                  <th className="px-2 py-2 text-left">Cost of sales</th>
+                  <th className="px-2 py-2 text-left">Total costs</th>
                   <th className="px-2 py-2 text-left">Profit</th>
                   <th className="px-2 py-2 text-left">Cash</th>
                   <th className="px-2 py-2 text-left">Stability</th>
@@ -1053,6 +1033,8 @@ function ScenarioOutput({
                       <div className="text-[10px] text-slate-500">{formatMonthDetail(row.month_index)}</div>
                     </td>
                     <td className="px-2 py-2">{formatCurrency(row.revenue, currency)}</td>
+                    <td className="px-2 py-2">{formatCurrency(row.expenses, currency)}</td>
+                    <td className="px-2 py-2">{formatCurrency(row.cost_of_sales, currency)}</td>
                     <td className="px-2 py-2">{formatCurrency(row.costs, currency)}</td>
                     <td className="px-2 py-2">{formatCurrency(row.profit, currency)}</td>
                     <td className="px-2 py-2">{formatCurrency(row.cash_balance, currency)}</td>
@@ -1086,8 +1068,10 @@ function ScenarioOutput({
 
 function MetricCard({ title, metrics, currency, isDelta, info }) {
   const rows = [
-    ["Monthly revenue", metrics.monthly_revenue],
-    ["Monthly costs", metrics.monthly_costs],
+    ["Monthly run-rate revenue", metrics.monthly_revenue],
+    ["Monthly expenses", metrics.monthly_expenses],
+    ["Cost of sales", metrics.monthly_cost_of_sales],
+    ["Total costs", metrics.monthly_costs],
     ["Profit", metrics.net_profit],
     ["Stability score", metrics.stability_score]
   ];
