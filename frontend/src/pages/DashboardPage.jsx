@@ -11,12 +11,12 @@ import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { formatCurrency, formatNumber } from "../lib/format";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
+import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 
 export default function DashboardPage() {
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
-  const validation = useWorkspaceStore((s) => s.validation);
   const currency = useWorkspaceStore((s) => s.currency);
 
   const [loading, setLoading] = useState(true);
@@ -28,6 +28,7 @@ export default function DashboardPage() {
     quotations: [],
     catalogue: { products: [], customers: [], vendors: [] }
   });
+  const [acceptedValidation, setAcceptedValidation] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -49,6 +50,7 @@ export default function DashboardPage() {
           quotations: data?.financials?.quotes || data?.financials?.quotations || [],
           catalogue: data?.catalogue || { products: [], customers: [], vendors: [] }
         });
+        setAcceptedValidation(getAcceptedWorkspaceValidation(data));
       } catch (e) {
         if (!alive) return;
         setError(e instanceof Error ? e.message : "Failed to load dashboard data.");
@@ -72,9 +74,9 @@ export default function DashboardPage() {
           expenses: snapshot.expenses,
           contracts: snapshot.contracts,
         },
-        validation,
+        validation: acceptedValidation,
       }),
-    [snapshot, validation]
+    [acceptedValidation, snapshot]
   );
   const primaryRecommendation = metrics.recommendations[0] || null;
 

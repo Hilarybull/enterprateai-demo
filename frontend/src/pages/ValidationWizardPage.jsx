@@ -63,6 +63,7 @@ export default function ValidationWizardPage() {
   const setWorkspaceNameStore = useWorkspaceStore((s) => s.setWorkspaceName);
   const setWorkspaceLogoStore = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
+  const setServiceDecisionStatus = useWorkspaceStore((s) => s.setServiceDecisionStatus);
   const setInputs = useWorkspaceStore((s) => s.setInputs);
   const setIdeaValidation = useWorkspaceStore((s) => s.setIdeaValidation);
   const draftIdeaValidation = useWorkspaceStore((s) => s.draftIdeaValidation);
@@ -1294,6 +1295,7 @@ export default function ValidationWizardPage() {
               { timeoutMs: 120000 }
             );
             setValidation(result);
+            setServiceDecisionStatus(null);
 
           if (wsId) {
               const isEditingServiceHistory = editingHistoryEntry?.type === "service_validation";

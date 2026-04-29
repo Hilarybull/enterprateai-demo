@@ -204,9 +204,14 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   const accruedCostOfSales = invoiceCostOfSales + contractCostOfSales;
   const accruedExpenses = operationalExpenses + contractPurchases;
   const totalCosts = accruedExpenses + accruedCostOfSales;
-  const fallbackRevenue = toNumber(validation?.metrics?.revenue_monthly);
-  const fallbackCosts = toNumber(validation?.metrics?.costs_monthly);
-  const fallbackCostOfSales = toNumber(validation?.metrics?.cost_of_sales_monthly);
+  const fallbackRevenue = toNumber(validation?.metrics?.revenue_monthly ?? validation?.metrics?.monthly_revenue);
+  const fallbackCostOfSales = toNumber(
+    validation?.metrics?.cost_of_sales_monthly ?? validation?.metrics?.monthly_variable_cost
+  );
+  const fallbackFixedExpenses = toNumber(validation?.metrics?.monthly_fixed_cost);
+  const fallbackCosts = toNumber(
+    validation?.metrics?.costs_monthly ?? (fallbackFixedExpenses + fallbackCostOfSales)
+  );
   const effectiveRevenue = accruedRevenue > 0 ? accruedRevenue : fallbackRevenue;
   const effectiveCostOfSales = accruedCostOfSales > 0 ? accruedCostOfSales : fallbackCostOfSales;
   const effectiveExpenses = accruedExpenses > 0 ? accruedExpenses : Math.max(0, fallbackCosts - effectiveCostOfSales);

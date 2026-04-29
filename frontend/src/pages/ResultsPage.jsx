@@ -50,6 +50,7 @@ export default function ResultsPage() {
   const [mfError, setMfError] = useState(null);
   const [serviceDraft, setServiceDraft] = useState(null);
   const isServiceIdeaView = Boolean(validation?.scores && validation?.metrics && validation?.outcome);
+  const decisionMeta = decisionBadge(decision);
 
   useEffect(() => {
     async function loadDecision() {
@@ -68,18 +69,22 @@ export default function ResultsPage() {
           if (status === "accepted" || status === "rejected") {
             setDecision(status);
             setServiceDecisionStatusStore(status);
+            setDecisionStatusStore(null);
           } else {
             setDecision(null);
             setServiceDecisionStatusStore(null);
+            setDecisionStatusStore(null);
           }
         } else {
           const status = ws?.data?.decision?.status;
           if (status === "accepted" || status === "rejected") {
             setDecision(status);
             setDecisionStatusStore(status);
+            setServiceDecisionStatusStore(null);
           } else {
             setDecision(null);
             setDecisionStatusStore(null);
+            setServiceDecisionStatusStore(null);
           }
         }
       } catch {
@@ -217,6 +222,7 @@ export default function ResultsPage() {
   const serviceRiskFlags = Array.isArray(validation?.risk_flags) ? validation.risk_flags : [];
 
   if (isServiceIdea) {
+    const serviceDecisionLocked = decision === "accepted" || decision === "rejected";
     const viabilityScore = typeof serviceScores?.viability_score === "number" ? serviceScores.viability_score : 0;
     const serviceCategory = serviceDraft?.service_category ? String(serviceDraft.service_category).replaceAll("_", " ") : "";
     const targetCustomer = serviceDraft?.target_customer_type || "";
@@ -255,6 +261,7 @@ export default function ResultsPage() {
                 {validation?.service_name || "Service idea"}
               </div>
               {serviceOutcome ? <Badge>{serviceOutcome}</Badge> : null}
+              <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
             </div>
             <div className="mt-1 text-sm text-slate-600">Service idea viability results.</div>
           </div>
@@ -262,14 +269,26 @@ export default function ResultsPage() {
             <Button variant="secondary" disabled={!workspaceId} onClick={() => navigate(`/validation?workspace_id=${workspaceId}`)}>
               Modify
             </Button>
-            <Button variant="danger" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("rejected")}>
+            <Button
+              variant="danger"
+              className={serviceDecisionLocked ? "opacity-50" : ""}
+              disabled={decisionSaving || !workspaceId || serviceDecisionLocked}
+              onClick={() => setDecisionStatus("rejected")}
+            >
               Reject
             </Button>
-            <Button disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("accepted")}>
+            <Button
+              className={serviceDecisionLocked ? "opacity-50" : ""}
+              disabled={decisionSaving || !workspaceId || serviceDecisionLocked}
+              onClick={() => setDecisionStatus("accepted")}
+            >
               Accept
             </Button>
           </div>
         </div>
+
+        {error ? <InlineAlert kind="error" message={error} /> : null}
+        {decisionNotice ? <InlineAlert message={decisionNotice} /> : null}
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
           <div className="space-y-4 lg:col-span-8">
@@ -501,8 +520,6 @@ export default function ResultsPage() {
     const fromBackend = validation?.dimension_explanations && typeof validation.dimension_explanations === "object" ? validation.dimension_explanations[k] : null;
     return fromBackend || DIMENSION_META[k]?.help || "Dimension score (0-100).";
   }
-
-  const decisionMeta = decisionBadge(decision);
 
   return (
     <div className="space-y-4">

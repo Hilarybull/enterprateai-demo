@@ -532,6 +532,28 @@ export default function FinancialsPage() {
 </html>`;
   }
 
+  function buildFinancialShareText(kind, record, customer, product) {
+    const isInvoice = kind === "invoice";
+    const reference = isInvoice
+      ? record?.invoice_id || record?.id || "Draft invoice"
+      : record?.quotation_id || record?.id || "Draft quotation";
+    const subtotal = Number(record?.subtotal_amount || 0);
+    const costOfSales = Number(record?.cost_of_sales || 0);
+    const grandTotal = Number(record?.total_amount || subtotal + costOfSales);
+    const itemName = product?.name || record?.product_name || "Product / Service";
+    return [
+      `${isInvoice ? "Invoice" : "Quotation"} ${reference}`,
+      `Customer: ${customer?.name || "Customer"}`,
+      `Item: ${itemName}`,
+      `Quantity: ${record?.quantity || 0}`,
+      `Unit price: ${formatMoney(record?.unit_price || 0)}`,
+      `Subtotal: ${formatMoney(subtotal)}`,
+      `Cost of sales: ${formatMoney(costOfSales)}`,
+      `Grand total: ${formatMoney(grandTotal)}`,
+      `Status: ${record?.status || (isInvoice ? "pending" : "draft")}`,
+    ].join("\n");
+  }
+
   async function downloadPdfFile(html, filename) {
     try {
       const container = document.createElement("div");
@@ -586,20 +608,36 @@ export default function FinancialsPage() {
     setShareNotice("Creating link...");
     try {
       const isInvoice = kind === "invoice";
-      const html = isInvoice ? buildInvoiceHtml(record, customer, product) : buildQuoteHtml(record, customer, product);
       const titlePrefix = isInvoice ? "Invoice" : "Sales Quotation";
       const shareIdField = "share_document_id";
-      const res = await apiRequest("/blueprint/financial-documents/share", "POST", {
-        document_id: record?.[shareIdField] || null,
-        type: isInvoice ? "invoice_template" : "sales_quotation",
-        title: `${titlePrefix} — ${record?.invoice_id || record?.quotation_id || record?.id || workspaceName || "Document"}`,
-        company_name: workspaceName || "EnterprateAI",
-        workspace_id: workspaceId || null,
-        document_markdown: html,
-        document_html: html,
-      });
-      const token = res?.token;
-      const documentId = res?.document_id;
+      const existingDocumentId = record?.[shareIdField] || null;
+      let token = null;
+      let documentId = existingDocumentId;
+
+      if (existingDocumentId) {
+        const shareRes = await apiRequest(
+          `/blueprint/documents/${existingDocumentId}/share`,
+          "POST",
+          null,
+          { timeoutMs: 120000 }
+        );
+        token = shareRes?.token;
+      } else {
+        const html = isInvoice ? buildInvoiceHtml(record, customer, product) : buildQuoteHtml(record, customer, product);
+        const markdown = buildFinancialShareText(kind, record, customer, product);
+        const res = await apiRequest("/blueprint/financial-documents/share", "POST", {
+          document_id: null,
+          type: isInvoice ? "invoice_template" : "sales_quotation",
+          title: `${titlePrefix} — ${record?.invoice_id || record?.quotation_id || record?.id || workspaceName || "Document"}`,
+          company_name: workspaceName || "EnterprateAI",
+          workspace_id: workspaceId || null,
+          document_markdown: markdown,
+          document_html: html,
+        }, { timeoutMs: 120000 });
+        token = res?.token;
+        documentId = res?.document_id;
+      }
+
       if (!token || !documentId) throw new Error("Share link could not be created.");
 
       if (documentId !== record?.[shareIdField]) {

@@ -13,6 +13,7 @@ import { useAuthStore } from "../store/auth";
 import { formatCurrency, formatNumber } from "../lib/format";
 import InfoTip from "../components/InfoTip";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
+import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 
 const FieldLabel = ({ children, info }) => (
   <div className="ea-label flex items-center gap-2">
@@ -33,6 +34,7 @@ export default function SimulationPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
+  const serviceDecisionStatus = useWorkspaceStore((s) => s.serviceDecisionStatus);
   const validation = useWorkspaceStore((s) => s.validation);
   const inputs = useWorkspaceStore((s) => s.inputs);
   const currency = useWorkspaceStore((s) => s.currency);
@@ -46,10 +48,15 @@ export default function SimulationPage() {
 
   const [catalogueData, setCatalogueData] = useState({ products: [], customers: [], vendors: [] });
   const [financialsData, setFinancialsData] = useState({ invoices: [], expenses: [], contracts: [] });
+  const [acceptedValidation, setAcceptedValidation] = useState(null);
   const [upgradeNotice, setUpgradeNotice] = useState(null);
   const [upgradeLoading, setUpgradeLoading] = useState(false);
 
   const acceptedIdeaValidation = decisionStatus === "accepted" ? ideaValidation : null;
+  const acceptedModuleValidation =
+    acceptedValidation ||
+    acceptedIdeaValidation ||
+    (serviceDecisionStatus === "accepted" ? validation : null);
 
   async function handleUpgradeClick() {
     setUpgradeLoading(true);
@@ -69,10 +76,10 @@ export default function SimulationPage() {
       buildFinancialIntelligence({
         catalogue: catalogueData,
         financials: financialsData,
-        validation: isRegistered ? validation : acceptedIdeaValidation,
+        validation: acceptedModuleValidation,
         inputs,
       }),
-    [acceptedIdeaValidation, catalogueData, financialsData, inputs, isRegistered, validation]
+    [acceptedModuleValidation, catalogueData, financialsData, inputs]
   );
 
   const stateSnapshot = financialInsights.stateSnapshot;
@@ -143,6 +150,7 @@ export default function SimulationPage() {
         setCatalogueData(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
         setFinancialsData(ws?.data?.financials || { invoices: [], expenses: [], contracts: [] });
         setRegistrationStatus(ws?.data?.registration_status || { status: "not_started" });
+        setAcceptedValidation(getAcceptedWorkspaceValidation(ws?.data));
       } catch {
         // ignore
       }
@@ -774,6 +782,7 @@ export default function SimulationPage() {
                     timeline,
                     currency || "GBP",
                     manualTemplateId,
+                    templates,
                     largestClient,
                     manualParams,
                     parseNumber(manualTimelineMonths, 6)
@@ -924,16 +933,29 @@ function buildScenarioExecutionBreakdown(
   timeline,
   currency,
   manualTemplateId,
+  templates,
   largestClient,
   manualParams,
   months
 ) {
-  if (!activeRun || isProjection(activeRun)) {
+  const selectedTemplate = Array.isArray(templates)
+    ? templates.find((item) => item?.scenario_template_id === manualTemplateId)
+    : null;
+  const activeTemplateId = String(activeRun?.scenario_template_id || "");
+  const activeScenarioType = String(activeRun?.scenario_type || "").toLowerCase();
+  const selectedScenarioType = String(selectedTemplate?.scenario_type || "").toLowerCase();
+
+  if (
+    !activeRun ||
+    isProjection(activeRun) ||
+    (manualTemplateId && activeTemplateId && activeTemplateId !== manualTemplateId) ||
+    (selectedScenarioType && activeScenarioType && selectedScenarioType !== activeScenarioType)
+  ) {
     return scenarioAssumptions(manualTemplateId, largestClient, manualParams, months);
   }
 
   const scenarioType = String(activeRun?.scenario_type || "").toLowerCase();
-  const params = activeRun?.parameters || {};
+  const params = { ...(activeRun?.parameters || {}), ...(manualParams || {}) };
   const baseline = activeRun?.baseline_snapshot || {};
   const baselineRevenue = Number(
     activeRun?.baseline_metrics?.monthly_revenue ?? baseline?.revenue_monthly ?? 0

@@ -5,6 +5,7 @@ import { apiRequest, getApiBaseUrl } from "../api/client";
 import logoUrl from "../enterprate-logo.png";
 import { useWorkspaceStore } from "../store/workspace";
 import BusinessAssistant from "./BusinessAssistant";
+import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid" },
@@ -169,12 +170,14 @@ export default function Layout() {
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
   const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
+  const setServiceDecisionStatus = useWorkspaceStore((s) => s.setServiceDecisionStatus);
   const setWorkspaceLoadedAt = useWorkspaceStore((s) => s.setWorkspaceLoadedAt);
   const setIdeaValidation = useWorkspaceStore((s) => s.setIdeaValidation);
   const setDraftIdeaValidation = useWorkspaceStore((s) => s.setDraftIdeaValidation);
   const setDraftServiceIdea = useWorkspaceStore((s) => s.setDraftServiceIdea);
   const setInputs = useWorkspaceStore((s) => s.setInputs);
   const setCurrency = useWorkspaceStore((s) => s.setCurrency);
+  const setValidation = useWorkspaceStore((s) => s.setValidation);
 
   const enableHealthCheck = String(import.meta.env.ENABLE_HEALTH_CHECK ?? "false").toLowerCase() === "true";
   const acceptedAny = decisionStatus === "accepted" || serviceDecisionStatus === "accepted";
@@ -263,9 +266,17 @@ export default function Layout() {
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
         else setDecisionStatus(null);
+        const acceptedServiceEntry = getAcceptedServiceValidationEntry(ws?.data);
+        if (acceptedServiceEntry?.decision_status === "accepted") {
+          setServiceDecisionStatus("accepted");
+          if (acceptedServiceEntry?.result) setValidation(acceptedServiceEntry.result);
+          if (acceptedServiceEntry?.payload) setDraftServiceIdea(acceptedServiceEntry.payload);
+        } else {
+          setServiceDecisionStatus(null);
+        }
           if (ws?.data?.idea_validation) setIdeaValidation(ws.data.idea_validation);
           if (ws?.data?.draft_idea_validation) setDraftIdeaValidation(ws.data.draft_idea_validation);
-          if (ws?.data?.draft_service_idea) setDraftServiceIdea(ws.data.draft_service_idea);
+          if (ws?.data?.draft_service_idea && !acceptedServiceEntry?.payload) setDraftServiceIdea(ws.data.draft_service_idea);
           if (ws?.data?.inputs || ws?.data?.assumptions) setInputs(ws.data.inputs || ws.data.assumptions);
         const currency =
           ws?.data?.idea_validation?.context?.currency ||
@@ -279,6 +290,7 @@ export default function Layout() {
           setWorkspaceName(null);
           setWorkspaceLogo(null);
           setDecisionStatus(null);
+          setServiceDecisionStatus(null);
         }
       }
     }
@@ -287,7 +299,7 @@ export default function Layout() {
     return () => {
       cancelled = true;
     };
-    }, [token, setCurrency, setDecisionStatus, setDraftIdeaValidation, setDraftServiceIdea, setIdeaValidation, setInputs, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, setWorkspaceLoadedAt]);
+    }, [token, setCurrency, setDecisionStatus, setDraftIdeaValidation, setDraftServiceIdea, setIdeaValidation, setInputs, setServiceDecisionStatus, setValidation, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, setWorkspaceLoadedAt]);
 
   const filteredNav = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
