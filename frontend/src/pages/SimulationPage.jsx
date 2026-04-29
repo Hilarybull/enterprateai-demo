@@ -769,7 +769,10 @@ export default function SimulationPage() {
               <div className="rounded-xl border border-slate-200 bg-white p-3">
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">How this run works</div>
                 <div className="mt-2 space-y-2 text-xs leading-5 text-slate-600">
-                  {scenarioAssumptions(
+                  {buildScenarioExecutionBreakdown(
+                    activeRun,
+                    timeline,
+                    currency || "GBP",
                     manualTemplateId,
                     largestClient,
                     manualParams,
@@ -839,7 +842,7 @@ function scenarioOutputNote(templateId, largestClient) {
     case "do_nothing_projection":
       return "This shows what your business may look like over time if you keep going without making any major change.";
     case "tmpl_client_loss":
-      return `This shows what may happen if your biggest client${largestClient?.name ? ` (${largestClient.name})` : ""} stops buying from you, including the effect on revenue, cost of sales, profit, and projected cash balance.`;
+      return `This shows what may happen if your biggest client${largestClient?.name ? ` (${largestClient.name})` : ""} stops buying from you, with revenue and cost of sales stepping down over the first months of the run.`;
     case "tmpl_price_increase":
       return "This shows whether a price increase improves revenue and profit without changing your current cost base straight away.";
     case "tmpl_hire_staff":
@@ -867,7 +870,7 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
     case "tmpl_client_loss":
       return [
         `Client loss applied: ${Number(manualParams?.client_loss_pct ?? largestClient?.share ?? 0).toFixed(2)}%.`,
-        "Revenue drops from the lost client, while cost of sales reduces more gradually over the timeline.",
+        "Revenue ramps down over the first months, and cost of sales falls in the same proportion as revenue during that ramp.",
       ];
     case "tmpl_price_increase":
       return [
@@ -902,6 +905,144 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
     default:
       return [`Timeline: ${months} month${Number(months) === 1 ? "" : "s"}.`];
   }
+}
+
+function monthSpanFromDays(days, fallback = 1, cap = 3) {
+  const numeric = Number(days || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  const span = Math.ceil(numeric / 30);
+  return Math.max(1, Math.min(cap, span));
+}
+
+function formatPercentValue(value, digits = 2) {
+  const numeric = Number(value || 0);
+  return `${numeric.toFixed(digits)}%`;
+}
+
+function buildScenarioExecutionBreakdown(
+  activeRun,
+  timeline,
+  currency,
+  manualTemplateId,
+  largestClient,
+  manualParams,
+  months
+) {
+  if (!activeRun || isProjection(activeRun)) {
+    return scenarioAssumptions(manualTemplateId, largestClient, manualParams, months);
+  }
+
+  const scenarioType = String(activeRun?.scenario_type || "").toLowerCase();
+  const params = activeRun?.parameters || {};
+  const baseline = activeRun?.baseline_snapshot || {};
+  const baselineRevenue = Number(
+    activeRun?.baseline_metrics?.monthly_revenue ?? baseline?.revenue_monthly ?? 0
+  );
+  const baselineExpenses = Number(
+    activeRun?.baseline_metrics?.monthly_expenses ?? baseline?.expenses_monthly ?? 0
+  );
+  const baselineCostOfSales = Number(
+    activeRun?.baseline_metrics?.monthly_cost_of_sales ?? baseline?.cost_of_sales_monthly ?? 0
+  );
+  const firstRow = Array.isArray(timeline) && timeline.length ? timeline[0] : null;
+  const secondRow = Array.isArray(timeline) && timeline.length > 1 ? timeline[1] : null;
+
+  if (scenarioType === "client_loss") {
+    const lossPct = Number(params?.client_loss_pct ?? baseline?.top_client_share_pct ?? largestClient?.share ?? 0);
+    const salesRampMonths = Math.max(
+      2,
+      monthSpanFromDays(baseline?.sales_cycle_days, 1, 3)
+    );
+    const monthOneProgress = Math.min(1, 1 / salesRampMonths);
+    const monthOneLossShare = lossPct * monthOneProgress;
+    const monthOneMultiplier = Math.max(0, 1 - monthOneLossShare / 100);
+    const fullMultiplier = Math.max(0, 1 - lossPct / 100);
+    const effectiveLargestClient = largestClient?.name || "largest client";
+
+    return [
+      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}.`,
+      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}. Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
+      `Largest client used in this run: ${effectiveLargestClient}. Client loss applied: ${formatPercentValue(lossPct)}.`,
+      `Ramp length: ${salesRampMonths} month${salesRampMonths === 1 ? "" : "s"}, based on your sales cycle.`,
+      `Month 1 applies ${formatPercentValue(monthOneLossShare, 3)} of loss, so the multiplier is ${monthOneMultiplier.toFixed(5)}.`,
+      `Month 1 revenue: ${formatCurrency(firstRow?.revenue ?? baselineRevenue * monthOneMultiplier, currency)} = ${formatCurrency(baselineRevenue, currency)} x ${monthOneMultiplier.toFixed(5)}.`,
+      `Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales * monthOneMultiplier, currency)} = ${formatCurrency(baselineCostOfSales, currency)} x ${monthOneMultiplier.toFixed(5)}.`,
+      `Month 2 onward applies the full ${formatPercentValue(lossPct)}, so the multiplier becomes ${fullMultiplier.toFixed(5)}.`,
+      `Month 2+ revenue: ${formatCurrency(secondRow?.revenue ?? baselineRevenue * fullMultiplier, currency)} = ${formatCurrency(baselineRevenue, currency)} x ${fullMultiplier.toFixed(5)}.`,
+      `Month 2+ cost of sales: ${formatCurrency(secondRow?.cost_of_sales ?? baselineCostOfSales * fullMultiplier, currency)} = ${formatCurrency(baselineCostOfSales, currency)} x ${fullMultiplier.toFixed(5)}.`,
+      "Projected cash balance increases only when revenue is collected and decreases only when costs are actually paid."
+    ];
+  }
+
+  if (scenarioType === "revenue_drop") {
+    const dropPct = Number(params?.revenue_drop_pct ?? 0);
+    const salesRampMonths = monthSpanFromDays(baseline?.sales_cycle_days, 1, 3);
+    const monthOneProgress = Math.min(1, 1 / salesRampMonths);
+    const monthOneMultiplier = Math.max(0, 1 - ((dropPct / 100) * monthOneProgress));
+    return [
+      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
+      `Revenue drop applied: ${formatPercentValue(dropPct)} over ${salesRampMonths} month${salesRampMonths === 1 ? "" : "s"}.`,
+      `Month 1 multiplier: ${monthOneMultiplier.toFixed(5)}.`,
+      `Month 1 revenue: ${formatCurrency(firstRow?.revenue ?? baselineRevenue * monthOneMultiplier, currency)}.`,
+      `Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales * monthOneMultiplier, currency)}.`,
+      "Cost of sales falls in the same proportion as revenue in this scenario."
+    ];
+  }
+
+  if (scenarioType === "price_change") {
+    const changePct = Number(params?.price_change_pct ?? 0);
+    const effectiveMonth = Math.max(1, Number(params?.effective_month ?? 1));
+    return [
+      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline cost base stays unchanged unless shown otherwise.`,
+      `Price increase applied: ${formatPercentValue(changePct)} from month ${effectiveMonth}.`,
+      `Month 1 revenue in the table is ${formatCurrency(firstRow?.revenue ?? baselineRevenue, currency)} based on when the increase begins.`,
+      "Profit changes because revenue moves while costs stay on the current baseline unless the scenario changes them."
+    ];
+  }
+
+  if (scenarioType === "cost_increase") {
+    const increasePct = Number(params?.cost_increase_pct ?? 0);
+    return [
+      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}. Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
+      `Cost increase applied: ${formatPercentValue(increasePct)} over the 2-month cost ramp.`,
+      `Month 1 expenses: ${formatCurrency(firstRow?.expenses ?? baselineExpenses, currency)}. Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales, currency)}.`,
+      "Both expenses and cost of sales move upward in this scenario, which is why profit and projected cash balance tighten."
+    ];
+  }
+
+  if (scenarioType === "hire_staff") {
+    const employeeCount = Math.max(1, Number(params?.employee_count ?? 1));
+    const employeeCost = Number(params?.employee_monthly_cost ?? 0);
+    return [
+      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
+      `New staff added: ${employeeCount} x ${formatCurrency(employeeCost, currency)} = ${formatCurrency(employeeCount * employeeCost, currency)} per month.`,
+      `Month 1 expenses in the table are ${formatCurrency(firstRow?.expenses ?? baselineExpenses + (employeeCount * employeeCost), currency)}.`,
+      "Revenue is left on the current baseline, so the output shows whether today’s sales can absorb the extra payroll."
+    ];
+  }
+
+  if (scenarioType === "payment_delay") {
+    const delayMonths = Math.max(0, Number(params?.delay_months ?? 0));
+    return [
+      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline costs: ${formatCurrency(Number(activeRun?.baseline_metrics?.monthly_costs ?? baseline?.costs_monthly ?? 0), currency)}.`,
+      `Payment delay applied: ${delayMonths} month${delayMonths === 1 ? "" : "s"}.`,
+      `Month 1 projected cash balance is ${formatCurrency(firstRow?.cash_balance ?? 0, currency)} because collections are pushed back.`,
+      "Profit can stay unchanged while projected cash balance moves later in the timeline."
+    ];
+  }
+
+  if (scenarioType === "service_launch") {
+    const revenueUplift = Number(params?.revenue_uplift_pct ?? 0);
+    const costUplift = Number(params?.cost_uplift_pct ?? 0);
+    return [
+      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
+      `Revenue uplift applied: ${formatPercentValue(revenueUplift)}. Cost uplift applied: ${formatPercentValue(costUplift)}.`,
+      `Month 1 revenue: ${formatCurrency(firstRow?.revenue ?? baselineRevenue, currency)}. Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales, currency)}.`,
+      "This scenario ramps both the upside and the added delivery cost over the first months of the run."
+    ];
+  }
+
+  return scenarioAssumptions(manualTemplateId, largestClient, manualParams, months);
 }
 
 function fieldHelp(key) {
@@ -954,7 +1095,7 @@ function buildScenarioMeaning(activeRun, timeline) {
 
   let scenarioRule = "The scenario changes your baseline monthly figures and then projects them across the timeline.";
   if (scenarioType === "client_loss") {
-    scenarioRule = "This run reduces revenue based on the client-loss percentage. Cost of sales also reduces, but more gradually, because some delivery costs do not disappear immediately.";
+    scenarioRule = "This run reduces revenue based on the client-loss percentage over the first months of the timeline. Cost of sales falls in the same proportion as revenue during that ramp.";
   } else if (scenarioType === "price_change") {
     scenarioRule = "This run increases revenue from the selected effective month onward. Costs stay on the current baseline unless the scenario says otherwise.";
   } else if (scenarioType === "cost_increase") {

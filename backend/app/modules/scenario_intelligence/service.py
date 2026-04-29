@@ -437,6 +437,7 @@ def _monthly_projection_values(
     cost_ramp_months = 2
 
     if scenario_type == "client_loss":
+        sales_ramp_months = max(2, sales_ramp_months)
         loss_pct = float(params.get("client_loss_pct") or state.top_client_share_pct or 0.0)
         progress = min(1.0, month_index / float(sales_ramp_months))
         multiplier = max(0.0, 1.0 - ((loss_pct / 100.0) * progress))
