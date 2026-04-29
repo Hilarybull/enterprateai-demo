@@ -663,8 +663,9 @@ export default function SimulationPage() {
 
       {workspaceId && tab === "manual" ? (
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <SectionCard title="Manual scenario" subtitle="Build a custom simulation.">
-            <div className="space-y-3">
+          <SectionCard title="Manual scenario" subtitle="Build a custom simulation." className="self-start lg:sticky lg:top-4">
+            <div className="space-y-4">
+              <div className="space-y-3">
               <div>
                 <FieldLabel info="Choose a scenario template to simulate.">Scenario template</FieldLabel>
                 <select className="ea-input" value={manualTemplateId} onChange={(e) => setManualTemplateId(e.target.value)}>
@@ -714,9 +715,9 @@ export default function SimulationPage() {
               ) : (
                 <div className="text-sm text-slate-600">No additional inputs required.</div>
               )}
-            </div>
+              </div>
 
-            <div className="mt-4">
+            <div>
               <div className="flex justify-end">
                 <Button
                   disabled={actionLoading || !canRun}
@@ -740,6 +741,47 @@ export default function SimulationPage() {
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
                 {scenarioOutputNote(manualTemplateId, largestClient)}
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Current baseline</div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-lg bg-slate-50 px-2 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Revenue</div>
+                    <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.revenue_monthly || 0, currency || "GBP")}</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 px-2 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Costs</div>
+                    <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.costs_monthly || 0, currency || "GBP")}</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 px-2 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Cash start</div>
+                    <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.starting_cash || 0, currency || "GBP")}</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 px-2 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Largest client</div>
+                    <div className="mt-1 font-semibold text-slate-900 break-words">{largestClient?.name || "Not identified"}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">How this run works</div>
+                <div className="mt-2 space-y-2 text-xs leading-5 text-slate-600">
+                  {scenarioAssumptions(
+                    manualTemplateId,
+                    largestClient,
+                    manualParams,
+                    parseNumber(manualTimelineMonths, 6)
+                  ).map((line) => (
+                    <div key={line} className="rounded-lg bg-slate-50 px-2 py-2">
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
             </div>
           </SectionCard>
 
@@ -812,6 +854,53 @@ function scenarioOutputNote(templateId, largestClient) {
       return "This shows whether a new service could lift revenue enough to justify the extra delivery and operating costs.";
     default:
       return "This output compares your current baseline with the scenario you selected, so you can see the effect on revenue, costs, profit, and projected cash balance.";
+  }
+}
+
+function scenarioAssumptions(templateId, largestClient, manualParams, months) {
+  switch (templateId) {
+    case "do_nothing_projection":
+      return [
+        `Timeline: ${months} month${Number(months) === 1 ? "" : "s"}.`,
+        "Uses your current run-rate revenue, current costs, and current payment timing without introducing a new change.",
+      ];
+    case "tmpl_client_loss":
+      return [
+        `Client loss applied: ${Number(manualParams?.client_loss_pct ?? largestClient?.share ?? 0).toFixed(2)}%.`,
+        "Revenue drops from the lost client, while cost of sales reduces more gradually over the timeline.",
+      ];
+    case "tmpl_price_increase":
+      return [
+        `Price change: ${Number(manualParams?.price_change_pct ?? 0).toFixed(2)}%.`,
+        `Effective month: ${Math.max(1, Number(manualParams?.effective_month ?? 1))}.`,
+      ];
+    case "tmpl_hire_staff":
+      return [
+        `New employees: ${Math.max(1, Number(manualParams?.employee_count ?? 1))}.`,
+        `Monthly payroll added: ${Number(manualParams?.employee_monthly_cost ?? 0).toFixed(2)} per employee.`,
+      ];
+    case "tmpl_cost_increase":
+      return [
+        `Cost increase: ${Number(manualParams?.cost_increase_pct ?? 0).toFixed(2)}%.`,
+        "Expenses and cost of sales are both increased by this scenario.",
+      ];
+    case "tmpl_revenue_drop":
+      return [
+        `Revenue drop: ${Number(manualParams?.revenue_drop_pct ?? 0).toFixed(2)}%.`,
+        "Cost of sales falls with revenue in this scenario.",
+      ];
+    case "tmpl_payment_delay":
+      return [
+        `Payment delay: ${Math.max(0, Number(manualParams?.delay_months ?? 0))} month${Number(manualParams?.delay_months ?? 0) === 1 ? "" : "s"}.`,
+        "Profit can stay unchanged while projected cash balance moves more slowly.",
+      ];
+    case "tmpl_service_launch":
+      return [
+        `Revenue uplift: ${Number(manualParams?.revenue_uplift_pct ?? 0).toFixed(2)}%.`,
+        `Cost uplift: ${Number(manualParams?.cost_uplift_pct ?? 0).toFixed(2)}%.`,
+      ];
+    default:
+      return [`Timeline: ${months} month${Number(months) === 1 ? "" : "s"}.`];
   }
 }
 

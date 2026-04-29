@@ -440,9 +440,8 @@ def _monthly_projection_values(
         loss_pct = float(params.get("client_loss_pct") or state.top_client_share_pct or 0.0)
         progress = min(1.0, month_index / float(sales_ramp_months))
         multiplier = max(0.0, 1.0 - ((loss_pct / 100.0) * progress))
-        sticky_factor = max(0.35, 1.0 - ((loss_pct / 100.0) * min(1.0, max(0, month_index - 1) / 2.0)))
         revenue *= multiplier
-        cost_of_sales *= sticky_factor
+        cost_of_sales *= multiplier
     elif scenario_type == "revenue_drop":
         drop_pct = float(params.get("revenue_drop_pct") or 0.0)
         progress = min(1.0, month_index / float(sales_ramp_months))
