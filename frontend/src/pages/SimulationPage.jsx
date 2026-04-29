@@ -834,12 +834,13 @@ function fieldHelp(key) {
 function buildScenarioMeaning(activeRun, timeline) {
   const scenario = activeRun?.scenario_metrics || {};
   const delta = activeRun?.deltas || {};
-  const stateResult = String(activeRun?.state_result || "neutral").toLowerCase();
+  const scenarioType = String(activeRun?.scenario_type || "").toLowerCase();
   const lastRow = Array.isArray(timeline) && timeline.length ? timeline[timeline.length - 1] : null;
   const revenueDelta = Number(delta?.monthly_revenue || 0);
   const profitDelta = Number(delta?.net_profit || 0);
   const costsDelta = Number(delta?.monthly_costs || 0);
   const scenarioCash = Number(lastRow?.cash_balance || 0);
+  const firstRow = Array.isArray(timeline) && timeline.length ? timeline[0] : null;
 
   const revenueText =
     revenueDelta > 0
@@ -862,30 +863,33 @@ function buildScenarioMeaning(activeRun, timeline) {
         ? `total costs fall by ${Math.abs(costsDelta).toFixed(2)}`
         : "total costs stay broadly flat";
 
-  let opening = "This scenario is largely neutral overall.";
-  if (stateResult === "improved") {
-    opening = "This scenario looks better than your current baseline overall.";
-  } else if (stateResult === "worse") {
-    opening = "This scenario looks weaker than your current baseline overall.";
+  let scenarioRule = "The scenario changes your baseline monthly figures and then projects them across the timeline.";
+  if (scenarioType === "client_loss") {
+    scenarioRule = "This run reduces revenue based on the client-loss percentage. Cost of sales also reduces, but more gradually, because some delivery costs do not disappear immediately.";
+  } else if (scenarioType === "price_change") {
+    scenarioRule = "This run increases revenue from the selected effective month onward. Costs stay on the current baseline unless the scenario says otherwise.";
+  } else if (scenarioType === "cost_increase") {
+    scenarioRule = "This run pushes expenses and cost of sales upward, so the table shows how higher costs affect profit and cash over time.";
+  } else if (scenarioType === "revenue_drop") {
+    scenarioRule = "This run reduces revenue and lets cost of sales fall with it, so you can see how a slower sales pace affects the business month by month.";
+  } else if (scenarioType === "payment_delay") {
+    scenarioRule = "This run keeps the revenue assumption but delays when the cash is collected, so profit and projected cash balance can move differently.";
+  } else if (scenarioType === "hire_staff") {
+    scenarioRule = "This run adds staff cost into monthly expenses, so the output shows whether the current revenue base can absorb the extra payroll.";
+  } else if (scenarioType === "service_launch") {
+    scenarioRule = "This run lifts revenue and costs together over a short ramp, so you can compare whether the added income outweighs the added delivery cost.";
   }
 
   const cashLine = lastRow
     ? scenarioCash > 0
-      ? `By the end of the projection, projected cash balance is ${scenarioCash.toFixed(2)}.`
+      ? `Projected cash balance ends at ${scenarioCash.toFixed(2)} because the model adds cash only when revenue is collected and subtracts cash when costs are actually paid.`
       : "Projected cash balance stays tight through the projection."
     : "Projected cash balance is based on when revenue is collected and costs are paid, not just on profit.";
+  const firstMonthLine = firstRow
+    ? `In the first projected month, revenue is ${Number(firstRow.revenue || 0).toFixed(2)}, total costs are ${Number(firstRow.costs || 0).toFixed(2)}, and profit is ${Number(firstRow.profit || 0).toFixed(2)}.`
+    : "";
 
-  const scenarioProfit = Number(scenario?.net_profit || 0);
-  const caution =
-    scenarioProfit < 0
-      ? "In simple terms: this scenario would leave the business losing money each month unless something else changes."
-      : revenueDelta < 0 && scenarioProfit > 0
-        ? "In simple terms: the business still makes money here, but it makes less than your current baseline."
-        : revenueDelta > 0 && scenarioProfit > 0
-          ? "In simple terms: this scenario improves earnings without pushing the business into a loss."
-          : "In simple terms: use the timeline to see whether the month-by-month cash movement still feels comfortable.";
-
-  return `${opening} Compared with your baseline, ${revenueText}, ${costsText}, and ${profitText}. ${cashLine} ${caution}`;
+  return `${scenarioRule} Compared with your baseline, ${revenueText}, ${costsText}, and ${profitText}. ${firstMonthLine} ${cashLine}`;
 }
 
 function ScenarioOutput({
@@ -1003,13 +1007,6 @@ function ScenarioOutput({
             Current accrued cost of sales: {formatCurrency(activeRun?.baseline_snapshot?.accrued_cost_of_sales_total || 0, currency)}
           </div>
         ) : null}
-      </div>
-
-      <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-brand-700">What This Means</div>
-        <div className="mt-2 text-sm leading-6 text-slate-700 break-words">
-          {scenarioMeaning}
-        </div>
       </div>
 
       {runRisks.length || runRecs.length ? (
@@ -1140,6 +1137,13 @@ function ScenarioOutput({
           </div>
         </div>
       ) : null}
+
+      <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-brand-700">What This Means</div>
+        <div className="mt-2 text-sm leading-6 text-slate-700 break-words">
+          {scenarioMeaning}
+        </div>
+      </div>
 
       {!hideDecision ? (
         <div className="flex flex-wrap items-center gap-2">
