@@ -716,25 +716,30 @@ export default function SimulationPage() {
               )}
             </div>
 
-            <div className="mt-4 flex justify-end">
-              <Button
-                disabled={actionLoading || !canRun}
-                onClick={() => {
-                  if (manualTemplateId === "do_nothing_projection") {
-                    runDoNothing(parseNumber(manualTimelineMonths, 6), true);
-                    return;
-                  }
-                  runScenario(
-                    manualTemplateId,
-                    "manual",
-                    { ...manualParams, timeline_months: parseNumber(manualTimelineMonths, 6) },
-                    manualName
-                  );
-                }}
-              >
-                {actionLoading ? <Spinner size={16} /> : null}
-                {manualTemplateId === "do_nothing_projection" ? "Run projection" : "Run manual scenario"}
-              </Button>
+            <div className="mt-4">
+              <div className="flex justify-end">
+                <Button
+                  disabled={actionLoading || !canRun}
+                  onClick={() => {
+                    if (manualTemplateId === "do_nothing_projection") {
+                      runDoNothing(parseNumber(manualTimelineMonths, 6), true);
+                      return;
+                    }
+                    runScenario(
+                      manualTemplateId,
+                      "manual",
+                      { ...manualParams, timeline_months: parseNumber(manualTimelineMonths, 6) },
+                      manualName
+                    );
+                  }}
+                >
+                  {actionLoading ? <Spinner size={16} /> : null}
+                  {manualTemplateId === "do_nothing_projection" ? "Run projection" : "Run manual scenario"}
+                </Button>
+              </div>
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                {scenarioOutputNote(manualTemplateId, largestClient)}
+              </div>
             </div>
           </SectionCard>
 
@@ -787,6 +792,29 @@ function prettyLabel(key) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function scenarioOutputNote(templateId, largestClient) {
+  switch (templateId) {
+    case "do_nothing_projection":
+      return "This shows what your business may look like over time if you keep going without making any major change.";
+    case "tmpl_client_loss":
+      return `This shows what may happen if your biggest client${largestClient?.name ? ` (${largestClient.name})` : ""} stops buying from you, including the effect on revenue, cost of sales, profit, and projected cash balance.`;
+    case "tmpl_price_increase":
+      return "This shows whether a price increase improves revenue and profit without changing your current cost base straight away.";
+    case "tmpl_hire_staff":
+      return "This shows how adding staff increases monthly costs first, so you can see whether your current revenue can absorb the extra payroll.";
+    case "tmpl_cost_increase":
+      return "This shows what happens if delivery or operating costs rise, and whether your margin and projected cash balance can still hold up.";
+    case "tmpl_revenue_drop":
+      return "This shows what happens if sales slow down across the business, including the knock-on effect on profit and projected cash balance.";
+    case "tmpl_payment_delay":
+      return "This shows what happens when customers pay later than expected, so profit may still look fine while cash comes in more slowly.";
+    case "tmpl_service_launch":
+      return "This shows whether a new service could lift revenue enough to justify the extra delivery and operating costs.";
+    default:
+      return "This output compares your current baseline with the scenario you selected, so you can see the effect on revenue, costs, profit, and projected cash balance.";
+  }
+}
+
 function fieldHelp(key) {
   const help = {
     price_change_pct: "Percent change in price.",
@@ -801,6 +829,63 @@ function fieldHelp(key) {
     client_loss_pct: "Percent of monthly revenue lost if the largest client leaves."
   };
   return help[key] || "";
+}
+
+function buildScenarioMeaning(activeRun, timeline) {
+  const scenario = activeRun?.scenario_metrics || {};
+  const delta = activeRun?.deltas || {};
+  const stateResult = String(activeRun?.state_result || "neutral").toLowerCase();
+  const lastRow = Array.isArray(timeline) && timeline.length ? timeline[timeline.length - 1] : null;
+  const revenueDelta = Number(delta?.monthly_revenue || 0);
+  const profitDelta = Number(delta?.net_profit || 0);
+  const costsDelta = Number(delta?.monthly_costs || 0);
+  const scenarioCash = Number(lastRow?.cash_balance || 0);
+
+  const revenueText =
+    revenueDelta > 0
+      ? `monthly run-rate revenue is up by ${Math.abs(revenueDelta).toFixed(2)}`
+      : revenueDelta < 0
+        ? `monthly run-rate revenue is down by ${Math.abs(revenueDelta).toFixed(2)}`
+        : "monthly run-rate revenue is broadly unchanged";
+
+  const profitText =
+    profitDelta > 0
+      ? `profit improves by ${Math.abs(profitDelta).toFixed(2)}`
+      : profitDelta < 0
+        ? `profit falls by ${Math.abs(profitDelta).toFixed(2)}`
+        : "profit is broadly unchanged";
+
+  const costsText =
+    costsDelta > 0
+      ? `total costs rise by ${Math.abs(costsDelta).toFixed(2)}`
+      : costsDelta < 0
+        ? `total costs fall by ${Math.abs(costsDelta).toFixed(2)}`
+        : "total costs stay broadly flat";
+
+  let opening = "This scenario is largely neutral overall.";
+  if (stateResult === "improved") {
+    opening = "This scenario looks better than your current baseline overall.";
+  } else if (stateResult === "worse") {
+    opening = "This scenario looks weaker than your current baseline overall.";
+  }
+
+  const cashLine = lastRow
+    ? scenarioCash > 0
+      ? `By the end of the projection, projected cash balance is ${scenarioCash.toFixed(2)}.`
+      : "Projected cash balance stays tight through the projection."
+    : "Projected cash balance is based on when revenue is collected and costs are paid, not just on profit.";
+
+  const scenarioProfit = Number(scenario?.net_profit || 0);
+  const caution =
+    scenarioProfit < 0
+      ? "In simple terms: this scenario would leave the business losing money each month unless something else changes."
+      : revenueDelta < 0 && scenarioProfit > 0
+        ? "In simple terms: the business still makes money here, but it makes less than your current baseline."
+        : revenueDelta > 0 && scenarioProfit > 0
+          ? "In simple terms: this scenario improves earnings without pushing the business into a loss."
+          : "In simple terms: use the timeline to see whether the month-by-month cash movement still feels comfortable.";
+
+  return `${opening} Compared with your baseline, ${revenueText}, ${costsText}, and ${profitText}. ${cashLine} ${caution}`;
 }
 
 function ScenarioOutput({
@@ -822,6 +907,7 @@ function ScenarioOutput({
   const deltas = activeRun.deltas || {};
   const runRisks = Array.isArray(activeRun.risk_signals) ? activeRun.risk_signals : [];
   const runRecs = Array.isArray(activeRun.recommendations) ? activeRun.recommendations : [];
+  const scenarioMeaning = buildScenarioMeaning(activeRun, timeline);
 
   const timelineRows = maxTimelineRows ? timeline.slice(0, maxTimelineRows) : timeline;
   const isTrimmed = maxTimelineRows && timeline.length > maxTimelineRows;
@@ -917,6 +1003,13 @@ function ScenarioOutput({
             Current accrued cost of sales: {formatCurrency(activeRun?.baseline_snapshot?.accrued_cost_of_sales_total || 0, currency)}
           </div>
         ) : null}
+      </div>
+
+      <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-brand-700">What This Means</div>
+        <div className="mt-2 text-sm leading-6 text-slate-700 break-words">
+          {scenarioMeaning}
+        </div>
       </div>
 
       {runRisks.length || runRecs.length ? (
