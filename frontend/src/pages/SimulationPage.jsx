@@ -1020,7 +1020,7 @@ function ScenarioOutput({
                   <th className="px-2 py-2 text-left">Cost of sales</th>
                   <th className="px-2 py-2 text-left">Total costs</th>
                   <th className="px-2 py-2 text-left">Profit</th>
-                  <th className="px-2 py-2 text-left">Cash</th>
+                  <th className="px-2 py-2 text-left">Projected cash balance</th>
                   <th className="px-2 py-2 text-left">Stability</th>
                   <th className="px-2 py-2 text-left">State</th>
                 </tr>

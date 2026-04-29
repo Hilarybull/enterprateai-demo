@@ -81,6 +81,7 @@ export default function ValidationWizardPage() {
   const [existingCatalogue, setExistingCatalogue] = useState({ products: [], customers: [], vendors: [] });
   const [savedServiceIdeas, setSavedServiceIdeas] = useState([]);
   const [validationHistory, setValidationHistory] = useState([]);
+  const [editingHistoryEntry, setEditingHistoryEntry] = useState(null);
   const [serviceSelection, setServiceSelection] = useState("");
   const [hasAppliedDrafts, setHasAppliedDrafts] = useState(false);
   const [contentTab, setContentTab] = useState("builder");
@@ -866,6 +867,11 @@ export default function ValidationWizardPage() {
         setServiceCurrency(serviceEntry?.currency || data.currency || serviceCurrency || "GBP");
         setDraftServiceIdea(payload);
         setValidation(serviceEntry?.result || entry.result || null);
+        setEditingHistoryEntry({
+          id: entry.id,
+          type: "service_validation",
+          created_at: serviceEntry?.created_at || entry.created_at || new Date().toISOString(),
+        });
         await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
           data: {
             active_service_validation_id: entry.id,
@@ -882,6 +888,11 @@ export default function ValidationWizardPage() {
         setForm(hydrated);
         setDraftIdeaValidation(payload);
         setValidation(entry.result || null);
+        setEditingHistoryEntry({
+          id: entry.id,
+          type: "business_validation",
+          created_at: entry.created_at || new Date().toISOString(),
+        });
         await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
           data: {
             active_validation_id: entry.id,
@@ -1284,15 +1295,21 @@ export default function ValidationWizardPage() {
             );
             setValidation(result);
 
-            if (wsId) {
-              const validationId = crypto.randomUUID();
+          if (wsId) {
+              const isEditingServiceHistory = editingHistoryEntry?.type === "service_validation";
+              const validationId = isEditingServiceHistory ? editingHistoryEntry.id : crypto.randomUUID();
+              const createdAt = isEditingServiceHistory
+                ? editingHistoryEntry.created_at || new Date().toISOString()
+                : new Date().toISOString();
               try {
                 const ws = await apiRequest(`/validation/${wsId}`, "GET");
                 const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
                 const validationHistoryExisting = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
+                const nextServiceHistoryBase = history.filter((item) => item?.id !== validationId);
+                const nextValidationHistoryBase = validationHistoryExisting.filter((item) => item?.id !== validationId);
                 const entry = {
                   id: validationId,
-                  created_at: new Date().toISOString(),
+                  created_at: createdAt,
                   service_name: payloadService.service_name,
                   payload: payloadService,
                   result,
@@ -1306,26 +1323,26 @@ export default function ValidationWizardPage() {
                     data: {
                       validation_history: [
                         {
-                          id: validationId,
-                          type: "service_validation",
-                          title: payloadService.service_name,
-                          created_at: entry.created_at,
-                          status: "pending",
-                          score: typeof result?.scores?.viability_score === "number" ? result.scores.viability_score : null,
-                          summary: String(result?.outcome || "").trim() || "Service validation completed",
-                          payload: payloadService,
-                          result,
-                        },
-                        ...validationHistoryExisting
-                      ],
-                      service_validation_history: [entry, ...history],
+                        id: validationId,
+                        type: "service_validation",
+                        title: payloadService.service_name,
+                        created_at: createdAt,
+                        status: "pending",
+                        score: typeof result?.scores?.viability_score === "number" ? result.scores.viability_score : null,
+                        summary: String(result?.outcome || "").trim() || "Service validation completed",
+                        payload: payloadService,
+                        result,
+                      },
+                      ...nextValidationHistoryBase
+                    ],
+                      service_validation_history: [entry, ...nextServiceHistoryBase],
                       active_service_validation_id: validationId,
                       draft_service_idea: { ...serviceForm, ...payloadService }
                     }
                   },
                   { timeoutMs: 120000 }
                 );
-                setSavedServiceIdeas([entry, ...history]);
+                setSavedServiceIdeas([entry, ...nextServiceHistoryBase]);
                 setValidationHistory(
                   buildUnifiedValidationHistory({
                     validation_history: [
@@ -1333,18 +1350,19 @@ export default function ValidationWizardPage() {
                         id: validationId,
                         type: "service_validation",
                         title: payloadService.service_name,
-                        created_at: entry.created_at,
+                        created_at: createdAt,
                         status: "pending",
                         score: typeof result?.scores?.viability_score === "number" ? result.scores.viability_score : null,
                         summary: String(result?.outcome || "").trim() || "Service validation completed",
                         payload: payloadService,
                         result,
                       },
-                      ...validationHistoryExisting
+                      ...nextValidationHistoryBase
                     ],
-                    service_validation_history: [entry, ...history],
+                    service_validation_history: [entry, ...nextServiceHistoryBase],
                   })
                 );
+                setEditingHistoryEntry(null);
               } catch (e) {
                 console.warn("Failed to persist service validation history:", e);
               }
@@ -1366,15 +1384,20 @@ export default function ValidationWizardPage() {
           );
           setValidation(result);
           if (wsId) {
-            const validationId = crypto.randomUUID();
+            const isEditingBusinessHistory = editingHistoryEntry?.type === "business_validation";
+            const validationId = isEditingBusinessHistory ? editingHistoryEntry.id : crypto.randomUUID();
+            const createdAt = isEditingBusinessHistory
+              ? editingHistoryEntry.created_at || new Date().toISOString()
+              : new Date().toISOString();
             try {
               const ws = await apiRequest(`/validation/${wsId}`, "GET");
               const existing = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
+              const nextHistoryBase = existing.filter((item) => item?.id !== validationId);
               const nextEntry = {
                 id: validationId,
                 type: "business_validation",
                 title: String(payload?.context?.business_name || wsName || "Business validation"),
-                created_at: new Date().toISOString(),
+                created_at: createdAt,
                 status: "pending",
                 score: typeof result?.score === "number" ? result.score : null,
                 summary: String(result?.classification || result?.outcome || "Business validation completed"),
@@ -1383,11 +1406,12 @@ export default function ValidationWizardPage() {
               };
               await apiRequest(`/validation/${wsId}`, "PATCH", {
                 data: {
-                  validation_history: [nextEntry, ...existing],
+                  validation_history: [nextEntry, ...nextHistoryBase],
                   active_validation_id: validationId,
                 }
               }, { timeoutMs: 120000 });
-              setValidationHistory([normaliseValidationHistoryEntry(nextEntry), ...existing.map(normaliseValidationHistoryEntry).filter(Boolean)].filter(Boolean));
+              setValidationHistory([normaliseValidationHistoryEntry(nextEntry), ...nextHistoryBase.map(normaliseValidationHistoryEntry).filter(Boolean)].filter(Boolean));
+              setEditingHistoryEntry(null);
             } catch (historyErr) {
               console.warn("Failed to persist validation history:", historyErr);
             }
