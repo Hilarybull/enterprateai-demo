@@ -1,5 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
-import { useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import html2pdf from "html2pdf.js";
 import Button from "../components/Button";
@@ -13,7 +12,73 @@ import { FinancialIllustration, IllustrationCard } from "../components/Illustrat
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { formatCurrency } from "../lib/format";
-import { getProductCostOfSales } from "../lib/financialIntelligence";
+import { getProductCostOfSales, getProductSalesPrice } from "../lib/financialIntelligence";
+
+function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "Select products / services" }) {
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedProducts = products.filter((product) => selectedIds.includes(product.id));
+  const summary = selectedProducts.length ? selectedProducts.map((product) => product.name).join(", ") : placeholder;
+
+  return (
+    <div ref={dropdownRef} className="relative">
+      <button type="button" onClick={() => setOpen((value) => !value)} className="ea-input flex w-full items-center justify-between text-left">
+        <span className="truncate text-sm text-slate-700">{summary}</span>
+        <svg
+          className={`ml-2 h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 20 20"
+          fill="currentColor"
+        >
+          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+        </svg>
+      </button>
+      {open ? (
+        <div className="absolute z-30 mt-1 w-full rounded-xl border border-slate-200 bg-white shadow-lg">
+          <div className="max-h-56 space-y-1 overflow-y-auto p-2">
+            {products.length ? products.map((product) => (
+              <label key={product.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(product.id)}
+                  onChange={() => {
+                    const next = selectedIds.includes(product.id)
+                      ? selectedIds.filter((id) => id !== product.id)
+                      : [...selectedIds, product.id];
+                    onChange(next);
+                  }}
+                  className="accent-brand-600"
+                />
+                <span>{product.name}</span>
+              </label>
+            )) : (
+              <div className="px-3 py-2 text-xs text-slate-400">No products or services found.</div>
+            )}
+          </div>
+          <div className="border-t border-slate-100 px-3 py-2 text-right">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded-lg bg-slate-900 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-700"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export default function FinancialsPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -55,39 +120,46 @@ export default function FinancialsPage() {
   const [invoiceForm, setInvoiceForm] = useState({
     invoice_id: "",
     customer_id: "",
-    product_id: "",
-    quantity: "1",
-    unit_price: "",
-    unit_cost_of_sales: ""
+    product_ids: [],
+    items: [],
+    issued_at: new Date().toISOString().slice(0, 10),
+    due_date: ""
   });
   const [quoteForm, setQuoteForm] = useState({
     quotation_id: "",
     customer_id: "",
-    product_id: "",
-    quantity: "1",
-    unit_price: "",
-    unit_cost_of_sales: "",
-    validity_days: "30"
+    product_ids: [],
+    items: [],
+    validity_days: "30",
+    issued_at: new Date().toISOString().slice(0, 10),
+    due_date: ""
   });
   const [expenseForm, setExpenseForm] = useState({
     vendor_id: "",
     item: "",
     price: "",
-    cost_type: "variable"
+    cost_type: "variable",
+    incurred_at: new Date().toISOString().slice(0, 10),
+    due_date: ""
   });
   const [contractForm, setContractForm] = useState({
     contract_type: "sales",
     counterparty_id: "",
-    product_id: "",
+    product_ids: [],
     price: "",
     payment_terms: "",
     discount: "",
     freight: "",
     cost_of_sales: "",
-    start_date: "",
+    start_date: new Date().toISOString().slice(0, 10),
     end_date: "",
+    due_date: "",
     status: "pending"
   });
+
+  function todayInputValue() {
+    return new Date().toISOString().slice(0, 10);
+  }
 
   function CardIcon({ tone = "bg-brand-50 text-brand-600", children }) {
     return (
@@ -406,10 +478,90 @@ export default function FinancialsPage() {
     return activeProducts.find((p) => p.id === ref) || matchByName(activeProducts, ref) || (fallbackName ? { name: fallbackName } : null);
   }
 
+  function resolveProducts(refs, fallbackNames = []) {
+    const ids = Array.isArray(refs) ? refs : refs ? [refs] : [];
+    const resolved = ids.map((ref) => resolveProduct(ref)).filter(Boolean);
+    if (resolved.length) return resolved;
+    return (Array.isArray(fallbackNames) ? fallbackNames : [])
+      .map((name) => resolveProduct(name, name))
+      .filter(Boolean);
+  }
+
+  function buildSelectedProductItems(productIds, quantity, unitPriceOverride, unitCostOverride) {
+    const selectedProducts = resolveProducts(productIds);
+    return selectedProducts.map((product) => ({
+      product_id: product.id,
+      product_name: product.name,
+      quantity,
+      unit_price: unitPriceOverride !== "" ? Number(unitPriceOverride || 0) : Number(getProductPrice(product)),
+      unit_cost_of_sales: unitCostOverride !== "" ? Number(unitCostOverride || 0) : Number(getProductDefaultCost(product)),
+    }));
+  }
+
+  function syncProductLineItems(selectedIds, existingItems = []) {
+    const selectedProducts = resolveProducts(selectedIds);
+    return selectedProducts.map((product) => {
+      const existing = existingItems.find((item) => item?.product_id === product.id);
+      return {
+        product_id: product.id,
+        product_name: product.name,
+        quantity: Number(existing?.quantity || 1),
+        unit_price: existing?.unit_price != null ? Number(existing.unit_price) : Number(getProductPrice(product)),
+        unit_cost_of_sales: existing?.unit_cost_of_sales != null ? Number(existing.unit_cost_of_sales) : Number(getProductDefaultCost(product)),
+      };
+    });
+  }
+
+  function normalizeRecordItems(record) {
+    if (Array.isArray(record?.items) && record.items.length) {
+      return record.items.map((item) => ({
+        product_id: item?.product_id || "",
+        product_name: item?.product_name || "Product / Service",
+        quantity: Number(item?.quantity || 1),
+        unit_price: Number(item?.unit_price || 0),
+        unit_cost_of_sales: Number(item?.unit_cost_of_sales || 0),
+      }));
+    }
+    const productIds = Array.isArray(record?.product_ids) && record.product_ids.length
+      ? record.product_ids
+      : record?.product_id
+        ? [record.product_id]
+        : [];
+    return buildSelectedProductItems(
+      productIds,
+      Number(record?.quantity || 1) || 1,
+      record?.unit_price ?? "",
+      record?.unit_cost_of_sales ?? ""
+    );
+  }
+
+  function sumLineItemQuantity(items = []) {
+    return items.reduce((sum, item) => sum + Math.max(0, Number(item?.quantity || 0)), 0);
+  }
+
+  function summariseProductNames(record) {
+    if (Array.isArray(record?.product_names) && record.product_names.length) return record.product_names.join(", ");
+    if (record?.product_name) return record.product_name;
+    return "Product / Service";
+  }
+
+  function getDocumentGrandTotal(record) {
+    const subtotal = Number(record?.subtotal_amount || 0);
+    const costOfSales = Number(record?.cost_of_sales || 0);
+    return Number((subtotal + costOfSales).toFixed(2));
+  }
+
   function buildInvoiceHtml(invoice, customer, product) {
     const subtotal = Number(invoice?.subtotal_amount || 0);
-    const costOfSales = Number(invoice?.cost_of_sales || 0);
-    const grandTotal = Number(invoice?.total_amount || subtotal + costOfSales);
+    const grandTotal = getDocumentGrandTotal(invoice);
+    const items = Array.isArray(invoice?.items) && invoice.items.length
+      ? invoice.items
+      : [{
+          product_name: product?.name || invoice?.product_name || "Product / Service",
+          quantity: invoice?.quantity || 0,
+          unit_price: invoice?.unit_price || 0,
+          subtotal_amount: subtotal,
+        }];
     return `<!doctype html>
 <html>
   <head>
@@ -443,26 +595,27 @@ export default function FinancialsPage() {
   <div class="card">
     <div class="muted">Bill to</div>
     <div><strong>${customer?.name || "Customer"}</strong></div>
-    <div class="muted">${customer?.address || "Address on file"}</div>
+    ${customer?.address ? `<div class="muted">${customer.address}</div>` : ""}
     <div class="muted" style="margin-top:6px;">Payment terms: ${formatPaymentTerms(customer?.payment_terms)}</div>
+    ${invoice?.due_date ? `<div class="muted" style="margin-top:6px;">Due date: ${new Date(invoice.due_date).toLocaleDateString()}</div>` : ""}
   </div>
   <table>
     <thead>
       <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Subtotal</th></tr>
     </thead>
     <tbody>
+      ${items.map((item) => `
       <tr>
-        <td>${product?.name || invoice?.product_name || "Product / Service"}</td>
-        <td class="right">${invoice?.quantity || 0}</td>
-        <td class="right">${formatMoney(invoice?.unit_price || 0)}</td>
-        <td class="right"><strong>${formatMoney(subtotal)}</strong></td>
+        <td>${item?.product_name || "Product / Service"}</td>
+        <td class="right">${item?.quantity || 0}</td>
+        <td class="right">${formatMoney(item?.unit_price || 0)}</td>
+        <td class="right"><strong>${formatMoney(item?.subtotal_amount || ((Number(item?.unit_price || 0) * Number(item?.quantity || 0))))}</strong></td>
       </tr>
+      `).join("")}
     </tbody>
   </table>
   <div class="card">
-    <div style="display:flex; justify-content:space-between; gap:12px;"><span>Subtotal</span><strong>${formatMoney(subtotal)}</strong></div>
-    <div style="display:flex; justify-content:space-between; gap:12px; margin-top:8px;"><span>Cost of sales</span><strong>${formatMoney(costOfSales)}</strong></div>
-    <div style="display:flex; justify-content:space-between; gap:12px; margin-top:12px; padding-top:12px; border-top:1px solid #e2e8f0;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
   </div>
   <div class="muted" style="margin-top:16px;">Thank you for your business.</div>
 </body>
@@ -471,8 +624,15 @@ export default function FinancialsPage() {
 
   function buildQuoteHtml(quote, customer, product) {
     const subtotal = Number(quote?.subtotal_amount || 0);
-    const costOfSales = Number(quote?.cost_of_sales || 0);
-    const grandTotal = Number(quote?.total_amount || subtotal + costOfSales);
+    const grandTotal = getDocumentGrandTotal(quote);
+    const items = Array.isArray(quote?.items) && quote.items.length
+      ? quote.items
+      : [{
+          product_name: product?.name || quote?.product_name || "Product / Service",
+          quantity: quote?.quantity || 0,
+          unit_price: quote?.unit_price || 0,
+          subtotal_amount: subtotal,
+        }];
     return `<!doctype html>
 <html>
   <head>
@@ -506,26 +666,27 @@ export default function FinancialsPage() {
   <div class="card">
     <div class="muted">Prepared for</div>
     <div><strong>${customer?.name || "Customer"}</strong></div>
-    <div class="muted">${customer?.address || "Address on file"}</div>
+    ${customer?.address ? `<div class="muted">${customer.address}</div>` : ""}
     <div class="muted" style="margin-top:6px;">Payment terms: ${formatPaymentTerms(customer?.payment_terms)}</div>
+    ${quote?.due_date ? `<div class="muted" style="margin-top:6px;">Due date: ${new Date(quote.due_date).toLocaleDateString()}</div>` : ""}
   </div>
   <table>
     <thead>
       <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Subtotal</th></tr>
     </thead>
     <tbody>
+      ${items.map((item) => `
       <tr>
-        <td>${product?.name || quote?.product_name || "Product / Service"}</td>
-        <td class="right">${quote?.quantity || 0}</td>
-        <td class="right">${formatMoney(quote?.unit_price || 0)}</td>
-        <td class="right"><strong>${formatMoney(subtotal)}</strong></td>
+        <td>${item?.product_name || "Product / Service"}</td>
+        <td class="right">${item?.quantity || 0}</td>
+        <td class="right">${formatMoney(item?.unit_price || 0)}</td>
+        <td class="right"><strong>${formatMoney(item?.subtotal_amount || ((Number(item?.unit_price || 0) * Number(item?.quantity || 0))))}</strong></td>
       </tr>
+      `).join("")}
     </tbody>
   </table>
   <div class="card">
-    <div style="display:flex; justify-content:space-between; gap:12px;"><span>Subtotal</span><strong>${formatMoney(subtotal)}</strong></div>
-    <div style="display:flex; justify-content:space-between; gap:12px; margin-top:8px;"><span>Cost of sales</span><strong>${formatMoney(costOfSales)}</strong></div>
-    <div style="display:flex; justify-content:space-between; gap:12px; margin-top:12px; padding-top:12px; border-top:1px solid #e2e8f0;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
   </div>
   <div class="muted" style="margin-top:16px;">This quotation is valid for ${quote?.validity_days || 30} days unless otherwise stated.</div>
 </body>
@@ -537,20 +698,16 @@ export default function FinancialsPage() {
     const reference = isInvoice
       ? record?.invoice_id || record?.id || "Draft invoice"
       : record?.quotation_id || record?.id || "Draft quotation";
-    const subtotal = Number(record?.subtotal_amount || 0);
-    const costOfSales = Number(record?.cost_of_sales || 0);
-    const grandTotal = Number(record?.total_amount || subtotal + costOfSales);
-    const itemName = product?.name || record?.product_name || "Product / Service";
+    const grandTotal = getDocumentGrandTotal(record);
+    const itemName = summariseProductNames(record) || product?.name || "Product / Service";
     return [
       `${isInvoice ? "Invoice" : "Quotation"} ${reference}`,
       `Customer: ${customer?.name || "Customer"}`,
-      `Item: ${itemName}`,
+      `Items: ${itemName}`,
       `Quantity: ${record?.quantity || 0}`,
-      `Unit price: ${formatMoney(record?.unit_price || 0)}`,
-      `Subtotal: ${formatMoney(subtotal)}`,
-      `Cost of sales: ${formatMoney(costOfSales)}`,
       `Grand total: ${formatMoney(grandTotal)}`,
       `Status: ${record?.status || (isInvoice ? "pending" : "draft")}`,
+      ...(record?.due_date ? [`Due date: ${new Date(record.due_date).toLocaleDateString()}`] : []),
     ].join("\n");
   }
 
@@ -756,17 +913,17 @@ export default function FinancialsPage() {
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", product_id: "", quantity: "1", unit_price: "", unit_cost_of_sales: "" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "" });
     setEditingInvoiceId(null);
   }
 
   function resetQuoteForm() {
-    setQuoteForm({ quotation_id: "", customer_id: "", product_id: "", quantity: "1", unit_price: "", unit_cost_of_sales: "", validity_days: "30" });
+    setQuoteForm({ quotation_id: "", customer_id: "", product_ids: [], items: [], validity_days: "30", issued_at: todayInputValue(), due_date: "" });
     setEditingQuoteId(null);
   }
 
   function resetExpenseForm() {
-    setExpenseForm({ vendor_id: "", item: "", price: "", cost_type: "variable" });
+    setExpenseForm({ vendor_id: "", item: "", price: "", cost_type: "variable", incurred_at: todayInputValue(), due_date: "" });
     setEditingExpenseId(null);
   }
 
@@ -774,56 +931,98 @@ export default function FinancialsPage() {
     setContractForm({
       contract_type: "sales",
       counterparty_id: "",
-      product_id: "",
+      product_ids: [],
       price: "",
       payment_terms: "",
       discount: "",
       freight: "",
       cost_of_sales: "",
-      start_date: "",
+      start_date: todayInputValue(),
       end_date: "",
+      due_date: "",
       status: "pending"
     });
     setEditingContractId(null);
   }
 
+  function updateInvoiceSelectedProducts(nextIds) {
+    setInvoiceForm((prev) => ({
+      ...prev,
+      product_ids: nextIds,
+      items: syncProductLineItems(nextIds, Array.isArray(prev.items) ? prev.items : []),
+    }));
+  }
+
+  function updateQuoteSelectedProducts(nextIds) {
+    setQuoteForm((prev) => ({
+      ...prev,
+      product_ids: nextIds,
+      items: syncProductLineItems(nextIds, Array.isArray(prev.items) ? prev.items : []),
+    }));
+  }
+
+  function updateInvoiceItem(productId, field, value) {
+    setInvoiceForm((prev) => ({
+      ...prev,
+      items: (Array.isArray(prev.items) ? prev.items : []).map((item) =>
+        item.product_id === productId
+          ? { ...item, [field]: field === "quantity" ? Math.max(0, Number(value || 0)) : Number(value || 0) }
+          : item
+      ),
+    }));
+  }
+
+  function updateQuoteItem(productId, field, value) {
+    setQuoteForm((prev) => ({
+      ...prev,
+      items: (Array.isArray(prev.items) ? prev.items : []).map((item) =>
+        item.product_id === productId
+          ? { ...item, [field]: field === "quantity" ? Math.max(0, Number(value || 0)) : Number(value || 0) }
+          : item
+      ),
+    }));
+  }
+
   async function upsertInvoice() {
-    if (!invoiceForm.customer_id || !invoiceForm.product_id) {
-      setError("Invoice must reference a customer and product.");
-      return;
-    }
-    const qty = Number(invoiceForm.quantity || 0);
-    if (!Number.isFinite(qty) || qty <= 0) {
-      setError("Quantity must be a positive number.");
+    if (!invoiceForm.customer_id || !Array.isArray(invoiceForm.product_ids) || !invoiceForm.product_ids.length) {
+      setError("Invoice must reference a customer and at least one product or service.");
       return;
     }
     setError(null);
     const customer = resolveCustomer(invoiceForm.customer_id);
-    const product = resolveProduct(invoiceForm.product_id);
-    const unitPrice = Number(invoiceForm.unit_price || 0);
-    const unitCostOfSales = Number(invoiceForm.unit_cost_of_sales || 0);
-    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
-      setError("Invoice unit price must be a positive number.");
+    const lineItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
+    if (!lineItems.length) {
+      setError("Select at least one product or service for this invoice.");
       return;
     }
-    const subtotal = Number((unitPrice * qty).toFixed(2));
-    const totalCostOfSales = Number((unitCostOfSales * qty).toFixed(2));
+    if (lineItems.some((item) => !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0)) {
+      setError("Each selected product or service must have a quantity greater than zero.");
+      return;
+    }
+    const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
+    const totalQuantity = sumLineItemQuantity(lineItems);
     const next = invoices.map((i) => ({ ...i }));
     const payload = {
       id: editingInvoiceId || crypto.randomUUID(),
       invoice_id: String(invoiceForm.invoice_id || "").trim(),
       customer_id: customer?.id || invoiceForm.customer_id,
       customer_name: customer?.name || String(invoiceForm.customer_id || "").trim(),
-      product_id: product?.id || invoiceForm.product_id,
-      product_name: product?.name || String(invoiceForm.product_id || "").trim(),
-      quantity: qty,
-      unit_price: unitPrice,
-      unit_cost_of_sales: Number(unitCostOfSales.toFixed(2)),
+      product_id: lineItems[0]?.product_id || invoiceForm.product_ids[0],
+      product_ids: lineItems.map((item) => item.product_id),
+      product_name: lineItems[0]?.product_name || "Product / Service",
+      product_names: lineItems.map((item) => item.product_name),
+      items: lineItems,
+      quantity: totalQuantity,
+      unit_price: lineItems.length === 1 ? Number(Number(lineItems[0]?.unit_price || 0).toFixed(2)) : null,
+      unit_cost_of_sales: lineItems.length === 1 ? Number(Number(lineItems[0]?.unit_cost_of_sales || 0).toFixed(2)) : null,
       subtotal_amount: subtotal,
       cost_of_sales: totalCostOfSales,
       total_amount: grandTotal,
       status: editingInvoiceId ? next.find((i) => i.id === editingInvoiceId)?.status || "pending" : "pending",
+      issued_at: invoiceForm.issued_at || null,
+      due_date: invoiceForm.due_date || null,
       updated_at: new Date().toISOString()
     };
     if (editingInvoiceId) {
@@ -838,44 +1037,47 @@ export default function FinancialsPage() {
   }
 
   async function upsertQuote() {
-    if (!quoteForm.customer_id || !quoteForm.product_id) {
-      setError("Quotation must reference a customer and product.");
-      return;
-    }
-    const qty = Number(quoteForm.quantity || 0);
-    if (!Number.isFinite(qty) || qty <= 0) {
-      setError("Quantity must be a positive number.");
+    if (!quoteForm.customer_id || !Array.isArray(quoteForm.product_ids) || !quoteForm.product_ids.length) {
+      setError("Quotation must reference a customer and at least one product or service.");
       return;
     }
     setError(null);
     const customer = resolveCustomer(quoteForm.customer_id);
-    const product = resolveProduct(quoteForm.product_id);
-    const unitPrice = Number(quoteForm.unit_price || 0);
-    const unitCostOfSales = Number(quoteForm.unit_cost_of_sales || 0);
-    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
-      setError("Quotation unit price must be a positive number.");
+    const lineItems = syncProductLineItems(quoteForm.product_ids, Array.isArray(quoteForm.items) ? quoteForm.items : []);
+    if (!lineItems.length) {
+      setError("Select at least one product or service for this quotation.");
       return;
     }
-    const subtotal = Number((unitPrice * qty).toFixed(2));
-    const totalCostOfSales = Number((unitCostOfSales * qty).toFixed(2));
+    if (lineItems.some((item) => !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0)) {
+      setError("Each selected product or service must have a quantity greater than zero.");
+      return;
+    }
+    const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
     const validity = Math.max(1, parseInt(String(quoteForm.validity_days || "30"), 10) || 30);
+    const totalQuantity = sumLineItemQuantity(lineItems);
     const next = quotes.map((q) => ({ ...q }));
     const payload = {
       id: editingQuoteId || crypto.randomUUID(),
       quotation_id: String(quoteForm.quotation_id || "").trim(),
       customer_id: customer?.id || quoteForm.customer_id,
       customer_name: customer?.name || String(quoteForm.customer_id || "").trim(),
-      product_id: product?.id || quoteForm.product_id,
-      product_name: product?.name || String(quoteForm.product_id || "").trim(),
-      quantity: qty,
-      unit_price: unitPrice,
-      unit_cost_of_sales: Number(unitCostOfSales.toFixed(2)),
+      product_id: lineItems[0]?.product_id || quoteForm.product_ids[0],
+      product_ids: lineItems.map((item) => item.product_id),
+      product_name: lineItems[0]?.product_name || "Product / Service",
+      product_names: lineItems.map((item) => item.product_name),
+      items: lineItems,
+      quantity: totalQuantity,
+      unit_price: lineItems.length === 1 ? Number(Number(lineItems[0]?.unit_price || 0).toFixed(2)) : null,
+      unit_cost_of_sales: lineItems.length === 1 ? Number(Number(lineItems[0]?.unit_cost_of_sales || 0).toFixed(2)) : null,
       subtotal_amount: subtotal,
       cost_of_sales: totalCostOfSales,
       total_amount: grandTotal,
       validity_days: validity,
       status: editingQuoteId ? next.find((q) => q.id === editingQuoteId)?.status || "draft" : "draft",
+      issued_at: quoteForm.issued_at || null,
+      due_date: quoteForm.due_date || null,
       updated_at: new Date().toISOString()
     };
     if (editingQuoteId) {
@@ -910,6 +1112,8 @@ export default function FinancialsPage() {
       price: Number(price.toFixed(2)),
       cost_type: expenseForm.cost_type,
       status: editingExpenseId ? next.find((e) => e.id === editingExpenseId)?.status || "pending" : "pending",
+      incurred_at: expenseForm.incurred_at || null,
+      due_date: expenseForm.due_date || null,
       updated_at: new Date().toISOString()
     };
     if (editingExpenseId) {
@@ -924,17 +1128,17 @@ export default function FinancialsPage() {
   }
 
   async function upsertContract() {
-    if (!contractForm.counterparty_id || !contractForm.product_id) {
-      setError("Contract must reference a customer/vendor and product.");
+    if (!contractForm.counterparty_id || !Array.isArray(contractForm.product_ids) || !contractForm.product_ids.length) {
+      setError("Contract must reference a customer/vendor and at least one product or service.");
       return;
     }
     const party =
       contractForm.contract_type === "sales"
         ? resolveCustomer(contractForm.counterparty_id)
         : resolveVendor(contractForm.counterparty_id);
-    const product = resolveProduct(contractForm.product_id);
-    const defaultPrice = getProductPrice(product);
-    const defaultCostOfSales = getProductDefaultCost(product);
+    const selectedProducts = resolveProducts(contractForm.product_ids);
+    const defaultPrice = selectedProducts.reduce((sum, product) => sum + getProductPrice(product), 0);
+    const defaultCostOfSales = selectedProducts.reduce((sum, product) => sum + getProductDefaultCost(product), 0);
     const rawPrice = contractForm.price !== "" ? Number(contractForm.price) : defaultPrice;
     const rawCostOfSales = contractForm.cost_of_sales !== "" ? Number(contractForm.cost_of_sales) : defaultCostOfSales;
     if (!Number.isFinite(rawPrice) || rawPrice <= 0) {
@@ -948,8 +1152,10 @@ export default function FinancialsPage() {
       contract_type: contractForm.contract_type,
       counterparty_id: party?.id || contractForm.counterparty_id,
       counterparty_name: party?.name || String(contractForm.counterparty_id || "").trim(),
-      product_id: product?.id || contractForm.product_id,
-      product_name: product?.name || String(contractForm.product_id || "").trim(),
+      product_id: selectedProducts[0]?.id || contractForm.product_ids[0],
+      product_ids: selectedProducts.map((product) => product.id),
+      product_name: selectedProducts[0]?.name || "Product / Service",
+      product_names: selectedProducts.map((product) => product.name),
       price: Number(rawPrice.toFixed(2)),
       cost_of_sales: Number((Number.isFinite(rawCostOfSales) ? rawCostOfSales : 0).toFixed(2)),
       payment_terms: contractForm.payment_terms || "",
@@ -957,6 +1163,7 @@ export default function FinancialsPage() {
       freight: Number(contractForm.freight || 0),
       start_date: contractForm.start_date || null,
       end_date: contractForm.end_date || null,
+      due_date: contractForm.due_date || null,
       status: editingContractId ? next.find((c) => c.id === editingContractId)?.status || "pending" : "pending",
       updated_at: new Date().toISOString()
     };
@@ -1086,17 +1293,13 @@ export default function FinancialsPage() {
   }
 
   const requiresCatalogue = !activeProducts.length || !activeCustomers.length || !activeVendors.length;
-  const selectedProduct = resolveProduct(invoiceForm.product_id);
-  const invoiceUnitPrice = Number(invoiceForm.unit_price || 0);
-  const invoiceUnitCostOfSales = Number(invoiceForm.unit_cost_of_sales || 0);
-  const invoiceSubtotal = Number(((Number(invoiceForm.quantity || 0) || 0) * invoiceUnitPrice).toFixed(2));
-  const invoiceCostOfSalesTotal = Number(((Number(invoiceForm.quantity || 0) || 0) * invoiceUnitCostOfSales).toFixed(2));
+  const invoicePreviewItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
+  const invoiceSubtotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+  const invoiceCostOfSalesTotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceGrandTotal = Number((invoiceSubtotal + invoiceCostOfSalesTotal).toFixed(2));
-  const selectedQuoteProduct = resolveProduct(quoteForm.product_id);
-  const quoteUnitPrice = Number(quoteForm.unit_price || 0);
-  const quoteUnitCostOfSales = Number(quoteForm.unit_cost_of_sales || 0);
-  const quoteSubtotal = Number(((Number(quoteForm.quantity || 0) || 0) * quoteUnitPrice).toFixed(2));
-  const quoteCostOfSalesTotal = Number(((Number(quoteForm.quantity || 0) || 0) * quoteUnitCostOfSales).toFixed(2));
+  const quotePreviewItems = syncProductLineItems(quoteForm.product_ids, Array.isArray(quoteForm.items) ? quoteForm.items : []);
+  const quoteSubtotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+  const quoteCostOfSalesTotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const quoteGrandTotal = Number((quoteSubtotal + quoteCostOfSalesTotal).toFixed(2));
   const previewInvoice = activeInvoices.find((inv) => inv.id === previewInvoiceId) || null;
   const previewCustomer = previewInvoice ? resolveCustomer(previewInvoice.customer_id, previewInvoice.customer_name) : null;
@@ -1359,51 +1562,60 @@ export default function FinancialsPage() {
                 />
               </div>
               <div>
-                <div className="ea-label">Product / Service *</div>
-              <Input
-                list="financial-products"
-                placeholder={activeProducts.length ? "Select or type product" : "Type product"}
-                value={invoiceForm.product_id}
-                onChange={(e) => {
-                  const product = resolveProduct(e.target.value);
-                  setInvoiceForm((f) => ({
-                    ...f,
-                    product_id: product?.name || e.target.value,
-                    unit_price: product ? String(getProductPrice(product)) : f.unit_price,
-                    unit_cost_of_sales: product ? String(getProductDefaultCost(product)) : f.unit_cost_of_sales
-                  }));
-                }}
-              />
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div>
-                <div className="ea-label">Quantity *</div>
-                <Input
-                  type="number"
-                  min="1"
-                  value={invoiceForm.quantity}
-                  onChange={(e) => setInvoiceForm((f) => ({ ...f, quantity: e.target.value }))}
+                <div className="ea-label">Products / Services *</div>
+                <MultiProductDropdown
+                  products={activeProducts}
+                  selectedIds={Array.isArray(invoiceForm.product_ids) ? invoiceForm.product_ids : []}
+                  onChange={updateInvoiceSelectedProducts}
                 />
               </div>
+              {invoicePreviewItems.length ? (
+                <div className="space-y-3">
+                  <div className="ea-label">Selected item details</div>
+                  {invoicePreviewItems.map((item) => (
+                    <div key={item.product_id} className="rounded-xl border border-slate-200 p-3">
+                      <div className="mb-3 text-sm font-semibold text-slate-900">{item.product_name}</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div>
+                          <div className="ea-label">Quantity *</div>
+                          <Input
+                            type="number"
+                            min="1"
+                            value={String(item.quantity ?? 1)}
+                            onChange={(e) => updateInvoiceItem(item.product_id, "quantity", e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <div className="ea-label">Unit price</div>
+                          <Input
+                            type="number"
+                            min="0"
+                            value={String(item.unit_price ?? 0)}
+                            onChange={(e) => updateInvoiceItem(item.product_id, "unit_price", e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <div className="ea-label">Unit cost of sales</div>
+                          <Input
+                            type="number"
+                            min="0"
+                            value={String(item.unit_cost_of_sales ?? 0)}
+                            onChange={(e) => updateInvoiceItem(item.product_id, "unit_cost_of_sales", e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <div className="ea-label">Unit price</div>
-                <Input
-                  type="number"
-                  min="0"
-                  value={invoiceForm.unit_price}
-                  placeholder={String(invoiceUnitPrice || 0)}
-                  onChange={(e) => setInvoiceForm((f) => ({ ...f, unit_price: e.target.value }))}
-                />
+                <div className="ea-label">Issued date</div>
+                <Input type="date" value={invoiceForm.issued_at} onChange={(e) => setInvoiceForm((f) => ({ ...f, issued_at: e.target.value }))} />
               </div>
               <div>
-                <div className="ea-label">Unit cost of sales</div>
-                <Input
-                  type="number"
-                  min="0"
-                  value={invoiceForm.unit_cost_of_sales}
-                  placeholder={String(invoiceUnitCostOfSales || 0)}
-                  onChange={(e) => setInvoiceForm((f) => ({ ...f, unit_cost_of_sales: e.target.value }))}
-                />
+                <div className="ea-label">Due date</div>
+                <Input type="date" value={invoiceForm.due_date} onChange={(e) => setInvoiceForm((f) => ({ ...f, due_date: e.target.value }))} />
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1453,10 +1665,10 @@ export default function FinancialsPage() {
                     <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-slate-900">
-                          {customer?.name || "Customer"} • {product?.name || "Product"}
+                          {customer?.name || "Customer"} • {summariseProductNames(inv)}
                         </div>
                         <div className="text-xs text-slate-500">
-                          Qty {inv.quantity} • Grand Total {formatMoney(inv.total_amount)} • Status {inv.status}
+                          Qty {inv.quantity} • Total {formatMoney(inv.total_amount)} • Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"} • Status {inv.status}
                         </div>
                       </div>
                       <ActionMenu
@@ -1465,13 +1677,13 @@ export default function FinancialsPage() {
                             label: "Edit",
                             onClick: () => {
                               setEditingInvoiceId(inv.id);
-                                setInvoiceForm({
+                              setInvoiceForm({
                                   invoice_id: inv.invoice_id || "",
                                   customer_id: inv.customer_name || inv.customer_id,
-                                  product_id: inv.product_name || inv.product_id,
-                                  quantity: String(inv.quantity || 1),
-                                  unit_price: String(inv.unit_price || ""),
-                                  unit_cost_of_sales: String(inv.unit_cost_of_sales || "")
+                                  product_ids: Array.isArray(inv.product_ids) && inv.product_ids.length ? inv.product_ids : inv.product_id ? [inv.product_id] : [],
+                                  items: normalizeRecordItems(inv),
+                                  issued_at: inv.issued_at || "",
+                                  due_date: inv.due_date || ""
                                 });
                             }
                           },
@@ -1580,54 +1792,53 @@ export default function FinancialsPage() {
                   onChange={(e) => setQuoteForm((f) => ({ ...f, customer_id: e.target.value }))}
                 />
               </div>
-            <div>
-              <div className="ea-label">Product / Service *</div>
-              <Input
-                list="financial-products"
-                placeholder={activeProducts.length ? "Select or type product" : "Type product"}
-                value={quoteForm.product_id}
-                onChange={(e) => {
-                  const product = resolveProduct(e.target.value);
-                  setQuoteForm((f) => ({
-                    ...f,
-                    product_id: product?.name || e.target.value,
-                    unit_price: product ? String(getProductPrice(product)) : f.unit_price,
-                    unit_cost_of_sales: product ? String(getProductDefaultCost(product)) : f.unit_cost_of_sales
-                  }));
-                }}
-              />
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
-                <div className="ea-label">Quantity *</div>
-                <Input
-                  type="number"
-                  min="1"
-                  value={quoteForm.quantity}
-                  onChange={(e) => setQuoteForm((f) => ({ ...f, quantity: e.target.value }))}
+                <div className="ea-label">Products / Services *</div>
+                <MultiProductDropdown
+                  products={activeProducts}
+                  selectedIds={Array.isArray(quoteForm.product_ids) ? quoteForm.product_ids : []}
+                  onChange={updateQuoteSelectedProducts}
                 />
               </div>
-              <div>
-                <div className="ea-label">Unit price</div>
-                <Input
-                  type="number"
-                  min="0"
-                  value={quoteForm.unit_price}
-                  placeholder={String(quoteUnitPrice || 0)}
-                  onChange={(e) => setQuoteForm((f) => ({ ...f, unit_price: e.target.value }))}
-                />
-              </div>
-              <div>
-                <div className="ea-label">Unit cost of sales</div>
-                <Input
-                  type="number"
-                  min="0"
-                  value={quoteForm.unit_cost_of_sales}
-                  placeholder={String(quoteUnitCostOfSales || 0)}
-                  onChange={(e) => setQuoteForm((f) => ({ ...f, unit_cost_of_sales: e.target.value }))}
-                />
-              </div>
-            </div>
+              {quotePreviewItems.length ? (
+                <div className="space-y-3">
+                  <div className="ea-label">Selected item details</div>
+                  {quotePreviewItems.map((item) => (
+                    <div key={item.product_id} className="rounded-xl border border-slate-200 p-3">
+                      <div className="mb-3 text-sm font-semibold text-slate-900">{item.product_name}</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div>
+                          <div className="ea-label">Quantity *</div>
+                          <Input
+                            type="number"
+                            min="1"
+                            value={String(item.quantity ?? 1)}
+                            onChange={(e) => updateQuoteItem(item.product_id, "quantity", e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <div className="ea-label">Unit price</div>
+                          <Input
+                            type="number"
+                            min="0"
+                            value={String(item.unit_price ?? 0)}
+                            onChange={(e) => updateQuoteItem(item.product_id, "unit_price", e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <div className="ea-label">Unit cost of sales</div>
+                          <Input
+                            type="number"
+                            min="0"
+                            value={String(item.unit_cost_of_sales ?? 0)}
+                            onChange={(e) => updateQuoteItem(item.product_id, "unit_cost_of_sales", e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Quotation validity (days)</div>
@@ -1637,6 +1848,14 @@ export default function FinancialsPage() {
                   value={quoteForm.validity_days}
                   onChange={(e) => setQuoteForm((f) => ({ ...f, validity_days: e.target.value }))}
                 />
+              </div>
+              <div>
+                <div className="ea-label">Issued date</div>
+                <Input type="date" value={quoteForm.issued_at} onChange={(e) => setQuoteForm((f) => ({ ...f, issued_at: e.target.value }))} />
+              </div>
+              <div>
+                <div className="ea-label">Due date</div>
+                <Input type="date" value={quoteForm.due_date} onChange={(e) => setQuoteForm((f) => ({ ...f, due_date: e.target.value }))} />
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1686,10 +1905,10 @@ export default function FinancialsPage() {
                     <div key={quote.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-slate-900">
-                          {customer?.name || "Customer"} • {product?.name || "Product"}
+                          {customer?.name || "Customer"} • {summariseProductNames(quote)}
                         </div>
                         <div className="text-xs text-slate-500">
-                          Qty {quote.quantity} • Grand Total {formatMoney(quote.total_amount)} • Status {quote.status || "draft"}
+                          Qty {quote.quantity} • Total {formatMoney(quote.total_amount)} • Due {quote.due_date ? new Date(quote.due_date).toLocaleDateString() : "Not set"} • Status {quote.status || "draft"}
                         </div>
                       </div>
                       <ActionMenu
@@ -1698,14 +1917,14 @@ export default function FinancialsPage() {
                             label: "Edit",
                             onClick: () => {
                               setEditingQuoteId(quote.id);
-                                setQuoteForm({
+                              setQuoteForm({
                                   quotation_id: quote.quotation_id || "",
                                   customer_id: quote.customer_name || quote.customer_id,
-                                  product_id: quote.product_name || quote.product_id,
-                                  quantity: String(quote.quantity || 1),
-                                  unit_price: String(quote.unit_price || ""),
-                                  unit_cost_of_sales: String(quote.unit_cost_of_sales || ""),
-                                  validity_days: String(quote.validity_days || "30")
+                                  product_ids: Array.isArray(quote.product_ids) && quote.product_ids.length ? quote.product_ids : quote.product_id ? [quote.product_id] : [],
+                                  items: normalizeRecordItems(quote),
+                                  validity_days: String(quote.validity_days || "30"),
+                                  issued_at: quote.issued_at || "",
+                                  due_date: quote.due_date || ""
                                 });
                             }
                           },
@@ -1845,6 +2064,16 @@ export default function FinancialsPage() {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <div className="ea-label">Incurred date</div>
+                <Input type="date" value={expenseForm.incurred_at} onChange={(e) => setExpenseForm((f) => ({ ...f, incurred_at: e.target.value }))} />
+              </div>
+              <div>
+                <div className="ea-label">Due date</div>
+                <Input type="date" value={expenseForm.due_date} onChange={(e) => setExpenseForm((f) => ({ ...f, due_date: e.target.value }))} />
+              </div>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertExpense}>{editingExpenseId ? "Update expense" : "Add expense"}</Button>
               {editingExpenseId ? (
@@ -1880,7 +2109,7 @@ export default function FinancialsPage() {
                           {vendor?.name || "Vendor"} • {exp.item}
                         </div>
                         <div className="text-xs text-slate-500">
-                          {exp.cost_type} • {formatMoney(exp.price)} • Status {exp.status}
+                          {exp.cost_type} • {formatMoney(exp.price)} • Due {exp.due_date ? new Date(exp.due_date).toLocaleDateString() : "Not set"} • Status {exp.status}
                         </div>
                       </div>
                       <ActionMenu
@@ -1893,7 +2122,9 @@ export default function FinancialsPage() {
                                 vendor_id: exp.vendor_name || exp.vendor_id,
                                 item: exp.item,
                                 price: String(exp.price || ""),
-                                cost_type: exp.cost_type || "variable"
+                                cost_type: exp.cost_type || "variable",
+                                incurred_at: exp.incurred_at || "",
+                                due_date: exp.due_date || ""
                               });
                             }
                           },
@@ -2013,20 +2244,11 @@ export default function FinancialsPage() {
               </div>
             </div>
             <div>
-              <div className="ea-label">Product / Service *</div>
-              <Input
-                list="financial-products"
-                placeholder={activeProducts.length ? "Select or type product" : "Type product"}
-                value={contractForm.product_id}
-                onChange={(e) => {
-                  const product = resolveProduct(e.target.value);
-                  setContractForm((f) => ({
-                    ...f,
-                    product_id: product?.name || e.target.value,
-                    price: product ? String(getProductPrice(product)) : f.price,
-                    cost_of_sales: product ? String(getProductDefaultCost(product)) : f.cost_of_sales
-                  }));
-                }}
+              <div className="ea-label">Products / Services *</div>
+              <MultiProductDropdown
+                products={activeProducts}
+                selectedIds={Array.isArray(contractForm.product_ids) ? contractForm.product_ids : []}
+                onChange={(nextIds) => setContractForm((f) => ({ ...f, product_ids: nextIds }))}
               />
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -2087,6 +2309,10 @@ export default function FinancialsPage() {
                 <div className="ea-label">End date</div>
                 <Input type="date" value={contractForm.end_date} onChange={(e) => setContractForm((f) => ({ ...f, end_date: e.target.value }))} />
               </div>
+              <div>
+                <div className="ea-label">Due date</div>
+                <Input type="date" value={contractForm.due_date} onChange={(e) => setContractForm((f) => ({ ...f, due_date: e.target.value }))} />
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertContract}>{editingContractId ? "Update contract" : "Add contract"}</Button>
@@ -2127,7 +2353,7 @@ export default function FinancialsPage() {
                           {contract.contract_type === "sales" ? "Sales" : "Purchase"} • {party?.name || "Partner"}
                         </div>
                         <div className="text-xs text-slate-500">
-                          {product?.name || "Product"} • {formatMoney(contract.price)} • Status {contract.status}
+                          {summariseProductNames(contract)} • {formatMoney(contract.price)} • Due {contract.due_date ? new Date(contract.due_date).toLocaleDateString() : "Not set"} • Status {contract.status}
                         </div>
                       </div>
                       <ActionMenu
@@ -2139,7 +2365,7 @@ export default function FinancialsPage() {
                               setContractForm({
                                 contract_type: contract.contract_type || "sales",
                                 counterparty_id: contract.counterparty_name || contract.counterparty_id,
-                                product_id: contract.product_name || contract.product_id,
+                                product_ids: Array.isArray(contract.product_ids) && contract.product_ids.length ? contract.product_ids : contract.product_id ? [contract.product_id] : [],
                                 price: String(contract.price || ""),
                                 cost_of_sales: String(contract.cost_of_sales || ""),
                                 payment_terms: String(contract.payment_terms || ""),
@@ -2147,6 +2373,7 @@ export default function FinancialsPage() {
                                 freight: String(contract.freight || ""),
                                 start_date: contract.start_date || "",
                                 end_date: contract.end_date || "",
+                                due_date: contract.due_date || "",
                                 status: contract.status || "pending"
                               });
                             }
@@ -2283,15 +2510,14 @@ export default function FinancialsPage() {
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Bill to</div>
                   <div className="mt-2 text-sm font-semibold text-slate-900">{previewCustomer?.name || "Customer"}</div>
-                  <div className="text-xs text-slate-500">{previewCustomer?.address || "Address on file"}</div>
+                  {previewCustomer?.address ? <div className="text-xs text-slate-500">{previewCustomer.address}</div> : null}
                   <div className="mt-2 text-xs text-slate-500">Payment terms: {formatPaymentTerms(previewCustomer?.payment_terms)}</div>
+                  {previewInvoice.due_date ? <div className="mt-1 text-xs text-slate-500">Due date: {new Date(previewInvoice.due_date).toLocaleDateString()}</div> : null}
                 </div>
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Invoice summary</div>
-                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500"><span>Subtotal</span><span>{formatMoney(previewInvoice.subtotal_amount)}</span></div>
-                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500"><span>Cost of sales</span><span>{formatMoney(previewInvoice.cost_of_sales)}</span></div>
-                  <div className="mt-3 text-xs text-slate-500">Grand Total</div>
-                  <div className="text-lg font-semibold text-slate-900">{formatMoney(previewInvoice.total_amount)}</div>
+                  <div className="mt-2 text-xs text-slate-500">Grand Total</div>
+                  <div className="text-lg font-semibold text-slate-900">{formatMoney(getDocumentGrandTotal(previewInvoice))}</div>
                 </div>
               </div>
 
@@ -2302,12 +2528,19 @@ export default function FinancialsPage() {
                   <div className="col-span-2 text-right">Unit</div>
                   <div className="col-span-2 text-right">Subtotal</div>
                 </div>
-                <div className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
-                  <div className="col-span-6">{previewProduct?.name || previewInvoice.product_name || "Product / Service"}</div>
-                  <div className="col-span-2 text-right">{previewInvoice.quantity}</div>
-                  <div className="col-span-2 text-right">{formatMoney(previewInvoice.unit_price)}</div>
-                  <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(previewInvoice.subtotal_amount)}</div>
-                </div>
+                {(Array.isArray(previewInvoice.items) && previewInvoice.items.length ? previewInvoice.items : [{
+                  product_name: previewProduct?.name || previewInvoice.product_name || "Product / Service",
+                  quantity: previewInvoice.quantity,
+                  unit_price: previewInvoice.unit_price,
+                  subtotal_amount: previewInvoice.subtotal_amount,
+                }]).map((item, index) => (
+                  <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
+                    <div className="col-span-6">{item.product_name || "Product / Service"}</div>
+                    <div className="col-span-2 text-right">{item.quantity}</div>
+                    <div className="col-span-2 text-right">{formatMoney(item.unit_price)}</div>
+                    <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(item.subtotal_amount || (Number(item.unit_price || 0) * Number(item.quantity || 0)))}</div>
+                  </div>
+                ))}
               </div>
 
               <div className="mt-6 text-xs text-slate-500">
@@ -2375,15 +2608,14 @@ export default function FinancialsPage() {
                   <div className="rounded-xl border border-slate-200 p-3">
                     <div className="text-xs font-semibold text-slate-600">Prepared for</div>
                     <div className="mt-2 text-sm font-semibold text-slate-900">{previewQuoteCustomer?.name || "Customer"}</div>
-                    <div className="text-xs text-slate-500">{previewQuoteCustomer?.address || "Address on file"}</div>
+                    {previewQuoteCustomer?.address ? <div className="text-xs text-slate-500">{previewQuoteCustomer.address}</div> : null}
                     <div className="mt-2 text-xs text-slate-500">Payment terms: {formatPaymentTerms(previewQuoteCustomer?.payment_terms)}</div>
+                    {previewQuote.due_date ? <div className="mt-1 text-xs text-slate-500">Due date: {new Date(previewQuote.due_date).toLocaleDateString()}</div> : null}
                   </div>
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Quotation summary</div>
-                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500"><span>Subtotal</span><span>{formatMoney(previewQuote.subtotal_amount)}</span></div>
-                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500"><span>Cost of sales</span><span>{formatMoney(previewQuote.cost_of_sales)}</span></div>
-                  <div className="mt-3 text-xs text-slate-500">Grand Total</div>
-                  <div className="text-lg font-semibold text-slate-900">{formatMoney(previewQuote.total_amount)}</div>
+                  <div className="mt-2 text-xs text-slate-500">Grand Total</div>
+                  <div className="text-lg font-semibold text-slate-900">{formatMoney(getDocumentGrandTotal(previewQuote))}</div>
                 </div>
               </div>
 
@@ -2394,12 +2626,19 @@ export default function FinancialsPage() {
                   <div className="col-span-2 text-right">Unit</div>
                   <div className="col-span-2 text-right">Subtotal</div>
                 </div>
-                <div className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
-                  <div className="col-span-6">{previewQuoteProduct?.name || previewQuote.product_name || "Product / Service"}</div>
-                  <div className="col-span-2 text-right">{previewQuote.quantity}</div>
-                  <div className="col-span-2 text-right">{formatMoney(previewQuote.unit_price)}</div>
-                  <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(previewQuote.subtotal_amount)}</div>
-                </div>
+                {(Array.isArray(previewQuote.items) && previewQuote.items.length ? previewQuote.items : [{
+                  product_name: previewQuoteProduct?.name || previewQuote.product_name || "Product / Service",
+                  quantity: previewQuote.quantity,
+                  unit_price: previewQuote.unit_price,
+                  subtotal_amount: previewQuote.subtotal_amount,
+                }]).map((item, index) => (
+                  <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
+                    <div className="col-span-6">{item.product_name || "Product / Service"}</div>
+                    <div className="col-span-2 text-right">{item.quantity}</div>
+                    <div className="col-span-2 text-right">{formatMoney(item.unit_price)}</div>
+                    <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(item.subtotal_amount || (Number(item.unit_price || 0) * Number(item.quantity || 0)))}</div>
+                  </div>
+                ))}
               </div>
 
               <div className="mt-6 text-xs text-slate-500">

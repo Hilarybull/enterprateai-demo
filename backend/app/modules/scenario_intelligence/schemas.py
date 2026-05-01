@@ -40,6 +40,9 @@ class BusinessStateSnapshot(BaseModel):
     overdue_receivables_count: int | None = Field(default=0, ge=0)
     approaching_payables_count: int | None = Field(default=0, ge=0)
     overdue_payables_count: int | None = Field(default=0, ge=0)
+    pending_receivables_schedule: List[float] = Field(default_factory=list)
+    pending_payables_schedule: List[float] = Field(default_factory=list)
+    opening_accrual_balance: float | None = Field(default=0, ge=0)
 
 
 class RiskDetectionRequest(BaseModel):
@@ -136,6 +139,7 @@ class ScenarioRunResult(BaseModel):
 class ScenarioTimelineEntry(BaseModel):
     month_index: int
     revenue: float
+    accruals: float = 0
     expenses: float
     cost_of_sales: float
     costs: float

@@ -1,5 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
-import { useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import Button from "../components/Button";
@@ -29,6 +28,43 @@ function asNonEmptyString(value, fallback) {
   return coerced || fallback;
 }
 
+function observedMonths(items) {
+  const dates = items
+    .map((item) => {
+      const ts = new Date(item?.created_at || item?.updated_at || item?.issued_at || "").getTime();
+      return Number.isFinite(ts) ? ts : null;
+    })
+    .filter((value) => value != null);
+  if (!dates.length) return 1;
+  const earliest = Math.min(...dates);
+  const latest = Math.max(...dates, Date.now());
+  const days = Math.max(1, Math.ceil((latest - earliest) / (1000 * 60 * 60 * 24)));
+  return Math.max(1, Math.min(12, Number((days / 30).toFixed(2))));
+}
+
+function getRecordItems(record) {
+  if (Array.isArray(record?.items) && record.items.length) return record.items;
+  return [
+    {
+      product_id: record?.product_id || null,
+      product_name: record?.product_name || "Product / Service",
+      quantity: Number(record?.quantity || 0),
+      unit_price: Number(record?.unit_price || 0),
+      unit_cost_of_sales: Number(record?.unit_cost_of_sales || 0),
+      subtotal_amount: Number(record?.subtotal_amount || 0),
+    },
+  ];
+}
+
+function getLineGrandTotal(item) {
+  const quantity = Number(item?.quantity || 0);
+  const subtotal = item?.subtotal_amount != null
+    ? Number(item.subtotal_amount || 0)
+    : Number(item?.unit_price || 0) * quantity;
+  const costOfSales = Number(item?.unit_cost_of_sales || 0) * quantity;
+  return Number((subtotal + costOfSales).toFixed(2));
+}
+
 export default function SimulationPage() {
   const simulationEnabled = true;
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -53,10 +89,10 @@ export default function SimulationPage() {
   const [upgradeLoading, setUpgradeLoading] = useState(false);
 
   const acceptedIdeaValidation = decisionStatus === "accepted" ? ideaValidation : null;
-  const acceptedModuleValidation =
-    acceptedValidation ||
-    acceptedIdeaValidation ||
-    (serviceDecisionStatus === "accepted" ? validation : null);
+  const acceptedModuleValidation = {
+    businessValidation: acceptedValidation?.businessValidation || acceptedIdeaValidation || null,
+    serviceValidation: acceptedValidation?.serviceValidation || (serviceDecisionStatus === "accepted" ? validation : null),
+  };
 
   async function handleUpgradeClick() {
     setUpgradeLoading(true);
@@ -85,6 +121,18 @@ export default function SimulationPage() {
   const stateSnapshot = financialInsights.stateSnapshot;
 
   const largestClient = financialInsights.largestClient;
+  const activeProducts = useMemo(
+    () => (Array.isArray(catalogueData?.products) ? catalogueData.products.filter((item) => !item?.archived) : []),
+    [catalogueData]
+  );
+  const activeContracts = useMemo(
+    () => (Array.isArray(financialsData?.contracts) ? financialsData.contracts.filter((item) => !item?.archived) : []),
+    [financialsData]
+  );
+  const activeInvoices = useMemo(
+    () => (Array.isArray(financialsData?.invoices) ? financialsData.invoices.filter((item) => !item?.archived) : []),
+    [financialsData]
+  );
 
   const [tab, setTab] = useState("adaptive"); // dashboard | manual
   const [templates, setTemplates] = useState([]);
@@ -117,6 +165,53 @@ export default function SimulationPage() {
   const lastSignalsSnapshotHashRef = useRef("");
 
   const canRun = Boolean(workspaceId);
+  const productScenarioOptions = useMemo(() => {
+    const paidInvoices = activeInvoices.filter((item) => String(item?.status || "").toLowerCase() === "paid");
+    const months = observedMonths(paidInvoices);
+    return activeProducts.map((product) => {
+      const invoiceRevenue = paidInvoices.reduce((sum, item) => {
+        const lineRevenue = getRecordItems(item)
+          .filter((lineItem) => {
+            const lineProductId = lineItem?.product_id || null;
+            const lineProductName = String(lineItem?.product_name || "").trim().toLowerCase();
+            return lineProductId === product.id || lineProductName === String(product.name || "").trim().toLowerCase();
+          })
+          .reduce((lineSum, lineItem) => lineSum + getLineGrandTotal(lineItem), 0);
+        return sum + lineRevenue;
+      }, 0);
+      return {
+        id: product.id,
+        label: product.name || "Product / Service",
+        revenueMonthly: invoiceRevenue > 0 ? Number((invoiceRevenue / months).toFixed(2)) : 0,
+      };
+    });
+  }, [activeInvoices, activeProducts]);
+
+  const pendingScenarioOptions = useMemo(() => {
+    const pendingInvoices = activeInvoices.filter((item) => String(item?.status || "").toLowerCase() !== "paid");
+    return pendingInvoices.map((item) => ({
+      id: item.id,
+      label: `${item.customer_name || "Customer"} • ${Array.isArray(item?.product_names) && item.product_names.length ? item.product_names.join(", ") : item.product_name || "Invoice"} • ${formatCurrency(Number(item?.total_amount || 0), currency || "GBP")}`,
+      detail: item?.due_date ? `Due ${new Date(item.due_date).toLocaleDateString()}` : "Awaiting due date",
+      amount: Number(item?.total_amount || 0),
+    }));
+  }, [activeInvoices, currency]);
+
+  const pendingScenarioLineOptions = useMemo(() => {
+    const pendingInvoices = activeInvoices.filter((item) => String(item?.status || "").toLowerCase() !== "paid");
+    return pendingInvoices.flatMap((item) => {
+      const dueDetail = item?.due_date ? `Due ${new Date(item.due_date).toLocaleDateString()}` : "Awaiting due date";
+      return getRecordItems(item).map((lineItem, index) => {
+        const amount = getLineGrandTotal(lineItem);
+        return {
+          id: `${item.id}:${lineItem?.product_id || lineItem?.product_name || index}:${index}`,
+          label: `${item.customer_name || "Customer"} - ${lineItem?.product_name || "Product / Service"} - ${formatCurrency(amount, currency || "GBP")}`,
+          detail: dueDetail,
+          amount,
+        };
+      });
+    });
+  }, [activeInvoices, currency]);
 
   useEffect(() => {
     async function bootstrap() {
@@ -297,6 +392,7 @@ export default function SimulationPage() {
   }
 
   const snapshotHash = useMemo(() => JSON.stringify(stateSnapshot || {}), [stateSnapshot]);
+  const lastManualTemplateIdRef = useRef(null);
 
   useEffect(() => {
     if (!canRun || tab !== "adaptive") return;
@@ -465,11 +561,16 @@ export default function SimulationPage() {
 
   useEffect(() => {
     if (manualTemplateId === "do_nothing_projection") {
-      setManualParams({});
+      if (lastManualTemplateIdRef.current !== manualTemplateId) {
+        lastManualTemplateIdRef.current = manualTemplateId;
+        setManualParams({});
+      }
       setManualName("Baseline Continuity Projection");
       return;
     }
     if (!manualTemplate) return;
+    if (lastManualTemplateIdRef.current === manualTemplateId) return;
+    lastManualTemplateIdRef.current = manualTemplateId;
     const params = buildDefaultParams(manualTemplate, stateSnapshot, largestClient);
     setManualParams(params);
     if (manualTemplate.scenario_type === "client_loss") {
@@ -483,8 +584,21 @@ export default function SimulationPage() {
   useEffect(() => {
     if (manualTemplate?.scenario_type !== "client_loss") return;
     if (largestClient?.share == null) return;
-    setManualParams((prev) => ({ ...prev, client_loss_pct: largestClient.share }));
+    setManualParams((prev) => {
+      if (prev?.client_loss_pct === largestClient.share) {
+        return prev;
+      }
+      return { ...prev, client_loss_pct: largestClient.share };
+    });
   }, [manualTemplate, largestClient?.share]);
+
+  function toggleManualSelection(key, id) {
+    setManualParams((prev) => {
+      const current = Array.isArray(prev?.[key]) ? prev[key] : [];
+      const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
+      return { ...prev, [key]: next };
+    });
+  }
 
   if (!simulationEnabled) {
     return (
@@ -704,22 +818,52 @@ export default function SimulationPage() {
               {manualTemplateId === "do_nothing_projection" ? (
                 <div className="text-sm text-slate-600">Uses current inputs. No additional inputs required.</div>
               ) : manualTemplate?.required_inputs?.length ? (
-                manualTemplate.required_inputs.map((key) => (
-                  <div key={key}>
-                    <FieldLabel info={fieldHelp(key)}>{prettyLabel(key)}</FieldLabel>
-                    <NumberInput
-                      value={String(manualParams[key] ?? "")}
-                      onChange={(v) => setManualParams((p) => ({ ...p, [key]: parseNumber(v, 0) }))}
-                      placeholder="0"
+                <>
+                  {manualTemplate.required_inputs.map((key) => (
+                    <div key={key}>
+                      <FieldLabel info={fieldHelp(key)}>{prettyLabel(key)}</FieldLabel>
+                      <NumberInput
+                        value={String(manualParams[key] ?? "")}
+                        onChange={(v) => setManualParams((p) => ({ ...p, [key]: parseNumber(v, 0) }))}
+                        placeholder="0"
+                      />
+                      {key === "client_loss_pct" && largestClient ? (
+                        <div className="mt-1 text-xs text-slate-500">
+                          Largest client: {largestClient.name}
+                          {largestClient.share != null ? ` (~${largestClient.share}% of revenue)` : ""}.
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                  {manualTemplate.scenario_type === "price_change" ? (
+                    <MultiSelectChecklist
+                      label="Products / Services To Include"
+                      info={fieldHelp("selected_product_ids")}
+                      items={productScenarioOptions.map((item) => ({
+                        id: item.id,
+                        label: item.label,
+                        detail: item.revenueMonthly > 0 ? `Current monthly revenue contribution: ${formatCurrency(item.revenueMonthly, currency || "GBP")}` : "No tracked revenue yet for this item."
+                      }))}
+                      selectedIds={Array.isArray(manualParams?.selected_product_ids) ? manualParams.selected_product_ids : []}
+                      onToggle={(id) => toggleManualSelection("selected_product_ids", id)}
+                      emptyText="No products or services available yet."
                     />
-                    {key === "client_loss_pct" && largestClient ? (
-                      <div className="mt-1 text-xs text-slate-500">
-                        Largest client: {largestClient.name}
-                        {largestClient.share != null ? ` (~${largestClient.share}% of revenue)` : ""}.
-                      </div>
-                    ) : null}
-                  </div>
-                ))
+                  ) : null}
+                  {manualTemplate.scenario_type === "payment_delay" ? (
+                    <MultiSelectChecklist
+                      label="Pending Items To Delay"
+                      info={fieldHelp("selected_pending_ids")}
+                      items={pendingScenarioLineOptions.map((item) => ({
+                        id: item.id,
+                        label: item.label,
+                        detail: `Pending amount: ${formatCurrency(item.amount, currency || "GBP")}`
+                      }))}
+                      selectedIds={Array.isArray(manualParams?.selected_pending_ids) ? manualParams.selected_pending_ids : []}
+                      onToggle={(id) => toggleManualSelection("selected_pending_ids", id)}
+                      emptyText="No pending receivables available right now."
+                    />
+                  ) : null}
+                </>
               ) : (
                 <div className="text-sm text-slate-600">No additional inputs required.</div>
               )}
@@ -734,10 +878,23 @@ export default function SimulationPage() {
                       runDoNothing(parseNumber(manualTimelineMonths, 6), true);
                       return;
                     }
+                    const selectedProductIds = Array.isArray(manualParams?.selected_product_ids) ? manualParams.selected_product_ids : [];
+                    const selectedPendingIds = Array.isArray(manualParams?.selected_pending_ids) ? manualParams.selected_pending_ids : [];
+                    const selectedProductRevenue = productScenarioOptions
+                      .filter((item) => !selectedProductIds.length || selectedProductIds.includes(item.id))
+                      .reduce((sum, item) => sum + Number(item.revenueMonthly || 0), 0);
+                    const selectedPendingReceivableAmount = pendingScenarioLineOptions
+                      .filter((item) => !selectedPendingIds.length || selectedPendingIds.includes(item.id))
+                      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
                     runScenario(
                       manualTemplateId,
                       "manual",
-                      { ...manualParams, timeline_months: parseNumber(manualTimelineMonths, 6) },
+                      {
+                        ...manualParams,
+                        selected_product_revenue_monthly: Number(selectedProductRevenue.toFixed(2)),
+                        selected_pending_receivable_amount: Number(selectedPendingReceivableAmount.toFixed(2)),
+                        timeline_months: parseNumber(manualTimelineMonths, 6)
+                      },
                       manualName
                     );
                   }}
@@ -786,8 +943,8 @@ export default function SimulationPage() {
                     largestClient,
                     manualParams,
                     parseNumber(manualTimelineMonths, 6)
-                  ).map((line) => (
-                    <div key={line} className="rounded-lg bg-slate-50 px-2 py-2">
+                  ).map((line, index) => (
+                    <div key={`${manualTemplateId || activeRun?.scenario_template_id || "scenario"}-${index}`} className="rounded-lg bg-slate-50 px-2 py-2">
                       {line}
                     </div>
                   ))}
@@ -828,7 +985,9 @@ function buildDefaultParams(template, stateSnapshot, largestClient) {
     delay_months: 1,
     revenue_uplift_pct: 10,
     cost_uplift_pct: 5,
-    client_loss_pct: stateSnapshot?.top_client_share_pct ?? 30
+    client_loss_pct: stateSnapshot?.top_client_share_pct ?? 30,
+    selected_product_ids: [],
+    selected_pending_ids: [],
   };
   const params = {};
   (template.required_inputs || []).forEach((key) => {
@@ -853,7 +1012,7 @@ function scenarioOutputNote(templateId, largestClient) {
     case "tmpl_client_loss":
       return `This shows what may happen if your biggest client${largestClient?.name ? ` (${largestClient.name})` : ""} stops buying from you, with revenue and cost of sales stepping down over the first months of the run.`;
     case "tmpl_price_increase":
-      return "This shows whether a price increase improves revenue and profit without changing your current cost base straight away.";
+      return "This shows whether a price increase on selected products or services improves revenue and profit without changing your current cost base straight away.";
     case "tmpl_hire_staff":
       return "This shows how adding staff increases monthly costs first, so you can see whether your current revenue can absorb the extra payroll.";
     case "tmpl_cost_increase":
@@ -861,7 +1020,7 @@ function scenarioOutputNote(templateId, largestClient) {
     case "tmpl_revenue_drop":
       return "This shows what happens if sales slow down across the business, including the knock-on effect on profit and projected cash balance.";
     case "tmpl_payment_delay":
-      return "This shows what happens when customers pay later than expected, so profit may still look fine while cash comes in more slowly.";
+      return "This shows what happens when selected pending customer payments land later than expected, so profit may still look fine while cash comes in more slowly.";
     case "tmpl_service_launch":
       return "This shows whether a new service could lift revenue enough to justify the extra delivery and operating costs.";
     default:
@@ -885,6 +1044,7 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
       return [
         `Price change: ${Number(manualParams?.price_change_pct ?? 0).toFixed(2)}%.`,
         `Effective month: ${Math.max(1, Number(manualParams?.effective_month ?? 1))}.`,
+        `Selected products/services: ${Array.isArray(manualParams?.selected_product_ids) && manualParams.selected_product_ids.length ? manualParams.selected_product_ids.length : "all current revenue sources"}.`,
       ];
     case "tmpl_hire_staff":
       return [
@@ -904,6 +1064,7 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
     case "tmpl_payment_delay":
       return [
         `Payment delay: ${Math.max(0, Number(manualParams?.delay_months ?? 0))} month${Number(manualParams?.delay_months ?? 0) === 1 ? "" : "s"}.`,
+        `Selected pending items: ${Array.isArray(manualParams?.selected_pending_ids) && manualParams.selected_pending_ids.length ? manualParams.selected_pending_ids.length : "all pending receivables"}.`,
         "Profit can stay unchanged while projected cash balance moves more slowly.",
       ];
     case "tmpl_service_launch":
@@ -1014,9 +1175,12 @@ function buildScenarioExecutionBreakdown(
   if (scenarioType === "price_change") {
     const changePct = Number(params?.price_change_pct ?? 0);
     const effectiveMonth = Math.max(1, Number(params?.effective_month ?? 1));
+    const selectedRevenue = Number(params?.selected_product_revenue_monthly ?? 0);
+    const selectedCount = Array.isArray(params?.selected_product_ids) ? params.selected_product_ids.length : 0;
     return [
       `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline cost base stays unchanged unless shown otherwise.`,
       `Price increase applied: ${formatPercentValue(changePct)} from month ${effectiveMonth}.`,
+      `Selected products/services: ${selectedCount || "all"}${selectedRevenue > 0 ? `, covering ${formatCurrency(selectedRevenue, currency)} of monthly revenue` : ""}.`,
       `Month 1 revenue in the table is ${formatCurrency(firstRow?.revenue ?? baselineRevenue, currency)} based on when the increase begins.`,
       "Profit changes because revenue moves while costs stay on the current baseline unless the scenario changes them."
     ];
@@ -1045,9 +1209,12 @@ function buildScenarioExecutionBreakdown(
 
   if (scenarioType === "payment_delay") {
     const delayMonths = Math.max(0, Number(params?.delay_months ?? 0));
+    const selectedPendingAmount = Number(params?.selected_pending_receivable_amount ?? 0);
+    const selectedPendingCount = Array.isArray(params?.selected_pending_ids) ? params.selected_pending_ids.length : 0;
     return [
       `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline costs: ${formatCurrency(Number(activeRun?.baseline_metrics?.monthly_costs ?? baseline?.costs_monthly ?? 0), currency)}.`,
       `Payment delay applied: ${delayMonths} month${delayMonths === 1 ? "" : "s"}.`,
+      `Selected pending items: ${selectedPendingCount || "all pending receivables"}${selectedPendingAmount > 0 ? `, worth ${formatCurrency(selectedPendingAmount, currency)}` : ""}.`,
       `Month 1 projected cash balance is ${formatCurrency(firstRow?.cash_balance ?? 0, currency)} because collections are pushed back.`,
       "Profit can stay unchanged while projected cash balance moves later in the timeline."
     ];
@@ -1078,9 +1245,42 @@ function fieldHelp(key) {
     delay_months: "Months of delayed payments.",
     revenue_uplift_pct: "Percent revenue uplift for new service.",
     cost_uplift_pct: "Percent cost uplift for new service.",
-    client_loss_pct: "Percent of monthly revenue lost if the largest client leaves."
+    client_loss_pct: "Percent of monthly revenue lost if the largest client leaves.",
+    selected_product_ids: "Select the products or services to include in the price increase.",
+    selected_pending_ids: "Select the pending receivables to focus the delay simulation on.",
   };
   return help[key] || "";
+}
+
+function MultiSelectChecklist({ label, info, items, selectedIds, onToggle, emptyText }) {
+  return (
+    <div>
+      <FieldLabel info={info}>{label}</FieldLabel>
+      <div className="mt-2 rounded-xl border border-slate-200 bg-white">
+        <div className="border-b border-slate-100 px-3 py-2 text-xs text-slate-500">
+          {selectedIds.length ? `${selectedIds.length} selected` : "Select one or more options"}
+        </div>
+        <div className="max-h-48 space-y-2 overflow-auto p-3">
+          {items.length ? items.map((item) => (
+            <label key={item.id} className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2 hover:bg-slate-50">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={selectedIds.includes(item.id)}
+                onChange={() => onToggle(item.id)}
+              />
+              <div className="min-w-0 text-sm text-slate-700">
+                <div className="break-words">{item.label}</div>
+                {item.detail ? <div className="mt-1 text-xs text-slate-500">{item.detail}</div> : null}
+              </div>
+            </label>
+          )) : (
+            <div className="px-2 py-2 text-sm text-slate-500">{emptyText}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function buildScenarioMeaning(activeRun, timeline) {
@@ -1358,6 +1558,7 @@ function ScenarioOutput({
                 <tr>
                   <th className="px-2 py-2 text-left">Month</th>
                   <th className="px-2 py-2 text-left">Run-rate revenue</th>
+                  <th className="px-2 py-2 text-left">Accruals</th>
                   <th className="px-2 py-2 text-left">Expenses</th>
                   <th className="px-2 py-2 text-left">Cost of sales</th>
                   <th className="px-2 py-2 text-left">Total costs</th>
@@ -1375,6 +1576,7 @@ function ScenarioOutput({
                       <div className="text-[10px] text-slate-500">{formatMonthDetail(row.month_index)}</div>
                     </td>
                     <td className="px-2 py-2">{formatCurrency(row.revenue, currency)}</td>
+                    <td className="px-2 py-2">{formatCurrency(row.accruals, currency)}</td>
                     <td className="px-2 py-2">{formatCurrency(row.expenses, currency)}</td>
                     <td className="px-2 py-2">{formatCurrency(row.cost_of_sales, currency)}</td>
                     <td className="px-2 py-2">{formatCurrency(row.costs, currency)}</td>

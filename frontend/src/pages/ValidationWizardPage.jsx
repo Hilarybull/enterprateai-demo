@@ -846,6 +846,56 @@ export default function ValidationWizardPage() {
 
   async function editHistoryEntry(entry) {
     if (!activeWorkspaceId) return;
+    if (entry?.status === "accepted" || entry?.status === "rejected") {
+      setError(null);
+      try {
+        const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+        const data = ws?.data || {};
+        setWorkspaceId(activeWorkspaceId);
+        setWorkspaceNameStore(ws?.name || null);
+        setWorkspaceName(ws?.name || "");
+        setWorkspaceNameTouched(true);
+        setCurrency(data?.currency || serviceCurrency || "GBP");
+
+        if (entry.type === "service_validation") {
+          const serviceHistory = Array.isArray(data.service_validation_history) ? data.service_validation_history : [];
+          const serviceEntry = serviceHistory.find((item) => item?.id === entry.id) || entry;
+          const payload = serviceEntry?.payload || data.draft_service_idea || null;
+          if (payload && typeof payload === "object") {
+            setDraftServiceIdea(payload);
+          }
+          setValidation(serviceEntry?.result || entry.result || null);
+          setServiceDecisionStatus(entry.status);
+          setDecisionStatus(null);
+          await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
+            data: {
+              active_service_validation_id: entry.id,
+              ...(payload && typeof payload === "object" ? { draft_service_idea: payload } : {})
+            }
+          });
+        } else {
+          const payload = entry.payload || data.draft_idea_validation || data.idea_validation || null;
+          if (payload && typeof payload === "object") {
+            setDraftIdeaValidation(payload);
+            setInputs(payload);
+          }
+          setIdeaValidation(entry.result || data.idea_validation || null);
+          setDecisionStatus(entry.status);
+          setServiceDecisionStatus(null);
+          await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
+            data: {
+              active_validation_id: entry.id,
+              ...(payload && typeof payload === "object" ? { draft_idea_validation: payload } : {})
+            }
+          });
+        }
+
+        navigate("/results");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not open this validation dashboard.");
+      }
+      return;
+    }
     setError(null);
     try {
       const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
@@ -1565,7 +1615,7 @@ export default function ValidationWizardPage() {
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <Button variant="secondary" onClick={() => editHistoryEntry(entry)}>
-                          Modify
+                          {entry.status === "accepted" || entry.status === "rejected" ? "Go to dashboard" : "Modify"}
                         </Button>
                         <Button variant="ghost" onClick={() => deleteHistoryEntry(entry.id)}>
                           Delete

@@ -18,6 +18,46 @@ function daysSince(dateLike) {
   return Math.max(0, Math.floor((Date.now() - ts) / (1000 * 60 * 60 * 24)));
 }
 
+function parseDate(dateLike) {
+  const ts = dateLike ? new Date(dateLike).getTime() : NaN;
+  return Number.isFinite(ts) ? new Date(ts) : null;
+}
+
+function addDays(dateLike, days) {
+  const base = parseDate(dateLike) || new Date();
+  const next = new Date(base);
+  next.setDate(next.getDate() + Math.max(0, Number(days || 0)));
+  return next;
+}
+
+function startOfMonth(dateLike = new Date()) {
+  const date = parseDate(dateLike) || new Date();
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function monthOffsetFromCurrent(dateLike) {
+  const date = parseDate(dateLike);
+  if (!date) return 0;
+  const current = startOfMonth(new Date());
+  const target = startOfMonth(date);
+  return (target.getFullYear() - current.getFullYear()) * 12 + (target.getMonth() - current.getMonth());
+}
+
+function emptySchedule(months = 12) {
+  return Array.from({ length: months }, () => 0);
+}
+
+function addToSchedule(schedule, dateLike, amount) {
+  const numeric = toNumber(amount);
+  if (!numeric) return;
+  const index = clamp(monthOffsetFromCurrent(dateLike), 0, schedule.length - 1);
+  schedule[index] = Number((schedule[index] + numeric).toFixed(2));
+}
+
+function effectiveDueDate(item, fallbackTermsDays) {
+  return item?.due_date || addDays(item?.issued_at || item?.created_at || item?.updated_at, fallbackTermsDays).toISOString();
+}
+
 function normaliseStatus(value, fallback = "pending") {
   return String(value || fallback).trim().toLowerCase();
 }
@@ -48,13 +88,29 @@ export function getProductCostOfSales(product) {
   return Math.max(0, toNumber(product?.cost_of_sales));
 }
 
+function getRecordProductIds(item) {
+  if (Array.isArray(item?.product_ids) && item.product_ids.length) return item.product_ids;
+  if (item?.product_id) return [item.product_id];
+  return [];
+}
+
 function isPendingWithinTerms(item, termsDays) {
   const status = normaliseStatus(item?.status);
   if (status === "paid" || status === "signed") return false;
+  if (item?.due_date) {
+    const due = parseDate(item.due_date);
+    if (!due) return true;
+    return due.getTime() >= Date.now();
+  }
   return daysSince(item?.created_at || item?.updated_at) <= parsePaymentTerms(termsDays);
 }
 
 function remainingTermDays(item, termsDays) {
+  if (item?.due_date) {
+    const due = parseDate(item.due_date);
+    if (!due) return parsePaymentTerms(termsDays);
+    return Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  }
   return parsePaymentTerms(termsDays) - daysSince(item?.created_at || item?.updated_at);
 }
 
@@ -67,6 +123,20 @@ function dedupeByScenario(recommendations) {
   const seen = new Set();
   return recommendations.filter((item) => {
     const key = `${item.scenario_template_id}:${item.reason_code}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeRiskItems(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const title = String(item?.title || "").trim().toLowerCase();
+    const detail = String(item?.detail || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const key = title === "validation risk"
+      ? `${title}::${detail}`
+      : `${String(item?.reason_code || "").trim()}::${title}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -139,6 +209,13 @@ function toRiskRecommendation(risk) {
 }
 
 export function buildFinancialIntelligence({ catalogue, financials, validation, inputs }) {
+  const serviceValidation =
+    validation?.serviceValidation ||
+    (validation?.scores && validation?.metrics && validation?.outcome ? validation : null);
+  const businessValidation =
+    validation?.businessValidation ||
+    (serviceValidation ? null : validation);
+
   const products = Array.isArray(catalogue?.products) ? catalogue.products.filter((item) => !item?.archived) : [];
   const customers = Array.isArray(catalogue?.customers) ? catalogue.customers.filter((item) => !item?.archived) : [];
   const vendors = Array.isArray(catalogue?.vendors) ? catalogue.vendors.filter((item) => !item?.archived) : [];
@@ -151,6 +228,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
 
   const customerMap = new Map(customers.map((item) => [item.id, item]));
   const productMap = new Map(products.map((item) => [item.id, item]));
+  const pendingReceivablesSchedule = emptySchedule();
+  const pendingPayablesSchedule = emptySchedule();
 
   const paidInvoices = invoices.filter((item) => normaliseStatus(item.status) === "paid");
   const pendingInvoices = invoices.filter((item) => normaliseStatus(item.status) !== "paid");
@@ -185,73 +264,92 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     return !isPendingWithinTerms(item, vendorTerms);
   });
 
-  const invoiceRevenue = [...paidInvoices, ...pendingInvoiceWithinTerms].reduce((sum, item) => sum + toNumber(item.total_amount), 0);
-  const invoiceCostOfSales = [...paidInvoices, ...pendingInvoiceWithinTerms].reduce((sum, item) => {
+  const invoiceRevenue = paidInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
+  const invoiceCostOfSales = paidInvoices.reduce((sum, item) => {
     if (item.cost_of_sales != null) return sum + toNumber(item.cost_of_sales);
-    const product = productMap.get(item.product_id);
-    return sum + getProductCostOfSales(product) * Math.max(1, toNumber(item.quantity || 1));
+    const productIds = getRecordProductIds(item);
+    if (!productIds.length) {
+      const product = productMap.get(item.product_id);
+      return sum + getProductCostOfSales(product) * Math.max(1, toNumber(item.quantity || 1));
+    }
+    const perUnitCost = productIds.reduce((running, productId) => running + getProductCostOfSales(productMap.get(productId)), 0);
+    return sum + perUnitCost * Math.max(1, toNumber(item.quantity || 1));
   }, 0);
-  const operationalExpenses = [...paidExpenses, ...pendingExpenseWithinTerms].reduce((sum, item) => sum + toNumber(item.price), 0);
-  const contractRevenue = salesContracts.reduce((sum, item) => sum + toNumber(item.price), 0);
-  const contractCostOfSales = salesContracts.reduce((sum, item) => {
-    if (item.cost_of_sales != null) return sum + toNumber(item.cost_of_sales);
-    const product = productMap.get(item.product_id);
-    return sum + getProductCostOfSales(product);
-  }, 0);
-  const contractPurchases = purchaseContracts.reduce((sum, item) => sum + toNumber(item.price), 0);
+  const operationalExpenses = paidExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
+  const contractRevenue = 0;
+  const contractCostOfSales = 0;
+  const contractPurchases = 0;
 
-  const accruedRevenue = invoiceRevenue + contractRevenue;
-  const accruedCostOfSales = invoiceCostOfSales + contractCostOfSales;
-  const accruedExpenses = operationalExpenses + contractPurchases;
-  const totalCosts = accruedExpenses + accruedCostOfSales;
-  const fallbackRevenue = toNumber(validation?.metrics?.revenue_monthly ?? validation?.metrics?.monthly_revenue);
-  const fallbackCostOfSales = toNumber(
-    validation?.metrics?.cost_of_sales_monthly ?? validation?.metrics?.monthly_variable_cost
-  );
-  const fallbackFixedExpenses = toNumber(validation?.metrics?.monthly_fixed_cost);
-  const fallbackCosts = toNumber(
-    validation?.metrics?.costs_monthly ?? (fallbackFixedExpenses + fallbackCostOfSales)
-  );
-  const effectiveRevenue = accruedRevenue > 0 ? accruedRevenue : fallbackRevenue;
-  const effectiveCostOfSales = accruedCostOfSales > 0 ? accruedCostOfSales : fallbackCostOfSales;
-  const effectiveExpenses = accruedExpenses > 0 ? accruedExpenses : Math.max(0, fallbackCosts - effectiveCostOfSales);
+  pendingInvoices.forEach((item) => {
+    const customer = customerMap.get(item.customer_id);
+    addToSchedule(
+      pendingReceivablesSchedule,
+      effectiveDueDate(item, customer?.payment_terms || item.payment_terms || 30),
+      item.total_amount
+    );
+  });
+  salesContracts
+    .filter((item) => normaliseStatus(item.status) !== "paid")
+    .forEach((item) => {
+      addToSchedule(
+        pendingReceivablesSchedule,
+        effectiveDueDate(item, item.payment_terms || 30),
+        item.price
+      );
+    });
+  pendingExpenses.forEach((item) => {
+    addToSchedule(
+      pendingPayablesSchedule,
+      effectiveDueDate(item, item.payment_terms || 30),
+      item.price
+    );
+  });
+  purchaseContracts
+    .filter((item) => normaliseStatus(item.status) !== "paid")
+    .forEach((item) => {
+      addToSchedule(
+        pendingPayablesSchedule,
+        effectiveDueDate(item, item.payment_terms || 30),
+        item.price
+      );
+    });
+
+  const recognisedRevenue = invoiceRevenue;
+  const recognisedCostOfSales = invoiceCostOfSales;
+  const recognisedExpenses = operationalExpenses;
+  const businessValidationRevenue = toNumber(businessValidation?.metrics?.revenue_monthly);
+  const businessValidationCostOfSales = toNumber(businessValidation?.metrics?.cost_of_sales_monthly);
+  const businessValidationCosts = toNumber(businessValidation?.metrics?.costs_monthly);
+  const businessValidationExpenses = Math.max(0, businessValidationCosts - businessValidationCostOfSales);
+  const serviceValidationRevenue = toNumber(serviceValidation?.metrics?.monthly_revenue);
+  const serviceValidationCostOfSales = toNumber(serviceValidation?.metrics?.monthly_variable_cost);
+  const serviceValidationExpenses = toNumber(serviceValidation?.metrics?.monthly_fixed_cost);
+  const validationRevenueContribution = businessValidationRevenue + serviceValidationRevenue;
+  const validationCostOfSalesContribution = businessValidationCostOfSales + serviceValidationCostOfSales;
+  const validationExpensesContribution = businessValidationExpenses + serviceValidationExpenses;
+  const validationTotalCostsContribution = validationCostOfSalesContribution + validationExpensesContribution;
+  const effectiveRevenue = recognisedRevenue > 0 ? recognisedRevenue : validationRevenueContribution;
+  const effectiveCostOfSales = recognisedCostOfSales > 0 ? recognisedCostOfSales : validationCostOfSalesContribution;
+  const effectiveExpenses = recognisedExpenses > 0 ? recognisedExpenses : validationExpensesContribution;
   const effectiveTotalCosts = effectiveExpenses + effectiveCostOfSales;
-  const financialActivityMonths = observedMonths([
-    ...paidInvoices,
-    ...pendingInvoiceWithinTerms,
-    ...paidExpenses,
-    ...pendingExpenseWithinTerms,
-    ...salesContracts,
-    ...purchaseContracts,
-  ]);
-  const derivedRevenueRunRate = financialActivityMonths > 0 ? effectiveRevenue / financialActivityMonths : effectiveRevenue;
-  const derivedCostOfSalesRunRate = financialActivityMonths > 0 ? effectiveCostOfSales / financialActivityMonths : effectiveCostOfSales;
-  const derivedExpensesRunRate = financialActivityMonths > 0 ? effectiveExpenses / financialActivityMonths : effectiveExpenses;
-  const simulationRevenue = fallbackRevenue > 0 ? fallbackRevenue : derivedRevenueRunRate;
-  const simulationCostOfSales = fallbackCostOfSales > 0 ? fallbackCostOfSales : derivedCostOfSalesRunRate;
-  const simulationExpenses = fallbackCosts > 0 ? Math.max(0, fallbackCosts - simulationCostOfSales) : derivedExpensesRunRate;
+  const simulationRevenue = effectiveRevenue;
+  const simulationCostOfSales = effectiveCostOfSales;
+  const simulationExpenses = effectiveExpenses;
   const simulationTotalCosts = simulationExpenses + simulationCostOfSales;
   const netProfit = simulationRevenue - simulationTotalCosts;
 
   const customerRevenueMap = new Map();
   const customerNameMap = new Map();
-  [...paidInvoices, ...pendingInvoiceWithinTerms].forEach((item) => {
+  paidInvoices.forEach((item) => {
     const key = item.customer_id || item.customer_name || "unknown";
     customerRevenueMap.set(key, toNumber(customerRevenueMap.get(key)) + toNumber(item.total_amount));
     if (!customerNameMap.has(key)) {
       customerNameMap.set(key, item.customer_name || customerMap.get(item.customer_id)?.name || "Largest client");
     }
   });
-  salesContracts.forEach((item) => {
-    const key = item.counterparty_id || item.counterparty_name || "unknown";
-    customerRevenueMap.set(key, toNumber(customerRevenueMap.get(key)) + toNumber(item.price));
-    if (!customerNameMap.has(key)) {
-      customerNameMap.set(key, item.counterparty_name || customerMap.get(item.counterparty_id)?.name || "Largest client");
-    }
-  });
   const largestCustomerEntry = [...customerRevenueMap.entries()].sort((a, b) => toNumber(b[1]) - toNumber(a[1]))[0] || null;
   const largestCustomerRevenue = largestCustomerEntry ? toNumber(largestCustomerEntry[1]) : 0;
-  const topClientSharePct = effectiveRevenue > 0 ? clamp((largestCustomerRevenue / effectiveRevenue) * 100, 0, 100) : null;
+  const topClientSharePct = recognisedRevenue > 0 ? clamp((largestCustomerRevenue / recognisedRevenue) * 100, 0, 100) : null;
   const largestClient =
     largestCustomerEntry && topClientSharePct != null
       ? {
@@ -264,11 +362,19 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   const paymentTermsDays = customers.length
     ? Math.round(customers.reduce((sum, item) => sum + parsePaymentTerms(item.payment_terms), 0) / customers.length)
     : null;
+  const openingAccrualBalance = Number(
+    (
+      pendingInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0) +
+      salesContracts.filter((item) => normaliseStatus(item.status) !== "paid").reduce((sum, item) => sum + toNumber(item.price), 0)
+    ).toFixed(2)
+  );
   const startingCash = Math.max(0, toNumber(inputs?.starting_cash));
   const runwayMonths = netProfit >= 0 ? 999 : Math.max(0, startingCash / Math.max(Math.abs(netProfit), 1));
-  const utilization = validation?.metrics?.capacity?.utilization;
+  const utilization = businessValidation?.metrics?.capacity?.utilization;
   const capacityUtilisationPct =
-    typeof utilization === "number" ? clamp(utilization * 100, 0, 10000) : validation?.metrics?.capacity?.utilization_pct ?? null;
+    typeof utilization === "number"
+      ? clamp(utilization * 100, 0, 10000)
+      : businessValidation?.metrics?.capacity?.utilization_pct ?? serviceValidation?.metrics?.capacity_utilisation ?? null;
 
   const riskItems = [];
   const pushRisk = (risk) => riskItems.push(risk);
@@ -278,7 +384,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       reason_code: "CLIENT_CONCENTRATION_HIGH",
       severity: topClientSharePct >= 60 ? "high" : "medium",
       title: "Client concentration risk",
-      detail: `Your largest client contributes about ${Math.round(topClientSharePct)}% of accrued revenue.`,
+      detail: `Your largest client contributes about ${Math.round(topClientSharePct)}% of recognised revenue.`,
     });
   }
   if (capacityUtilisationPct != null && capacityUtilisationPct >= 85) {
@@ -337,12 +443,12 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       detail: `${pendingExpenseApproachingDue.length} payable item${pendingExpenseApproachingDue.length > 1 ? "s are" : " is"} close to term expiry.`,
     });
   }
-  if (!paidInvoices.length && !pendingInvoiceWithinTerms.length && !salesContracts.length) {
+  if (!paidInvoices.length && !salesContracts.length && validationRevenueContribution <= 0) {
     pushRisk({
       reason_code: "NO_ACTIVE_REVENUE",
       severity: "medium",
       title: "No active revenue flow",
-      detail: "There are no paid or in-term receivables feeding the current revenue picture.",
+      detail: "There are no paid revenue items feeding the current revenue picture yet.",
     });
   }
   if (!products.length) {
@@ -354,7 +460,16 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     });
   }
 
-  const validationReasons = Array.isArray(validation?.reasons) ? validation.reasons.slice(0, 4) : [];
+  const validationReasons = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(businessValidation?.reasons) ? businessValidation.reasons.slice(0, 2) : []),
+        ...(Array.isArray(serviceValidation?.risk_flags) ? serviceValidation.risk_flags.slice(0, 2).map((flag) => String(flag).replaceAll("_", " ")) : []),
+      ]
+        .map((reason) => String(reason || "").trim())
+        .filter(Boolean)
+    )
+  );
   validationReasons.forEach((reason, index) => {
     pushRisk({
       reason_code: `VALIDATION_${index + 1}`,
@@ -364,8 +479,10 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     });
   });
 
+  const dedupedRiskItems = dedupeRiskItems(riskItems);
+
   const recommendations = dedupeByScenario(
-    riskItems
+    dedupedRiskItems
       .filter((item) => !String(item.reason_code || "").startsWith("VALIDATION_") || validationReasons.length <= 1)
       .map((item) => ({
         reason_code: item.reason_code,
@@ -396,7 +513,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     overduePendingInvoices,
     overduePendingExpenses,
     totalRevenue: effectiveRevenue,
-    accruedRevenue: effectiveRevenue,
+    accruals: openingAccrualBalance,
+    accruedRevenue: openingAccrualBalance,
     accruedExpenses: effectiveExpenses,
     accruedCostOfSales: effectiveCostOfSales,
     monthlyRevenueRunRate: simulationRevenue,
@@ -410,25 +528,32 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     capacityUtilisationPct,
     largestClient,
     recommendations,
-    riskItems,
+    riskItems: dedupedRiskItems,
     stateSnapshot: {
       revenue_monthly: Math.max(0, Number(simulationRevenue.toFixed(2))),
       expenses_monthly: Math.max(0, Number(simulationExpenses.toFixed(2))),
       cost_of_sales_monthly: Math.max(0, Number(simulationCostOfSales.toFixed(2))),
       costs_monthly: Math.max(0, Number(simulationTotalCosts.toFixed(2))),
-      accrued_revenue_total: Math.max(0, Number(effectiveRevenue.toFixed(2))),
+      accrued_revenue_total: Math.max(0, Number(openingAccrualBalance.toFixed(2))),
       accrued_expenses_total: Math.max(0, Number(effectiveExpenses.toFixed(2))),
       accrued_cost_of_sales_total: Math.max(0, Number(effectiveCostOfSales.toFixed(2))),
       starting_cash: startingCash,
       top_client_share_pct: topClientSharePct != null ? Number(topClientSharePct.toFixed(2)) : null,
       capacity_utilisation_pct: capacityUtilisationPct != null ? Number(capacityUtilisationPct.toFixed(2)) : null,
       payment_terms_days: paymentTermsDays,
-      sales_cycle_days: validation?.metrics?.sales_cycle_days ?? null,
+      sales_cycle_days: businessValidation?.metrics?.sales_cycle_days ?? null,
       clients_count: customerRevenueMap.size || customers.length || null,
       approaching_receivables_count: pendingInvoiceApproachingDue.length,
       overdue_receivables_count: overduePendingInvoices.length,
       approaching_payables_count: pendingExpenseApproachingDue.length,
       overdue_payables_count: overduePendingExpenses.length,
+      validation_revenue_monthly: Math.max(0, Number(validationRevenueContribution.toFixed(2))),
+      validation_expenses_monthly: Math.max(0, Number(validationExpensesContribution.toFixed(2))),
+      validation_cost_of_sales_monthly: Math.max(0, Number(validationCostOfSalesContribution.toFixed(2))),
+      validation_total_costs_monthly: Math.max(0, Number(validationTotalCostsContribution.toFixed(2))),
+      pending_receivables_schedule: pendingReceivablesSchedule,
+      pending_payables_schedule: pendingPayablesSchedule,
+      opening_accrual_balance: openingAccrualBalance,
     },
   };
 }

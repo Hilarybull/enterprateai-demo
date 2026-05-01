@@ -252,6 +252,15 @@ export default function Layout() {
   }, [token, logout, navigate]);
 
   useEffect(() => {
+    function handleUnauthorized() {
+      logout();
+      navigate("/login", { replace: true });
+    }
+    window.addEventListener("ea:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("ea:unauthorized", handleUnauthorized);
+  }, [logout, navigate]);
+
+  useEffect(() => {
     if (!token) return;
     let cancelled = false;
 

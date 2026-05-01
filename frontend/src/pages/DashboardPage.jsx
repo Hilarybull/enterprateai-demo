@@ -123,7 +123,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
             <StatTile label="Total Revenue" value={formatCurrency(metrics.totalRevenue, currency)} />
             <StatTile label="Expenses + cost of sales" value={formatCurrency(metrics.totalCosts, currency)} tone="warn" />
-            <StatTile label="Pending invoices" value={formatNumber(metrics.pendingInvoices.length)} />
+            <StatTile label="Accruals" value={formatCurrency(metrics.accruals || 0, currency)} />
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm text-slate-900 dark:text-slate-100 min-h-[124px] flex flex-col">
               <div className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-500">
                 <div>Active risks</div>
@@ -178,10 +178,6 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between">
                     <span>Paid invoices</span>
                     <span className="font-semibold text-slate-900">{metrics.paidInvoices.length}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Pending invoices</span>
-                    <span className="font-semibold text-slate-900">{metrics.pendingInvoices.length}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Quotations</span>

@@ -39,6 +39,9 @@ export async function apiRequest(path, method, body, options) {
     if (res.status === 401) {
       localStorage.removeItem("ea_token");
       localStorage.removeItem("ea_email");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("ea:unauthorized", { detail: { path, method } }));
+      }
     }
     
     let message = `Request failed`;

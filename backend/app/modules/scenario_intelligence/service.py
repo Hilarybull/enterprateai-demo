@@ -100,6 +100,52 @@ def _month_span_from_days(days: int | None, fallback: int = 1, cap: int = 3) -> 
     return max(1, min(cap, int(round(max(1, days) / 30.0)) or fallback))
 
 
+def _normalise_schedule(values: Any, months: int) -> List[float]:
+    if not isinstance(values, list):
+        return [0.0] * months
+    schedule = [0.0] * months
+    for index, value in enumerate(values[:months]):
+        try:
+            schedule[index] = max(0.0, float(value or 0.0))
+        except (TypeError, ValueError):
+            schedule[index] = 0.0
+    return schedule
+
+
+def _opening_accrual_balance(state: BusinessStateSnapshot, pending_receivables_schedule: List[float]) -> float:
+    try:
+        configured = float(state.opening_accrual_balance or 0.0)
+    except (TypeError, ValueError):
+        configured = 0.0
+    if configured > 0:
+        return configured
+    try:
+        accrued_total = float(state.accrued_revenue_total or 0.0)
+    except (TypeError, ValueError):
+        accrued_total = 0.0
+    if accrued_total > 0:
+        return accrued_total
+    return max(0.0, sum(float(value or 0.0) for value in pending_receivables_schedule))
+
+
+def _delay_receivable_schedule(schedule: List[float], amount: float, delay_months: int) -> List[float]:
+    if delay_months <= 0 or amount <= 0 or not schedule:
+        return list(schedule)
+    adjusted = [max(0.0, float(value or 0.0)) for value in schedule]
+    remaining = max(0.0, float(amount or 0.0))
+    for index, value in enumerate(list(adjusted)):
+        if remaining <= 0:
+            break
+        shifted = min(value, remaining)
+        if shifted <= 0:
+            continue
+        adjusted[index] = max(0.0, adjusted[index] - shifted)
+        target_index = min(len(adjusted) - 1, index + delay_months)
+        adjusted[target_index] += shifted
+        remaining -= shifted
+    return adjusted
+
+
 def _templates() -> List[ScenarioTemplate]:
     return [
         ScenarioTemplate(
@@ -365,37 +411,8 @@ def recommend_scenarios(risk_signals: List[Dict[str, Any]]) -> List[ScenarioReco
 
 
 def _apply_scenario(state: BusinessStateSnapshot, scenario_type: str, params: Dict[str, Any]) -> BusinessStateSnapshot:
-    revenue = float(state.revenue_monthly)
-    expenses = float(state.expenses_monthly or max(float(state.costs_monthly) - float(state.cost_of_sales_monthly or 0), 0.0))
-    cost_of_sales = float(state.cost_of_sales_monthly or 0.0)
+    revenue, expenses, cost_of_sales = _monthly_projection_values(state, scenario_type, params, 1)
     starting_cash = float(state.starting_cash)
-
-    if scenario_type == "client_loss":
-        loss_pct = float(params.get("client_loss_pct") or state.top_client_share_pct or 0.0)
-        revenue = max(0.0, revenue * (1.0 - loss_pct / 100.0))
-    elif scenario_type == "revenue_drop":
-        drop_pct = float(params.get("revenue_drop_pct") or 0.0)
-        revenue = max(0.0, revenue * (1.0 - drop_pct / 100.0))
-    elif scenario_type == "price_change":
-        change_pct = float(params.get("price_change_pct") or 0.0)
-        revenue = max(0.0, revenue * (1.0 + change_pct / 100.0))
-    elif scenario_type == "cost_increase":
-        inc_pct = float(params.get("cost_increase_pct") or 0.0)
-        expenses = max(0.0, expenses * (1.0 + inc_pct / 100.0))
-        cost_of_sales = max(0.0, cost_of_sales * (1.0 + inc_pct / 100.0))
-    elif scenario_type == "hire_staff":
-        add_cost = float(params.get("employee_monthly_cost") or 0.0)
-        employee_count = int(params.get("employee_count") or 1)
-        expenses = max(0.0, expenses + (add_cost * max(1, employee_count)))
-    elif scenario_type == "contractor_addition":
-        add_cost = float(params.get("contractor_monthly_cost") or 0.0)
-        expenses = max(0.0, expenses + add_cost)
-    elif scenario_type == "service_launch":
-        uplift = float(params.get("revenue_uplift_pct") or 0.0)
-        cost_up = float(params.get("cost_uplift_pct") or 0.0)
-        revenue = max(0.0, revenue * (1.0 + uplift / 100.0))
-        expenses = max(0.0, expenses * (1.0 + cost_up / 100.0))
-        cost_of_sales = max(0.0, cost_of_sales * (1.0 + cost_up / 100.0))
 
     return BusinessStateSnapshot(
         revenue_monthly=revenue,
@@ -452,9 +469,13 @@ def _monthly_projection_values(
     elif scenario_type == "price_change":
         change_pct = float(params.get("price_change_pct") or 0.0)
         effective_month = max(1, int(params.get("effective_month") or 1))
+        selected_revenue = float(params.get("selected_product_revenue_monthly") or 0.0)
         if month_index >= effective_month:
             progress = min(1.0, ((month_index - effective_month) + 1) / float(pricing_ramp_months))
-            revenue *= 1.0 + ((change_pct / 100.0) * progress)
+            if selected_revenue > 0:
+                revenue += selected_revenue * ((change_pct / 100.0) * progress)
+            else:
+                revenue *= 1.0 + ((change_pct / 100.0) * progress)
     elif scenario_type == "cost_increase":
         inc_pct = float(params.get("cost_increase_pct") or 0.0)
         progress = min(1.0, month_index / float(cost_ramp_months))
@@ -490,22 +511,36 @@ def _timeline(
 
     delay_months = int(params.get("delay_months") or 0)
     payment_term_months = _month_span_from_days(state.payment_terms_days, fallback=1, cap=6)
-    receivables_queue = [0.0] * max(1, delay_months + payment_term_months)
+    selected_pending_receivable_amount = float(params.get("selected_pending_receivable_amount") or 0.0)
+    receivables_queue = [0.0] * max(1, payment_term_months)
+    pending_receivables_schedule = _normalise_schedule(state.pending_receivables_schedule, months)
+    if scenario_type == "payment_delay" and selected_pending_receivable_amount > 0 and delay_months > 0:
+        pending_receivables_schedule = _delay_receivable_schedule(
+            pending_receivables_schedule,
+            selected_pending_receivable_amount,
+            delay_months,
+        )
+    pending_payables_schedule = _normalise_schedule(state.pending_payables_schedule, months)
     payables_queue = [0.0] * max(1, payment_term_months)
 
     cash = float(scenario_state.starting_cash)
+    accruals_balance = _opening_accrual_balance(state, pending_receivables_schedule)
     timeline: List[Dict[str, Any]] = []
 
     for m in range(1, months + 1):
         revenue, expenses, cost_of_sales = _monthly_projection_values(state, scenario_type, params, m)
         costs = expenses + cost_of_sales
         profit = revenue - costs
+        displayed_accruals = max(0.0, accruals_balance)
 
+        scheduled_receivable = pending_receivables_schedule[m - 1] if m - 1 < len(pending_receivables_schedule) else 0.0
+        scheduled_payable = pending_payables_schedule[m - 1] if m - 1 < len(pending_payables_schedule) else 0.0
         receivables_queue.append(revenue)
-        collected_revenue = receivables_queue.pop(0)
+        collected_revenue = receivables_queue.pop(0) + scheduled_receivable
         payables_queue.append(costs)
-        paid_costs = payables_queue.pop(0)
+        paid_costs = payables_queue.pop(0) + scheduled_payable
         cash = max(0.0, cash + collected_revenue - paid_costs)
+        accruals_balance = max(0.0, accruals_balance - scheduled_receivable)
 
         score = _stability_score(
             BusinessStateSnapshot(
@@ -529,6 +564,7 @@ def _timeline(
             dict(
                 month_index=m,
                 revenue=round(revenue, 2),
+                accruals=round(displayed_accruals, 2),
                 expenses=round(expenses, 2),
                 cost_of_sales=round(cost_of_sales, 2),
                 costs=round(costs, 2),
@@ -917,16 +953,23 @@ async def do_nothing_projection(
     payment_term_months = _month_span_from_days(state.payment_terms_days, fallback=1, cap=6)
     receivables_queue = [0.0] * max(1, payment_term_months)
     payables_queue = [0.0] * max(1, payment_term_months)
+    pending_receivables_schedule = _normalise_schedule(state.pending_receivables_schedule, months)
+    pending_payables_schedule = _normalise_schedule(state.pending_payables_schedule, months)
+    accruals_balance = _opening_accrual_balance(state, pending_receivables_schedule)
     forecast: List[Dict[str, Any]] = []
     for m in range(1, months + 1):
         revenue, expenses, cost_of_sales = _monthly_projection_values(state, "do_nothing_projection", {}, m)
         costs = expenses + cost_of_sales
         profit = revenue - costs
+        displayed_accruals = max(0.0, accruals_balance)
+        scheduled_receivable = pending_receivables_schedule[m - 1] if m - 1 < len(pending_receivables_schedule) else 0.0
+        scheduled_payable = pending_payables_schedule[m - 1] if m - 1 < len(pending_payables_schedule) else 0.0
         receivables_queue.append(revenue)
-        collected_revenue = receivables_queue.pop(0)
+        collected_revenue = receivables_queue.pop(0) + scheduled_receivable
         payables_queue.append(costs)
-        paid_costs = payables_queue.pop(0)
+        paid_costs = payables_queue.pop(0) + scheduled_payable
         cash = max(0.0, cash + collected_revenue - paid_costs)
+        accruals_balance = max(0.0, accruals_balance - scheduled_receivable)
         score = _stability_score(
             BusinessStateSnapshot(
                 revenue_monthly=revenue,
@@ -948,6 +991,7 @@ async def do_nothing_projection(
             dict(
                 month_index=m,
                 revenue=round(revenue, 2),
+                accruals=round(displayed_accruals, 2),
                 expenses=round(expenses, 2),
                 cost_of_sales=round(cost_of_sales, 2),
                 costs=round(costs, 2),

@@ -11,5 +11,8 @@ export function getAcceptedBusinessValidation(data) {
 }
 
 export function getAcceptedWorkspaceValidation(data) {
-  return getAcceptedBusinessValidation(data) || getAcceptedServiceValidationEntry(data)?.result || null;
+  return {
+    businessValidation: getAcceptedBusinessValidation(data),
+    serviceValidation: getAcceptedServiceValidationEntry(data)?.result || null,
+  };
 }
