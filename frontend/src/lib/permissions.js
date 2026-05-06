@@ -14,14 +14,12 @@ export const FEATURES = {
   ],
   validation: [
     { key: "evaluate_idea", label: "Evaluate Business Idea" },
-    { key: "market_fit", label: "Market Fit Analysis" },
     { key: "service_validation", label: "Service Idea Validation" },
   ],
   blueprint: [
-    { key: "generate_document", label: "Generate Blueprint" },
-    { key: "view_documents", label: "View Documents" },
-    { key: "export_document", label: "Export Documents" },
-    { key: "share_document", label: "Share Documents" },
+    { key: "business_plan", label: "Business Plan" },
+    { key: "business_proposal", label: "Business Proposals" },
+    { key: "sales_letter", label: "Sales Letter" },
   ],
   simulation: [
     { key: "run_simulation", label: "Run Simulation" },
@@ -32,10 +30,15 @@ export const FEATURES = {
   catalogue: [
     { key: "view_catalogue", label: "View Catalogue" },
     { key: "manage_products", label: "Manage Products" },
+    { key: "manage_customers", label: "Customers" },
+    { key: "manage_vendors", label: "Vendors" },
   ],
   financials: [
     { key: "view_financials", label: "View Financials" },
-    { key: "create_invoice", label: "Create Invoice" },
+    { key: "invoices", label: "Invoices" },
+    { key: "quotations", label: "Quotations" },
+    { key: "expenses", label: "Expenses" },
+    { key: "contracts", label: "Contracts" },
     { key: "export_reports", label: "Export Reports" },
   ],
   registration: [

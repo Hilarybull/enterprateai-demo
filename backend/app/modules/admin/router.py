@@ -21,7 +21,7 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
     workspaces = await sb_select("workspaces", columns="id,name,created_at")
     users = await sb_select("users", columns="id,email,created_at")
     members = await sb_select("workspace_members", columns="id,workspace_id,user_id,permission_type,created_at")
-    invitations = await sb_select("workspace_invitations", columns="id,workspace_id,invited_email,status,created_at")
+    invitations = await sb_select("workspace_invitations", columns="id,workspace_id,email,status,created_at")
 
     # Count simulations and blueprints from workspace data
     sim_count = 0
@@ -78,7 +78,7 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
             {
                 "id": i["id"],
                 "workspace_id": i["workspace_id"],
-                "invited_email": i.get("invited_email"),
+                "invited_email": i.get("email"),
                 "status": i.get("status"),
                 "created_at": i.get("created_at"),
             }

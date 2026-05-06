@@ -163,7 +163,9 @@ export default function FinancialsPage() {
     product_ids: [],
     items: [],
     issued_at: new Date().toISOString().slice(0, 10),
-    due_date: ""
+    due_date: "",
+    subtotal_override: "",
+    cost_of_sales_override: "",
   });
   const [quoteForm, setQuoteForm] = useState({
     quotation_id: "",
@@ -172,7 +174,9 @@ export default function FinancialsPage() {
     items: [],
     validity_days: "30",
     issued_at: new Date().toISOString().slice(0, 10),
-    due_date: ""
+    due_date: "",
+    subtotal_override: "",
+    cost_of_sales_override: "",
   });
   const [expenseForm, setExpenseForm] = useState({
     vendor_id: "",
@@ -986,12 +990,12 @@ export default function FinancialsPage() {
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "", subtotal_override: "", cost_of_sales_override: "" });
     setEditingInvoiceId(null);
   }
 
   function resetQuoteForm() {
-    setQuoteForm({ quotation_id: "", customer_id: "", product_ids: [], items: [], validity_days: "30", issued_at: todayInputValue(), due_date: "" });
+    setQuoteForm({ quotation_id: "", customer_id: "", product_ids: [], items: [], validity_days: "30", issued_at: todayInputValue(), due_date: "", subtotal_override: "", cost_of_sales_override: "" });
     setEditingQuoteId(null);
   }
 
@@ -1072,8 +1076,10 @@ export default function FinancialsPage() {
       setError("Each selected product or service must have a quantity greater than zero.");
       return;
     }
-    const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-    const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const calcSubtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const calcCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const subtotal = invoiceForm.subtotal_override !== "" ? Number(Number(invoiceForm.subtotal_override).toFixed(2)) : calcSubtotal;
+    const totalCostOfSales = invoiceForm.cost_of_sales_override !== "" ? Number(Number(invoiceForm.cost_of_sales_override).toFixed(2)) : calcCostOfSales;
     const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
     const totalQuantity = sumLineItemQuantity(lineItems);
     const next = invoices.map((i) => ({ ...i }));
@@ -1125,8 +1131,10 @@ export default function FinancialsPage() {
       setError("Each selected product or service must have a quantity greater than zero.");
       return;
     }
-    const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-    const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const calcSubtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const calcCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const subtotal = quoteForm.subtotal_override !== "" ? Number(Number(quoteForm.subtotal_override).toFixed(2)) : calcSubtotal;
+    const totalCostOfSales = quoteForm.cost_of_sales_override !== "" ? Number(Number(quoteForm.cost_of_sales_override).toFixed(2)) : calcCostOfSales;
     const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
     const validity = Math.max(1, parseInt(String(quoteForm.validity_days || "30"), 10) || 30);
     const totalQuantity = sumLineItemQuantity(lineItems);
@@ -1369,11 +1377,15 @@ export default function FinancialsPage() {
   const invoicePreviewItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
   const invoiceSubtotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceCostOfSalesTotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-  const invoiceGrandTotal = Number((invoiceSubtotal + invoiceCostOfSalesTotal).toFixed(2));
+  const effectiveInvoiceSubtotal = invoiceForm.subtotal_override !== "" ? Number(invoiceForm.subtotal_override) : invoiceSubtotal;
+  const effectiveInvoiceCostOfSales = invoiceForm.cost_of_sales_override !== "" ? Number(invoiceForm.cost_of_sales_override) : invoiceCostOfSalesTotal;
+  const invoiceGrandTotal = Number((effectiveInvoiceSubtotal + effectiveInvoiceCostOfSales).toFixed(2));
   const quotePreviewItems = syncProductLineItems(quoteForm.product_ids, Array.isArray(quoteForm.items) ? quoteForm.items : []);
   const quoteSubtotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const quoteCostOfSalesTotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-  const quoteGrandTotal = Number((quoteSubtotal + quoteCostOfSalesTotal).toFixed(2));
+  const effectiveQuoteSubtotal = quoteForm.subtotal_override !== "" ? Number(quoteForm.subtotal_override) : quoteSubtotal;
+  const effectiveQuoteCostOfSales = quoteForm.cost_of_sales_override !== "" ? Number(quoteForm.cost_of_sales_override) : quoteCostOfSalesTotal;
+  const quoteGrandTotal = Number((effectiveQuoteSubtotal + effectiveQuoteCostOfSales).toFixed(2));
   const previewInvoice = activeInvoices.find((inv) => inv.id === previewInvoiceId) || null;
   const previewCustomer = previewInvoice ? resolveCustomer(previewInvoice.customer_id, previewInvoice.customer_name) : null;
   const previewProduct = previewInvoice ? resolveProduct(previewInvoice.product_id, previewInvoice.product_name) : null;
@@ -1694,11 +1706,31 @@ export default function FinancialsPage() {
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Subtotal</div>
-                <Input value={formatMoney(invoiceSubtotal)} disabled />
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder={String(invoiceSubtotal)}
+                  value={invoiceForm.subtotal_override}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, subtotal_override: e.target.value }))}
+                />
+                {invoiceForm.subtotal_override !== "" && (
+                  <div className="mt-1 text-[11px] text-slate-400">Auto: {formatMoney(invoiceSubtotal)}</div>
+                )}
               </div>
               <div>
                 <div className="ea-label">Total cost of sales</div>
-                <Input value={formatMoney(invoiceCostOfSalesTotal)} disabled />
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder={String(invoiceCostOfSalesTotal)}
+                  value={invoiceForm.cost_of_sales_override}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, cost_of_sales_override: e.target.value }))}
+                />
+                {invoiceForm.cost_of_sales_override !== "" && (
+                  <div className="mt-1 text-[11px] text-slate-400">Auto: {formatMoney(invoiceCostOfSalesTotal)}</div>
+                )}
               </div>
             </div>
             <div>
@@ -1756,7 +1788,9 @@ export default function FinancialsPage() {
                                   product_ids: Array.isArray(inv.product_ids) && inv.product_ids.length ? inv.product_ids : inv.product_id ? [inv.product_id] : [],
                                   items: normalizeRecordItems(inv),
                                   issued_at: inv.issued_at || "",
-                                  due_date: inv.due_date || ""
+                                  due_date: inv.due_date || "",
+                                  subtotal_override: inv.subtotal_amount != null ? String(inv.subtotal_amount) : "",
+                                  cost_of_sales_override: inv.cost_of_sales != null ? String(inv.cost_of_sales) : "",
                                 });
                             }
                           },
@@ -1934,11 +1968,31 @@ export default function FinancialsPage() {
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Subtotal</div>
-                <Input value={formatMoney(quoteSubtotal)} disabled />
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder={String(quoteSubtotal)}
+                  value={quoteForm.subtotal_override}
+                  onChange={(e) => setQuoteForm((f) => ({ ...f, subtotal_override: e.target.value }))}
+                />
+                {quoteForm.subtotal_override !== "" && (
+                  <div className="mt-1 text-[11px] text-slate-400">Auto: {formatMoney(quoteSubtotal)}</div>
+                )}
               </div>
               <div>
                 <div className="ea-label">Total cost of sales</div>
-                <Input value={formatMoney(quoteCostOfSalesTotal)} disabled />
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder={String(quoteCostOfSalesTotal)}
+                  value={quoteForm.cost_of_sales_override}
+                  onChange={(e) => setQuoteForm((f) => ({ ...f, cost_of_sales_override: e.target.value }))}
+                />
+                {quoteForm.cost_of_sales_override !== "" && (
+                  <div className="mt-1 text-[11px] text-slate-400">Auto: {formatMoney(quoteCostOfSalesTotal)}</div>
+                )}
               </div>
             </div>
             <div>
@@ -1997,7 +2051,9 @@ export default function FinancialsPage() {
                                   items: normalizeRecordItems(quote),
                                   validity_days: String(quote.validity_days || "30"),
                                   issued_at: quote.issued_at || "",
-                                  due_date: quote.due_date || ""
+                                  due_date: quote.due_date || "",
+                                  subtotal_override: quote.subtotal_amount != null ? String(quote.subtotal_amount) : "",
+                                  cost_of_sales_override: quote.cost_of_sales != null ? String(quote.cost_of_sales) : "",
                                 });
                             }
                           },
