@@ -924,13 +924,18 @@ export default function FinancialsPage() {
       return url;
     } catch (e) {
       setShareNotice(null);
-      setError(e instanceof Error ? e.message : "Share failed.");
+      const raw = e instanceof Error ? e.message : "";
+      if (raw === "NETWORK_ERROR") {
+        setError("Cannot reach the server to create a share link. Check that the backend is running, then try again.");
+      } else {
+        setError(raw || "Share failed.");
+      }
       return null;
     }
   }
 
   async function shareFinancialDocument(kind, record, customer, product, mode = "copy") {
-    const url = await createFinancialShareLink(kind, record, customer, product);
+    let url = await createFinancialShareLink(kind, record, customer, product);
     if (!url) return;
     if (mode === "mail") {
       const isInvoice = kind === "invoice";
