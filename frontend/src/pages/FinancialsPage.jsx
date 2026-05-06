@@ -14,6 +14,8 @@ import { useWorkspaceStore } from "../store/workspace";
 import { formatCurrency } from "../lib/format";
 import { getProductCostOfSales, getProductSalesPrice } from "../lib/financialIntelligence";
 
+const OTHER_PRODUCT_ID = "__other__";
+
 function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "Select products / services" }) {
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -29,7 +31,17 @@ function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "
   }, []);
 
   const selectedProducts = products.filter((product) => selectedIds.includes(product.id));
-  const summary = selectedProducts.length ? selectedProducts.map((product) => product.name).join(", ") : placeholder;
+  const hasOther = selectedIds.includes(OTHER_PRODUCT_ID);
+  const summaryParts = selectedProducts.map((p) => p.name);
+  if (hasOther) summaryParts.push("Other");
+  const summary = summaryParts.length ? summaryParts.join(", ") : placeholder;
+
+  function toggleId(id) {
+    const next = selectedIds.includes(id)
+      ? selectedIds.filter((sid) => sid !== id)
+      : [...selectedIds, id];
+    onChange(next);
+  }
 
   return (
     <div ref={dropdownRef} className="relative">
@@ -51,12 +63,7 @@ function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "
                 <input
                   type="checkbox"
                   checked={selectedIds.includes(product.id)}
-                  onChange={() => {
-                    const next = selectedIds.includes(product.id)
-                      ? selectedIds.filter((id) => id !== product.id)
-                      : [...selectedIds, product.id];
-                    onChange(next);
-                  }}
+                  onChange={() => toggleId(product.id)}
                   className="accent-brand-600"
                 />
                 <span>{product.name}</span>
@@ -64,6 +71,15 @@ function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "
             )) : (
               <div className="px-3 py-2 text-xs text-slate-400">No products or services found.</div>
             )}
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border-t border-slate-100 px-3 py-2 text-xs text-slate-500 hover:bg-slate-50">
+              <input
+                type="checkbox"
+                checked={hasOther}
+                onChange={() => toggleId(OTHER_PRODUCT_ID)}
+                className="accent-brand-600"
+              />
+              <span className="italic">Other / Custom</span>
+            </label>
           </div>
           <div className="border-t border-slate-100 px-3 py-2 text-right">
             <button
@@ -164,8 +180,6 @@ export default function FinancialsPage() {
     items: [],
     issued_at: new Date().toISOString().slice(0, 10),
     due_date: "",
-    subtotal_override: "",
-    cost_of_sales_override: "",
   });
   const [quoteForm, setQuoteForm] = useState({
     quotation_id: "",
@@ -175,8 +189,6 @@ export default function FinancialsPage() {
     validity_days: "30",
     issued_at: new Date().toISOString().slice(0, 10),
     due_date: "",
-    subtotal_override: "",
-    cost_of_sales_override: "",
   });
   const [expenseForm, setExpenseForm] = useState({
     vendor_id: "",
@@ -581,9 +593,20 @@ export default function FinancialsPage() {
   }
 
   function syncProductLineItems(selectedIds, existingItems = []) {
-    const selectedProducts = resolveProducts(selectedIds);
-    return selectedProducts.map((product) => {
-      const existing = existingItems.find((item) => item?.product_id === product.id);
+    return selectedIds.map((id) => {
+      if (id === OTHER_PRODUCT_ID) {
+        const existing = existingItems.find((item) => item?.product_id === OTHER_PRODUCT_ID);
+        return {
+          product_id: OTHER_PRODUCT_ID,
+          product_name: existing?.product_name || "",
+          quantity: Number(existing?.quantity || 1),
+          unit_price: existing?.unit_price != null ? Number(existing.unit_price) : 0,
+          unit_cost_of_sales: existing?.unit_cost_of_sales != null ? Number(existing.unit_cost_of_sales) : 0,
+        };
+      }
+      const product = resolveProducts([id])[0];
+      if (!product) return null;
+      const existing = existingItems.find((item) => item?.product_id === id);
       return {
         product_id: product.id,
         product_name: product.name,
@@ -591,7 +614,7 @@ export default function FinancialsPage() {
         unit_price: existing?.unit_price != null ? Number(existing.unit_price) : Number(getProductPrice(product)),
         unit_cost_of_sales: existing?.unit_cost_of_sales != null ? Number(existing.unit_cost_of_sales) : Number(getProductDefaultCost(product)),
       };
-    });
+    }).filter(Boolean);
   }
 
   function normalizeRecordItems(record) {
@@ -990,12 +1013,12 @@ export default function FinancialsPage() {
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "", subtotal_override: "", cost_of_sales_override: "" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "" });
     setEditingInvoiceId(null);
   }
 
   function resetQuoteForm() {
-    setQuoteForm({ quotation_id: "", customer_id: "", product_ids: [], items: [], validity_days: "30", issued_at: todayInputValue(), due_date: "", subtotal_override: "", cost_of_sales_override: "" });
+    setQuoteForm({ quotation_id: "", customer_id: "", product_ids: [], items: [], validity_days: "30", issued_at: todayInputValue(), due_date: "" });
     setEditingQuoteId(null);
   }
 
@@ -1038,13 +1061,17 @@ export default function FinancialsPage() {
     }));
   }
 
+  function coerceItemField(field, value) {
+    if (field === "product_name") return value;
+    if (field === "quantity") return Math.max(0, Number(value || 0));
+    return Number(value || 0);
+  }
+
   function updateInvoiceItem(productId, field, value) {
     setInvoiceForm((prev) => ({
       ...prev,
       items: (Array.isArray(prev.items) ? prev.items : []).map((item) =>
-        item.product_id === productId
-          ? { ...item, [field]: field === "quantity" ? Math.max(0, Number(value || 0)) : Number(value || 0) }
-          : item
+        item.product_id === productId ? { ...item, [field]: coerceItemField(field, value) } : item
       ),
     }));
   }
@@ -1053,9 +1080,7 @@ export default function FinancialsPage() {
     setQuoteForm((prev) => ({
       ...prev,
       items: (Array.isArray(prev.items) ? prev.items : []).map((item) =>
-        item.product_id === productId
-          ? { ...item, [field]: field === "quantity" ? Math.max(0, Number(value || 0)) : Number(value || 0) }
-          : item
+        item.product_id === productId ? { ...item, [field]: coerceItemField(field, value) } : item
       ),
     }));
   }
@@ -1076,10 +1101,12 @@ export default function FinancialsPage() {
       setError("Each selected product or service must have a quantity greater than zero.");
       return;
     }
-    const calcSubtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-    const calcCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-    const subtotal = invoiceForm.subtotal_override !== "" ? Number(Number(invoiceForm.subtotal_override).toFixed(2)) : calcSubtotal;
-    const totalCostOfSales = invoiceForm.cost_of_sales_override !== "" ? Number(Number(invoiceForm.cost_of_sales_override).toFixed(2)) : calcCostOfSales;
+    if (lineItems.some((item) => item.product_id === OTHER_PRODUCT_ID && !String(item.product_name || "").trim())) {
+      setError("Enter a name for the custom product or service.");
+      return;
+    }
+    const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
     const totalQuantity = sumLineItemQuantity(lineItems);
     const next = invoices.map((i) => ({ ...i }));
@@ -1131,10 +1158,12 @@ export default function FinancialsPage() {
       setError("Each selected product or service must have a quantity greater than zero.");
       return;
     }
-    const calcSubtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-    const calcCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-    const subtotal = quoteForm.subtotal_override !== "" ? Number(Number(quoteForm.subtotal_override).toFixed(2)) : calcSubtotal;
-    const totalCostOfSales = quoteForm.cost_of_sales_override !== "" ? Number(Number(quoteForm.cost_of_sales_override).toFixed(2)) : calcCostOfSales;
+    if (lineItems.some((item) => item.product_id === OTHER_PRODUCT_ID && !String(item.product_name || "").trim())) {
+      setError("Enter a name for the custom product or service.");
+      return;
+    }
+    const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
     const validity = Math.max(1, parseInt(String(quoteForm.validity_days || "30"), 10) || 30);
     const totalQuantity = sumLineItemQuantity(lineItems);
@@ -1377,15 +1406,11 @@ export default function FinancialsPage() {
   const invoicePreviewItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
   const invoiceSubtotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceCostOfSalesTotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-  const effectiveInvoiceSubtotal = invoiceForm.subtotal_override !== "" ? Number(invoiceForm.subtotal_override) : invoiceSubtotal;
-  const effectiveInvoiceCostOfSales = invoiceForm.cost_of_sales_override !== "" ? Number(invoiceForm.cost_of_sales_override) : invoiceCostOfSalesTotal;
-  const invoiceGrandTotal = Number((effectiveInvoiceSubtotal + effectiveInvoiceCostOfSales).toFixed(2));
+  const invoiceGrandTotal = Number((invoiceSubtotal + invoiceCostOfSalesTotal).toFixed(2));
   const quotePreviewItems = syncProductLineItems(quoteForm.product_ids, Array.isArray(quoteForm.items) ? quoteForm.items : []);
   const quoteSubtotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const quoteCostOfSalesTotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-  const effectiveQuoteSubtotal = quoteForm.subtotal_override !== "" ? Number(quoteForm.subtotal_override) : quoteSubtotal;
-  const effectiveQuoteCostOfSales = quoteForm.cost_of_sales_override !== "" ? Number(quoteForm.cost_of_sales_override) : quoteCostOfSalesTotal;
-  const quoteGrandTotal = Number((effectiveQuoteSubtotal + effectiveQuoteCostOfSales).toFixed(2));
+  const quoteGrandTotal = Number((quoteSubtotal + quoteCostOfSalesTotal).toFixed(2));
   const previewInvoice = activeInvoices.find((inv) => inv.id === previewInvoiceId) || null;
   const previewCustomer = previewInvoice ? resolveCustomer(previewInvoice.customer_id, previewInvoice.customer_name) : null;
   const previewProduct = previewInvoice ? resolveProduct(previewInvoice.product_id, previewInvoice.product_name) : null;
@@ -1659,7 +1684,18 @@ export default function FinancialsPage() {
                   <div className="ea-label">Selected item details</div>
                   {invoicePreviewItems.map((item) => (
                     <div key={item.product_id} className="rounded-xl border border-slate-200 p-3">
-                      <div className="mb-3 text-sm font-semibold text-slate-900">{item.product_name}</div>
+                      {item.product_id === OTHER_PRODUCT_ID ? (
+                        <div className="mb-3">
+                          <div className="ea-label">Product / Service name *</div>
+                          <Input
+                            placeholder="Enter name"
+                            value={item.product_name}
+                            onChange={(e) => updateInvoiceItem(OTHER_PRODUCT_ID, "product_name", e.target.value)}
+                          />
+                        </div>
+                      ) : (
+                        <div className="mb-3 text-sm font-semibold text-slate-900">{item.product_name}</div>
+                      )}
                       <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
                         <div>
                           <div className="ea-label">Quantity *</div>
@@ -1706,31 +1742,11 @@ export default function FinancialsPage() {
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Subtotal</div>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder={String(invoiceSubtotal)}
-                  value={invoiceForm.subtotal_override}
-                  onChange={(e) => setInvoiceForm((f) => ({ ...f, subtotal_override: e.target.value }))}
-                />
-                {invoiceForm.subtotal_override !== "" && (
-                  <div className="mt-1 text-[11px] text-slate-400">Auto: {formatMoney(invoiceSubtotal)}</div>
-                )}
+                <Input value={formatMoney(invoiceSubtotal)} disabled />
               </div>
               <div>
                 <div className="ea-label">Total cost of sales</div>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder={String(invoiceCostOfSalesTotal)}
-                  value={invoiceForm.cost_of_sales_override}
-                  onChange={(e) => setInvoiceForm((f) => ({ ...f, cost_of_sales_override: e.target.value }))}
-                />
-                {invoiceForm.cost_of_sales_override !== "" && (
-                  <div className="mt-1 text-[11px] text-slate-400">Auto: {formatMoney(invoiceCostOfSalesTotal)}</div>
-                )}
+                <Input value={formatMoney(invoiceCostOfSalesTotal)} disabled />
               </div>
             </div>
             <div>
@@ -1789,8 +1805,6 @@ export default function FinancialsPage() {
                                   items: normalizeRecordItems(inv),
                                   issued_at: inv.issued_at || "",
                                   due_date: inv.due_date || "",
-                                  subtotal_override: inv.subtotal_amount != null ? String(inv.subtotal_amount) : "",
-                                  cost_of_sales_override: inv.cost_of_sales != null ? String(inv.cost_of_sales) : "",
                                 });
                             }
                           },
@@ -1912,7 +1926,18 @@ export default function FinancialsPage() {
                   <div className="ea-label">Selected item details</div>
                   {quotePreviewItems.map((item) => (
                     <div key={item.product_id} className="rounded-xl border border-slate-200 p-3">
-                      <div className="mb-3 text-sm font-semibold text-slate-900">{item.product_name}</div>
+                      {item.product_id === OTHER_PRODUCT_ID ? (
+                        <div className="mb-3">
+                          <div className="ea-label">Product / Service name *</div>
+                          <Input
+                            placeholder="Enter name"
+                            value={item.product_name}
+                            onChange={(e) => updateQuoteItem(OTHER_PRODUCT_ID, "product_name", e.target.value)}
+                          />
+                        </div>
+                      ) : (
+                        <div className="mb-3 text-sm font-semibold text-slate-900">{item.product_name}</div>
+                      )}
                       <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
                         <div>
                           <div className="ea-label">Quantity *</div>
@@ -1968,31 +1993,11 @@ export default function FinancialsPage() {
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Subtotal</div>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder={String(quoteSubtotal)}
-                  value={quoteForm.subtotal_override}
-                  onChange={(e) => setQuoteForm((f) => ({ ...f, subtotal_override: e.target.value }))}
-                />
-                {quoteForm.subtotal_override !== "" && (
-                  <div className="mt-1 text-[11px] text-slate-400">Auto: {formatMoney(quoteSubtotal)}</div>
-                )}
+                <Input value={formatMoney(quoteSubtotal)} disabled />
               </div>
               <div>
                 <div className="ea-label">Total cost of sales</div>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder={String(quoteCostOfSalesTotal)}
-                  value={quoteForm.cost_of_sales_override}
-                  onChange={(e) => setQuoteForm((f) => ({ ...f, cost_of_sales_override: e.target.value }))}
-                />
-                {quoteForm.cost_of_sales_override !== "" && (
-                  <div className="mt-1 text-[11px] text-slate-400">Auto: {formatMoney(quoteCostOfSalesTotal)}</div>
-                )}
+                <Input value={formatMoney(quoteCostOfSalesTotal)} disabled />
               </div>
             </div>
             <div>
@@ -2052,8 +2057,6 @@ export default function FinancialsPage() {
                                   validity_days: String(quote.validity_days || "30"),
                                   issued_at: quote.issued_at || "",
                                   due_date: quote.due_date || "",
-                                  subtotal_override: quote.subtotal_amount != null ? String(quote.subtotal_amount) : "",
-                                  cost_of_sales_override: quote.cost_of_sales != null ? String(quote.cost_of_sales) : "",
                                 });
                             }
                           },
