@@ -65,6 +65,19 @@ export function describePermissions(permissionType, permissions) {
 }
 
 /**
+ * Returns true if the given specific feature is accessible under the permission set.
+ * Module-level grants → all features within that module are accessible.
+ * Feature-level grants → only explicitly listed features are accessible.
+ */
+export function hasFeatureAccess(moduleKey, featureKey, permissionType, permissions) {
+  if (!permissions || !permissionType) return false;
+  if (permissionType === "module") {
+    return (permissions.modules || []).includes(moduleKey);
+  }
+  return ((permissions.features || {})[moduleKey] || []).includes(featureKey);
+}
+
+/**
  * Returns true if the given module is accessible under the permission set.
  */
 export function hasModuleAccess(moduleKey, permissionType, permissions) {

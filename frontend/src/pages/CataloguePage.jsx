@@ -10,12 +10,20 @@ import WorkspacePrompt from "../components/WorkspacePrompt";
 import { CatalogueIllustration, IllustrationCard } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
+import { hasFeatureAccess } from "../lib/permissions";
 
 export default function CataloguePage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
+  const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
+  const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
+  const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const navigate = useNavigate();
+
+  function canCatalogueFeature(featureKey) {
+    return !isMemberMode || hasFeatureAccess("catalogue", featureKey, memberPermissionType, memberPermissions);
+  }
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -33,6 +41,16 @@ export default function CataloguePage() {
   const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [editingVendorId, setEditingVendorId] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
+
+  // Reset to overview if current tab is locked by feature permissions
+  useEffect(() => {
+    const locked = {
+      products: !canCatalogueFeature("manage_products"),
+      customers: !canCatalogueFeature("manage_customers"),
+      vendors: !canCatalogueFeature("manage_vendors"),
+    };
+    if (locked[activeTab]) setActiveTab("overview");
+  }, [isMemberMode, memberPermissionType, memberPermissions]); // eslint-disable-line
 
   const [productForm, setProductForm] = useState({
     name: "",
@@ -592,9 +610,9 @@ export default function CataloguePage() {
           onChange={setActiveTab}
           options={[
             { value: "overview", label: "Overview" },
-            { value: "products", label: "Products" },
-            { value: "customers", label: "Customers" },
-            { value: "vendors", label: "Vendors" }
+            ...(canCatalogueFeature("manage_products") ? [{ value: "products", label: "Products" }] : []),
+            ...(canCatalogueFeature("manage_customers") ? [{ value: "customers", label: "Customers" }] : []),
+            ...(canCatalogueFeature("manage_vendors") ? [{ value: "vendors", label: "Vendors" }] : []),
           ]}
         />
       </div>

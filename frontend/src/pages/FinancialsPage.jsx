@@ -11,6 +11,7 @@ import WorkspacePrompt from "../components/WorkspacePrompt";
 import { FinancialIllustration, IllustrationCard } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
+import { hasFeatureAccess } from "../lib/permissions";
 import { formatCurrency } from "../lib/format";
 import { getProductCostOfSales, getProductSalesPrice } from "../lib/financialIntelligence";
 
@@ -143,7 +144,14 @@ export default function FinancialsPage() {
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
   const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
+  const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
+  const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
+  const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const navigate = useNavigate();
+
+  function canFinancialsFeature(featureKey) {
+    return !isMemberMode || hasFeatureAccess("financials", featureKey, memberPermissionType, memberPermissions);
+  }
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -167,6 +175,18 @@ export default function FinancialsPage() {
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [editingContractId, setEditingContractId] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
+
+  // Reset to overview if current tab is locked by feature permissions
+  useEffect(() => {
+    const locked = {
+      invoices: !canFinancialsFeature("invoices"),
+      quotes: !canFinancialsFeature("quotations"),
+      expenses: !canFinancialsFeature("expenses"),
+      contracts: !canFinancialsFeature("contracts"),
+    };
+    if (locked[activeTab]) setActiveTab("overview");
+  }, [isMemberMode, memberPermissionType, memberPermissions]); // eslint-disable-line
+
   const [previewInvoiceId, setPreviewInvoiceId] = useState(null);
   const [previewQuoteId, setPreviewQuoteId] = useState(null);
   const [shareMenu, setShareMenu] = useState(null);
@@ -1466,10 +1486,10 @@ export default function FinancialsPage() {
           onChange={setActiveTab}
           options={[
             { value: "overview", label: "Overview" },
-            { value: "invoices", label: "Invoices" },
-            { value: "quotes", label: "Quotations" },
-            { value: "expenses", label: "Expenses" },
-            { value: "contracts", label: "Contracts" }
+            ...(canFinancialsFeature("invoices") ? [{ value: "invoices", label: "Invoices" }] : []),
+            ...(canFinancialsFeature("quotations") ? [{ value: "quotes", label: "Quotations" }] : []),
+            ...(canFinancialsFeature("expenses") ? [{ value: "expenses", label: "Expenses" }] : []),
+            ...(canFinancialsFeature("contracts") ? [{ value: "contracts", label: "Contracts" }] : []),
           ]}
         />
       </div>

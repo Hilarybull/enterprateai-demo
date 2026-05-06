@@ -8,6 +8,7 @@ import Spinner from "../components/Spinner";
 import SegmentedTabs from "../components/SegmentedTabs";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
+import { hasFeatureAccess } from "../lib/permissions";
 import { useAuthStore } from "../store/auth";
 import InfoTip from "../components/InfoTip";
 import NumberInput, { parseIntSafe, parseNumber } from "../components/NumberInput";
@@ -60,6 +61,11 @@ export default function ValidationWizardPage() {
   const requestedHistoryId = searchParams.get("history_id");
   const requestedHistoryType = searchParams.get("history_type");
   const storedWorkspaceId = useWorkspaceStore((s) => s.workspaceId);
+  const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
+  const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
+  const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
+
+  const canServiceValidation = !isMemberMode || hasFeatureAccess("validation", "service_validation", memberPermissionType, memberPermissions);
 
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceNameStore = useWorkspaceStore((s) => s.setWorkspaceName);
@@ -1668,17 +1674,19 @@ export default function ValidationWizardPage() {
                     <div className="text-sm font-semibold text-slate-900">Business idea</div>
                     <div className="mt-1 text-xs text-slate-600">A service, marketplace, or company concept you want to start.</div>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => selectPathway("product_service_idea")}
-                    className={
-                      "rounded-2xl border p-4 text-left transition " +
-                      (form.pathway === "product_service_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
-                    }
-                  >
-                    <div className="text-sm font-semibold text-slate-900">Product / service idea</div>
-                    <div className="mt-1 text-xs text-slate-600">A product or offering you want to build or add.</div>
-                  </button>
+                  {canServiceValidation && (
+                    <button
+                      type="button"
+                      onClick={() => selectPathway("product_service_idea")}
+                      className={
+                        "rounded-2xl border p-4 text-left transition " +
+                        (form.pathway === "product_service_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
+                      }
+                    >
+                      <div className="text-sm font-semibold text-slate-900">Product / service idea</div>
+                      <div className="mt-1 text-xs text-slate-600">A product or offering you want to build or add.</div>
+                    </button>
+                  )}
                 </div>
               </SectionCard>
             ) : null}
