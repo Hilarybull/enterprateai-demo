@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1-mini"
 
     # Optional AI integration keys (not required for MVP routes)
-    claude_api_key: str | None = Field(default=None, validation_alias=AliasChoices("CLAUDE_API_KEY",))
+    claude_api_key: str | None = Field(default=None, validation_alias=AliasChoices("CLAUDE_API_KEY", "ANTHROPIC_API_KEY"))
     # Use a stable, explicit model id by default to avoid provider-side "Not Found"
     # errors when aliases like "*-latest" are not supported for an API key.
     claude_model: str = Field(default="claude-3-5-sonnet-20240620", validation_alias=AliasChoices("CLAUDE_MODEL",))

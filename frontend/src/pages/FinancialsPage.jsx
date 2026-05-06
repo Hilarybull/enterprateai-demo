@@ -539,8 +539,8 @@ export default function FinancialsPage() {
     return str || "Payment terms";
   }
 
-  function renderDocBranding(subtitle, { forShare = false } = {}) {
-    const logoSrc = !forShare && workspaceLogo && !workspaceLogo.startsWith("data:") ? workspaceLogo : null;
+  function renderDocBranding(subtitle) {
+    const logoSrc = workspaceLogo && String(workspaceLogo).trim() ? workspaceLogo : null;
     return `
       <div class="brand-block">
         ${logoSrc ? `<img src="${logoSrc}" alt="Company logo" />` : ""}
@@ -886,7 +886,6 @@ export default function FinancialsPage() {
         token = shareRes?.token;
       } else {
         const rawHtml = isInvoice ? buildInvoiceHtml(record, customer, product) : buildQuoteHtml(record, customer, product);
-        const safeHtml = rawHtml.replace(/src="data:[^"]*"/g, 'src=""');
         const markdown = buildFinancialShareText(kind, record, customer, product);
         const res = await apiRequest("/blueprint/financial-documents/share", "POST", {
           document_id: null,
@@ -895,7 +894,7 @@ export default function FinancialsPage() {
           company_name: workspaceName || "EnterprateAI",
           workspace_id: workspaceId || null,
           document_markdown: markdown,
-          document_html: safeHtml,
+          document_html: rawHtml,
         }, { timeoutMs: 120000 });
         token = res?.token;
         documentId = res?.document_id;
