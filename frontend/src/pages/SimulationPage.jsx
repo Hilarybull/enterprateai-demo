@@ -6,6 +6,7 @@ import InlineAlert from "../components/InlineAlert";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import Spinner from "../components/Spinner";
 import NumberInput, { parseNumber } from "../components/NumberInput";
+import { SimulationIllustration } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
@@ -722,7 +723,6 @@ export default function SimulationPage() {
                   recommendations.map((rec) => (
                     <div key={rec.scenario_template_id} className="rounded-xl border border-slate-200 bg-white p-3">
                       <div className="text-sm font-semibold text-slate-900">{rec.title}</div>
-                      <div className="text-xs text-slate-500">{scenarioCaption(rec)}</div>
                       <div className="mt-2">
                         <Button
                           size="sm"
@@ -759,9 +759,10 @@ export default function SimulationPage() {
                     >
                       <div>
                         <div className="text-sm font-semibold text-slate-900">{h.scenario_name}</div>
-                        <div className="text-xs text-slate-500">{h.scenario_type}</div>
                       </div>
-                      <div className="text-xs text-slate-500">{h.executed_at}</div>
+                      <div className="text-xs text-slate-500">
+                        {h.executed_at ? new Date(h.executed_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : ""}
+                      </div>
                       <div className="text-xs font-semibold text-slate-600">
                         {h.decision_status ? h.decision_status.toUpperCase() : "PENDING"}
                       </div>
@@ -909,31 +910,39 @@ export default function SimulationPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
-              <div className="rounded-xl border border-slate-200 bg-white p-3">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Current baseline</div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                  <div className="rounded-lg bg-slate-50 px-2 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Revenue</div>
-                    <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.revenue_monthly || 0, currency || "GBP")}</div>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 px-2 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Costs</div>
-                    <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.costs_monthly || 0, currency || "GBP")}</div>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 px-2 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Cash start</div>
-                    <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.starting_cash || 0, currency || "GBP")}</div>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 px-2 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Largest client</div>
-                    <div className="mt-1 font-semibold text-slate-900 break-words">{largestClient?.name || "Not identified"}</div>
+              <details className="rounded-xl border border-slate-200 bg-white">
+                <summary className="cursor-pointer select-none px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-50 rounded-xl list-none flex items-center justify-between">
+                  <span>Current baseline</span>
+                  <svg viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5 text-slate-400"><path fillRule="evenodd" d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z" clipRule="evenodd"/></svg>
+                </summary>
+                <div className="border-t border-slate-100 p-3">
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-lg bg-slate-50 px-2 py-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Revenue</div>
+                      <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.revenue_monthly || 0, currency || "GBP")}</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-2 py-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Costs</div>
+                      <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.costs_monthly || 0, currency || "GBP")}</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-2 py-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Cash start</div>
+                      <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.starting_cash || 0, currency || "GBP")}</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-2 py-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Largest client</div>
+                      <div className="mt-1 font-semibold text-slate-900 break-words">{largestClient?.name || "Not identified"}</div>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </details>
 
-              <div className="rounded-xl border border-slate-200 bg-white p-3">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">How this run works</div>
-                <div className="mt-2 space-y-2 text-xs leading-5 text-slate-600">
+              <details className="rounded-xl border border-slate-200 bg-white">
+                <summary className="cursor-pointer select-none px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-50 rounded-xl list-none flex items-center justify-between">
+                  <span>How this run works</span>
+                  <svg viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5 text-slate-400"><path fillRule="evenodd" d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z" clipRule="evenodd"/></svg>
+                </summary>
+                <div className="border-t border-slate-100 p-3 space-y-2 text-xs leading-5 text-slate-600">
                   {buildScenarioExecutionBreakdown(
                     activeRun,
                     timeline,
@@ -949,8 +958,9 @@ export default function SimulationPage() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </details>
             </div>
+
             </div>
           </SectionCard>
 
@@ -1355,7 +1365,14 @@ function ScenarioOutput({
   maxTimelineRows
 }) {
   if (!activeRun) {
-    return <div className="text-sm text-slate-600">Run a scenario to view results.</div>;
+    return (
+      <div className="flex flex-col items-center py-4 text-center">
+        <div className="w-full max-w-xs overflow-hidden rounded-2xl bg-gradient-to-br from-brand-50 via-white to-indigo-50">
+          <SimulationIllustration />
+        </div>
+        <p className="mt-4 text-sm text-slate-500">Run a scenario from the left panel to see results here.</p>
+      </div>
+    );
   }
 
   const base = activeRun.baseline_metrics || {};
@@ -1573,7 +1590,6 @@ function ScenarioOutput({
                   <tr key={row.month_index} className="border-t">
                     <td className="px-2 py-2">
                       <div className="font-semibold text-slate-700">{formatMonthLabel(row.month_index)}</div>
-                      <div className="text-[10px] text-slate-500">{formatMonthDetail(row.month_index)}</div>
                     </td>
                     <td className="px-2 py-2">{formatCurrency(row.revenue, currency)}</td>
                     <td className="px-2 py-2">{formatCurrency(row.accruals, currency)}</td>

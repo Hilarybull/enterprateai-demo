@@ -494,15 +494,6 @@ export default function CataloguePage() {
     square: { label: "Square", note: "Sync catalog and item pricing." }
   };
 
-  const catalogueLogos = {
-    hubspot: { label: "HS", className: "bg-orange-100 text-orange-700" },
-    salesforce: { label: "SF", className: "bg-sky-100 text-sky-700" },
-    zoho_crm: { label: "ZC", className: "bg-red-100 text-red-700" },
-    shopify: { label: "SH", className: "bg-emerald-100 text-emerald-700" },
-    woo_commerce: { label: "WC", className: "bg-violet-100 text-violet-700" },
-    square: { label: "SQ", className: "bg-slate-100 text-slate-700" }
-  };
-
   function statusBadge(status) {
     if (status === "connected") return { label: "Connected", tone: "emerald" };
     if (status === "pending") return { label: "Pending", tone: "amber" };
@@ -510,10 +501,57 @@ export default function CataloguePage() {
   }
 
   function CatalogueLogo({ type }) {
-    const meta = catalogueLogos[type] || { label: type?.slice(0, 2) || "IN", className: "bg-slate-100 text-slate-600" };
+    const icons = {
+      hubspot: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#FF7A59"/>
+          <circle cx="18" cy="13" r="4" fill="white"/>
+          <rect x="16.5" y="17" width="3" height="5" rx="1.5" fill="white"/>
+          <circle cx="25" cy="24" r="2.5" fill="white" opacity="0.85"/>
+          <circle cx="11" cy="24" r="2.5" fill="white" opacity="0.85"/>
+          <line x1="18" y1="19" x2="25" y2="24" stroke="white" strokeWidth="1.5"/>
+          <line x1="18" y1="19" x2="11" y2="24" stroke="white" strokeWidth="1.5"/>
+        </svg>
+      ),
+      salesforce: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#00A1E0"/>
+          <path d="M9 23c0-2.8 1.8-5 4.5-5 .4 0 .8.1 1.1.2C15.3 16 17.3 14 20 14c1.8 0 3.4.8 4.5 2.1A4 4 0 0128 20.5a3.5 3.5 0 01-3.5 3.5H11a2 2 0 01-2-1z" fill="white"/>
+        </svg>
+      ),
+      zoho_crm: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#E42527"/>
+          <text x="18" y="25" textAnchor="middle" fill="white" fontSize="17" fontWeight="bold" fontFamily="Arial, sans-serif">Z</text>
+        </svg>
+      ),
+      shopify: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#5C6AC4"/>
+          <path d="M22.5 10.5c-.2 0-.3.1-.4.2l-.9.9c-.5-.3-1.1-.5-1.7-.5-1.9 0-2.8 1.4-3.1 2.8l-1.5.5-.3.9h1.2L15 26h11l-.8-11.5.8-.2c.2-.8.2-1.2.2-1.2-.1-1.6-1.3-2.6-3.7-2.6zm-1 1.5c.8 0 1.5.3 2 .7l-.7.7c-.3-.2-.8-.4-1.3-.4-.5 0-.9.2-1.2.5l-.5-.5c.4-.6 1-1 1.7-1z" fill="white" opacity="0.9"/>
+        </svg>
+      ),
+      woo_commerce: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#7F54B3"/>
+          <path d="M8 12h20a1 1 0 011 1v2H7v-2a1 1 0 011-1z" fill="white" opacity="0.9"/>
+          <path d="M7 15h22l-2 9H9l-2-9z" fill="white" opacity="0.7"/>
+          <path d="M12 18l2 4M24 18l-2 4M18 18v4" stroke="#7F54B3" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      ),
+      square: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#1A1A1A"/>
+          <rect x="9" y="9" width="18" height="18" rx="4" fill="white"/>
+          <rect x="14" y="14" width="8" height="8" rx="2" fill="#1A1A1A"/>
+        </svg>
+      ),
+    };
+    const icon = icons[type];
+    if (icon) return icon;
     return (
-      <div className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold ${meta.className}`}>
-        {meta.label}
+      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-600">
+        {String(type || "IN").slice(0, 2).toUpperCase()}
       </div>
     );
   }
@@ -756,7 +794,7 @@ export default function CataloguePage() {
               <div className="ea-label">Product / Service name *</div>
               <Input value={productForm.name} onChange={(e) => setProductForm((p) => ({ ...p, name: e.target.value }))} />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Type</div>
                 <select
@@ -778,7 +816,7 @@ export default function CataloguePage() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
               <div>
                 <div className="ea-label">Cost of sales / service</div>
                 <Input
@@ -956,7 +994,7 @@ export default function CataloguePage() {
               <div className="ea-label">Address</div>
               <Input value={customerForm.address} onChange={(e) => setCustomerForm((c) => ({ ...c, address: e.target.value }))} />
             </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
                 <div>
                   <div className="ea-label">Payment terms</div>
                   <select
@@ -1165,7 +1203,7 @@ export default function CataloguePage() {
               <div className="ea-label">Address</div>
               <Input value={vendorForm.address} onChange={(e) => setVendorForm((v) => ({ ...v, address: e.target.value }))} />
             </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
                 <div>
                   <div className="ea-label">Payment terms</div>
                   <select
@@ -1199,7 +1237,7 @@ export default function CataloguePage() {
                 <Input value={vendorForm.industry} onChange={(e) => setVendorForm((v) => ({ ...v, industry: e.target.value }))} />
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Product type</div>
                 <select
@@ -1351,9 +1389,11 @@ export default function CataloguePage() {
       </div>
       ) : null}
 
-      <div className="mt-6">
-        <div className="text-xs text-slate-500">{loading ? "Syncing catalogue..." : "Catalogue saved to workspace."}</div>
-      </div>
+      {loading ? (
+        <div className="mt-4">
+          <div className="text-xs text-slate-500">Syncing catalogue...</div>
+        </div>
+      ) : null}
     </div>
   );
 }

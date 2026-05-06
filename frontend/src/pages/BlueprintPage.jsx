@@ -226,6 +226,45 @@ function ServicesDropdown({ workspaceServices, selectedServices, setSelectedServ
   );
 }
 
+function ShareLinkPopup({ url, onClose }) {
+  const inputRef = useRef(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { inputRef.current?.select(); }, []);
+  async function handleCopy() {
+    try { await navigator.clipboard.writeText(url); } catch {}
+    try { inputRef.current?.select(); document.execCommand("copy"); } catch {}
+    setCopied(true);
+    setTimeout(onClose, 1200);
+  }
+  return (
+    <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/30 sm:items-center" onClick={onClose}>
+      <div className="relative mx-4 mb-6 w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl sm:mb-0" onClick={(e) => e.stopPropagation()}>
+        <button type="button" onClick={onClose} className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+          <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
+        </button>
+        <div className="mb-3 text-sm font-semibold text-slate-900">Share link ready</div>
+        <div className="flex gap-2">
+          <input
+            ref={inputRef}
+            readOnly
+            value={url}
+            className="ea-input min-w-0 flex-1 font-mono text-xs"
+            onClick={() => inputRef.current?.select()}
+          />
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-brand-700"
+          >
+            {copied ? "Copied!" : "Copy"}
+          </button>
+        </div>
+        <p className="mt-2 text-[11px] text-slate-400">Anyone with this link can view the document.</p>
+      </div>
+    </div>
+  );
+}
+
 export default function BlueprintPage() {
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
   const workspaceLogoStored = useWorkspaceStore((s) => s.workspaceLogo);
@@ -314,6 +353,7 @@ export default function BlueprintPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
   const [shareNotice, setShareNotice] = useState(null);
+  const [shareLinkUrl, setShareLinkUrl] = useState(null);
   const [sectionsByDoc, setSectionsByDoc] = useState({
     business_plan: [],
     client_proposal: [],
@@ -1471,9 +1511,8 @@ export default function BlueprintPage() {
       const token = res?.token;
       if (!token) throw new Error("Share link could not be created.");
       const url = `${window.location.origin}/share/${token}`;
-      await navigator.clipboard.writeText(url);
-      setShareNotice("Link copied");
-      setTimeout(() => setShareNotice(null), 1800);
+      setShareNotice(null);
+      setShareLinkUrl(url);
     } catch (e) {
       setShareNotice(null);
       setError(e instanceof Error ? e.message : "Share failed");
@@ -2451,6 +2490,8 @@ export default function BlueprintPage() {
 
         </div>
       ) : null}
+
+      {shareLinkUrl ? <ShareLinkPopup url={shareLinkUrl} onClose={() => setShareLinkUrl(null)} /> : null}
     </div>
   );
-}     
+}

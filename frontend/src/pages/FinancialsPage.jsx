@@ -80,6 +80,45 @@ function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "
   );
 }
 
+function ShareLinkPopup({ url, onClose }) {
+  const inputRef = useRef(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { inputRef.current?.select(); }, []);
+  async function handleCopy() {
+    try { await navigator.clipboard.writeText(url); } catch {}
+    try { inputRef.current?.select(); document.execCommand("copy"); } catch {}
+    setCopied(true);
+    setTimeout(onClose, 1200);
+  }
+  return (
+    <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/30 sm:items-center" onClick={onClose}>
+      <div className="relative mx-4 mb-6 w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl sm:mb-0" onClick={(e) => e.stopPropagation()}>
+        <button type="button" onClick={onClose} className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+          <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
+        </button>
+        <div className="mb-3 text-sm font-semibold text-slate-900">Share link ready</div>
+        <div className="flex gap-2">
+          <input
+            ref={inputRef}
+            readOnly
+            value={url}
+            className="ea-input min-w-0 flex-1 font-mono text-xs"
+            onClick={() => inputRef.current?.select()}
+          />
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-brand-700"
+          >
+            {copied ? "Copied!" : "Copy"}
+          </button>
+        </div>
+        <p className="mt-2 text-[11px] text-slate-400">Anyone with this link can view the document.</p>
+      </div>
+    </div>
+  );
+}
+
 export default function FinancialsPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
@@ -93,6 +132,7 @@ export default function FinancialsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [shareNotice, setShareNotice] = useState(null);
+  const [shareLinkUrl, setShareLinkUrl] = useState(null);
 
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -389,15 +429,6 @@ export default function FinancialsPage() {
     salesforce: { label: "Salesforce", note: "Connect accounts, opportunities, and stages." }
   };
 
-  const integrationLogos = {
-    quickbooks: { label: "QB", className: "bg-emerald-100 text-emerald-700" },
-    sap: { label: "SAP", className: "bg-blue-100 text-blue-700" },
-    zoho_books: { label: "ZB", className: "bg-amber-100 text-amber-700" },
-    zoho_crm: { label: "ZC", className: "bg-red-100 text-red-700" },
-    hubspot: { label: "HS", className: "bg-orange-100 text-orange-700" },
-    salesforce: { label: "SF", className: "bg-sky-100 text-sky-700" }
-  };
-
   function statusBadge(status) {
     if (status === "connected") return { label: "Connected", tone: "emerald" };
     if (status === "pending") return { label: "Pending", tone: "amber" };
@@ -405,10 +436,55 @@ export default function FinancialsPage() {
   }
 
   function IntegrationLogo({ type }) {
-    const meta = integrationLogos[type] || { label: type?.slice(0, 2) || "IN", className: "bg-slate-100 text-slate-600" };
+    const icons = {
+      quickbooks: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#2CA01C"/>
+          <circle cx="16" cy="18" r="6" fill="none" stroke="white" strokeWidth="2.5"/>
+          <path d="M22 18h6M25 15v6" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      ),
+      sap: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#009EDB"/>
+          <text x="18" y="23" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold" fontFamily="Arial, sans-serif" letterSpacing="1">SAP</text>
+        </svg>
+      ),
+      zoho_books: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#E05C00"/>
+          <text x="18" y="25" textAnchor="middle" fill="white" fontSize="17" fontWeight="bold" fontFamily="Arial, sans-serif">Z</text>
+        </svg>
+      ),
+      zoho_crm: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#E42527"/>
+          <text x="18" y="25" textAnchor="middle" fill="white" fontSize="17" fontWeight="bold" fontFamily="Arial, sans-serif">Z</text>
+        </svg>
+      ),
+      hubspot: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#FF7A59"/>
+          <circle cx="18" cy="13" r="4" fill="white"/>
+          <rect x="16.5" y="17" width="3" height="5" rx="1.5" fill="white"/>
+          <circle cx="25" cy="24" r="2.5" fill="white" opacity="0.85"/>
+          <circle cx="11" cy="24" r="2.5" fill="white" opacity="0.85"/>
+          <line x1="18" y1="19" x2="25" y2="24" stroke="white" strokeWidth="1.5"/>
+          <line x1="18" y1="19" x2="11" y2="24" stroke="white" strokeWidth="1.5"/>
+        </svg>
+      ),
+      salesforce: (
+        <svg viewBox="0 0 36 36" fill="none" className="h-9 w-9">
+          <rect width="36" height="36" rx="9" fill="#00A1E0"/>
+          <path d="M9 23c0-2.8 1.8-5 4.5-5 .4 0 .8.1 1.1.2C15.3 16 17.3 14 20 14c1.8 0 3.4.8 4.5 2.1A4 4 0 0128 20.5a3.5 3.5 0 01-3.5 3.5H11a2 2 0 01-2-1z" fill="white"/>
+        </svg>
+      ),
+    };
+    const icon = icons[type];
+    if (icon) return icon;
     return (
-      <div className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold ${meta.className}`}>
-        {meta.label}
+      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-600">
+        {String(type || "IN").slice(0, 2).toUpperCase()}
       </div>
     );
   }
@@ -447,15 +523,17 @@ export default function FinancialsPage() {
     return str || "Payment terms";
   }
 
-  function renderDocBranding(subtitle) {
+  function renderDocBranding(subtitle, { forShare = false } = {}) {
+    const logoSrc = !forShare && workspaceLogo && !workspaceLogo.startsWith("data:") ? workspaceLogo : null;
     return `
       <div class="brand-block">
-        ${workspaceLogo ? `<img src="${workspaceLogo}" alt="Company logo" />` : ""}
+        ${logoSrc ? `<img src="${logoSrc}" alt="Company logo" />` : ""}
         <h2>${workspaceName || "EnterprateAI"}</h2>
         <div class="muted">${subtitle}</div>
       </div>
     `;
   }
+
 
   function matchByName(list, value) {
     const needle = String(value || "").trim().toLowerCase();
@@ -780,7 +858,8 @@ export default function FinancialsPage() {
         );
         token = shareRes?.token;
       } else {
-        const html = isInvoice ? buildInvoiceHtml(record, customer, product) : buildQuoteHtml(record, customer, product);
+        const rawHtml = isInvoice ? buildInvoiceHtml(record, customer, product) : buildQuoteHtml(record, customer, product);
+        const safeHtml = rawHtml.replace(/src="data:[^"]*"/g, 'src=""');
         const markdown = buildFinancialShareText(kind, record, customer, product);
         const res = await apiRequest("/blueprint/financial-documents/share", "POST", {
           document_id: null,
@@ -789,7 +868,7 @@ export default function FinancialsPage() {
           company_name: workspaceName || "EnterprateAI",
           workspace_id: workspaceId || null,
           document_markdown: markdown,
-          document_html: html,
+          document_html: safeHtml,
         }, { timeoutMs: 120000 });
         token = res?.token;
         documentId = res?.document_id;
@@ -814,6 +893,7 @@ export default function FinancialsPage() {
       }
 
       const url = `${window.location.origin}/share/${token}`;
+      setShareNotice(null);
       return url;
     } catch (e) {
       setShareNotice(null);
@@ -840,14 +920,7 @@ export default function FinancialsPage() {
       setTimeout(() => setShareNotice(null), 1800);
       return;
     }
-    try {
-      await navigator.clipboard.writeText(url);
-      setShareNotice("Link copied");
-      setTimeout(() => setShareNotice(null), 1800);
-    } catch (e) {
-      setShareNotice(null);
-      setError(e instanceof Error ? e.message : "Share failed.");
-    }
+    setShareLinkUrl(url);
   }
 
   function addFinancialShareAction(items, kind, record, customer, product) {
@@ -1575,7 +1648,7 @@ export default function FinancialsPage() {
                   {invoicePreviewItems.map((item) => (
                     <div key={item.product_id} className="rounded-xl border border-slate-200 p-3">
                       <div className="mb-3 text-sm font-semibold text-slate-900">{item.product_name}</div>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
                         <div>
                           <div className="ea-label">Quantity *</div>
                           <Input
@@ -1608,7 +1681,7 @@ export default function FinancialsPage() {
                   ))}
                 </div>
               ) : null}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Issued date</div>
                 <Input type="date" value={invoiceForm.issued_at} onChange={(e) => setInvoiceForm((f) => ({ ...f, issued_at: e.target.value }))} />
@@ -1618,7 +1691,7 @@ export default function FinancialsPage() {
                 <Input type="date" value={invoiceForm.due_date} onChange={(e) => setInvoiceForm((f) => ({ ...f, due_date: e.target.value }))} />
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Subtotal</div>
                 <Input value={formatMoney(invoiceSubtotal)} disabled />
@@ -1806,7 +1879,7 @@ export default function FinancialsPage() {
                   {quotePreviewItems.map((item) => (
                     <div key={item.product_id} className="rounded-xl border border-slate-200 p-3">
                       <div className="mb-3 text-sm font-semibold text-slate-900">{item.product_name}</div>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
                         <div>
                           <div className="ea-label">Quantity *</div>
                           <Input
@@ -1839,7 +1912,7 @@ export default function FinancialsPage() {
                   ))}
                 </div>
               ) : null}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Quotation validity (days)</div>
                 <Input
@@ -1858,7 +1931,7 @@ export default function FinancialsPage() {
                 <Input type="date" value={quoteForm.due_date} onChange={(e) => setQuoteForm((f) => ({ ...f, due_date: e.target.value }))} />
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Subtotal</div>
                 <Input value={formatMoney(quoteSubtotal)} disabled />
@@ -2042,7 +2115,7 @@ export default function FinancialsPage() {
               <div className="ea-label">Item *</div>
               <Input value={expenseForm.item} onChange={(e) => setExpenseForm((f) => ({ ...f, item: e.target.value }))} />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Cost type</div>
                 <select
@@ -2064,7 +2137,7 @@ export default function FinancialsPage() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Incurred date</div>
                 <Input type="date" value={expenseForm.incurred_at} onChange={(e) => setExpenseForm((f) => ({ ...f, incurred_at: e.target.value }))} />
@@ -2212,7 +2285,7 @@ export default function FinancialsPage() {
           }
         >
           <div className="grid grid-cols-1 gap-3">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Contract type</div>
                 <select
@@ -2251,7 +2324,7 @@ export default function FinancialsPage() {
                 onChange={(nextIds) => setContractForm((f) => ({ ...f, product_ids: nextIds }))}
               />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
               <div>
                 <div className="ea-label">Price *</div>
                 <Input
@@ -2280,7 +2353,7 @@ export default function FinancialsPage() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Discount</div>
                 <Input
@@ -2300,7 +2373,7 @@ export default function FinancialsPage() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Start date</div>
                 <Input type="date" value={contractForm.start_date} onChange={(e) => setContractForm((f) => ({ ...f, start_date: e.target.value }))} />
@@ -2308,10 +2381,6 @@ export default function FinancialsPage() {
               <div>
                 <div className="ea-label">End date</div>
                 <Input type="date" value={contractForm.end_date} onChange={(e) => setContractForm((f) => ({ ...f, end_date: e.target.value }))} />
-              </div>
-              <div>
-                <div className="ea-label">Due date</div>
-                <Input type="date" value={contractForm.due_date} onChange={(e) => setContractForm((f) => ({ ...f, due_date: e.target.value }))} />
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -2353,7 +2422,7 @@ export default function FinancialsPage() {
                           {contract.contract_type === "sales" ? "Sales" : "Purchase"} • {party?.name || "Partner"}
                         </div>
                         <div className="text-xs text-slate-500">
-                          {summariseProductNames(contract)} • {formatMoney(contract.price)} • Due {contract.due_date ? new Date(contract.due_date).toLocaleDateString() : "Not set"} • Status {contract.status}
+                          {summariseProductNames(contract)} • {formatMoney(contract.price)} • {contract.end_date ? `Ends ${new Date(contract.end_date).toLocaleDateString()}` : "No end date"} • Status {contract.status}
                         </div>
                       </div>
                       <ActionMenu
@@ -2373,7 +2442,6 @@ export default function FinancialsPage() {
                                 freight: String(contract.freight || ""),
                                 start_date: contract.start_date || "",
                                 end_date: contract.end_date || "",
-                                due_date: contract.due_date || "",
                                 status: contract.status || "pending"
                               });
                             }
@@ -2685,6 +2753,8 @@ export default function FinancialsPage() {
           {shareNotice}
         </div>
       ) : null}
+
+      {shareLinkUrl ? <ShareLinkPopup url={shareLinkUrl} onClose={() => setShareLinkUrl(null)} /> : null}
     </div>
   );
 }

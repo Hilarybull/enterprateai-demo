@@ -49,6 +49,8 @@ export default function ResultsPage() {
   const [mfLoading, setMfLoading] = useState(false);
   const [mfError, setMfError] = useState(null);
   const [serviceDraft, setServiceDraft] = useState(null);
+  const [activeValidationId, setActiveValidationId] = useState(null);
+  const [activeServiceValidationId, setActiveServiceValidationId] = useState(null);
   const isServiceIdeaView = Boolean(validation?.scores && validation?.metrics && validation?.outcome);
   const decisionMeta = decisionBadge(decision);
 
@@ -64,6 +66,7 @@ export default function ResultsPage() {
         if (isServiceIdeaView) {
           const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
           const activeId = ws?.data?.active_service_validation_id;
+          setActiveServiceValidationId(activeId || history[0]?.id || null);
           const active = activeId ? history.find((h) => h?.id === activeId) : history[0];
           const status = active?.decision_status;
           if (status === "accepted" || status === "rejected") {
@@ -77,6 +80,7 @@ export default function ResultsPage() {
           }
         } else {
           const status = ws?.data?.decision?.status;
+          setActiveValidationId(ws?.data?.active_validation_id || null);
           if (status === "accepted" || status === "rejected") {
             setDecision(status);
             setDecisionStatusStore(status);
@@ -257,7 +261,7 @@ export default function ResultsPage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="text-2xl font-semibold tracking-tight text-slate-900">
+              <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
                 {validation?.service_name || "Service idea"}
               </div>
               {serviceOutcome ? <Badge>{serviceOutcome}</Badge> : null}
@@ -266,7 +270,15 @@ export default function ResultsPage() {
             <div className="mt-1 text-sm text-slate-600">Service idea viability results.</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" disabled={!workspaceId} onClick={() => navigate(`/validation?workspace_id=${workspaceId}`)}>
+            <Button
+              variant="secondary"
+              disabled={!workspaceId}
+              onClick={() =>
+                navigate(
+                  `/validation?workspace_id=${workspaceId}${activeServiceValidationId ? `&history_id=${encodeURIComponent(activeServiceValidationId)}&history_type=service_validation` : ""}`
+                )
+              }
+            >
               Modify
             </Button>
             <Button
@@ -526,7 +538,7 @@ export default function ResultsPage() {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-2xl font-semibold tracking-tight text-slate-900">{businessName || "Validation"}</div>
+            <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">{businessName || "Validation"}</div>
             <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
             {pathwayLabel ? <Badge>{pathwayLabel}</Badge> : null}
           </div>
@@ -543,7 +555,15 @@ export default function ResultsPage() {
               { value: "detailed", label: "Detailed" }
             ]}
           />
-          <Button variant="secondary" disabled={!workspaceId} onClick={() => navigate(`/validation?workspace_id=${workspaceId}`)}>
+          <Button
+            variant="secondary"
+            disabled={!workspaceId}
+            onClick={() =>
+              navigate(
+                `/validation?workspace_id=${workspaceId}${activeValidationId ? `&history_id=${encodeURIComponent(activeValidationId)}&history_type=business_validation` : ""}`
+              )
+            }
+          >
             Modify
           </Button>
           <Button variant="danger" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("rejected")}>

@@ -14,6 +14,9 @@ import CataloguePage from "./pages/CataloguePage";
 import FinancialsPage from "./pages/FinancialsPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import SharedBlueprintPage from "./pages/SharedBlueprintPage";
+import TeamPage from "./pages/TeamPage";
+import JoinPage from "./pages/JoinPage";
+import AdminPage from "./pages/AdminPage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -40,6 +43,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/share/:token" element={<SharedBlueprintPage />} />
+      <Route path="/join/:token" element={<JoinPage />} />
       <Route
         path="/"
         element={
@@ -57,7 +61,16 @@ export default function App() {
         <Route path="registration" element={<RegistrationPage />} />
         <Route path="catalogue" element={<CataloguePage />} />
         <Route path="financials" element={<FinancialsPage />} />
+        <Route path="team" element={<TeamPage />} />
       </Route>
+      <Route
+        path="ent-admin"
+        element={
+          <Protected>
+            <AdminPage />
+          </Protected>
+        }
+      />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

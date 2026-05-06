@@ -24,7 +24,14 @@ export default function LoginPage() {
   const [forgotNotice, setForgotNotice] = useState(null);
 
   useEffect(() => {
-    if (token) navigate("/dashboard");
+    if (!token) return;
+    const pendingJoin = sessionStorage.getItem("ea_pending_join");
+    if (pendingJoin) {
+      sessionStorage.removeItem("ea_pending_join");
+      navigate(`/join/${pendingJoin}`, { replace: true });
+    } else {
+      navigate("/dashboard", { replace: true });
+    }
   }, [token, navigate]);
 
   async function onSubmit(e) {

@@ -17,6 +17,14 @@ export const useWorkspaceStore = create(
       draftServiceIdea: null,
       validation: null,
       currency: "GBP",
+
+      // Member mode — set when the user is accessing someone else's workspace via invite
+      isMemberMode: false,
+      membershipId: null,
+      memberPermissionType: null,  // "module" | "feature"
+      memberPermissions: null,     // { modules: [...] } or { features: {...} }
+      memberWorkspaceName: null,
+
       setWorkspaceId: (workspaceId) => set({ workspaceId: workspaceId ?? null }),
       setWorkspaceName: (workspaceName) => set({ workspaceName: workspaceName || null }),
       setWorkspaceLogo: (workspaceLogo) => set({ workspaceLogo: workspaceLogo || null }),
@@ -30,6 +38,25 @@ export const useWorkspaceStore = create(
       setDraftServiceIdea: (draftServiceIdea) => set({ draftServiceIdea: draftServiceIdea ?? null }),
       setValidation: (validation) => set({ validation: validation ?? null }),
       setCurrency: (currency) => set({ currency: currency || "GBP" }),
+
+      setMemberMode: (membershipId, permType, perms, workspaceName) =>
+        set({
+          isMemberMode: true,
+          membershipId: membershipId || null,
+          memberPermissionType: permType || null,
+          memberPermissions: perms || null,
+          memberWorkspaceName: workspaceName || null,
+        }),
+
+      clearMemberMode: () =>
+        set({
+          isMemberMode: false,
+          membershipId: null,
+          memberPermissionType: null,
+          memberPermissions: null,
+          memberWorkspaceName: null,
+        }),
+
       resetForUser: (email) =>
         set((state) => {
           if (!email) {
@@ -46,7 +73,12 @@ export const useWorkspaceStore = create(
               draftIdeaValidation: null,
               draftServiceIdea: null,
               validation: null,
-              currency: "GBP"
+              currency: "GBP",
+              isMemberMode: false,
+              membershipId: null,
+              memberPermissionType: null,
+              memberPermissions: null,
+              memberWorkspaceName: null,
             };
           }
           if (state.workspaceOwnerEmail && state.workspaceOwnerEmail !== email) {
@@ -63,7 +95,12 @@ export const useWorkspaceStore = create(
               draftIdeaValidation: null,
               draftServiceIdea: null,
               validation: null,
-              currency: "GBP"
+              currency: "GBP",
+              isMemberMode: false,
+              membershipId: null,
+              memberPermissionType: null,
+              memberPermissions: null,
+              memberWorkspaceName: null,
             };
           }
           return { workspaceOwnerEmail: email };
@@ -84,7 +121,12 @@ export const useWorkspaceStore = create(
         draftIdeaValidation: state.draftIdeaValidation,
         draftServiceIdea: state.draftServiceIdea,
         validation: state.validation,
-        currency: state.currency || "GBP"
+        currency: state.currency || "GBP",
+        isMemberMode: state.isMemberMode,
+        membershipId: state.membershipId,
+        memberPermissionType: state.memberPermissionType,
+        memberPermissions: state.memberPermissions,
+        memberWorkspaceName: state.memberWorkspaceName,
       })
     }
   )

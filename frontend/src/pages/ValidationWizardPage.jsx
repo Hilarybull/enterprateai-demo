@@ -57,6 +57,8 @@ export default function ValidationWizardPage() {
   const fromOtherModule = searchParams.get("from") === "module";
   const isCreateWorkspace = fromOtherModule;
   const returnTo = searchParams.get("return");
+  const requestedHistoryId = searchParams.get("history_id");
+  const requestedHistoryType = searchParams.get("history_type");
   const storedWorkspaceId = useWorkspaceStore((s) => s.workspaceId);
 
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
@@ -87,6 +89,7 @@ export default function ValidationWizardPage() {
   const [hasAppliedDrafts, setHasAppliedDrafts] = useState(false);
   const [contentTab, setContentTab] = useState("builder");
   const [historyFilter, setHistoryFilter] = useState("all");
+  const [historyRequestHandled, setHistoryRequestHandled] = useState(false);
 
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceNameTouched, setWorkspaceNameTouched] = useState(false);
@@ -407,6 +410,25 @@ export default function ValidationWizardPage() {
     if (workspaceNameTouched) return;
     setWorkspaceName(derivedWorkspaceName);
   }, [derivedWorkspaceName, workspaceNameTouched]);
+
+  useEffect(() => {
+    if (!requestedHistoryId || !requestedHistoryType) return;
+    if (!activeWorkspaceId || historyRequestHandled || isPrefilling) return;
+    setHistoryRequestHandled(true);
+    setContentTab("builder");
+    setMode("fill");
+    editHistoryEntry({
+      id: requestedHistoryId,
+      type: requestedHistoryType,
+      status: "pending",
+    });
+  }, [
+    activeWorkspaceId,
+    historyRequestHandled,
+    isPrefilling,
+    requestedHistoryId,
+    requestedHistoryType,
+  ]);
 
   useEffect(() => {
     if (!isCreateWorkspace) return;
@@ -1604,14 +1626,8 @@ export default function ValidationWizardPage() {
                           </span>
                         </div>
                         <div className="mt-1 text-xs text-slate-500">
-                          {new Date(entry.created_at).toLocaleString()}
+                          {new Date(entry.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
                         </div>
-                        {entry.summary ? (
-                          <div className="mt-2 text-sm text-slate-600">{entry.summary}</div>
-                        ) : null}
-                        {typeof entry.score === "number" ? (
-                          <div className="mt-2 text-xs font-semibold text-slate-500">Score: {entry.score}</div>
-                        ) : null}
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <Button variant="secondary" onClick={() => editHistoryEntry(entry)}>
@@ -1739,7 +1755,7 @@ export default function ValidationWizardPage() {
                         {isProductPath ? "What product or service are you building?" : "What are you building?"}
                       </FieldLabel>
                       {isProductPath && workspaceServices.length ? (
-                        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                        <div className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
                           <select
                             className="ea-input"
                             value={serviceSelection}
@@ -2092,7 +2108,7 @@ export default function ValidationWizardPage() {
                         <div className="md:col-span-2 xl:col-span-3">
                           <FieldLabel info="Name of the service idea you want to validate.">Service name *</FieldLabel>
                           {combinedServiceOptions.length ? (
-                            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                            <div className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
                               <select
                                 className="ea-input"
                                 value={serviceSelection}
@@ -2178,10 +2194,9 @@ export default function ValidationWizardPage() {
                     {enabledForms.revenue_inputs ? (
                       <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                         <summary className="cursor-pointer text-sm font-semibold text-slate-900">Revenue inputs</summary>
-                        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2">
                           <div>
                             <FieldLabel info="Price charged per sale.">Price per sale *</FieldLabel>
-                            <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                             <NumberInput placeholder="0" value={serviceForm.price_per_sale} onChange={(v) => updateService("price_per_sale", v)} />
                           </div>
                         <div>
@@ -2198,27 +2213,22 @@ export default function ValidationWizardPage() {
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Labour cost to deliver one sale.">Direct labour cost per sale *</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.direct_labour_cost_per_sale} onChange={(v) => updateService("direct_labour_cost_per_sale", v)} />
                         </div>
                         <div>
                           <FieldLabel info="Contractor cost to deliver one sale.">Contractor cost per sale</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.contractor_cost_per_sale} onChange={(v) => updateService("contractor_cost_per_sale", v)} />
                         </div>
                         <div>
                           <FieldLabel info="Materials or tools cost per sale.">Materials/tools cost per sale</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.materials_cost_per_sale} onChange={(v) => updateService("materials_cost_per_sale", v)} />
                         </div>
                         <div>
                           <FieldLabel info="Travel cost per sale.">Travel cost per sale</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.travel_cost_per_sale} onChange={(v) => updateService("travel_cost_per_sale", v)} />
                         </div>
                         <div>
                           <FieldLabel info="Any other direct cost per sale.">Other direct cost per sale</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.other_direct_cost_per_sale} onChange={(v) => updateService("other_direct_cost_per_sale", v)} />
                         </div>
                       </div>
@@ -2231,27 +2241,22 @@ export default function ValidationWizardPage() {
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Recurring software costs per month.">Monthly software cost *</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.monthly_software_cost} onChange={(v) => updateService("monthly_software_cost", v)} />
                         </div>
                         <div>
                           <FieldLabel info="Recurring marketing costs per month.">Monthly marketing cost *</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.monthly_marketing_cost} onChange={(v) => updateService("monthly_marketing_cost", v)} />
                         </div>
                         <div>
                           <FieldLabel info="Recurring admin costs per month.">Monthly admin cost *</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.monthly_admin_cost} onChange={(v) => updateService("monthly_admin_cost", v)} />
                         </div>
                         <div>
                           <FieldLabel info="Rent or workspace costs per month.">Monthly rent/workspace cost</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.monthly_rent_cost} onChange={(v) => updateService("monthly_rent_cost", v)} />
                         </div>
                         <div>
                           <FieldLabel info="Any other fixed monthly cost.">Other fixed cost</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.monthly_other_fixed_cost} onChange={(v) => updateService("monthly_other_fixed_cost", v)} />
                         </div>
                       </div>
@@ -2261,7 +2266,7 @@ export default function ValidationWizardPage() {
                     {enabledForms.capacity_inputs ? (
                       <details className="rounded-2xl border border-slate-200 bg-white p-4">
                         <summary className="cursor-pointer text-sm font-semibold text-slate-900">Capacity inputs</summary>
-                        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2">
                           <div>
                             <FieldLabel info="Hours required to deliver one sale.">Hours required *</FieldLabel>
                             <NumberInput placeholder="0" value={serviceForm.hours_required_per_sale} onChange={(v) => updateService("hours_required_per_sale", v)} />
@@ -2320,12 +2325,10 @@ export default function ValidationWizardPage() {
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Lowest competitor price you see.">Competitor price (low)</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.competitor_price_low} onChange={(v) => updateService("competitor_price_low", v)} />
                         </div>
                         <div>
                           <FieldLabel info="Highest competitor price you see.">Competitor price (high)</FieldLabel>
-                          <div className="text-[11px] text-slate-500">{currencyLabel(serviceCurrency)}</div>
                           <NumberInput placeholder="0" value={serviceForm.competitor_price_high} onChange={(v) => updateService("competitor_price_high", v)} />
                         </div>
                         <div>

@@ -7,6 +7,7 @@ import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import Spinner from "../components/Spinner";
+import { ValidationIllustration, SimulationIllustration, BlueprintIllustration, CatalogueIllustration, FinancialIllustration } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { formatCurrency, formatNumber } from "../lib/format";
@@ -233,28 +234,33 @@ export default function DashboardPage() {
             </SectionCard>
           </div>
 
-          <SectionCard title="Quick actions" subtitle="Jump straight to the modules you need.">
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => navigate("/validation")}>
-                Idea Validation
-              </Button>
-              <Button variant="secondary" onClick={() => navigate("/results")}>
-                View Validation Dashboard
-              </Button>
-              <Button variant="secondary" onClick={() => navigate("/blueprint")}>
-                Generate Blueprints
-              </Button>
-              {/*<Button variant="secondary" onClick={() => navigate("/registration")}>
-                Business Registration
-              </Button>*/}
-              <Button variant="secondary" onClick={() => navigate("/simulation")}>
-                Simulation
-              </Button>
-              <Button variant="secondary" onClick={() => navigate("/financials")}>
-                Financials
-              </Button>
+          <div>
+            <div className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Explore modules</div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+              {[
+                { label: "Idea Validation", subtitle: "Evaluate your business concept.", href: "/validation", illustration: <ValidationIllustration /> },
+                { label: "Simulation", subtitle: "Model what-if scenarios.", href: "/simulation", illustration: <SimulationIllustration /> },
+                { label: "Blueprints", subtitle: "Generate strategic documents.", href: "/blueprint", illustration: <BlueprintIllustration /> },
+                { label: "Catalogue", subtitle: "Manage products & customers.", href: "/catalogue", illustration: <CatalogueIllustration /> },
+                { label: "Financials", subtitle: "Invoicing & cash tracking.", href: "/financials", illustration: <FinancialIllustration /> },
+              ].map((mod) => (
+                <button
+                  key={mod.href}
+                  type="button"
+                  onClick={() => navigate(mod.href)}
+                  className="group rounded-2xl border border-slate-200 bg-white text-left transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900/70 dark:hover:border-brand-700"
+                >
+                  <div className="overflow-hidden rounded-t-2xl bg-gradient-to-br from-brand-50 via-white to-indigo-50 dark:from-slate-800 dark:via-slate-900 dark:to-slate-800">
+                    {mod.illustration}
+                  </div>
+                  <div className="px-4 py-3">
+                    <div className="text-sm font-semibold text-slate-900 group-hover:text-brand-700 dark:text-slate-100 dark:group-hover:text-brand-400">{mod.label}</div>
+                    <div className="mt-0.5 text-xs text-slate-500">{mod.subtitle}</div>
+                  </div>
+                </button>
+              ))}
             </div>
-          </SectionCard>
+          </div>
         </>
       )}
     </div>

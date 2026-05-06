@@ -103,6 +103,42 @@ create table if not exists blueprint_document_shares (
 create index if not exists blueprint_document_shares_token_idx on blueprint_document_shares(token);
 create index if not exists blueprint_document_shares_document_idx on blueprint_document_shares(document_id);
 
+-- Workspace invitations: pending/accepted/revoked invites with granular permissions
+create table if not exists workspace_invitations (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id text references workspaces(id) on delete cascade,
+  invited_by_user_id text references users(id) on delete cascade,
+  email text,
+  token text unique not null,
+  permission_type text not null,
+  permissions jsonb not null default '{}',
+  status text not null default 'pending',
+  created_at timestamptz default now(),
+  expires_at timestamptz,
+  accepted_at timestamptz,
+  accepted_by_user_id text references users(id)
+);
+
+create index if not exists workspace_invitations_token_idx on workspace_invitations(token);
+create index if not exists workspace_invitations_workspace_idx on workspace_invitations(workspace_id);
+
+-- Workspace members: users who have accepted an invitation and their access permissions
+create table if not exists workspace_members (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id text references workspaces(id) on delete cascade,
+  user_id text references users(id) on delete cascade,
+  invited_by_user_id text references users(id),
+  permission_type text not null,
+  permissions jsonb not null default '{}',
+  role text not null default 'member',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique(workspace_id, user_id)
+);
+
+create index if not exists workspace_members_workspace_idx on workspace_members(workspace_id);
+create index if not exists workspace_members_user_idx on workspace_members(user_id);
+
 create table if not exists upgrade_clicks (
   id uuid primary key default gen_random_uuid(),
   user_id text,

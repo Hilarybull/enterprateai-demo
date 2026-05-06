@@ -5,7 +5,7 @@ export default function InfoTip({ text, className = "" }) {
     <span className={"relative inline-flex " + className}>
       <button
         type="button"
-        className="group inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-200"
+        className="group inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
         aria-label="Info"
       >
         <span className="text-[9px] font-extrabold leading-none">i</span>
