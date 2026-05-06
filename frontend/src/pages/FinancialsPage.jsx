@@ -890,7 +890,7 @@ export default function FinancialsPage() {
         const markdown = buildFinancialShareText(kind, record, customer, product);
         const res = await apiRequest("/blueprint/financial-documents/share", "POST", {
           document_id: null,
-          type: isInvoice ? "invoice_template" : "sales_quotation",
+          type: isInvoice ? `invoice_template:${record.id}` : `sales_quotation:${record.id}`,
           title: `${titlePrefix} — ${record?.invoice_id || record?.quotation_id || record?.id || workspaceName || "Document"}`,
           company_name: workspaceName || "EnterprateAI",
           workspace_id: workspaceId || null,

@@ -76,6 +76,15 @@ def markdown_to_html(markdown_text: str) -> str:
             idx += 1
             continue
 
+        md_img = re.match(r"^!\[([^\]]*)\]\(([^)]+)\)$", trimmed)
+        if md_img:
+            close_list()
+            alt = md_img.group(1).replace('"', "&quot;")
+            src = md_img.group(2).replace('"', "&quot;")
+            html.append(f'<img class="document-logo" src="{src}" alt="{alt}" />')
+            idx += 1
+            continue
+
         if trimmed.startswith('<p class="subject-line">') and trimmed.endswith("</p>"):
             close_list()
             html.append(trimmed)

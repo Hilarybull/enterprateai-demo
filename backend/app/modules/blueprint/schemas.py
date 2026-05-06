@@ -113,7 +113,7 @@ class BlueprintShareLinkResponse(BaseModel):
 
 class BlueprintFinancialShareRequest(BaseModel):
     document_id: Optional[str] = None
-    type: Literal["sales_quotation", "invoice_template"]
+    type: str = Field(min_length=2, max_length=120)
     title: str = Field(min_length=2, max_length=120)
     company_name: str = Field(min_length=2, max_length=120)
     workspace_id: Optional[str] = None
@@ -128,7 +128,7 @@ class BlueprintFinancialShareResponse(BlueprintShareLinkResponse):
 
 
 class BlueprintSharedDocument(BaseModel):
-    type: BlueprintType
+    type: str
     title: str
     company_name: str
     document_markdown: str

@@ -72,6 +72,20 @@ function markdownToHtml(md) {
       continue;
     }
 
+    if (/^<img\b/i.test(trimmed)) {
+      closeList();
+      html += trimmed;
+      continue;
+    }
+
+    const mdImgMatch = trimmed.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (mdImgMatch) {
+      closeList();
+      const [, alt, src] = mdImgMatch;
+      html += `<img class="document-logo" src="${src.replace(/"/g, "&quot;")}" alt="${alt.replace(/"/g, "&quot;")}" />`;
+      continue;
+    }
+
     if (trimmed.startsWith("<p class=\"subject-line\">") && trimmed.endsWith("</p>")) {
       closeList();
       html += trimmed;
