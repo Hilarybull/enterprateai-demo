@@ -87,6 +87,9 @@ create table if not exists blueprint_documents (
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+-- Financial documents (invoice_template, sales_quotation) create one record per
+-- document, so the (user_id, type) uniqueness constraint must not exist.
+alter table blueprint_documents drop constraint if exists blueprint_documents_user_id_type_key;
 
 create table if not exists blueprint_document_shares (
   id uuid primary key default gen_random_uuid(),
