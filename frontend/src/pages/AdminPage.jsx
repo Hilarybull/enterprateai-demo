@@ -996,7 +996,6 @@ const TABS = [
   { key: "members", label: "Members" },
   { key: "invitations", label: "Invitations" },
   { key: "upgrades", label: "Upgrade Clicks" },
-  { key: "platform", label: "Platform" },
 ];
 
 const INV_FILTERS = ["all", "pending", "accepted", "revoked"];
@@ -1488,6 +1487,105 @@ export default function AdminPage() {
                 />
               </div>
             </div>
+
+            {/* Platform health metrics */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h2 className="mb-4 text-sm font-semibold text-slate-800">Platform health metrics</h2>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {platformMetrics.map((m) => (
+                  <div key={m.label} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                    <div className="text-2xl font-bold tabular-nums text-slate-900">{m.value}</div>
+                    <div className="mt-0.5 text-[12px] font-semibold text-slate-700">{m.label}</div>
+                    <div className="mt-1 text-[11px] text-slate-400">{m.sub}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Data exports + Bulk ops */}
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                <h2 className="mb-1 text-sm font-semibold text-slate-800">Data exports</h2>
+                <p className="mb-4 text-[12px] text-slate-400">Download platform data as CSV for analytics or offline reporting.</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {[
+                    {
+                      label: "All users", sub: `${stats?.total_users ?? 0} records`,
+                      onClick: () => downloadCSV(stats?.users || [], [
+                        { key: "id", label: "ID" }, { key: "email", label: "Email" }, { key: "created_at", label: "Joined" },
+                      ], "users.csv"),
+                    },
+                    {
+                      label: "All workspaces", sub: `${stats?.total_workspaces ?? 0} records`,
+                      onClick: () => downloadCSV(stats?.workspaces || [], [
+                        { key: "id", label: "ID" }, { key: "name", label: "Name" }, { key: "owner_email", label: "Owner" },
+                        { key: "member_count", label: "Members" }, { key: "created_at", label: "Created" },
+                      ], "workspaces.csv"),
+                    },
+                    {
+                      label: "All members", sub: `${stats?.total_members ?? 0} records`,
+                      onClick: () => downloadCSV(stats?.members || [], [
+                        { key: "id", label: "ID" }, { key: "user_email", label: "User Email" }, { key: "workspace_name", label: "Workspace" },
+                        { key: "permission_type", label: "Permission" }, { key: "created_at", label: "Added" },
+                      ], "members.csv"),
+                    },
+                    {
+                      label: "All invitations", sub: `${stats?.total_invitations ?? 0} records`,
+                      onClick: () => downloadCSV(stats?.invitations || [], [
+                        { key: "id", label: "ID" }, { key: "workspace_name", label: "Workspace" }, { key: "invited_email", label: "Email" },
+                        { key: "status", label: "Status" }, { key: "created_at", label: "Sent" },
+                      ], "invitations.csv"),
+                    },
+                    {
+                      label: "Upgrade clicks", sub: upgradesLoaded ? `${upgrades?.length ?? 0} records` : "Load required",
+                      onClick: upgradesLoaded ? () => downloadCSV(upgrades || [], [
+                        { key: "email", label: "Email" }, { key: "feature", label: "Feature" }, { key: "source", label: "Source" }, { key: "clicked_at", label: "Clicked At" },
+                      ], "upgrade-clicks.csv") : () => { loadUpgrades(); showToast("success", "Upgrade data loading — try again in a moment."); },
+                    },
+                  ].map((item) => (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={item.onClick}
+                      className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-brand-200 hover:bg-brand-50 group"
+                    >
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-500 group-hover:border-brand-200 group-hover:text-brand-600 transition">
+                        <DownloadIcon />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[13px] font-semibold text-slate-800">{item.label}</div>
+                        <div className="text-[11px] text-slate-400">{item.sub}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                <h2 className="mb-1 text-sm font-semibold text-slate-800">Bulk operations</h2>
+                <p className="mb-4 text-[12px] text-slate-400">Platform-wide actions that affect multiple records at once. Use with care.</p>
+                <div className="flex items-start gap-4 rounded-xl border border-amber-100 bg-amber-50 p-4">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
+                    <BanIcon />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-semibold text-slate-800">Revoke all pending invitations</div>
+                    <div className="mt-0.5 text-[11px] text-slate-500">
+                      Immediately invalidates all {invStatusCounts.pending} pending invitation link{invStatusCounts.pending !== 1 ? "s" : ""} across the platform.
+                    </div>
+                    <button
+                      type="button"
+                      disabled={invStatusCounts.pending === 0}
+                      onClick={bulkRevokePending}
+                      className="mt-3 rounded-xl bg-amber-600 px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-amber-700 disabled:opacity-40"
+                    >
+                      Revoke {invStatusCounts.pending} pending
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
           </div>
         )}
 
@@ -1753,112 +1851,6 @@ export default function AdminPage() {
                 emptyText="No upgrade clicks recorded"
               />
             )}
-          </div>
-        )}
-
-        {/* ── Platform ── */}
-        {tab === "platform" && (
-          <div className="space-y-6">
-
-            {/* Health metrics */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <h2 className="mb-4 text-sm font-semibold text-slate-800">Platform health metrics</h2>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {platformMetrics.map((m) => (
-                  <div key={m.label} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                    <div className="text-2xl font-bold tabular-nums text-slate-900">{m.value}</div>
-                    <div className="mt-0.5 text-[12px] font-semibold text-slate-700">{m.label}</div>
-                    <div className="mt-1 text-[11px] text-slate-400">{m.sub}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Data exports */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <h2 className="mb-1 text-sm font-semibold text-slate-800">Data exports</h2>
-              <p className="mb-4 text-[12px] text-slate-400">Download platform data as CSV for CRM import, analytics, or offline reporting.</p>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {[
-                  {
-                    label: "All users", sub: `${stats?.total_users ?? 0} records`, color: "emerald",
-                    onClick: () => downloadCSV(stats?.users || [], [
-                      { key: "id", label: "ID" }, { key: "email", label: "Email" }, { key: "created_at", label: "Joined" },
-                    ], "users.csv"),
-                  },
-                  {
-                    label: "All workspaces", sub: `${stats?.total_workspaces ?? 0} records`, color: "brand",
-                    onClick: () => downloadCSV(stats?.workspaces || [], [
-                      { key: "id", label: "ID" }, { key: "name", label: "Name" }, { key: "owner_email", label: "Owner" },
-                      { key: "member_count", label: "Members" }, { key: "created_at", label: "Created" },
-                    ], "workspaces.csv"),
-                  },
-                  {
-                    label: "All members", sub: `${stats?.total_members ?? 0} records`, color: "violet",
-                    onClick: () => downloadCSV(stats?.members || [], [
-                      { key: "id", label: "ID" }, { key: "user_email", label: "User Email" }, { key: "workspace_name", label: "Workspace" },
-                      { key: "permission_type", label: "Permission" }, { key: "created_at", label: "Added" },
-                    ], "members.csv"),
-                  },
-                  {
-                    label: "All invitations", sub: `${stats?.total_invitations ?? 0} records`, color: "amber",
-                    onClick: () => downloadCSV(stats?.invitations || [], [
-                      { key: "id", label: "ID" }, { key: "workspace_name", label: "Workspace" }, { key: "invited_email", label: "Email" },
-                      { key: "status", label: "Status" }, { key: "created_at", label: "Sent" },
-                    ], "invitations.csv"),
-                  },
-                  {
-                    label: "Upgrade clicks", sub: upgradesLoaded ? `${upgrades?.length ?? 0} records` : "Load required", color: "sky",
-                    onClick: upgradesLoaded ? () => downloadCSV(upgrades || [], [
-                      { key: "email", label: "Email" }, { key: "feature", label: "Feature" }, { key: "source", label: "Source" }, { key: "clicked_at", label: "Clicked At" },
-                    ], "upgrade-clicks.csv") : () => { loadUpgrades(); showToast("success", "Upgrade data loading — try again in a moment."); },
-                  },
-                ].map((item) => (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={item.onClick}
-                    className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-brand-200 hover:bg-brand-50 group"
-                  >
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-500 group-hover:border-brand-200 group-hover:text-brand-600 transition">
-                      <DownloadIcon />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-[13px] font-semibold text-slate-800">{item.label}</div>
-                      <div className="text-[11px] text-slate-400">{item.sub}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Bulk operations */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <h2 className="mb-1 text-sm font-semibold text-slate-800">Bulk operations</h2>
-              <p className="mb-4 text-[12px] text-slate-400">Platform-wide actions that affect multiple records at once. Use with care.</p>
-              <div className="flex flex-wrap gap-3">
-                <div className="flex items-start gap-4 rounded-xl border border-amber-100 bg-amber-50 p-4">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
-                    <BanIcon />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[13px] font-semibold text-slate-800">Revoke all pending invitations</div>
-                    <div className="mt-0.5 text-[11px] text-slate-500">
-                      Immediately invalidates all {invStatusCounts.pending} pending invitation link{invStatusCounts.pending !== 1 ? "s" : ""} across the platform.
-                    </div>
-                    <button
-                      type="button"
-                      disabled={invStatusCounts.pending === 0}
-                      onClick={bulkRevokePending}
-                      className="mt-3 rounded-xl bg-amber-600 px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-amber-700 disabled:opacity-40"
-                    >
-                      Revoke {invStatusCounts.pending} pending
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
           </div>
         )}
 
