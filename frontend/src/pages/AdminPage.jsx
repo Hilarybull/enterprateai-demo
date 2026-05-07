@@ -136,7 +136,7 @@ function ActionBtn({ onClick, title, variant = "danger", disabled = false }) {
 
 function SearchBar({ value, onChange, placeholder = "Search…" }) {
   return (
-    <div className="relative max-w-xs">
+    <div className="relative w-full sm:w-auto sm:min-w-[180px] sm:max-w-xs">
       <svg viewBox="0 0 20 20" fill="currentColor" className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400">
         <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" />
       </svg>
@@ -229,7 +229,7 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
       className="fixed inset-0 z-40 flex justify-end bg-slate-900/30 backdrop-blur-sm"
       onClick={(e) => { if (e.target === backdropRef.current) onClose(); }}
     >
-      <div className="flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl">
+      <div className="flex h-full w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl sm:max-w-md">
         <div className="flex shrink-0 items-start justify-between border-b border-slate-100 px-5 py-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">{detail.name}</h2>
@@ -478,7 +478,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
       className="fixed inset-0 z-40 flex justify-end bg-slate-900/30 backdrop-blur-sm"
       onClick={(e) => { if (e.target === backdropRef.current) onClose(); }}
     >
-      <div className="flex h-full w-full max-w-lg flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl">
+      <div className="flex h-full w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl sm:max-w-lg">
 
         {/* Header */}
         <div className="flex shrink-0 items-start justify-between border-b border-slate-100 px-5 py-4">
@@ -1381,11 +1381,11 @@ export default function AdminPage() {
         </div>
       </header>
 
-      <div className="ea-scroll flex-1 overflow-y-auto">
-      <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="ea-scroll flex-1 overflow-y-auto overflow-x-hidden">
+      <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 pb-10 sm:px-6 lg:px-8">
 
         {/* Stat tiles — clickable where a target tab exists */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
           {STAT_CONFIG.map((cfg) => (
             <StatTile
               key={cfg.key}
@@ -1596,12 +1596,12 @@ export default function AdminPage() {
 
         {/* ── Workspaces ── */}
         {tab === "workspaces" && (
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <h2 className="text-sm font-semibold text-slate-800">
                 All workspaces <span className="ml-1 text-slate-400 font-normal">({filteredWorkspaces.length})</span>
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => downloadCSV(stats?.workspaces || [], [
@@ -1614,7 +1614,7 @@ export default function AdminPage() {
                   ], "workspaces.csv")}
                   className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
                 >
-                  <DownloadIcon /> Export CSV
+                  <DownloadIcon /> <span className="hidden sm:inline">Export CSV</span>
                 </button>
                 <SearchBar value={search} onChange={setSearch} placeholder="Search by name, owner…" />
               </div>
@@ -1645,12 +1645,12 @@ export default function AdminPage() {
 
         {/* ── Users ── */}
         {tab === "users" && (
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <h2 className="text-sm font-semibold text-slate-800">
                 All users <span className="ml-1 text-slate-400 font-normal">({filteredUsers.length})</span>
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => downloadCSV(stats?.users || [], [
@@ -1660,7 +1660,7 @@ export default function AdminPage() {
                   ], "users.csv")}
                   className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
                 >
-                  <DownloadIcon /> Export CSV
+                  <DownloadIcon /> <span className="hidden sm:inline">Export CSV</span>
                 </button>
                 <SearchBar value={search} onChange={setSearch} placeholder="Search by email or ID…" />
               </div>
@@ -1699,12 +1699,12 @@ export default function AdminPage() {
 
         {/* ── Members ── */}
         {tab === "members" && (
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <h2 className="text-sm font-semibold text-slate-800">
                 Workspace members <span className="ml-1 text-slate-400 font-normal">({filteredMembers.length})</span>
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => downloadCSV(stats?.members || [], [
@@ -1716,7 +1716,7 @@ export default function AdminPage() {
                   ], "members.csv")}
                   className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
                 >
-                  <DownloadIcon /> Export CSV
+                  <DownloadIcon /> <span className="hidden sm:inline">Export CSV</span>
                 </button>
                 <SearchBar value={search} onChange={setSearch} placeholder="Search by email or workspace…" />
               </div>
@@ -1766,7 +1766,7 @@ export default function AdminPage() {
                   ))}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {invStatusCounts.pending > 0 && (
                   <button
                     type="button"
@@ -1787,7 +1787,7 @@ export default function AdminPage() {
                   ], "invitations.csv")}
                   className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
                 >
-                  <DownloadIcon /> Export CSV
+                  <DownloadIcon /> <span className="hidden sm:inline">Export CSV</span>
                 </button>
                 <SearchBar value={search} onChange={setSearch} placeholder="Search by email or workspace…" />
               </div>
@@ -1820,7 +1820,7 @@ export default function AdminPage() {
                 </h2>
                 <p className="mt-0.5 text-[11px] text-slate-400">Users who clicked an upgrade prompt — potential leads for outreach.</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {upgradesLoaded && (
                   <button
                     type="button"
