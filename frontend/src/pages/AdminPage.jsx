@@ -1321,7 +1321,7 @@ export default function AdminPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-slate-50 overflow-x-hidden">
+    <div className="flex h-screen flex-col overflow-hidden bg-slate-50">
 
       <ConfirmModal confirm={confirm} onCancel={() => setConfirm(null)} onConfirm={executeConfirm} loading={actionLoading} />
 
@@ -1381,6 +1381,7 @@ export default function AdminPage() {
         </div>
       </header>
 
+      <div className="ea-scroll flex-1 overflow-y-auto">
       <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
 
         {/* Stat tiles — clickable where a target tab exists */}
@@ -1859,6 +1860,7 @@ export default function AdminPage() {
         )}
 
       </main>
+      </div>
     </div>
   );
 }
