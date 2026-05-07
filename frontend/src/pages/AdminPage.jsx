@@ -1,111 +1,919 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { apiRequest } from "../api/client";
+import { MODULES, FEATURES } from "../lib/permissions";
 import logoUrl from "../enterprate-logo.png";
 
 const ADMIN_EMAIL = "tech.support@enterprateai.com";
 
-const STAT_CONFIG = [
-  {
-    key: "total_workspaces",
-    label: "Workspaces",
-    color: "bg-brand-50 text-brand-700 border-brand-100",
-    iconBg: "bg-brand-100",
-    iconColor: "text-brand-600",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
-      </svg>
-    ),
-  },
-  {
-    key: "total_users",
-    label: "Total Users",
-    color: "bg-emerald-50 text-emerald-700 border-emerald-100",
-    iconBg: "bg-emerald-100",
-    iconColor: "text-emerald-600",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
-      </svg>
-    ),
-  },
-  {
-    key: "total_members",
-    label: "Members",
-    color: "bg-violet-50 text-violet-700 border-violet-100",
-    iconBg: "bg-violet-100",
-    iconColor: "text-violet-600",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
-      </svg>
-    ),
-  },
-  {
-    key: "total_invitations",
-    label: "Invitations",
-    color: "bg-amber-50 text-amber-700 border-amber-100",
-    iconBg: "bg-amber-100",
-    iconColor: "text-amber-600",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
-      </svg>
-    ),
-  },
-  {
-    key: "total_simulations",
-    label: "Simulations",
-    color: "bg-sky-50 text-sky-700 border-sky-100",
-    iconBg: "bg-sky-100",
-    iconColor: "text-sky-600",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
-      </svg>
-    ),
-  },
-  {
-    key: "total_blueprints",
-    label: "Blueprints",
-    color: "bg-indigo-50 text-indigo-700 border-indigo-100",
-    iconBg: "bg-indigo-100",
-    iconColor: "text-indigo-600",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-      </svg>
-    ),
-  },
-  {
-    key: "total_validated_workspaces",
-    label: "Validated",
-    color: "bg-teal-50 text-teal-700 border-teal-100",
-    iconBg: "bg-teal-100",
-    iconColor: "text-teal-600",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-    ),
-  },
-];
+// ── Icons ─────────────────────────────────────────────────────────────────────
 
-function StatTile({ config, value }) {
+function TrashIcon() {
   return (
-    <div className={`flex items-center gap-3 rounded-2xl border p-4 ${config.color}`}>
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${config.iconBg} ${config.iconColor}`}>
-        {config.icon}
-      </div>
-      <div className="min-w-0">
-        <div className="text-2xl font-bold tabular-nums leading-none">{value ?? "—"}</div>
-        <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide opacity-70 truncate">{config.label}</div>
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+      <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+      <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
+      <path fillRule="evenodd" d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function XIcon({ className = "h-4 w-4" }) {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className={className}>
+      <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+      <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function BanIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+      <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" />
+      <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
+    </svg>
+  );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatDate(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function formatDateTime(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function downloadCSV(rows, columns, filename) {
+  const header = columns.map((c) => `"${c.label}"`).join(",");
+  const body = rows.map((row) =>
+    columns.map((c) => {
+      const val = row[c.key] ?? "";
+      return `"${String(val).replace(/"/g, '""')}"`;
+    }).join(",")
+  );
+  const csv = [header, ...body].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Small components ──────────────────────────────────────────────────────────
+
+function StatusBadge({ status }) {
+  const cls =
+    status === "accepted" ? "bg-emerald-100 text-emerald-700"
+    : status === "pending" ? "bg-amber-100 text-amber-700"
+    : status === "revoked" ? "bg-slate-100 text-slate-500 line-through"
+    : "bg-slate-100 text-slate-500";
+  return (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>
+      {status || "—"}
+    </span>
+  );
+}
+
+function PermBadge({ type }) {
+  const cls = type === "module" ? "bg-brand-100 text-brand-700"
+    : type === "feature" ? "bg-violet-100 text-violet-700"
+    : "bg-slate-100 text-slate-500";
+  return (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>
+      {type || "—"}
+    </span>
+  );
+}
+
+function ActionBtn({ onClick, title, variant = "danger", disabled = false }) {
+  const cls = variant === "danger"
+    ? "text-rose-400 hover:text-rose-600 hover:bg-rose-50"
+    : variant === "warn"
+    ? "text-amber-400 hover:text-amber-600 hover:bg-amber-50"
+    : "text-slate-400 hover:text-slate-600 hover:bg-slate-100";
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex h-7 w-7 items-center justify-center rounded-lg transition disabled:opacity-30 ${cls}`}
+    >
+      {variant === "danger" ? <TrashIcon /> : variant === "warn" ? <BanIcon /> : <EyeIcon />}
+    </button>
+  );
+}
+
+function SearchBar({ value, onChange, placeholder = "Search…" }) {
+  return (
+    <div className="relative max-w-xs">
+      <svg viewBox="0 0 20 20" fill="currentColor" className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400">
+        <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" />
+      </svg>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-[13px] text-slate-800 placeholder-slate-400 outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100 transition"
+      />
+      {value && (
+        <button type="button" onClick={() => onChange("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+          <XIcon className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Toast notification ────────────────────────────────────────────────────────
+
+function Toast({ toast, onDismiss }) {
+  if (!toast) return null;
+  return (
+    <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-lg transition-all ${
+      toast.kind === "error"
+        ? "border-rose-200 bg-rose-50 text-rose-700"
+        : "border-emerald-200 bg-emerald-50 text-emerald-700"
+    }`}>
+      <span className="text-sm font-medium">{toast.msg}</span>
+      <button type="button" onClick={onDismiss} className="ml-1 opacity-60 hover:opacity-100">
+        <XIcon className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+// ── Confirm modal ─────────────────────────────────────────────────────────────
+
+function ConfirmModal({ confirm, onCancel, onConfirm, loading }) {
+  if (!confirm) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-rose-100">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5 text-rose-600">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          </svg>
+        </div>
+        <h3 className="mt-3 text-base font-semibold text-slate-900">{confirm.title}</h3>
+        <p className="mt-1 text-sm text-slate-500">{confirm.description}</p>
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className="flex-1 rounded-xl bg-rose-600 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-50"
+          >
+            {loading ? "Working…" : confirm.label}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
+
+// ── Workspace detail panel ────────────────────────────────────────────────────
+
+function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitation, actionLoading }) {
+  const backdropRef = useRef(null);
+  useEffect(() => {
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (!detail) return null;
+
+  return (
+    <div
+      ref={backdropRef}
+      className="fixed inset-0 z-40 flex justify-end bg-slate-900/30 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === backdropRef.current) onClose(); }}
+    >
+      <div className="flex h-full w-full max-w-md flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl">
+        <div className="flex shrink-0 items-start justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">{detail.name}</h2>
+            <p className="mt-0.5 font-mono text-[11px] text-slate-400">{detail.id}</p>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition">
+            <XIcon />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { label: "Owner", value: detail.owner_email || "—" },
+              { label: "Created", value: formatDate(detail.created_at) },
+              { label: "Members", value: detail.member_count ?? 0 },
+              { label: "Invitations", value: detail.invitation_count ?? 0 },
+            ].map(({ label, value }) => (
+              <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</div>
+                <div className="mt-0.5 truncate text-sm font-semibold text-slate-800">{String(value)}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            {detail.has_validation && (
+              <span className="rounded-full bg-teal-100 px-2.5 py-1 text-[11px] font-semibold text-teal-700">✓ Validated</span>
+            )}
+            {detail.has_simulation && (
+              <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-700">✓ Simulated</span>
+            )}
+            {!detail.has_validation && !detail.has_simulation && (
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500">No activity</span>
+            )}
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Members ({detail.members?.length ?? 0})
+            </h3>
+            {detail.members?.length > 0 ? (
+              <div className="divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
+                {detail.members.map((m) => (
+                  <div key={m.id} className="flex items-center gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium text-slate-800">{m.email}</div>
+                      <div className="mt-0.5 text-[10px] text-slate-400">{formatDate(m.created_at)}</div>
+                    </div>
+                    <PermBadge type={m.permission_type} />
+                    <ActionBtn title="Remove member" disabled={actionLoading} onClick={() => onDeleteMember(m.id)} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">No members.</p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Invitations ({detail.invitations?.length ?? 0})
+            </h3>
+            {detail.invitations?.length > 0 ? (
+              <div className="divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
+                {detail.invitations.map((inv) => (
+                  <div key={inv.id} className="flex items-center gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium text-slate-800">{inv.email || "Link-only"}</div>
+                      <div className="mt-0.5 text-[10px] text-slate-400">{formatDate(inv.created_at)}</div>
+                    </div>
+                    <StatusBadge status={inv.status} />
+                    {inv.status === "pending" && (
+                      <ActionBtn title="Revoke invitation" variant="warn" disabled={actionLoading} onClick={() => onRevokeInvitation(inv.id)} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">No invitations.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── User detail panel ─────────────────────────────────────────────────────────
+
+const PANEL_TABS = [
+  { key: "profile", label: "Profile" },
+  { key: "access", label: "Access Controls" },
+  { key: "activity", label: "Activity & Data" },
+];
+
+function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDeleteWorkspace, onUserUpdated, showToast, actionLoading }) {
+  const backdropRef = useRef(null);
+  const [panelTab, setPanelTab] = useState("profile");
+
+  // Access tab state
+  const [restrictions, setRestrictions] = useState([]);
+  const [restrictionsLoading, setRestrictionsLoading] = useState(false);
+  const [addModule, setAddModule] = useState("");
+  const [addFeature, setAddFeature] = useState("");
+  const [addingRestriction, setAddingRestriction] = useState(false);
+  const [removingId, setRemovingId] = useState(null);
+  const [blockLoading, setBlockLoading] = useState(false);
+  const [showBlockForm, setShowBlockForm] = useState(false);
+  const [blockReasonInput, setBlockReasonInput] = useState("");
+
+  // Activity tab state
+  const [fullData, setFullData] = useState(null);
+  const [fullDataLoading, setFullDataLoading] = useState(false);
+
+  useEffect(() => {
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!user) return;
+    setPanelTab("access");
+    setRestrictions([]);
+    setFullData(null);
+    setShowBlockForm(false);
+    setBlockReasonInput("");
+    loadRestrictions(user.id);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (panelTab === "activity" && !fullData && !fullDataLoading && user) {
+      loadFullData(user.id);
+    }
+  }, [panelTab]);
+
+  async function loadRestrictions(userId) {
+    setRestrictionsLoading(true);
+    try {
+      const data = await apiRequest(`/admin/users/${userId}/restrictions`, "GET");
+      setRestrictions(data || []);
+    } catch {
+      setRestrictions([]);
+    } finally {
+      setRestrictionsLoading(false);
+    }
+  }
+
+  async function loadFullData(userId) {
+    setFullDataLoading(true);
+    try {
+      const data = await apiRequest(`/admin/users/${userId}/full-data`, "GET");
+      setFullData(data);
+    } catch (e) {
+      showToast("error", e.message || "Failed to load user data.");
+    } finally {
+      setFullDataLoading(false);
+    }
+  }
+
+  async function handleBlock() {
+    if (!user || blockLoading) return;
+    setBlockLoading(true);
+    try {
+      const updated = await apiRequest(`/admin/users/${user.id}/block`, "PATCH", { reason: blockReasonInput || "Blocked by administrator" });
+      onUserUpdated(updated);
+      showToast("success", `${user.email} has been blocked.`);
+      setShowBlockForm(false);
+      setBlockReasonInput("");
+    } catch (e) {
+      showToast("error", e.message || "Failed to block user.");
+    } finally {
+      setBlockLoading(false);
+    }
+  }
+
+  async function handleUnblock() {
+    if (!user || blockLoading) return;
+    setBlockLoading(true);
+    try {
+      const updated = await apiRequest(`/admin/users/${user.id}/unblock`, "PATCH");
+      onUserUpdated(updated);
+      showToast("success", `${user.email} has been unblocked.`);
+    } catch (e) {
+      showToast("error", e.message || "Failed to unblock user.");
+    } finally {
+      setBlockLoading(false);
+    }
+  }
+
+  async function handleAddRestriction() {
+    if (!addModule || addingRestriction) return;
+    setAddingRestriction(true);
+    try {
+      const r = await apiRequest(`/admin/users/${user.id}/restrictions`, "POST", {
+        module_key: addModule,
+        feature_key: addFeature || null,
+      });
+      setRestrictions((prev) => [...prev.filter((x) => x.id !== r.id), r]);
+      setAddModule("");
+      setAddFeature("");
+      showToast("success", "Restriction added.");
+    } catch (e) {
+      showToast("error", e.message || "Failed to add restriction.");
+    } finally {
+      setAddingRestriction(false);
+    }
+  }
+
+  async function handleRemoveRestriction(id) {
+    setRemovingId(id);
+    try {
+      await apiRequest(`/admin/users/${user.id}/restrictions/${id}`, "DELETE");
+      setRestrictions((prev) => prev.filter((r) => r.id !== id));
+      showToast("success", "Restriction removed.");
+    } catch (e) {
+      showToast("error", e.message || "Failed to remove restriction.");
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  const ownedWorkspaces = useMemo(() =>
+    (stats?.workspaces || []).filter((w) => w.owner_email === user?.email),
+    [stats, user]
+  );
+  const memberships = useMemo(() =>
+    (stats?.members || []).filter((m) => m.user_email === user?.email),
+    [stats, user]
+  );
+  const userUpgrades = useMemo(() =>
+    (upgrades || []).filter((u) => u.email === user?.email),
+    [upgrades, user]
+  );
+
+  if (!user) return null;
+
+  const availableFeatures = addModule ? (FEATURES[addModule] || []) : [];
+  const moduleLabel = (key) => MODULES.find((m) => m.key === key)?.label || key;
+  const featureLabel = (modKey, featKey) => (FEATURES[modKey] || []).find((f) => f.key === featKey)?.label || featKey;
+
+  return (
+    <div
+      ref={backdropRef}
+      className="fixed inset-0 z-40 flex justify-end bg-slate-900/30 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === backdropRef.current) onClose(); }}
+    >
+      <div className="flex h-full w-full max-w-lg flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl">
+
+        {/* Header */}
+        <div className="flex shrink-0 items-start justify-between border-b border-slate-100 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold ${user.is_blocked ? "bg-rose-100 text-rose-700" : "bg-brand-100 text-brand-700"}`}>
+              {user.email?.[0]?.toUpperCase() || "?"}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-slate-900 truncate max-w-[200px]">{user.email}</h2>
+                {user.is_blocked && (
+                  <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-600">Blocked</span>
+                )}
+              </div>
+              <p className="mt-0.5 font-mono text-[11px] text-slate-400">{user.id?.slice(0, 16)}…</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition">
+            <XIcon />
+          </button>
+        </div>
+
+        {/* Tab nav */}
+        <div className="shrink-0 flex gap-1 border-b border-slate-100 bg-slate-50/80 px-4 py-2">
+          {PANEL_TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setPanelTab(t.key)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${panelTab === t.key ? "bg-white text-slate-900 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-700"}`}
+            >
+              {t.label}
+              {t.key === "access" && restrictions.length > 0 && (
+                <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{restrictions.length}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Profile tab ── */}
+        {panelTab === "profile" && (
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Joined", value: formatDate(user.created_at) },
+                { label: "Workspaces", value: ownedWorkspaces.length },
+                { label: "Memberships", value: memberships.length },
+              ].map(({ label, value }) => (
+                <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</div>
+                  <div className="mt-0.5 text-sm font-bold text-slate-800">{String(value)}</div>
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Owned workspaces ({ownedWorkspaces.length})</h3>
+              {ownedWorkspaces.length > 0 ? (
+                <div className="divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
+                  {ownedWorkspaces.map((w) => (
+                    <div key={w.id} className="flex items-center gap-3 px-3 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-medium text-slate-800">{w.name || "Unnamed"}</div>
+                        <div className="mt-0.5 flex gap-2 text-[10px] text-slate-400">
+                          <span>{w.member_count ?? 0} members</span>
+                          <span>·</span>
+                          <span>{formatDate(w.created_at)}</span>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 gap-1">
+                        {w.has_validation && <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold text-teal-700">V</span>}
+                        {w.has_simulation && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">S</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-slate-400">No owned workspaces.</p>}
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Team memberships ({memberships.length})</h3>
+              {memberships.length > 0 ? (
+                <div className="divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
+                  {memberships.map((m) => (
+                    <div key={m.id} className="flex items-center gap-3 px-3 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-medium text-slate-800">{m.workspace_name || m.workspace_id?.slice(0, 12) + "…"}</div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">{formatDate(m.created_at)}</div>
+                      </div>
+                      <PermBadge type={m.permission_type} />
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-slate-400">No team memberships.</p>}
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Upgrade intent {upgrades !== null ? `(${userUpgrades.length})` : ""}
+              </h3>
+              {upgrades === null ? (
+                <p className="text-xs text-slate-400">Visit the Upgrade Clicks tab first to load intent data.</p>
+              ) : userUpgrades.length > 0 ? (
+                <div className="divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
+                  {userUpgrades.map((u, i) => (
+                    <div key={i} className="flex items-center gap-3 px-3 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13px] font-medium text-slate-800">{u.feature || "—"}</div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">{formatDateTime(u.clicked_at)}</div>
+                      </div>
+                      <span className="text-[11px] text-slate-400">{u.source || "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-slate-400">No upgrade clicks recorded.</p>}
+            </div>
+          </div>
+        )}
+
+        {/* ── Access Controls tab ── */}
+        {panelTab === "access" && (
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+
+            {/* Account status */}
+            <div>
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Account status</h3>
+              {user.is_blocked ? (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-rose-500" />
+                        <span className="text-sm font-semibold text-rose-700">Account blocked</span>
+                      </div>
+                      {user.block_reason && (
+                        <p className="mt-1 text-xs text-rose-600">Reason: {user.block_reason}</p>
+                      )}
+                      <p className="mt-1 text-[11px] text-rose-500">This user cannot log in or make any API requests.</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={blockLoading}
+                      onClick={handleUnblock}
+                      className="shrink-0 rounded-xl bg-white border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-40"
+                    >
+                      {blockLoading ? "Working…" : "Unblock"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                        <span className="text-sm font-semibold text-emerald-700">Active</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-emerald-600">User can log in and access their account normally.</p>
+                    </div>
+                    {user.email !== ADMIN_EMAIL && !showBlockForm && (
+                      <button
+                        type="button"
+                        onClick={() => setShowBlockForm(true)}
+                        className="shrink-0 rounded-xl border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
+                      >
+                        Block account
+                      </button>
+                    )}
+                  </div>
+                  {showBlockForm && (
+                    <div className="mt-3 border-t border-emerald-100 pt-3">
+                      <label className="block text-[11px] font-semibold text-slate-500 mb-1">Reason (shown to support, not user)</label>
+                      <input
+                        type="text"
+                        value={blockReasonInput}
+                        onChange={(e) => setBlockReasonInput(e.target.value)}
+                        placeholder="Spam, policy violation, fraud…"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
+                      />
+                      <div className="mt-2 flex gap-2">
+                        <button type="button" onClick={() => setShowBlockForm(false)} className="flex-1 rounded-xl border border-slate-200 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={blockLoading}
+                          onClick={handleBlock}
+                          className="flex-1 rounded-xl bg-rose-600 py-2 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:opacity-40"
+                        >
+                          {blockLoading ? "Blocking…" : "Confirm block"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Platform restrictions */}
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Module & feature restrictions</h3>
+                {restrictionsLoading && <div className="h-3.5 w-3.5 animate-spin rounded-full border border-slate-300 border-t-slate-600" />}
+              </div>
+              <p className="mb-3 text-[11px] text-slate-500 leading-relaxed">
+                Restrictions block access to specific modules or features across all this user's workspaces, overriding workspace-level permissions.
+              </p>
+
+              {/* Current restrictions */}
+              {restrictions.length > 0 ? (
+                <div className="mb-3 divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
+                  {restrictions.map((r) => (
+                    <div key={r.id} className="flex items-center gap-3 px-3 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-brand-700">
+                            {moduleLabel(r.module_key)}
+                          </span>
+                          {r.feature_key ? (
+                            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+                              {featureLabel(r.module_key, r.feature_key)}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-slate-400">entire module</span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={removingId === r.id}
+                        onClick={() => handleRemoveRestriction(r.id)}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition disabled:opacity-30"
+                      >
+                        <XIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mb-3 text-xs text-slate-400">No restrictions — full access based on workspace permissions.</p>
+              )}
+
+              {/* Add restriction form */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Add restriction</div>
+                <select
+                  value={addModule}
+                  onChange={(e) => { setAddModule(e.target.value); setAddFeature(""); }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
+                >
+                  <option value="">Select module…</option>
+                  {MODULES.filter((m) => m.key !== "dashboard").map((m) => (
+                    <option key={m.key} value={m.key}>{m.label}</option>
+                  ))}
+                </select>
+                {addModule && (
+                  <select
+                    value={addFeature}
+                    onChange={(e) => setAddFeature(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
+                  >
+                    <option value="">Entire module</option>
+                    {availableFeatures.map((f) => (
+                      <option key={f.key} value={f.key}>{f.label}</option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  disabled={!addModule || addingRestriction}
+                  onClick={handleAddRestriction}
+                  className="w-full rounded-xl bg-brand-600 py-2 text-xs font-semibold text-white transition hover:bg-brand-700 disabled:opacity-40"
+                >
+                  {addingRestriction ? "Adding…" : "Add restriction"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Activity & Data tab ── */}
+        {panelTab === "activity" && (
+          <div className="flex-1 overflow-y-auto px-5 py-4">
+            {fullDataLoading ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
+                <p className="text-xs text-slate-400">Loading user data…</p>
+              </div>
+            ) : !fullData ? (
+              <div className="flex flex-col items-center justify-center py-16">
+                <p className="text-xs text-slate-400">Failed to load data.</p>
+                <button type="button" onClick={() => loadFullData(user.id)} className="mt-3 text-xs text-brand-600 hover:text-brand-700 font-medium">Retry</button>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {/* Summary metrics */}
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { label: "Workspaces owned", value: fullData.owned_workspaces.length },
+                    { label: "Team memberships", value: fullData.memberships.length },
+                    { label: "Blueprint docs", value: fullData.blueprint_documents.length },
+                    { label: "Upgrade clicks", value: fullData.upgrade_clicks.length },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</div>
+                      <div className="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Workspaces with data breakdown */}
+                <div>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Workspaces ({fullData.owned_workspaces.length})</h3>
+                  {fullData.owned_workspaces.length > 0 ? (
+                    <div className="space-y-2">
+                      {fullData.owned_workspaces.map((ws) => (
+                        <div key={ws.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                          <div className="flex items-center justify-between gap-3 px-3 py-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[13px] font-semibold text-slate-800">{ws.name}</div>
+                              <div className="mt-1 flex flex-wrap gap-2">
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{ws.sim_count} simulations</span>
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{ws.blueprint_count} blueprints</span>
+                                {ws.has_validation && <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold text-teal-700">Validated</span>}
+                                {ws.has_service_validation && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Service validated</span>}
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-400">Updated {formatDate(ws.updated_at)} · Created {formatDate(ws.created_at)}</div>
+                            </div>
+                            <ActionBtn
+                              variant="danger"
+                              title="Delete workspace"
+                              disabled={actionLoading}
+                              onClick={() => onDeleteWorkspace(ws.id, ws.name)}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="text-xs text-slate-400">No owned workspaces.</p>}
+                </div>
+
+                {/* Blueprint documents */}
+                <div>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Blueprint documents ({fullData.blueprint_documents.length})</h3>
+                  {fullData.blueprint_documents.length > 0 ? (
+                    <div className="divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
+                      {fullData.blueprint_documents.map((doc) => (
+                        <div key={doc.id} className="flex items-center gap-3 px-3 py-2.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[13px] font-medium text-slate-800">{doc.title || "Untitled"}</div>
+                            <div className="mt-0.5 flex gap-2 text-[10px] text-slate-400">
+                              <span className="capitalize">{doc.type?.replace(/_/g, " ") || "—"}</span>
+                              {doc.company_name && <><span>·</span><span>{doc.company_name}</span></>}
+                            </div>
+                          </div>
+                          <span className="text-[11px] text-slate-400">{formatDate(doc.created_at)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="text-xs text-slate-400">No blueprint documents.</p>}
+                </div>
+
+                {/* Upgrade clicks */}
+                {fullData.upgrade_clicks.length > 0 && (
+                  <div>
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Upgrade intent ({fullData.upgrade_clicks.length})</h3>
+                    <div className="divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
+                      {fullData.upgrade_clicks.slice(0, 10).map((u, i) => (
+                        <div key={i} className="flex items-center gap-3 px-3 py-2.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13px] font-medium text-slate-800">{u.feature || "—"}</div>
+                            <div className="mt-0.5 text-[10px] text-slate-400">{u.source || "—"}</div>
+                          </div>
+                          <span className="text-[11px] text-slate-400">{formatDateTime(u.clicked_at)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Footer */}
+        {user.email !== ADMIN_EMAIL && (
+          <div className="shrink-0 border-t border-slate-100 px-5 py-3">
+            <button
+              type="button"
+              disabled={actionLoading}
+              onClick={() => onDeleteUser(user.id, user.email)}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 py-2.5 text-sm font-semibold text-rose-600 transition hover:bg-rose-100 disabled:opacity-40"
+            >
+              <TrashIcon />
+              Delete account permanently
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Insight card ──────────────────────────────────────────────────────────────
+
+const INSIGHT_COLORS = {
+  amber: { bg: "bg-amber-50", border: "border-amber-100", count: "text-amber-700", label: "text-amber-600", btn: "bg-amber-600 hover:bg-amber-700", dot: "bg-amber-400" },
+  sky:   { bg: "bg-sky-50",   border: "border-sky-100",   count: "text-sky-700",   label: "text-sky-600",   btn: "bg-sky-600 hover:bg-sky-700",   dot: "bg-sky-400" },
+  violet:{ bg: "bg-violet-50",border: "border-violet-100",count: "text-violet-700",label: "text-violet-600",btn: "bg-violet-600 hover:bg-violet-700",dot: "bg-violet-400" },
+  emerald:{bg:"bg-emerald-50",border:"border-emerald-100",count:"text-emerald-700",label:"text-emerald-600",btn:"bg-emerald-600 hover:bg-emerald-700",dot:"bg-emerald-400"},
+};
+
+function InsightCard({ label, count, description, color = "amber", onAction, actionLabel }) {
+  const c = INSIGHT_COLORS[color] || INSIGHT_COLORS.amber;
+  return (
+    <div className={`flex flex-col justify-between rounded-2xl border p-4 ${c.bg} ${c.border}`}>
+      <div>
+        <div className={`text-3xl font-bold tabular-nums ${c.count}`}>{count}</div>
+        <div className={`mt-1 text-xs font-semibold ${c.label}`}>{label}</div>
+        <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">{description}</p>
+      </div>
+      {onAction && (
+        <button
+          type="button"
+          onClick={onAction}
+          className={`mt-4 rounded-xl px-3 py-2 text-[12px] font-semibold text-white transition ${c.btn}`}
+        >
+          {actionLabel || "View →"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Data table ────────────────────────────────────────────────────────────────
 
 function DataTable({ columns, rows, emptyText = "No data" }) {
   if (!rows || rows.length === 0) {
@@ -126,7 +934,7 @@ function DataTable({ columns, rows, emptyText = "No data" }) {
         <thead>
           <tr className="border-b border-slate-100 bg-slate-50/80">
             {columns.map((col) => (
-              <th key={col.key} className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              <th key={col.key} className={`px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400 ${col.className || ""}`}>
                 {col.label}
               </th>
             ))}
@@ -136,8 +944,8 @@ function DataTable({ columns, rows, emptyText = "No data" }) {
           {rows.map((row, i) => (
             <tr key={row.id || i} className="hover:bg-slate-50/60 transition-colors">
               {columns.map((col) => (
-                <td key={col.key} className="px-4 py-3 text-slate-700">
-                  {col.render ? col.render(row) : row[col.key] ?? "—"}
+                <td key={col.key} className={`px-4 py-3 text-slate-700 ${col.tdClass || ""}`}>
+                  {col.render ? col.render(row) : (row[col.key] ?? "—")}
                 </td>
               ))}
             </tr>
@@ -148,45 +956,327 @@ function DataTable({ columns, rows, emptyText = "No data" }) {
   );
 }
 
-function formatDate(iso) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+// ── Stat tiles ────────────────────────────────────────────────────────────────
+
+const STAT_CONFIG = [
+  { key: "total_workspaces", label: "Workspaces", targetTab: "workspaces", color: "bg-brand-50 text-brand-700 border-brand-100", iconBg: "bg-brand-100", iconColor: "text-brand-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" /></svg> },
+  { key: "total_users", label: "Total Users", targetTab: "users", color: "bg-emerald-50 text-emerald-700 border-emerald-100", iconBg: "bg-emerald-100", iconColor: "text-emerald-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" /></svg> },
+  { key: "total_members", label: "Members", targetTab: "members", color: "bg-violet-50 text-violet-700 border-violet-100", iconBg: "bg-violet-100", iconColor: "text-violet-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" /></svg> },
+  { key: "total_invitations", label: "Invitations", targetTab: "invitations", color: "bg-amber-50 text-amber-700 border-amber-100", iconBg: "bg-amber-100", iconColor: "text-amber-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg> },
+  { key: "total_simulations", label: "Simulations", targetTab: null, color: "bg-sky-50 text-sky-700 border-sky-100", iconBg: "bg-sky-100", iconColor: "text-sky-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg> },
+  { key: "total_blueprints", label: "Blueprints", targetTab: null, color: "bg-indigo-50 text-indigo-700 border-indigo-100", iconBg: "bg-indigo-100", iconColor: "text-indigo-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg> },
+  { key: "total_validated_workspaces", label: "Validated", targetTab: null, color: "bg-teal-50 text-teal-700 border-teal-100", iconBg: "bg-teal-100", iconColor: "text-teal-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+];
+
+function StatTile({ config, value, onClick }) {
+  const Tag = onClick ? "button" : "div";
+  return (
+    <Tag
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={`flex items-center gap-3 rounded-2xl border p-4 text-left transition ${config.color} ${onClick ? "cursor-pointer hover:shadow-md hover:scale-[1.02]" : ""}`}
+    >
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${config.iconBg} ${config.iconColor}`}>
+        {config.icon}
+      </div>
+      <div className="min-w-0">
+        <div className="text-2xl font-bold tabular-nums leading-none">{value ?? "—"}</div>
+        <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide opacity-70 truncate">{config.label}</div>
+      </div>
+    </Tag>
+  );
 }
 
+// ── Tab config ────────────────────────────────────────────────────────────────
+
 const TABS = [
-  { key: "overview", label: "Overview", icon: <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm6.39-2.908a.75.75 0 01.766.027l3.5 2.25a.75.75 0 010 1.262l-3.5 2.25A.75.75 0 018 12.25v-4.5a.75.75 0 01.39-.658z" /></svg> },
-  { key: "workspaces", label: "Workspaces", icon: <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 001.1 1.677A.75.75 0 0113.26 18H6.74a.75.75 0 01-.484-1.323A3.501 3.501 0 007.355 15H4.25A2.25 2.25 0 012 12.75v-8.5z" /></svg> },
-  { key: "users", label: "Users", icon: <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M10 8a3 3 0 100-6 3 3 0 000 6zM3.465 14.493a1.23 1.23 0 00.41 1.412A9.957 9.957 0 0010 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 00-13.074.003z" /></svg> },
-  { key: "members", label: "Members", icon: <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M7 8a3 3 0 100-6 3 3 0 000 6zM14.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM1.615 16.428a1.224 1.224 0 01-.256-1.12 6.002 6.002 0 0111.272 0 1.224 1.224 0 01-.256 1.12A6.985 6.985 0 017 18a6.985 6.985 0 01-5.385-1.572zM14.5 16h-.106c.07-.297.088-.611.048-.933a7.47 7.47 0 00-1.588-3.755 4.502 4.502 0 015.874 2.636.818.818 0 01-.36.98A7.465 7.465 0 0114.5 16z" /></svg> },
-  { key: "invitations", label: "Invitations", icon: <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M3 4a2 2 0 00-2 2v1.161l8.441 4.221a1.25 1.25 0 001.118 0L19 7.162V6a2 2 0 00-2-2H3z" /><path d="M19 8.839l-7.77 3.885a2.75 2.75 0 01-2.46 0L1 8.839V14a2 2 0 002 2h14a2 2 0 002-2V8.839z" /></svg> },
+  { key: "overview", label: "Overview" },
+  { key: "workspaces", label: "Workspaces" },
+  { key: "users", label: "Users" },
+  { key: "members", label: "Members" },
+  { key: "invitations", label: "Invitations" },
+  { key: "upgrades", label: "Upgrade Clicks" },
+  { key: "platform", label: "Platform" },
 ];
+
+const INV_FILTERS = ["all", "pending", "accepted", "revoked"];
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
   const navigate = useNavigate();
   const email = useAuthStore((s) => s.email);
+
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [tab, setTab] = useState("overview");
+  const [search, setSearch] = useState("");
+  const [invitationFilter, setInvitationFilter] = useState("all");
+
+  const [confirm, setConfirm] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const [userDetail, setUserDetail] = useState(null);
+
+  const [upgrades, setUpgrades] = useState(null);
+  const [upgradesLoaded, setUpgradesLoaded] = useState(false);
+
+  const [toast, setToast] = useState(null);
 
   const isAdmin = email === ADMIN_EMAIL;
 
+  // ── Data loading ──────────────────────────────────────────────────────────
+
+  const loadStats = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
+    else setRefreshing(true);
+    setError(null);
+    try {
+      const data = await apiRequest("/admin/stats", "GET");
+      setStats(data);
+    } catch (e) {
+      setError(e.message || "Failed to load admin stats.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!isAdmin) return;
-    let cancelled = false;
-    async function load() {
-      try {
-        const data = await apiRequest("/admin/stats", "GET");
-        if (!cancelled) setStats(data);
-      } catch (e) {
-        if (!cancelled) setError(e.message || "Failed to load admin stats.");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+    loadStats();
+  }, [isAdmin, loadStats]);
+
+  const loadUpgrades = useCallback(() => {
+    if (upgradesLoaded) return;
+    apiRequest("/admin/upgrade-clicks", "GET")
+      .then((data) => { setUpgrades(data); setUpgradesLoaded(true); })
+      .catch(() => { setUpgrades([]); setUpgradesLoaded(true); });
+  }, [upgradesLoaded]);
+
+  useEffect(() => {
+    if (tab === "upgrades") loadUpgrades();
+  }, [tab, loadUpgrades]);
+
+  // ── Toast helpers ─────────────────────────────────────────────────────────
+
+  const showToast = useCallback((kind, msg) => {
+    setToast({ kind, msg });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  // ── Workspace detail panel ────────────────────────────────────────────────
+
+  async function openDetail(workspaceId) {
+    setDetailLoading(true);
+    try {
+      const data = await apiRequest(`/admin/workspaces/${workspaceId}`, "GET");
+      setDetail(data);
+    } catch (e) {
+      showToast("error", e.message || "Failed to load workspace detail.");
+    } finally {
+      setDetailLoading(false);
     }
-    load();
-    return () => { cancelled = true; };
-  }, [isAdmin]);
+  }
+
+  function refreshDetail() {
+    if (detail?.id) openDetail(detail.id);
+  }
+
+  // ── Confirm + action execution ────────────────────────────────────────────
+
+  function askConfirm(payload) {
+    setConfirm(payload);
+  }
+
+  async function executeConfirm() {
+    if (!confirm) return;
+    setActionLoading(true);
+    try {
+      await confirm.action();
+      showToast("success", confirm.successMsg || "Done.");
+      setConfirm(null);
+      loadStats(true);
+      if (detail) refreshDetail();
+      if (confirm.afterAction) confirm.afterAction();
+    } catch (e) {
+      showToast("error", e.message || "Action failed.");
+      setConfirm(null);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  // ── Per-entity actions ────────────────────────────────────────────────────
+
+  function deleteUser(userId, userEmail) {
+    askConfirm({
+      title: "Delete user account?",
+      description: `This permanently deletes "${userEmail}" and all their workspace data. This cannot be undone.`,
+      label: "Delete user",
+      successMsg: `User "${userEmail}" deleted.`,
+      afterAction: () => setUserDetail(null),
+      action: () => apiRequest(`/admin/users/${userId}`, "DELETE"),
+    });
+  }
+
+  function deleteWorkspace(workspaceId, workspaceName) {
+    askConfirm({
+      title: "Delete workspace?",
+      description: `This permanently deletes "${workspaceName}" including all members, invitations, and workspace data.`,
+      label: "Delete workspace",
+      successMsg: `Workspace "${workspaceName}" deleted.`,
+      action: async () => {
+        await apiRequest(`/admin/workspaces/${workspaceId}`, "DELETE");
+        if (detail?.id === workspaceId) setDetail(null);
+      },
+    });
+  }
+
+  function removeMember(memberId, memberEmail) {
+    askConfirm({
+      title: "Remove workspace member?",
+      description: `Remove "${memberEmail || memberId}" from this workspace. They will lose access immediately.`,
+      label: "Remove member",
+      successMsg: "Member removed.",
+      action: () => apiRequest(`/admin/members/${memberId}`, "DELETE"),
+    });
+  }
+
+  function revokeInvitation(invitationId, invEmail) {
+    askConfirm({
+      title: "Revoke invitation?",
+      description: `Revoke the pending invitation${invEmail ? ` for "${invEmail}"` : ""}. The link will stop working immediately.`,
+      label: "Revoke",
+      successMsg: "Invitation revoked.",
+      action: () => apiRequest(`/admin/invitations/${invitationId}/revoke`, "PATCH"),
+    });
+  }
+
+  function bulkRevokePending() {
+    const pending = (stats?.invitations || []).filter((i) => i.status === "pending");
+    if (!pending.length) return;
+    askConfirm({
+      title: `Revoke all ${pending.length} pending invitation${pending.length > 1 ? "s" : ""}?`,
+      description: "All pending invitation links will stop working immediately. Members who haven't accepted yet will lose their links.",
+      label: `Revoke all ${pending.length}`,
+      successMsg: `Revoked ${pending.length} pending invitation${pending.length > 1 ? "s" : ""}.`,
+      action: async () => {
+        await Promise.all(pending.map((i) => apiRequest(`/admin/invitations/${i.id}/revoke`, "PATCH")));
+      },
+    });
+  }
+
+  // ── Navigation helper ─────────────────────────────────────────────────────
+
+  function goToTab(tabKey) {
+    setTab(tabKey);
+    setSearch("");
+  }
+
+  // ── Derived / filtered data ───────────────────────────────────────────────
+
+  const q = search.trim().toLowerCase();
+
+  const filteredWorkspaces = useMemo(() =>
+    (stats?.workspaces || []).filter((w) =>
+      !q || w.name?.toLowerCase().includes(q) || w.id?.toLowerCase().includes(q) || w.owner_email?.toLowerCase().includes(q)
+    ), [stats?.workspaces, q]);
+
+  const filteredUsers = useMemo(() =>
+    (stats?.users || []).filter((u) =>
+      !q || u.email?.toLowerCase().includes(q) || u.id?.toLowerCase().includes(q)
+    ), [stats?.users, q]);
+
+  const filteredMembers = useMemo(() =>
+    (stats?.members || []).filter((m) =>
+      !q || m.user_email?.toLowerCase().includes(q) || m.workspace_name?.toLowerCase().includes(q)
+    ), [stats?.members, q]);
+
+  const filteredInvitations = useMemo(() => {
+    const statusMatch = (i) => invitationFilter === "all" || i.status === invitationFilter;
+    return (stats?.invitations || []).filter((i) =>
+      statusMatch(i) &&
+      (!q || i.invited_email?.toLowerCase().includes(q) || i.workspace_name?.toLowerCase().includes(q) || i.status?.includes(q))
+    );
+  }, [stats?.invitations, q, invitationFilter]);
+
+  const filteredUpgrades = useMemo(() =>
+    (upgrades || []).filter((u) =>
+      !q || u.email?.toLowerCase().includes(q) || u.feature?.toLowerCase().includes(q) || u.source?.toLowerCase().includes(q)
+    ), [upgrades, q]);
+
+  const tabCounts = {
+    workspaces: stats?.total_workspaces ?? 0,
+    users: stats?.total_users ?? 0,
+    members: stats?.total_members ?? 0,
+    invitations: stats?.total_invitations ?? 0,
+  };
+
+  const invStatusCounts = useMemo(() => {
+    const all = stats?.invitations || [];
+    return {
+      all: all.length,
+      pending: all.filter((i) => i.status === "pending").length,
+      accepted: all.filter((i) => i.status === "accepted").length,
+      revoked: all.filter((i) => i.status === "revoked").length,
+    };
+  }, [stats?.invitations]);
+
+  const insights = useMemo(() => {
+    if (!stats) return [];
+    const ownedEmails = new Set((stats.workspaces || []).map((w) => w.owner_email));
+    const memberEmails = new Set((stats.members || []).map((m) => m.user_email));
+    const orphaned = (stats.users || []).filter((u) => !ownedEmails.has(u.email) && !memberEmails.has(u.email));
+    const pendingInv = (stats.invitations || []).filter((i) => i.status === "pending");
+    const soloWs = (stats.workspaces || []).filter((w) => (w.member_count ?? 0) === 0);
+    return [
+      {
+        id: "orphaned", color: "amber", label: "Users without a workspace", count: orphaned.length,
+        description: "Accounts with no owned workspace and no memberships. These users may have dropped off during onboarding.",
+        onAction: () => goToTab("users"), actionLabel: "View users →",
+      },
+      {
+        id: "pending", color: "sky", label: "Pending invitations", count: pendingInv.length,
+        description: "Open invitation links still waiting to be claimed. Consider following up or revoking stale links.",
+        onAction: () => { goToTab("invitations"); setInvitationFilter("pending"); }, actionLabel: "View pending →",
+      },
+      {
+        id: "solo", color: "violet", label: "Solo workspaces", count: soloWs.length,
+        description: "Workspaces with no team members yet. These owners may benefit from guided activation.",
+        onAction: () => goToTab("workspaces"), actionLabel: "View workspaces →",
+      },
+      {
+        id: "upgrades", color: "emerald", label: "Upgrade intent clicks", count: stats.total_upgrade_clicks ?? 0,
+        description: "Users who clicked an upgrade prompt — warm leads for outreach or product feedback.",
+        onAction: () => goToTab("upgrades"), actionLabel: "View upgrade clicks →",
+      },
+    ];
+  }, [stats]);
+
+  const platformMetrics = useMemo(() => {
+    if (!stats) return [];
+    const ws = stats.workspaces || [];
+    const inv = stats.invitations || [];
+    const accepted = inv.filter((i) => i.status === "accepted").length;
+    const wsWithMembers = ws.filter((w) => (w.member_count ?? 0) > 0).length;
+    const pct = (n, d) => (d > 0 ? `${Math.round((n / d) * 100)}%` : "—");
+    return [
+      { label: "Invitation acceptance rate", value: pct(accepted, inv.length), sub: `${accepted} of ${inv.length} invitations accepted` },
+      { label: "Team adoption rate", value: pct(wsWithMembers, ws.length), sub: `${wsWithMembers} of ${ws.length} workspaces have team members` },
+      { label: "Avg. members / workspace", value: ws.length > 0 ? (stats.total_members / ws.length).toFixed(1) : "—", sub: `${stats.total_members} members across ${ws.length} workspaces` },
+      { label: "Validation completion rate", value: pct(stats.total_validated_workspaces, ws.length), sub: `${stats.total_validated_workspaces} of ${ws.length} workspaces validated` },
+      { label: "Simulation usage rate", value: pct(stats.total_simulations, ws.length), sub: `${stats.total_simulations} simulation runs total` },
+      { label: "Blueprint generation rate", value: pct(stats.total_blueprints, ws.length), sub: `${stats.total_blueprints} blueprints generated` },
+    ];
+  }, [stats]);
+
+  // ── Guard states ──────────────────────────────────────────────────────────
 
   if (!isAdmin) {
     return (
@@ -198,11 +1288,8 @@ export default function AdminPage() {
         </div>
         <h2 className="mt-4 text-lg font-semibold text-slate-900">Access restricted</h2>
         <p className="mt-2 max-w-xs text-sm text-slate-500">This page is restricted to system administrators only.</p>
-        <button
-          type="button"
-          onClick={() => navigate("/dashboard")}
-          className="mt-6 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700"
-        >
+        <button type="button" onClick={() => navigate("/dashboard")}
+          className="mt-6 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700">
           Back to dashboard
         </button>
       </div>
@@ -222,35 +1309,54 @@ export default function AdminPage() {
   if (error) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-slate-50 px-4 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-6 w-6 text-slate-400">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-          </svg>
-        </div>
         <p className="text-sm font-medium text-slate-700">Failed to load data</p>
         <p className="text-xs text-slate-400">{error}</p>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="mt-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700"
-        >
+        <button type="button" onClick={() => loadStats()}
+          className="mt-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700">
           Retry
         </button>
       </div>
     );
   }
 
-  const tabCounts = {
-    workspaces: stats?.total_workspaces ?? 0,
-    users: stats?.total_users ?? 0,
-    members: stats?.total_members ?? 0,
-    invitations: stats?.total_invitations ?? 0,
-  };
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-slate-50">
+
+      <ConfirmModal confirm={confirm} onCancel={() => setConfirm(null)} onConfirm={executeConfirm} loading={actionLoading} />
+
+      {(detail || detailLoading) && (
+        <WorkspaceDetailPanel
+          detail={detail}
+          onClose={() => setDetail(null)}
+          onDeleteMember={(id) => removeMember(id, detail?.members?.find((m) => m.id === id)?.email)}
+          onRevokeInvitation={(id) => revokeInvitation(id, detail?.invitations?.find((i) => i.id === id)?.email)}
+          actionLoading={actionLoading}
+        />
+      )}
+
+      {userDetail && (
+        <UserDetailPanel
+          user={userDetail}
+          stats={stats}
+          upgrades={upgrades}
+          onClose={() => setUserDetail(null)}
+          onDeleteUser={deleteUser}
+          onDeleteWorkspace={deleteWorkspace}
+          onUserUpdated={(updatedUser) => {
+            setUserDetail((prev) => prev ? { ...prev, ...updatedUser } : prev);
+            loadStats(true);
+          }}
+          showToast={showToast}
+          actionLoading={actionLoading}
+        />
+      )}
+
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
+
       {/* Top bar */}
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-6">
           <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" />
           <div className="h-5 w-px bg-slate-200" />
@@ -260,39 +1366,48 @@ export default function AdminPage() {
               Control Panel
             </span>
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => loadStats(true)}
+              disabled={refreshing}
+              title="Refresh data"
+              className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-800 disabled:opacity-40"
+            >
+              <span className={refreshing ? "animate-spin" : ""}><RefreshIcon /></span>
+            </button>
             <span className="hidden text-xs text-slate-400 sm:block">{email}</span>
-            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">
-              Admin
-            </span>
+            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">Admin</span>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
 
-        {/* Stat tiles */}
+        {/* Stat tiles — clickable where a target tab exists */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
           {STAT_CONFIG.map((cfg) => (
-            <StatTile key={cfg.key} config={cfg} value={stats[cfg.key]} />
+            <StatTile
+              key={cfg.key}
+              config={cfg}
+              value={stats[cfg.key]}
+              onClick={cfg.targetTab ? () => goToTab(cfg.targetTab) : undefined}
+            />
           ))}
         </div>
 
-        {/* Tab navigation */}
+        {/* Tab nav */}
         <div className="overflow-x-auto">
           <div className="flex min-w-max gap-1 rounded-2xl border border-slate-200 bg-white p-1">
             {TABS.map((t) => (
               <button
                 key={t.key}
                 type="button"
-                onClick={() => setTab(t.key)}
+                onClick={() => { goToTab(t.key); }}
                 className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition whitespace-nowrap ${
-                  tab === t.key
-                    ? "bg-brand-600 text-white shadow-sm"
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                  tab === t.key ? "bg-brand-600 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
                 }`}
               >
-                {t.icon}
                 {t.label}
                 {tabCounts[t.key] !== undefined ? (
                   <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
@@ -306,134 +1421,447 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {/* Overview */}
+        {/* ── Overview ── */}
         {tab === "overview" && (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-800">Recent workspaces</h2>
-                <button type="button" onClick={() => setTab("workspaces")} className="text-xs font-medium text-brand-600 hover:text-brand-700">
-                  View all →
-                </button>
+          <div className="space-y-6">
+            {/* Actionable insights */}
+            <div>
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Actionable insights</h2>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {insights.map((ins) => (
+                  <InsightCard
+                    key={ins.id}
+                    label={ins.label}
+                    count={ins.count}
+                    description={ins.description}
+                    color={ins.color}
+                    onAction={ins.onAction}
+                    actionLabel={ins.actionLabel}
+                  />
+                ))}
               </div>
-              <DataTable
-                columns={[
-                  { key: "name", label: "Name", render: (r) => <span className="font-medium text-slate-800">{r.name || "Unnamed"}</span> },
-                  { key: "created_at", label: "Created", render: (r) => <span className="text-xs text-slate-500">{formatDate(r.created_at)}</span> },
-                ]}
-                rows={(stats.workspaces || []).slice(0, 8)}
-                emptyText="No workspaces yet"
-              />
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-800">Recent users</h2>
-                <button type="button" onClick={() => setTab("users")} className="text-xs font-medium text-brand-600 hover:text-brand-700">
-                  View all →
-                </button>
+            {/* Recent tables */}
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-slate-800">Recent workspaces</h2>
+                  <button type="button" onClick={() => goToTab("workspaces")} className="text-xs font-medium text-brand-600 hover:text-brand-700">View all →</button>
+                </div>
+                <DataTable
+                  columns={[
+                    { key: "name", label: "Name", render: (r) => <span className="font-medium text-slate-800">{r.name || "Unnamed"}</span> },
+                    { key: "owner_email", label: "Owner", render: (r) => <span className="text-xs text-slate-500 truncate max-w-[140px] block">{r.owner_email || "—"}</span> },
+                    { key: "created_at", label: "Created", render: (r) => <span className="text-xs text-slate-500">{formatDate(r.created_at)}</span> },
+                  ]}
+                  rows={(stats.workspaces || []).slice(0, 8)}
+                  emptyText="No workspaces yet"
+                />
               </div>
-              <DataTable
-                columns={[
-                  { key: "email", label: "Email", render: (r) => <span className="font-medium text-slate-800">{r.email}</span> },
-                  { key: "created_at", label: "Joined", render: (r) => <span className="text-xs text-slate-500">{formatDate(r.created_at)}</span> },
-                ]}
-                rows={(stats.users || []).slice(0, 8)}
-                emptyText="No users yet"
-              />
+              <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-slate-800">Recent users</h2>
+                  <button type="button" onClick={() => goToTab("users")} className="text-xs font-medium text-brand-600 hover:text-brand-700">View all →</button>
+                </div>
+                <DataTable
+                  columns={[
+                    { key: "email", label: "Email", render: (r) => (
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-slate-800 truncate max-w-[160px]">{r.email}</span>
+                        {r.is_blocked && <span className="shrink-0 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">Blocked</span>}
+                      </div>
+                    )},
+                    { key: "created_at", label: "Joined", render: (r) => <span className="text-xs text-slate-500">{formatDate(r.created_at)}</span> },
+                    { key: "actions", label: "", tdClass: "w-20", render: (r) => (
+                      <button
+                        type="button"
+                        onClick={() => setUserDetail(r)}
+                        className="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-[11px] font-semibold text-brand-700 transition hover:bg-brand-100 whitespace-nowrap"
+                      >
+                        Manage →
+                      </button>
+                    )},
+                  ]}
+                  rows={(stats.users || []).slice(0, 8)}
+                  emptyText="No users yet"
+                />
+              </div>
             </div>
           </div>
         )}
 
-        {/* Workspaces */}
+        {/* ── Workspaces ── */}
         {tab === "workspaces" && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="mb-4 text-sm font-semibold text-slate-800">All workspaces</h2>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-slate-800">
+                All workspaces <span className="ml-1 text-slate-400 font-normal">({filteredWorkspaces.length})</span>
+              </h2>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadCSV(stats?.workspaces || [], [
+                    { key: "id", label: "ID" },
+                    { key: "name", label: "Name" },
+                    { key: "owner_email", label: "Owner" },
+                    { key: "member_count", label: "Members" },
+                    { key: "invitation_count", label: "Invitations" },
+                    { key: "created_at", label: "Created" },
+                  ], "workspaces.csv")}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                >
+                  <DownloadIcon /> Export CSV
+                </button>
+                <SearchBar value={search} onChange={setSearch} placeholder="Search by name, owner…" />
+              </div>
+            </div>
             <DataTable
               columns={[
+                { key: "name", label: "Workspace", render: (r) => (
+                  <div>
+                    <div className="font-medium text-slate-800">{r.name || "Unnamed"}</div>
+                    <div className="text-[11px] text-slate-400">{r.owner_email || "—"}</div>
+                  </div>
+                )},
                 { key: "id", label: "ID", render: (r) => <span className="font-mono text-[11px] text-slate-400">{r.id.slice(0, 12)}…</span> },
-                { key: "name", label: "Name", render: (r) => <span className="font-medium text-slate-800">{r.name || "Unnamed"}</span> },
-                { key: "created_at", label: "Created", render: (r) => formatDate(r.created_at) },
+                { key: "member_count", label: "Members", render: (r) => <span className="text-xs tabular-nums">{r.member_count ?? 0}</span> },
+                { key: "created_at", label: "Created", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },
+                { key: "actions", label: "", tdClass: "w-20", render: (r) => (
+                  <div className="flex items-center gap-1">
+                    <ActionBtn variant="view" title="View details" onClick={() => openDetail(r.id)} disabled={detailLoading} />
+                    <ActionBtn variant="danger" title="Delete workspace" onClick={() => deleteWorkspace(r.id, r.name || "Unnamed")} />
+                  </div>
+                )},
               ]}
-              rows={stats.workspaces || []}
-              emptyText="No workspaces"
+              rows={filteredWorkspaces}
+              emptyText={search ? "No workspaces match your search" : "No workspaces"}
             />
           </div>
         )}
 
-        {/* Users */}
+        {/* ── Users ── */}
         {tab === "users" && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="mb-4 text-sm font-semibold text-slate-800">All users</h2>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-slate-800">
+                All users <span className="ml-1 text-slate-400 font-normal">({filteredUsers.length})</span>
+              </h2>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadCSV(stats?.users || [], [
+                    { key: "id", label: "ID" },
+                    { key: "email", label: "Email" },
+                    { key: "created_at", label: "Joined" },
+                  ], "users.csv")}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                >
+                  <DownloadIcon /> Export CSV
+                </button>
+                <SearchBar value={search} onChange={setSearch} placeholder="Search by email or ID…" />
+              </div>
+            </div>
             <DataTable
               columns={[
+                { key: "email", label: "Email", render: (r) => (
+                  <div className="flex items-center gap-2">
+                    <span className={`font-medium ${r.email === ADMIN_EMAIL ? "text-rose-600" : "text-slate-800"}`}>{r.email}</span>
+                    {r.email === ADMIN_EMAIL && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">admin</span>}
+                    {r.is_blocked && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">Blocked</span>}
+                  </div>
+                )},
                 { key: "id", label: "ID", render: (r) => <span className="font-mono text-[11px] text-slate-400">{r.id.slice(0, 12)}…</span> },
-                { key: "email", label: "Email", render: (r) => <span className="font-medium text-slate-800">{r.email}</span> },
-                { key: "created_at", label: "Joined", render: (r) => formatDate(r.created_at) },
+                { key: "created_at", label: "Joined", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },
+                { key: "actions", label: "", tdClass: "w-40", render: (r) => (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setUserDetail(r)}
+                      className="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-[11px] font-semibold text-brand-700 transition hover:bg-brand-100 whitespace-nowrap"
+                    >
+                      Manage
+                    </button>
+                    {r.email !== ADMIN_EMAIL && (
+                      <ActionBtn variant="danger" title="Delete user" onClick={() => deleteUser(r.id, r.email)} />
+                    )}
+                  </div>
+                )},
               ]}
-              rows={stats.users || []}
-              emptyText="No users"
+              rows={filteredUsers}
+              emptyText={search ? "No users match your search" : "No users"}
             />
           </div>
         )}
 
-        {/* Members */}
+        {/* ── Members ── */}
         {tab === "members" && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="mb-4 text-sm font-semibold text-slate-800">Workspace members</h2>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-slate-800">
+                Workspace members <span className="ml-1 text-slate-400 font-normal">({filteredMembers.length})</span>
+              </h2>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadCSV(stats?.members || [], [
+                    { key: "id", label: "ID" },
+                    { key: "user_email", label: "User Email" },
+                    { key: "workspace_name", label: "Workspace" },
+                    { key: "permission_type", label: "Permission Type" },
+                    { key: "created_at", label: "Added" },
+                  ], "members.csv")}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                >
+                  <DownloadIcon /> Export CSV
+                </button>
+                <SearchBar value={search} onChange={setSearch} placeholder="Search by email or workspace…" />
+              </div>
+            </div>
             <DataTable
               columns={[
-                { key: "workspace_id", label: "Workspace", render: (r) => <span className="font-mono text-[11px] text-slate-400">{String(r.workspace_id || "").slice(0, 10)}…</span> },
-                { key: "user_id", label: "User ID", render: (r) => <span className="font-mono text-[11px] text-slate-400">{String(r.user_id || "").slice(0, 10)}…</span> },
-                {
-                  key: "permission_type",
-                  label: "Permission",
-                  render: (r) => (
-                    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${
-                      r.permission_type === "full" || r.permission_type === "module"
-                        ? "bg-brand-100 text-brand-700"
-                        : "bg-amber-100 text-amber-700"
-                    }`}>
-                      {r.permission_type || "—"}
-                    </span>
-                  ),
-                },
-                { key: "created_at", label: "Added", render: (r) => formatDate(r.created_at) },
+                { key: "user_email", label: "User", render: (r) => <span className="font-medium text-slate-800">{r.user_email || r.user_id?.slice(0, 10) + "…"}</span> },
+                { key: "workspace_name", label: "Workspace", render: (r) => <span className="text-slate-600">{r.workspace_name || r.workspace_id?.slice(0, 10) + "…"}</span> },
+                { key: "permission_type", label: "Permission", render: (r) => <PermBadge type={r.permission_type} /> },
+                { key: "created_at", label: "Added", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },
+                { key: "actions", label: "", tdClass: "w-16", render: (r) => (
+                  <ActionBtn variant="danger" title="Remove member" onClick={() => removeMember(r.id, r.user_email)} />
+                )},
               ]}
-              rows={stats.members || []}
-              emptyText="No members"
+              rows={filteredMembers}
+              emptyText={search ? "No members match your search" : "No members"}
             />
           </div>
         )}
 
-        {/* Invitations */}
+        {/* ── Invitations ── */}
         {tab === "invitations" && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="mb-4 text-sm font-semibold text-slate-800">Workspace invitations</h2>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-800">
+                  Workspace invitations <span className="ml-1 text-slate-400 font-normal">({filteredInvitations.length})</span>
+                </h2>
+                {/* Status filter pills */}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {INV_FILTERS.map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setInvitationFilter(f)}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize transition ${
+                        invitationFilter === f
+                          ? f === "pending" ? "bg-amber-500 text-white"
+                            : f === "accepted" ? "bg-emerald-500 text-white"
+                            : f === "revoked" ? "bg-slate-500 text-white"
+                            : "bg-brand-600 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {f} <span className="opacity-70">({invStatusCounts[f]})</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {invStatusCounts.pending > 0 && (
+                  <button
+                    type="button"
+                    onClick={bulkRevokePending}
+                    className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-700 transition hover:bg-amber-100"
+                  >
+                    <BanIcon /> Revoke all pending ({invStatusCounts.pending})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => downloadCSV(stats?.invitations || [], [
+                    { key: "id", label: "ID" },
+                    { key: "workspace_name", label: "Workspace" },
+                    { key: "invited_email", label: "Email" },
+                    { key: "status", label: "Status" },
+                    { key: "created_at", label: "Sent" },
+                  ], "invitations.csv")}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                >
+                  <DownloadIcon /> Export CSV
+                </button>
+                <SearchBar value={search} onChange={setSearch} placeholder="Search by email or workspace…" />
+              </div>
+            </div>
             <DataTable
               columns={[
-                { key: "workspace_id", label: "Workspace", render: (r) => <span className="font-mono text-[11px] text-slate-400">{String(r.workspace_id || "").slice(0, 10)}…</span> },
-                { key: "invited_email", label: "Email invited", render: (r) => <span className="font-medium text-slate-800">{r.invited_email || "—"}</span> },
-                {
-                  key: "status",
-                  label: "Status",
-                  render: (r) => (
-                    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${
-                      r.status === "accepted" ? "bg-emerald-100 text-emerald-700"
-                      : r.status === "pending" ? "bg-amber-100 text-amber-700"
-                      : "bg-slate-100 text-slate-500"
-                    }`}>
-                      {r.status || "—"}
-                    </span>
-                  ),
-                },
-                { key: "created_at", label: "Sent", render: (r) => formatDate(r.created_at) },
+                { key: "workspace_name", label: "Workspace", render: (r) => <span className="font-medium text-slate-800">{r.workspace_name || r.workspace_id?.slice(0, 10) + "…"}</span> },
+                { key: "invited_email", label: "Email", render: (r) => <span className="text-slate-700">{r.invited_email || <span className="text-slate-400 italic">Link-only</span>}</span> },
+                { key: "status", label: "Status", render: (r) => <StatusBadge status={r.status} /> },
+                { key: "created_at", label: "Sent", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },
+                { key: "actions", label: "", tdClass: "w-16", render: (r) => (
+                  r.status === "pending" ? (
+                    <ActionBtn variant="warn" title="Revoke invitation" onClick={() => revokeInvitation(r.id, r.invited_email)} />
+                  ) : null
+                )},
               ]}
-              rows={stats.invitations || []}
-              emptyText="No invitations"
+              rows={filteredInvitations}
+              emptyText={search || invitationFilter !== "all" ? "No invitations match your filter" : "No invitations"}
             />
           </div>
         )}
+
+        {/* ── Upgrade Clicks ── */}
+        {tab === "upgrades" && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-800">
+                  Upgrade intent clicks <span className="ml-1 text-slate-400 font-normal">({filteredUpgrades.length})</span>
+                </h2>
+                <p className="mt-0.5 text-[11px] text-slate-400">Users who clicked an upgrade prompt — potential leads for outreach.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {upgradesLoaded && (
+                  <button
+                    type="button"
+                    onClick={() => downloadCSV(upgrades || [], [
+                      { key: "email", label: "Email" },
+                      { key: "feature", label: "Feature" },
+                      { key: "source", label: "Source" },
+                      { key: "clicked_at", label: "Clicked At" },
+                    ], "upgrade-clicks.csv")}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                  >
+                    <DownloadIcon /> Export CSV
+                  </button>
+                )}
+                <SearchBar value={search} onChange={setSearch} placeholder="Search by email or feature…" />
+              </div>
+            </div>
+            {!upgradesLoaded ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
+              </div>
+            ) : (
+              <DataTable
+                columns={[
+                  { key: "email", label: "Email", render: (r) => <span className="font-medium text-slate-800">{r.email || r.user_id?.slice(0, 12) + "…" || "—"}</span> },
+                  { key: "feature", label: "Feature", render: (r) => (
+                    <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700">{r.feature || "—"}</span>
+                  )},
+                  { key: "source", label: "Source", render: (r) => <span className="text-xs text-slate-500">{r.source || "—"}</span> },
+                  { key: "clicked_at", label: "When", render: (r) => <span className="text-xs">{formatDateTime(r.clicked_at)}</span> },
+                ]}
+                rows={filteredUpgrades}
+                emptyText="No upgrade clicks recorded"
+              />
+            )}
+          </div>
+        )}
+
+        {/* ── Platform ── */}
+        {tab === "platform" && (
+          <div className="space-y-6">
+
+            {/* Health metrics */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h2 className="mb-4 text-sm font-semibold text-slate-800">Platform health metrics</h2>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {platformMetrics.map((m) => (
+                  <div key={m.label} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                    <div className="text-2xl font-bold tabular-nums text-slate-900">{m.value}</div>
+                    <div className="mt-0.5 text-[12px] font-semibold text-slate-700">{m.label}</div>
+                    <div className="mt-1 text-[11px] text-slate-400">{m.sub}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Data exports */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h2 className="mb-1 text-sm font-semibold text-slate-800">Data exports</h2>
+              <p className="mb-4 text-[12px] text-slate-400">Download platform data as CSV for CRM import, analytics, or offline reporting.</p>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  {
+                    label: "All users", sub: `${stats?.total_users ?? 0} records`, color: "emerald",
+                    onClick: () => downloadCSV(stats?.users || [], [
+                      { key: "id", label: "ID" }, { key: "email", label: "Email" }, { key: "created_at", label: "Joined" },
+                    ], "users.csv"),
+                  },
+                  {
+                    label: "All workspaces", sub: `${stats?.total_workspaces ?? 0} records`, color: "brand",
+                    onClick: () => downloadCSV(stats?.workspaces || [], [
+                      { key: "id", label: "ID" }, { key: "name", label: "Name" }, { key: "owner_email", label: "Owner" },
+                      { key: "member_count", label: "Members" }, { key: "created_at", label: "Created" },
+                    ], "workspaces.csv"),
+                  },
+                  {
+                    label: "All members", sub: `${stats?.total_members ?? 0} records`, color: "violet",
+                    onClick: () => downloadCSV(stats?.members || [], [
+                      { key: "id", label: "ID" }, { key: "user_email", label: "User Email" }, { key: "workspace_name", label: "Workspace" },
+                      { key: "permission_type", label: "Permission" }, { key: "created_at", label: "Added" },
+                    ], "members.csv"),
+                  },
+                  {
+                    label: "All invitations", sub: `${stats?.total_invitations ?? 0} records`, color: "amber",
+                    onClick: () => downloadCSV(stats?.invitations || [], [
+                      { key: "id", label: "ID" }, { key: "workspace_name", label: "Workspace" }, { key: "invited_email", label: "Email" },
+                      { key: "status", label: "Status" }, { key: "created_at", label: "Sent" },
+                    ], "invitations.csv"),
+                  },
+                  {
+                    label: "Upgrade clicks", sub: upgradesLoaded ? `${upgrades?.length ?? 0} records` : "Load required", color: "sky",
+                    onClick: upgradesLoaded ? () => downloadCSV(upgrades || [], [
+                      { key: "email", label: "Email" }, { key: "feature", label: "Feature" }, { key: "source", label: "Source" }, { key: "clicked_at", label: "Clicked At" },
+                    ], "upgrade-clicks.csv") : () => { loadUpgrades(); showToast("success", "Upgrade data loading — try again in a moment."); },
+                  },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={item.onClick}
+                    className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-brand-200 hover:bg-brand-50 group"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-500 group-hover:border-brand-200 group-hover:text-brand-600 transition">
+                      <DownloadIcon />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-semibold text-slate-800">{item.label}</div>
+                      <div className="text-[11px] text-slate-400">{item.sub}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Bulk operations */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h2 className="mb-1 text-sm font-semibold text-slate-800">Bulk operations</h2>
+              <p className="mb-4 text-[12px] text-slate-400">Platform-wide actions that affect multiple records at once. Use with care.</p>
+              <div className="flex flex-wrap gap-3">
+                <div className="flex items-start gap-4 rounded-xl border border-amber-100 bg-amber-50 p-4">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
+                    <BanIcon />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-semibold text-slate-800">Revoke all pending invitations</div>
+                    <div className="mt-0.5 text-[11px] text-slate-500">
+                      Immediately invalidates all {invStatusCounts.pending} pending invitation link{invStatusCounts.pending !== 1 ? "s" : ""} across the platform.
+                    </div>
+                    <button
+                      type="button"
+                      disabled={invStatusCounts.pending === 0}
+                      onClick={bulkRevokePending}
+                      className="mt-3 rounded-xl bg-amber-600 px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-amber-700 disabled:opacity-40"
+                    >
+                      Revoke {invStatusCounts.pending} pending
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
+
       </main>
     </div>
   );

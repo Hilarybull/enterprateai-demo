@@ -26,6 +26,8 @@ async def login(payload: LoginRequest) -> TokenResponse:
     user = await sb_select("users", filters=[("id", "eq", payload.email.lower())], single=True)
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    if user.get("is_blocked"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account suspended. Contact support at tech.support@enterprateai.com")
     token = create_access_token(subject=user["id"])
     return TokenResponse(access_token=token)
 
@@ -66,3 +68,17 @@ async def google_auth(payload: GoogleAuthRequest) -> TokenResponse:
 @router.get("/me", response_model=UserPublic)
 async def me(user=Depends(get_current_user)) -> UserPublic:
     return UserPublic(id=user["id"], email=user["email"])
+
+
+@router.get("/restrictions")
+async def get_my_restrictions(user=Depends(get_current_user)) -> list:
+    """Returns platform-level module/feature restrictions set by an admin for the current user."""
+    from app.core.supabase import sb_select as _sb_select
+    try:
+        return await _sb_select(
+            "user_platform_restrictions",
+            filters=[("user_id", "eq", user["id"])],
+            columns="module_key,feature_key",
+        )
+    except Exception:
+        return []

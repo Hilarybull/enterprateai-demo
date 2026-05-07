@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from uuid import uuid4
+from typing import Optional
 
-from app.core.supabase import sb_select
+from fastapi import APIRouter, Body, Depends, HTTPException, status
+from pydantic import BaseModel
+
+from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.shared.auth.deps import get_current_user
 
 ADMIN_EMAIL = "tech.support@enterprateai.com"
@@ -16,14 +20,46 @@ def require_admin(user=Depends(get_current_user)):
     return user
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+async def _select_restrictions(user_id: str, columns: str = "id,module_key,feature_key,created_at") -> list:
+    """Gracefully returns [] if the table doesn't exist yet (pre-migration)."""
+    try:
+        return await sb_select(
+            "user_platform_restrictions",
+            filters=[("user_id", "eq", user_id)],
+            columns=columns,
+            order="created_at",
+        )
+    except Exception:
+        return []
+
+
+async def _select_users_with_block(columns: str = "id,email,created_at,is_blocked,block_reason", **kwargs) -> list:
+    """Falls back to base columns if is_blocked column doesn't exist yet (pre-migration)."""
+    try:
+        return await sb_select("users", columns=columns, **kwargs)
+    except Exception:
+        rows = await sb_select("users", columns="id,email,created_at", **kwargs)
+        for r in rows:
+            r.setdefault("is_blocked", False)
+            r.setdefault("block_reason", None)
+        return rows
+
+
+# ── Read endpoints ────────────────────────────────────────────────────────────
+
 @router.get("/stats")
 async def get_system_stats(user=Depends(require_admin)) -> dict:
-    workspaces = await sb_select("workspaces", columns="id,name,created_at")
-    users = await sb_select("users", columns="id,email,created_at")
+    workspaces = await sb_select("workspaces", columns="id,name,user_id,created_at")
+    users = await _select_users_with_block()
     members = await sb_select("workspace_members", columns="id,workspace_id,user_id,permission_type,created_at")
     invitations = await sb_select("workspace_invitations", columns="id,workspace_id,email,status,created_at")
+    upgrade_clicks = await sb_select("upgrade_clicks", columns="id")
 
-    # Count simulations and blueprints from workspace data
+    user_email_map = {u["id"]: u["email"] for u in users}
+    workspace_name_map = {ws["id"]: (ws.get("name") or "Unnamed") for ws in workspaces}
+
     sim_count = 0
     blueprint_count = 0
     validation_count = 0
@@ -48,10 +84,13 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
         "total_simulations": sim_count,
         "total_blueprints": blueprint_count,
         "total_validated_workspaces": validation_count,
+        "total_upgrade_clicks": len(upgrade_clicks),
         "workspaces": [
             {
                 "id": ws["id"],
                 "name": ws.get("name") or "Unnamed",
+                "owner_id": ws.get("user_id"),
+                "owner_email": user_email_map.get(ws.get("user_id") or "", ""),
                 "created_at": ws.get("created_at"),
             }
             for ws in workspaces
@@ -61,6 +100,8 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
                 "id": u["id"],
                 "email": u["email"],
                 "created_at": u.get("created_at"),
+                "is_blocked": bool(u.get("is_blocked", False)),
+                "block_reason": u.get("block_reason"),
             }
             for u in users
         ],
@@ -68,7 +109,9 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
             {
                 "id": m["id"],
                 "workspace_id": m["workspace_id"],
+                "workspace_name": workspace_name_map.get(m["workspace_id"] or "", ""),
                 "user_id": m["user_id"],
+                "user_email": user_email_map.get(m["user_id"] or "", ""),
                 "permission_type": m.get("permission_type"),
                 "created_at": m.get("created_at"),
             }
@@ -78,6 +121,7 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
             {
                 "id": i["id"],
                 "workspace_id": i["workspace_id"],
+                "workspace_name": workspace_name_map.get(i["workspace_id"] or "", ""),
                 "invited_email": i.get("email"),
                 "status": i.get("status"),
                 "created_at": i.get("created_at"),
@@ -94,4 +138,304 @@ async def list_all_workspaces(user=Depends(require_admin)) -> list:
 
 @router.get("/users")
 async def list_all_users(user=Depends(require_admin)) -> list:
-    return await sb_select("users", columns="id,email,created_at", order="created_at", desc=True)
+    return await _select_users_with_block(order="created_at", desc=True)
+
+
+@router.get("/upgrade-clicks")
+async def list_upgrade_clicks(user=Depends(require_admin)) -> list:
+    return await sb_select(
+        "upgrade_clicks",
+        columns="id,user_id,email,feature,source,clicked_at",
+        order="clicked_at",
+        desc=True,
+    )
+
+
+@router.get("/workspaces/{workspace_id}")
+async def get_workspace_detail(workspace_id: str, user=Depends(require_admin)) -> dict:
+    ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    members = await sb_select(
+        "workspace_members",
+        filters=[("workspace_id", "eq", workspace_id)],
+        columns="id,user_id,permission_type,role,created_at",
+    )
+    invitations = await sb_select(
+        "workspace_invitations",
+        filters=[("workspace_id", "eq", workspace_id)],
+        columns="id,email,status,permission_type,created_at",
+        order="created_at",
+        desc=True,
+    )
+
+    user_ids = [m["user_id"] for m in members if m.get("user_id")]
+    users_map: dict = {}
+    if user_ids:
+        users_list = await sb_select("users", filters=[("id", "in", user_ids)], columns="id,email")
+        users_map = {u["id"]: u["email"] for u in users_list}
+
+    owner = None
+    if ws.get("user_id"):
+        owner = await sb_select("users", filters=[("id", "eq", ws["user_id"])], columns="id,email", single=True)
+
+    raw_data = ws.get("data") or {}
+    data = raw_data if isinstance(raw_data, dict) else {}
+
+    return {
+        "id": ws["id"],
+        "name": ws.get("name") or "Unnamed",
+        "created_at": ws.get("created_at"),
+        "owner_id": ws.get("user_id"),
+        "owner_email": owner.get("email") if owner else None,
+        "member_count": len(members),
+        "invitation_count": len(invitations),
+        "has_validation": bool(data.get("decision") or data.get("idea_validation")),
+        "has_simulation": bool(data.get("simulations")),
+        "members": [
+            {
+                "id": m["id"],
+                "user_id": m["user_id"],
+                "email": users_map.get(m["user_id"] or "", "Unknown"),
+                "permission_type": m.get("permission_type"),
+                "role": m.get("role", "member"),
+                "created_at": m.get("created_at"),
+            }
+            for m in members
+        ],
+        "invitations": [
+            {
+                "id": i["id"],
+                "email": i.get("email"),
+                "status": i.get("status"),
+                "permission_type": i.get("permission_type"),
+                "created_at": i.get("created_at"),
+            }
+            for i in invitations
+        ],
+    }
+
+
+@router.get("/users/{user_id}/restrictions")
+async def get_user_restrictions(user_id: str, user=Depends(require_admin)) -> list:
+    return await _select_restrictions(user_id)
+
+
+@router.get("/users/{user_id}/full-data")
+async def get_user_full_data(user_id: str, user=Depends(require_admin)) -> dict:
+    target = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    workspaces = await sb_select(
+        "workspaces",
+        filters=[("user_id", "eq", user_id)],
+        columns="id,name,data,created_at,updated_at",
+        order="created_at",
+        desc=True,
+    )
+
+    memberships = await sb_select(
+        "workspace_members",
+        filters=[("user_id", "eq", user_id)],
+        columns="id,workspace_id,permission_type,created_at",
+    )
+    ws_ids = [m["workspace_id"] for m in memberships if m.get("workspace_id")]
+    ws_names: dict = {}
+    if ws_ids:
+        ws_list = await sb_select("workspaces", filters=[("id", "in", ws_ids)], columns="id,name")
+        ws_names = {w["id"]: (w.get("name") or "Unnamed") for w in ws_list}
+
+    blueprints = await sb_select(
+        "blueprint_documents",
+        filters=[("user_id", "eq", user_id)],
+        columns="id,type,title,company_name,created_at",
+        order="created_at",
+        desc=True,
+    )
+
+    upgrade_clicks = await sb_select(
+        "upgrade_clicks",
+        filters=[("email", "eq", target["email"])],
+        columns="id,feature,source,clicked_at",
+        order="clicked_at",
+        desc=True,
+    )
+
+    restrictions = await _select_restrictions(user_id)
+
+    workspace_summaries = []
+    for ws in workspaces:
+        data = ws.get("data") or {}
+        if not isinstance(data, dict):
+            data = {}
+        sims = data.get("simulations") or []
+        bps = data.get("blueprints") or data.get("documents") or []
+        workspace_summaries.append({
+            "id": ws["id"],
+            "name": ws.get("name") or "Unnamed",
+            "created_at": ws.get("created_at"),
+            "updated_at": ws.get("updated_at"),
+            "sim_count": len(sims) if isinstance(sims, list) else 0,
+            "blueprint_count": len(bps) if isinstance(bps, list) else 0,
+            "has_validation": bool(data.get("decision") or data.get("idea_validation")),
+            "has_service_validation": bool(data.get("service_validation_history")),
+        })
+
+    return {
+        "user": {
+            "id": target["id"],
+            "email": target["email"],
+            "name": target.get("name"),
+            "auth_provider": target.get("auth_provider"),
+            "created_at": target.get("created_at"),
+            "is_blocked": bool(target.get("is_blocked", False)),
+            "block_reason": target.get("block_reason"),
+        },
+        "owned_workspaces": workspace_summaries,
+        "memberships": [
+            {
+                "id": m["id"],
+                "workspace_id": m["workspace_id"],
+                "workspace_name": ws_names.get(m["workspace_id"], m["workspace_id"]),
+                "permission_type": m.get("permission_type"),
+                "created_at": m.get("created_at"),
+            }
+            for m in memberships
+        ],
+        "blueprint_documents": blueprints,
+        "upgrade_clicks": upgrade_clicks,
+        "platform_restrictions": restrictions,
+    }
+
+
+# ── Control endpoints ─────────────────────────────────────────────────────────
+
+class BlockPayload(BaseModel):
+    reason: Optional[str] = "Blocked by administrator"
+
+
+@router.patch("/users/{user_id}/block")
+async def block_user(
+    user_id: str,
+    payload: BlockPayload = Body(default=BlockPayload()),
+    user=Depends(require_admin),
+) -> dict:
+    if user_id == user.get("id"):
+        raise HTTPException(status_code=400, detail="Cannot block your own admin account.")
+    try:
+        result = await sb_update(
+            "users",
+            payload={"is_blocked": True, "block_reason": payload.reason or "Blocked by administrator"},
+            filters=[("id", "eq", user_id)],
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="User not found.")
+        u = result[0]
+        return {"id": u["id"], "email": u["email"], "is_blocked": True, "block_reason": u.get("block_reason")}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Migration required: run the is_blocked schema migration first. ({e})")
+
+
+@router.patch("/users/{user_id}/unblock")
+async def unblock_user(user_id: str, user=Depends(require_admin)) -> dict:
+    try:
+        result = await sb_update(
+            "users",
+            payload={"is_blocked": False, "block_reason": None},
+            filters=[("id", "eq", user_id)],
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="User not found.")
+        u = result[0]
+        return {"id": u["id"], "email": u["email"], "is_blocked": False, "block_reason": None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Migration required: run the is_blocked schema migration first. ({e})")
+
+
+class RestrictionPayload(BaseModel):
+    module_key: str
+    feature_key: Optional[str] = None
+
+
+@router.post("/users/{user_id}/restrictions")
+async def add_user_restriction(
+    user_id: str,
+    payload: RestrictionPayload,
+    user=Depends(require_admin),
+) -> dict:
+    feature_key = payload.feature_key or ""
+    try:
+        existing = await sb_select(
+            "user_platform_restrictions",
+            filters=[
+                ("user_id", "eq", user_id),
+                ("module_key", "eq", payload.module_key),
+                ("feature_key", "eq", feature_key),
+            ],
+            single=True,
+        )
+        if existing:
+            return existing
+        doc = {
+            "id": str(uuid4()),
+            "user_id": user_id,
+            "module_key": payload.module_key,
+            "feature_key": feature_key,
+            "created_by": user.get("id"),
+        }
+        result = await sb_insert("user_platform_restrictions", doc)
+        return result[0] if isinstance(result, list) else result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Migration required: run the user_platform_restrictions schema migration first. ({e})")
+
+
+@router.delete("/users/{user_id}/restrictions/{restriction_id}", status_code=204)
+async def remove_user_restriction(
+    user_id: str,
+    restriction_id: str,
+    user=Depends(require_admin),
+) -> None:
+    try:
+        await sb_delete(
+            "user_platform_restrictions",
+            filters=[("id", "eq", restriction_id), ("user_id", "eq", user_id)],
+        )
+    except Exception:
+        pass  # If table doesn't exist yet, nothing to delete
+
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user(user_id: str, user=Depends(require_admin)) -> None:
+    if user_id == user.get("id"):
+        raise HTTPException(status_code=400, detail="Cannot delete your own admin account.")
+    await sb_delete("users", filters=[("id", "eq", user_id)])
+
+
+@router.delete("/workspaces/{workspace_id}", status_code=204)
+async def delete_workspace(workspace_id: str, user=Depends(require_admin)) -> None:
+    await sb_delete("workspaces", filters=[("id", "eq", workspace_id)])
+
+
+@router.delete("/members/{member_id}", status_code=204)
+async def remove_workspace_member(member_id: str, user=Depends(require_admin)) -> None:
+    await sb_delete("workspace_members", filters=[("id", "eq", member_id)])
+
+
+@router.patch("/invitations/{invitation_id}/revoke")
+async def revoke_workspace_invitation(invitation_id: str, user=Depends(require_admin)) -> dict:
+    result = await sb_update(
+        "workspace_invitations",
+        payload={"status": "revoked"},
+        filters=[("id", "eq", invitation_id)],
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Invitation not found.")
+    return result[0]

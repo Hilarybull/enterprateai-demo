@@ -8,7 +8,7 @@ import Spinner from "../components/Spinner";
 import SegmentedTabs from "../components/SegmentedTabs";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
-import { hasFeatureAccess } from "../lib/permissions";
+import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
 import { useAuthStore } from "../store/auth";
 import InfoTip from "../components/InfoTip";
 import NumberInput, { parseIntSafe, parseNumber } from "../components/NumberInput";
@@ -64,8 +64,14 @@ export default function ValidationWizardPage() {
   const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
+  const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
 
-  const canServiceValidation = !isMemberMode || hasFeatureAccess("validation", "service_validation", memberPermissionType, memberPermissions);
+  const canEvaluateIdea =
+    !isPlatformFeatureRestricted("validation", "evaluate_idea", platformRestrictions) &&
+    (!isMemberMode || hasFeatureAccess("validation", "evaluate_idea", memberPermissionType, memberPermissions));
+  const canServiceValidation =
+    !isPlatformFeatureRestricted("validation", "service_validation", platformRestrictions) &&
+    (!isMemberMode || hasFeatureAccess("validation", "service_validation", memberPermissionType, memberPermissions));
 
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceNameStore = useWorkspaceStore((s) => s.setWorkspaceName);
@@ -1663,6 +1669,7 @@ export default function ValidationWizardPage() {
                 subtitle="Choose the option that best matches your idea."
               >
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {canEvaluateIdea && (
                   <button
                     type="button"
                     onClick={() => selectPathway("business_idea")}
@@ -1674,6 +1681,7 @@ export default function ValidationWizardPage() {
                     <div className="text-sm font-semibold text-slate-900">Business idea</div>
                     <div className="mt-1 text-xs text-slate-600">A service, marketplace, or company concept you want to start.</div>
                   </button>
+                  )}
                   {canServiceValidation && (
                     <button
                       type="button"

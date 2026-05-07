@@ -7,7 +7,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import BusinessAssistant from "./BusinessAssistant";
 import InviteModal from "./InviteModal";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
-import { hasModuleAccess } from "../lib/permissions";
+import { hasModuleAccess, isPlatformModuleRestricted } from "../lib/permissions";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid", moduleKey: "dashboard" },
@@ -239,6 +239,7 @@ export default function Layout() {
     ? (memberWorkspaceName || "Shared workspace")
     : (acceptedAny && workspaceName ? workspaceName : workspaceName || "My workspace");
   const email = useAuthStore((s) => s.email);
+  const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
   const profileInitials = initialsFromEmail(email);
 
   useEffect(() => {
@@ -449,9 +450,10 @@ export default function Layout() {
     const base = !q ? NAV : NAV.filter((i) => `${i.label} ${i.subtitle}`.toLowerCase().includes(q));
     return base.map((item) => ({
       ...item,
-      locked: isMemberMode && !hasModuleAccess(item.moduleKey, memberPermissionType, memberPermissions),
+      locked: isPlatformModuleRestricted(item.moduleKey, platformRestrictions) ||
+              (isMemberMode && !hasModuleAccess(item.moduleKey, memberPermissionType, memberPermissions)),
     }));
-  }, [search, isMemberMode, memberPermissionType, memberPermissions]);
+  }, [search, isMemberMode, memberPermissionType, memberPermissions, platformRestrictions]);
 
   // Determine if the current route is locked for this member
   const currentRouteModuleKey = useMemo(() => {
@@ -465,7 +467,9 @@ export default function Layout() {
     return null;
   }, [location.pathname]);
 
-  const isCurrentRouteLocked = isMemberMode && currentRouteModuleKey && !hasModuleAccess(currentRouteModuleKey, memberPermissionType, memberPermissions);
+  const isCurrentRouteLocked =
+    (currentRouteModuleKey && isPlatformModuleRestricted(currentRouteModuleKey, platformRestrictions)) ||
+    (isMemberMode && currentRouteModuleKey && !hasModuleAccess(currentRouteModuleKey, memberPermissionType, memberPermissions));
 
   const isCreateWorkspaceRoute =
     location.pathname === "/validation" &&

@@ -8,10 +8,12 @@ import Spinner from "../components/Spinner";
 import { apiRequest, getApiBaseUrl } from "../api/client";
 import Button from "../components/Button";
 import { useWorkspaceStore } from "../store/workspace";
+import { useAuthStore } from "../store/auth";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import { BlueprintIllustration, IllustrationCard } from "../components/Illustrations";
 import SegmentedTabs from "../components/SegmentedTabs";
 import { imageFileToDataUrl } from "../lib/files";
+import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
 
 const DOCUMENTS = [
   {
@@ -265,6 +267,13 @@ function ShareLinkPopup({ url, onClose }) {
   );
 }
 
+// Map document id to blueprint feature key
+const DOC_FEATURE_KEY = {
+  business_plan: "business_plan",
+  client_proposal: "business_proposal",
+  sales_letter: "sales_letter",
+};
+
 export default function BlueprintPage() {
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
   const workspaceLogoStored = useWorkspaceStore((s) => s.workspaceLogo);
@@ -273,6 +282,17 @@ export default function BlueprintPage() {
   const setWorkspaceLogoStored = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
+  const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
+  const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
+  const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
+  const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
+
+  function canBlueprintDoc(docId) {
+    const featureKey = DOC_FEATURE_KEY[docId];
+    if (!featureKey) return true;
+    if (isPlatformFeatureRestricted("blueprint", featureKey, platformRestrictions)) return false;
+    return !isMemberMode || hasFeatureAccess("blueprint", featureKey, memberPermissionType, memberPermissions);
+  }
   const [selectedDoc, setSelectedDoc] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showInputs, setShowInputs] = useState(true);
@@ -1729,7 +1749,7 @@ export default function BlueprintPage() {
         </IllustrationCard>
         <SectionCard title="Documents" subtitle="Click a document to generate it.">
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-            {DOCUMENTS.map((d) => (
+            {DOCUMENTS.filter((d) => canBlueprintDoc(d.id)).map((d) => (
               <button
                 key={d.id}
                 type="button"

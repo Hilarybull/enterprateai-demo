@@ -14,6 +14,7 @@ import { formatCurrency, formatNumber } from "../lib/format";
 import InfoTip from "../components/InfoTip";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
+import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
 
 const FieldLabel = ({ children, info }) => (
   <div className="ea-label flex items-center gap-2">
@@ -76,6 +77,15 @@ export default function SimulationPage() {
   const inputs = useWorkspaceStore((s) => s.inputs);
   const currency = useWorkspaceStore((s) => s.currency);
   const email = useAuthStore((s) => s.email);
+  const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
+  const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
+  const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
+  const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
+
+  function canSimFeature(featureKey) {
+    if (isPlatformFeatureRestricted("simulation", featureKey, platformRestrictions)) return false;
+    return !isMemberMode || hasFeatureAccess("simulation", featureKey, memberPermissionType, memberPermissions);
+  }
 
   const tenantId = asNonEmptyString(email, "ten_default");
   const businessId = asNonEmptyString(workspaceId, "biz_unknown");
@@ -135,7 +145,15 @@ export default function SimulationPage() {
     [financialsData]
   );
 
-  const [tab, setTab] = useState("adaptive"); // dashboard | manual
+  const [tab, setTab] = useState(() => {
+    // Default to manual if user only has run_simulation but not adaptive features
+    if (isMemberMode && !hasFeatureAccess("simulation", "scenario_intelligence", memberPermissionType, memberPermissions)
+        && !hasFeatureAccess("simulation", "risk_detection", memberPermissionType, memberPermissions)
+        && !hasFeatureAccess("simulation", "recommendations", memberPermissionType, memberPermissions)) {
+      return "manual";
+    }
+    return "adaptive";
+  }); // adaptive | manual
   const [templates, setTemplates] = useState([]);
   const [riskSignals, setRiskSignals] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
@@ -650,7 +668,7 @@ export default function SimulationPage() {
         </div>
       ) : null}
 
-      {workspaceId ? (
+      {workspaceId && ((tab === "adaptive" && canSimFeature("run_simulation")) || (tab === "manual" && (canSimFeature("scenario_intelligence") || canSimFeature("risk_detection") || canSimFeature("recommendations")))) ? (
         <div className="mt-6 flex justify-end">
           <Button onClick={() => setTab(tab === "manual" ? "adaptive" : "manual")}>
             {tab === "manual" ? "Back to simulation dashboard" : "Run a scenario"}
@@ -660,86 +678,92 @@ export default function SimulationPage() {
 
       {workspaceId && tab === "adaptive" ? (
         <div className="mt-4 space-y-4">
-          <SectionCard
-            title={
-              <div className="flex items-center gap-2">
-                <span>Baseline Continuity (6 months)</span>
-                {autoProjectionLoading ? <Spinner size={14} /> : null}
-                <InfoTip text="Current baseline projection if no action is taken." />
-              </div>
-            }
-            subtitle={autoProjectionLoading ? "Updating baseline projection." : undefined}
-          >
-            <ScenarioOutput
-              activeRun={projectionRun}
-              timeline={projectionTimeline}
-              currency={currency}
-              decisionSaving={decisionSaving}
-              decisionNotice={decisionNotice}
-              onDecision={saveDecision}
-              hideDecision
-              maxTimelineRows={6}
-            />
-          </SectionCard>
+          {canSimFeature("scenario_intelligence") && (
+            <SectionCard
+              title={
+                <div className="flex items-center gap-2">
+                  <span>Baseline Continuity (6 months)</span>
+                  {autoProjectionLoading ? <Spinner size={14} /> : null}
+                  <InfoTip text="Current baseline projection if no action is taken." />
+                </div>
+              }
+              subtitle={autoProjectionLoading ? "Updating baseline projection." : undefined}
+            >
+              <ScenarioOutput
+                activeRun={projectionRun}
+                timeline={projectionTimeline}
+                currency={currency}
+                decisionSaving={decisionSaving}
+                decisionNotice={decisionNotice}
+                onDecision={saveDecision}
+                hideDecision
+                maxTimelineRows={6}
+              />
+            </SectionCard>
+          )}
 
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-            <SectionCard
-              title={
-                <div className="flex items-center gap-2">
-                  <span>Risk alerts</span>
-                  <InfoTip text="Auto-detected risks based on your current business data." />
-                </div>
-              }
-              subtitle="What looks risky right now."
-            >
-              <div className="space-y-2">
-                {riskSignals.length ? (
-                  riskSignals.map((r) => (
-                    <div key={r.risk_signal_id} className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        {describeRisk(r).title}
+            {canSimFeature("risk_detection") && (
+              <SectionCard
+                title={
+                  <div className="flex items-center gap-2">
+                    <span>Risk alerts</span>
+                    <InfoTip text="Auto-detected risks based on your current business data." />
+                  </div>
+                }
+                subtitle="What looks risky right now."
+              >
+                <div className="space-y-2">
+                  {riskSignals.length ? (
+                    riskSignals.map((r) => (
+                      <div key={r.risk_signal_id} className="rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          {describeRisk(r).title}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700">{describeRisk(r).detail}</div>
+                        <div className="mt-1 text-xs text-slate-500">Severity: {r.severity}</div>
                       </div>
-                      <div className="mt-1 text-sm text-slate-700">{describeRisk(r).detail}</div>
-                      <div className="mt-1 text-xs text-slate-500">Severity: {r.severity}</div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-slate-600">No risks detected yet.</div>
-                )}
-              </div>
-            </SectionCard>
+                    ))
+                  ) : (
+                    <div className="text-sm text-slate-600">No risks detected yet.</div>
+                  )}
+                </div>
+              </SectionCard>
+            )}
 
-            <SectionCard
-              title={
-                <div className="flex items-center gap-2">
-                  <span>Recommended scenarios</span>
-                  <InfoTip text="Scenarios suggested based on your current business data." />
-                </div>
-              }
-              subtitle="Quick simulations to explore next steps."
-            >
-              <div className="space-y-3">
-                {recommendations.length ? (
-                  recommendations.map((rec) => (
-                    <div key={rec.scenario_template_id} className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="text-sm font-semibold text-slate-900">{rec.title}</div>
-                      <div className="mt-2">
-                        <Button
-                          size="sm"
-                          onClick={() => openManualScenario(rec.scenario_template_id, rec.title)}
-                          disabled={actionLoading || !canRun}
-                        >
-                          {actionLoading && scenarioRunningId === rec.scenario_template_id ? <Spinner size={14} /> : null}
-                          Run scenario
-                        </Button>
+            {canSimFeature("recommendations") && (
+              <SectionCard
+                title={
+                  <div className="flex items-center gap-2">
+                    <span>Recommended scenarios</span>
+                    <InfoTip text="Scenarios suggested based on your current business data." />
+                  </div>
+                }
+                subtitle="Quick simulations to explore next steps."
+              >
+                <div className="space-y-3">
+                  {recommendations.length ? (
+                    recommendations.map((rec) => (
+                      <div key={rec.scenario_template_id} className="rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="text-sm font-semibold text-slate-900">{rec.title}</div>
+                        <div className="mt-2">
+                          <Button
+                            size="sm"
+                            onClick={() => openManualScenario(rec.scenario_template_id, rec.title)}
+                            disabled={actionLoading || !canRun}
+                          >
+                            {actionLoading && scenarioRunningId === rec.scenario_template_id ? <Spinner size={14} /> : null}
+                            Run scenario
+                          </Button>
+                        </div>
                       </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-slate-600">No recommendations yet.</div>
-                )}
-              </div>
-            </SectionCard>
+                    ))
+                  ) : (
+                    <div className="text-sm text-slate-600">No recommendations yet.</div>
+                  )}
+                </div>
+              </SectionCard>
+            )}
 
             <SectionCard
               title={
@@ -784,7 +808,7 @@ export default function SimulationPage() {
         </div>
       ) : null}
 
-      {workspaceId && tab === "manual" ? (
+      {workspaceId && tab === "manual" && canSimFeature("run_simulation") ? (
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <SectionCard title="Manual scenario" subtitle="Build a custom simulation." className="self-start lg:sticky lg:top-4">
             <div className="space-y-4">
@@ -974,6 +998,8 @@ export default function SimulationPage() {
               onDecision={saveDecision}
               hideDecision={isProjection(activeRun)}
               maxTimelineRows={6}
+              showRisks={canSimFeature("risk_detection")}
+              showRecommendations={canSimFeature("recommendations")}
             />
           </SectionCard>
         </div>
@@ -1362,7 +1388,9 @@ function ScenarioOutput({
   decisionNotice,
   onDecision,
   hideDecision,
-  maxTimelineRows
+  maxTimelineRows,
+  showRisks = true,
+  showRecommendations = true,
 }) {
   if (!activeRun) {
     return (
@@ -1478,66 +1506,70 @@ function ScenarioOutput({
         ) : null}
       </div>
 
-      {runRisks.length || runRecs.length ? (
+      {(showRisks && runRisks.length) || (showRecommendations && runRecs.length) ? (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <span>Risk alerts</span>
-              <InfoTip text="Risks detected from the scenario output snapshot." />
-            </div>
-            <div className="mt-3 space-y-2">
-              {runRisks.length ? (
-                runRisks.map((r) => (
-                  <div key={r.risk_signal_id || r.reason_code} className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      {describeScenarioRisk(r).title}
-                    </div>
-                    <div className="mt-1 text-sm text-slate-700">{describeScenarioRisk(r).detail}</div>
-                    {r?.severity ? <div className="mt-1 text-xs text-slate-500">Severity: {r.severity}</div> : null}
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-slate-600">No risks detected for this scenario.</div>
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <span>Recommendations</span>
-              <InfoTip text="Recommended actions based on the scenario outcome." />
-            </div>
-            <div className="mt-3 space-y-2">
-              {runRecs.length ? (
-                runRecs.map((rec) => (
-                  <div
-                    key={rec.recommendation_id || rec.title || rec.action_type}
-                    className="rounded-xl border border-slate-200 bg-white p-3"
-                  >
-                    <div className="text-sm font-semibold text-slate-900">{rec.title || "Recommendation"}</div>
-                    {rec.description ? <div className="mt-1 text-xs text-slate-600">{rec.description}</div> : null}
-                    {rec.action_type ? <div className="mt-1 text-[11px] text-slate-500">{rec.action_type}</div> : null}
-                    {rec.scenario_template_id ? (
-                      <div className="mt-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            const url = `/simulation?template=${rec.scenario_template_id}`;
-                            window.location.href = url;
-                          }}
-                        >
-                          Run recommended scenario
-                        </Button>
+          {showRisks && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <span>Risk alerts</span>
+                <InfoTip text="Risks detected from the scenario output snapshot." />
+              </div>
+              <div className="mt-3 space-y-2">
+                {runRisks.length ? (
+                  runRisks.map((r) => (
+                    <div key={r.risk_signal_id || r.reason_code} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        {describeScenarioRisk(r).title}
                       </div>
-                    ) : null}
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-slate-600">No recommendations generated.</div>
-              )}
+                      <div className="mt-1 text-sm text-slate-700">{describeScenarioRisk(r).detail}</div>
+                      {r?.severity ? <div className="mt-1 text-xs text-slate-500">Severity: {r.severity}</div> : null}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-slate-600">No risks detected for this scenario.</div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
+
+          {showRecommendations && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <span>Recommendations</span>
+                <InfoTip text="Recommended actions based on the scenario outcome." />
+              </div>
+              <div className="mt-3 space-y-2">
+                {runRecs.length ? (
+                  runRecs.map((rec) => (
+                    <div
+                      key={rec.recommendation_id || rec.title || rec.action_type}
+                      className="rounded-xl border border-slate-200 bg-white p-3"
+                    >
+                      <div className="text-sm font-semibold text-slate-900">{rec.title || "Recommendation"}</div>
+                      {rec.description ? <div className="mt-1 text-xs text-slate-600">{rec.description}</div> : null}
+                      {rec.action_type ? <div className="mt-1 text-[11px] text-slate-500">{rec.action_type}</div> : null}
+                      {rec.scenario_template_id ? (
+                        <div className="mt-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              const url = `/simulation?template=${rec.scenario_template_id}`;
+                              window.location.href = url;
+                            }}
+                          >
+                            Run recommended scenario
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-slate-600">No recommendations generated.</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       ) : null}
 

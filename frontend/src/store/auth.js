@@ -9,10 +9,25 @@ function humanizeAuthError(e) {
   }
   if (msg === "AUTH_RESPONSE_INVALID") return "Authentication failed. Please try again.";
   if (msg.startsWith("HTTP 401:")) return "Invalid credentials. Try again or create an account.";
+  if (msg.startsWith("HTTP 403:")) {
+    const lower = msg.toLowerCase();
+    if (lower.includes("suspended") || lower.includes("blocked")) {
+      return msg.replace(/^HTTP 403:\s*/, "");
+    }
+    return "Access denied.";
+  }
   if (msg.startsWith("HTTP 409:")) return "Account already exists. Sign in instead.";
   if (msg.startsWith("HTTP 422:")) return "Please enter a valid email and a password (8+ characters).";
   if (msg.startsWith("HTTP 500:")) return "Server configuration error. Try again later.";
   return msg;
+}
+
+async function fetchPlatformRestrictions() {
+  try {
+    return await apiRequest("/auth/restrictions", "GET");
+  } catch {
+    return [];
+  }
 }
 
 export const useAuthStore = create((set, get) => ({
@@ -21,12 +36,18 @@ export const useAuthStore = create((set, get) => ({
   hydrated: false,
   isLoading: false,
   error: null,
+  platformRestrictions: [],
 
   hydrate: () => {
     const token = localStorage.getItem("ea_token");
     const email = localStorage.getItem("ea_email");
     set({ token: token || null, email: email || null, hydrated: true });
+    if (token) {
+      fetchPlatformRestrictions().then((r) => set({ platformRestrictions: r }));
+    }
   },
+
+  setPlatformRestrictions: (restrictions) => set({ platformRestrictions: restrictions }),
 
   register: async (email, password) => {
     set({ isLoading: true, error: null });
@@ -49,6 +70,8 @@ export const useAuthStore = create((set, get) => ({
       localStorage.setItem("ea_token", token);
       localStorage.setItem("ea_email", email);
       set({ token, email });
+      const restrictions = await fetchPlatformRestrictions();
+      set({ platformRestrictions: restrictions });
     } catch (e) {
       set({ error: humanizeAuthError(e) });
     } finally {
@@ -66,6 +89,8 @@ export const useAuthStore = create((set, get) => ({
       const me = await apiRequest("/auth/me", "GET");
       localStorage.setItem("ea_email", me.email);
       set({ token, email: me.email });
+      const restrictions = await fetchPlatformRestrictions();
+      set({ platformRestrictions: restrictions });
     } catch (e) {
       set({ error: humanizeAuthError(e) });
     } finally {
@@ -76,6 +101,6 @@ export const useAuthStore = create((set, get) => ({
   logout: () => {
     localStorage.removeItem("ea_token");
     localStorage.removeItem("ea_email");
-    set({ token: null, email: null, hydrated: true });
+    set({ token: null, email: null, hydrated: true, platformRestrictions: [] });
   }
 }));

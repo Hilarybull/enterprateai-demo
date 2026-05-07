@@ -91,6 +91,24 @@ export function hasModuleAccess(moduleKey, permissionType, permissions) {
 }
 
 /**
+ * Returns true if an admin has blocked the entire module for this user platform-wide.
+ */
+export function isPlatformModuleRestricted(moduleKey, platformRestrictions) {
+  return (platformRestrictions || []).some(
+    (r) => r.module_key === moduleKey && !r.feature_key
+  );
+}
+
+/**
+ * Returns true if an admin has blocked this specific feature (or its entire module) platform-wide.
+ */
+export function isPlatformFeatureRestricted(moduleKey, featureKey, platformRestrictions) {
+  return (platformRestrictions || []).some(
+    (r) => r.module_key === moduleKey && (!r.feature_key || r.feature_key === featureKey)
+  );
+}
+
+/**
  * Returns a structured summary of what is granted, grouped by module.
  * [{ moduleKey, moduleLabel, features: [{key, label}] | "all" }]
  */

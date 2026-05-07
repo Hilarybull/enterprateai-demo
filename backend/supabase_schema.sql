@@ -227,3 +227,23 @@ create table if not exists scenario_risk_signals (
   threshold_value numeric,
   reason_code text
 );
+
+-- ── Admin: user blocking & platform-level restrictions ────────────────────────
+
+alter table users add column if not exists is_blocked boolean not null default false;
+alter table users add column if not exists block_reason text;
+
+create table if not exists user_platform_restrictions (
+  id uuid primary key default gen_random_uuid(),
+  user_id text references users(id) on delete cascade,
+  module_key text not null,
+  feature_key text not null default '',
+  created_by text references users(id),
+  created_at timestamptz default now()
+);
+
+-- empty feature_key means the entire module is blocked
+create unique index if not exists upr_user_module_feature_idx
+  on user_platform_restrictions(user_id, module_key, feature_key);
+
+create index if not exists upr_user_idx on user_platform_restrictions(user_id);
