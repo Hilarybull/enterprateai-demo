@@ -1321,7 +1321,7 @@ export default function AdminPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 overflow-x-hidden">
 
       <ConfirmModal confirm={confirm} onCancel={() => setConfirm(null)} onConfirm={executeConfirm} loading={actionLoading} />
 
@@ -1381,7 +1381,7 @@ export default function AdminPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
+      <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
 
         {/* Stat tiles — clickable where a target tab exists */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
@@ -1422,11 +1422,12 @@ export default function AdminPage() {
 
         {/* ── Overview ── */}
         {tab === "overview" && (
-          <div className="space-y-6">
-            {/* Actionable insights */}
-            <div>
+          <div className="space-y-5">
+
+            {/* 1 — Actionable insights */}
+            <section>
               <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Actionable insights</h2>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 {insights.map((ins) => (
                   <InsightCard
                     key={ins.id}
@@ -1439,75 +1440,75 @@ export default function AdminPage() {
                   />
                 ))}
               </div>
-            </div>
+            </section>
 
-            {/* Recent tables */}
-            <div className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="mb-4 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-slate-800">Recent workspaces</h2>
-                  <button type="button" onClick={() => goToTab("workspaces")} className="text-xs font-medium text-brand-600 hover:text-brand-700">View all →</button>
-                </div>
-                <DataTable
-                  columns={[
-                    { key: "name", label: "Name", render: (r) => <span className="font-medium text-slate-800">{r.name || "Unnamed"}</span> },
-                    { key: "owner_email", label: "Owner", render: (r) => <span className="text-xs text-slate-500 truncate max-w-[140px] block">{r.owner_email || "—"}</span> },
-                    { key: "created_at", label: "Created", render: (r) => <span className="text-xs text-slate-500">{formatDate(r.created_at)}</span> },
-                  ]}
-                  rows={(stats.workspaces || []).slice(0, 8)}
-                  emptyText="No workspaces yet"
-                />
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="mb-4 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-slate-800">Recent users</h2>
-                  <button type="button" onClick={() => goToTab("users")} className="text-xs font-medium text-brand-600 hover:text-brand-700">View all →</button>
-                </div>
-                <DataTable
-                  columns={[
-                    { key: "email", label: "Email", render: (r) => (
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-slate-800 truncate max-w-[160px]">{r.email}</span>
-                        {r.is_blocked && <span className="shrink-0 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">Blocked</span>}
-                      </div>
-                    )},
-                    { key: "created_at", label: "Joined", render: (r) => <span className="text-xs text-slate-500">{formatDate(r.created_at)}</span> },
-                    { key: "actions", label: "", tdClass: "w-20", render: (r) => (
-                      <button
-                        type="button"
-                        onClick={() => setUserDetail(r)}
-                        className="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-[11px] font-semibold text-brand-700 transition hover:bg-brand-100 whitespace-nowrap"
-                      >
-                        Manage →
-                      </button>
-                    )},
-                  ]}
-                  rows={(stats.users || []).slice(0, 8)}
-                  emptyText="No users yet"
-                />
-              </div>
-            </div>
-
-            {/* Platform health metrics */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            {/* 2 — Platform health metrics */}
+            <section className="rounded-2xl border border-slate-200 bg-white p-5">
               <h2 className="mb-4 text-sm font-semibold text-slate-800">Platform health metrics</h2>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                 {platformMetrics.map((m) => (
-                  <div key={m.label} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                    <div className="text-2xl font-bold tabular-nums text-slate-900">{m.value}</div>
-                    <div className="mt-0.5 text-[12px] font-semibold text-slate-700">{m.label}</div>
-                    <div className="mt-1 text-[11px] text-slate-400">{m.sub}</div>
+                  <div key={m.label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
+                    <div className="text-xl font-bold tabular-nums text-slate-900">{m.value}</div>
+                    <div className="mt-0.5 text-[11px] font-semibold text-slate-700 leading-tight">{m.label}</div>
+                    <div className="mt-1 text-[10px] text-slate-400 leading-tight">{m.sub}</div>
                   </div>
                 ))}
               </div>
+            </section>
+
+            {/* 3 — Recent workspaces + users (compact reference) */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-slate-800">Recent workspaces</h2>
+                  <button type="button" onClick={() => goToTab("workspaces")} className="text-xs font-medium text-brand-600 hover:text-brand-700">View all →</button>
+                </div>
+                <div className="divide-y divide-slate-50">
+                  {(stats.workspaces || []).slice(0, 5).map((r) => (
+                    <div key={r.id} className="flex items-center justify-between gap-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-medium text-slate-800">{r.name || "Unnamed"}</div>
+                        <div className="truncate text-[11px] text-slate-400">{r.owner_email || "—"}</div>
+                      </div>
+                      <span className="shrink-0 text-[11px] text-slate-400 whitespace-nowrap">{formatDate(r.created_at)}</span>
+                    </div>
+                  ))}
+                  {!(stats.workspaces || []).length && <p className="py-3 text-xs text-slate-400">No workspaces yet</p>}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-slate-800">Recent users</h2>
+                  <button type="button" onClick={() => goToTab("users")} className="text-xs font-medium text-brand-600 hover:text-brand-700">View all →</button>
+                </div>
+                <div className="divide-y divide-slate-50">
+                  {(stats.users || []).slice(0, 5).map((r) => (
+                    <div key={r.id} className="flex items-center justify-between gap-3 py-2">
+                      <div className="min-w-0 flex-1 flex items-center gap-2">
+                        <span className="truncate text-[13px] font-medium text-slate-800">{r.email}</span>
+                        {r.is_blocked && <span className="shrink-0 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">Blocked</span>}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setUserDetail(r)}
+                        className="shrink-0 rounded-lg border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700 transition hover:bg-brand-100"
+                      >
+                        Manage
+                      </button>
+                    </div>
+                  ))}
+                  {!(stats.users || []).length && <p className="py-3 text-xs text-slate-400">No users yet</p>}
+                </div>
+              </section>
             </div>
 
-            {/* Data exports + Bulk ops */}
-            <div className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            {/* 4 — Data exports + Bulk ops */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
                 <h2 className="mb-1 text-sm font-semibold text-slate-800">Data exports</h2>
                 <p className="mb-4 text-[12px] text-slate-400">Download platform data as CSV for analytics or offline reporting.</p>
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {[
                     {
                       label: "All users", sub: `${stats?.total_users ?? 0} records`,
@@ -1538,16 +1539,19 @@ export default function AdminPage() {
                     },
                     {
                       label: "Upgrade clicks", sub: upgradesLoaded ? `${upgrades?.length ?? 0} records` : "Load required",
-                      onClick: upgradesLoaded ? () => downloadCSV(upgrades || [], [
-                        { key: "email", label: "Email" }, { key: "feature", label: "Feature" }, { key: "source", label: "Source" }, { key: "clicked_at", label: "Clicked At" },
-                      ], "upgrade-clicks.csv") : () => { loadUpgrades(); showToast("success", "Upgrade data loading — try again in a moment."); },
+                      onClick: upgradesLoaded
+                        ? () => downloadCSV(upgrades || [], [
+                            { key: "email", label: "Email" }, { key: "feature", label: "Feature" },
+                            { key: "source", label: "Source" }, { key: "clicked_at", label: "Clicked At" },
+                          ], "upgrade-clicks.csv")
+                        : () => { loadUpgrades(); showToast("success", "Upgrade data loading — try again in a moment."); },
                     },
                   ].map((item) => (
                     <button
                       key={item.label}
                       type="button"
                       onClick={item.onClick}
-                      className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-brand-200 hover:bg-brand-50 group"
+                      className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition hover:border-brand-200 hover:bg-brand-50 group"
                     >
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-500 group-hover:border-brand-200 group-hover:text-brand-600 transition">
                         <DownloadIcon />
@@ -1559,9 +1563,9 @@ export default function AdminPage() {
                     </button>
                   ))}
                 </div>
-              </div>
+              </section>
 
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
                 <h2 className="mb-1 text-sm font-semibold text-slate-800">Bulk operations</h2>
                 <p className="mb-4 text-[12px] text-slate-400">Platform-wide actions that affect multiple records at once. Use with care.</p>
                 <div className="flex items-start gap-4 rounded-xl border border-amber-100 bg-amber-50 p-4">
@@ -1583,7 +1587,7 @@ export default function AdminPage() {
                     </button>
                   </div>
                 </div>
-              </div>
+              </section>
             </div>
 
           </div>
