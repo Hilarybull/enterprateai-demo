@@ -200,6 +200,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
   const isEditMode = Boolean(memberId);
 
   const [tab, setTab] = useState(initialPermissionType || "module");
+  const [accessMode, setAccessMode] = useState("link");
   const [selectedModules, setSelectedModules] = useState(initialPermissions?.modules || []);
   const [selectedFeatures, setSelectedFeatures] = useState(initialPermissions?.features || {});
   const [email, setEmail] = useState("");
@@ -235,11 +236,13 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
 
   async function handleGenerate() {
     if (!hasSelection()) { setError("Select at least one module or feature."); return; }
+    if (accessMode === "email" && !email.trim()) { setError("Enter the email address for this invite."); return; }
     setLoading(true);
     setError(null);
     try {
       const result = await apiRequest("/workspace/invitations", "POST", {
-        email: email.trim() || null,
+        access_mode: accessMode,
+        email: accessMode === "email" ? email.trim() : null,
         permission_type: tab,
         permissions: buildPermissions(),
         expires_in_days: expiryDays,
@@ -284,7 +287,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
     const body = encodeURIComponent(
       `Hi,\n\nYou've been invited to join a workspace on EnterprateAI.\n\nClick the link below to accept:\n${inviteLink}\n\nThis link expires in ${expiryDays} day${expiryDays !== 1 ? "s" : ""}.\n`
     );
-    window.open(`mailto:${email || ""}?subject=${subject}&body=${body}`);
+    window.open(`mailto:${accessMode === "email" ? email : ""}?subject=${subject}&body=${body}`);
   }
 
   return (
@@ -364,17 +367,57 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
             <div className="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-4">
               <div>
                 <label className="mb-1.5 block text-[12px] font-semibold text-slate-700 dark:text-slate-300">
-                  Recipient email
-                  <span className="ml-1 font-normal text-slate-400">(optional)</span>
+                  Who can use this link?
                 </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="colleague@company.com"
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-slate-600 transition"
-                />
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {[
+                    {
+                      value: "link",
+                      title: "Anyone with link",
+                      desc: "Multiple users can join with this same link until it expires or is revoked.",
+                    },
+                    {
+                      value: "email",
+                      title: "Specific email only",
+                      desc: "Only the entered email can use this link, and only once.",
+                    },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => {
+                        setAccessMode(opt.value);
+                        if (opt.value === "link") setEmail("");
+                        setError(null);
+                      }}
+                      className={
+                        "rounded-xl border p-3 text-left transition " +
+                        (accessMode === opt.value
+                          ? "border-brand-300 bg-brand-50 dark:border-slate-700 dark:bg-slate-800"
+                          : "border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800")
+                      }
+                    >
+                      <div className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{opt.title}</div>
+                      <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
+              {accessMode === "email" && (
+                <div>
+                  <label className="mb-1.5 block text-[12px] font-semibold text-slate-700 dark:text-slate-300">
+                    Email address
+                    <span className="ml-1 font-normal text-slate-400">(required)</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="colleague@company.com"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-slate-600 transition"
+                  />
+                </div>
+              )}
               <div>
                 <label className="mb-1.5 block text-[12px] font-semibold text-slate-700 dark:text-slate-300">
                   Link expires in
@@ -409,7 +452,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
                   <CheckIcon className="h-3 w-3" />
                 </span>
                 <span className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">
-                  Invite link ready · expires in {expiryDays} day{expiryDays !== 1 ? "s" : ""}
+                  Invite link ready - {accessMode === "email" ? "email-only" : "multi-use"} - expires in {expiryDays} day{expiryDays !== 1 ? "s" : ""}
                 </span>
               </div>
               <div className="flex items-center gap-2 rounded-lg bg-white ring-1 ring-slate-200 pl-2.5 pr-1 py-1 dark:bg-slate-900 dark:ring-slate-700">
@@ -458,7 +501,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
               disabled={loading || !hasSelection()}
               className="w-full sm:w-auto rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50 transition"
             >
-              {loading ? "Saving…" : "Save changes"}
+              {loading ? "Saving..." : "Save changes"}
             </button>
           ) : (
             <button
@@ -467,7 +510,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
               disabled={loading || !hasSelection()}
               className="w-full sm:w-auto rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50 transition"
             >
-              {loading ? "Generating…" : "Generate invite link"}
+              {loading ? "Generating..." : "Generate invite link"}
             </button>
           )}
         </div>

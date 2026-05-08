@@ -710,94 +710,96 @@ export default function CataloguePage() {
             <CatalogueIllustration />
           </IllustrationCard>
 
-          <SectionCard
-            title="Catalogue integrations"
-            subtitle="Connect CRM and inventory tools to keep your catalogue in sync."
-            className="lg:col-span-3"
-            icon={
-              <CardIcon tone="bg-emerald-50 text-emerald-600">
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M7 7h10v10H7z" />
-                  <path d="M3 12h4M17 12h4M12 3v4M12 17v4" />
-                </svg>
-              </CardIcon>
-            }
-          >
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <div className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="text-xs font-semibold text-slate-600">CRM systems</div>
-                <div className="mt-3 space-y-2">
-                  {["hubspot", "salesforce", "zoho_crm"].map((key) => {
-                    const meta = catalogueIntegrationMeta[key];
-                    const badge = statusBadge(catalogueIntegrations.crm[key]);
-                    return (
-                      <div key={key} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-3">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <CatalogueLogo type={key} />
-                          <div>
-                            <div className="text-sm font-semibold text-slate-900">{meta.label}</div>
-                            <div className="text-xs text-slate-500">{meta.note}</div>
+          {false && (
+            <SectionCard
+              title="Catalogue integrations"
+              subtitle="Connect CRM and inventory tools to keep your catalogue in sync."
+              className="lg:col-span-3"
+              icon={
+                <CardIcon tone="bg-emerald-50 text-emerald-600">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M7 7h10v10H7z" />
+                    <path d="M3 12h4M17 12h4M12 3v4M12 17v4" />
+                  </svg>
+                </CardIcon>
+              }
+            >
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="text-xs font-semibold text-slate-600">CRM systems</div>
+                  <div className="mt-3 space-y-2">
+                    {["hubspot", "salesforce", "zoho_crm"].map((key) => {
+                      const meta = catalogueIntegrationMeta[key];
+                      const badge = statusBadge(catalogueIntegrations.crm[key]);
+                      return (
+                        <div key={key} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-3">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <CatalogueLogo type={key} />
+                            <div>
+                              <div className="text-sm font-semibold text-slate-900">{meta.label}</div>
+                              <div className="text-xs text-slate-500">{meta.note}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                badge.tone === "emerald"
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : badge.tone === "amber"
+                                    ? "bg-amber-50 text-amber-700"
+                                    : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {badge.label}
+                            </span>
+                            <Button variant="secondary" onClick={() => updateCatalogueIntegration("crm", key)}>
+                              {catalogueIntegrations.crm[key] === "connected" ? "Disconnect" : "Connect"}
+                            </Button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                              badge.tone === "emerald"
-                                ? "bg-emerald-50 text-emerald-700"
-                                : badge.tone === "amber"
-                                  ? "bg-amber-50 text-amber-700"
-                                  : "bg-slate-100 text-slate-600"
-                            }`}
-                          >
-                            {badge.label}
-                          </span>
-                          <Button variant="secondary" onClick={() => updateCatalogueIntegration("crm", key)}>
-                            {catalogueIntegrations.crm[key] === "connected" ? "Disconnect" : "Connect"}
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="text-xs font-semibold text-slate-600">Inventory & commerce</div>
-                <div className="mt-3 space-y-2">
-                  {["shopify", "woo_commerce", "square"].map((key) => {
-                    const meta = catalogueIntegrationMeta[key];
-                    const badge = statusBadge(catalogueIntegrations.inventory[key]);
-                    return (
-                      <div key={key} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-3">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <CatalogueLogo type={key} />
-                          <div>
-                            <div className="text-sm font-semibold text-slate-900">{meta.label}</div>
-                            <div className="text-xs text-slate-500">{meta.note}</div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="text-xs font-semibold text-slate-600">Inventory & commerce</div>
+                  <div className="mt-3 space-y-2">
+                    {["shopify", "woo_commerce", "square"].map((key) => {
+                      const meta = catalogueIntegrationMeta[key];
+                      const badge = statusBadge(catalogueIntegrations.inventory[key]);
+                      return (
+                        <div key={key} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-3">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <CatalogueLogo type={key} />
+                            <div>
+                              <div className="text-sm font-semibold text-slate-900">{meta.label}</div>
+                              <div className="text-xs text-slate-500">{meta.note}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                badge.tone === "emerald"
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : badge.tone === "amber"
+                                    ? "bg-amber-50 text-amber-700"
+                                    : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {badge.label}
+                            </span>
+                            <Button variant="secondary" onClick={() => updateCatalogueIntegration("inventory", key)}>
+                              {catalogueIntegrations.inventory[key] === "connected" ? "Disconnect" : "Connect"}
+                            </Button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                              badge.tone === "emerald"
-                                ? "bg-emerald-50 text-emerald-700"
-                                : badge.tone === "amber"
-                                  ? "bg-amber-50 text-amber-700"
-                                  : "bg-slate-100 text-slate-600"
-                            }`}
-                          >
-                            {badge.label}
-                          </span>
-                          <Button variant="secondary" onClick={() => updateCatalogueIntegration("inventory", key)}>
-                            {catalogueIntegrations.inventory[key] === "connected" ? "Disconnect" : "Connect"}
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </div>
-          </SectionCard>
+            </SectionCard>
+          )}
         </div>
       ) : null}
 

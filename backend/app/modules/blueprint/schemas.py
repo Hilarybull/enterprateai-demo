@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 
@@ -111,7 +111,26 @@ class BlueprintShareLinkResponse(BaseModel):
     token: str = Field(min_length=16, max_length=256)
 
 
+class BlueprintShareCreateRequest(BaseModel):
+    access_mode: str = "link"
+    email: Optional[EmailStr] = None
+    expires_in_days: int = Field(default=7, ge=1, le=30)
+
+    @model_validator(mode="after")
+    def validate_access_mode(self):
+        if self.access_mode not in {"link", "email"}:
+            raise ValueError("access_mode must be either 'link' or 'email'")
+        if self.access_mode == "email" and not self.email:
+            raise ValueError("Email is required for email-only share links")
+        if self.access_mode == "link":
+            self.email = None
+        return self
+
+
 class BlueprintFinancialShareRequest(BaseModel):
+    access_mode: str = "link"
+    email: Optional[EmailStr] = None
+    expires_in_days: int = Field(default=7, ge=1, le=30)
     document_id: Optional[str] = None
     type: str = Field(min_length=2, max_length=120)
     title: str = Field(min_length=2, max_length=120)
@@ -121,6 +140,16 @@ class BlueprintFinancialShareRequest(BaseModel):
     pricing_model: Optional[str] = Field(default=None, max_length=40)
     document_markdown: str = Field(min_length=1)
     document_html: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_access_mode(self):
+        if self.access_mode not in {"link", "email"}:
+            raise ValueError("access_mode must be either 'link' or 'email'")
+        if self.access_mode == "email" and not self.email:
+            raise ValueError("Email is required for email-only share links")
+        if self.access_mode == "link":
+            self.email = None
+        return self
 
 
 class BlueprintFinancialShareResponse(BlueprintShareLinkResponse):

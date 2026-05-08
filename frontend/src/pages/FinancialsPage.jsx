@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import html2pdf from "html2pdf.js";
 import Button from "../components/Button";
+import DocumentShareModal from "../components/DocumentShareModal";
 import InlineAlert from "../components/InlineAlert";
 import Input from "../components/Input";
 import PageHeader from "../components/PageHeader";
@@ -97,45 +98,6 @@ function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "
   );
 }
 
-function ShareLinkPopup({ url, onClose }) {
-  const inputRef = useRef(null);
-  const [copied, setCopied] = useState(false);
-  useEffect(() => { inputRef.current?.select(); }, []);
-  async function handleCopy() {
-    try { await navigator.clipboard.writeText(url); } catch {}
-    try { inputRef.current?.select(); document.execCommand("copy"); } catch {}
-    setCopied(true);
-    setTimeout(onClose, 1200);
-  }
-  return (
-    <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/30 sm:items-center" onClick={onClose}>
-      <div className="relative mx-4 mb-6 w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl sm:mb-0" onClick={(e) => e.stopPropagation()}>
-        <button type="button" onClick={onClose} className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
-          <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
-        </button>
-        <div className="mb-3 text-sm font-semibold text-slate-900">Share link ready</div>
-        <div className="flex gap-2">
-          <input
-            ref={inputRef}
-            readOnly
-            value={url}
-            className="ea-input min-w-0 flex-1 font-mono text-xs"
-            onClick={() => inputRef.current?.select()}
-          />
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-brand-700"
-          >
-            {copied ? "Copied!" : "Copy"}
-          </button>
-        </div>
-        <p className="mt-2 text-[11px] text-slate-400">Anyone with this link can view the document.</p>
-      </div>
-    </div>
-  );
-}
-
 export default function FinancialsPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
@@ -167,7 +129,7 @@ export default function FinancialsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [shareNotice, setShareNotice] = useState(null);
-  const [shareLinkUrl, setShareLinkUrl] = useState(null);
+  const [shareDialog, setShareDialog] = useState(null);
 
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -688,6 +650,15 @@ export default function FinancialsPage() {
     return Number((subtotal + costOfSales).toFixed(2));
   }
 
+  function renderShareStatus(status) {
+    const normalized = String(status || "").trim().toLowerCase();
+    if (!normalized || normalized === "pending" || normalized === "draft") return "";
+    return `
+      <div class="muted" style="margin-top:8px;">Status</div>
+      <div>${normalized === "paid" ? "paid" : normalized}</div>
+    `;
+  }
+
   function buildInvoiceHtml(invoice, customer, product) {
     const subtotal = Number(invoice?.subtotal_amount || 0);
     const grandTotal = getDocumentGrandTotal(invoice);
@@ -725,8 +696,7 @@ export default function FinancialsPage() {
       <div class="right">
         <div class="muted">Invoice ID</div>
         <div>${invoice?.invoice_id || invoice?.id || ""}</div>
-      <div class="muted" style="margin-top:8px;">Status</div>
-      <div>${invoice?.status || "pending"}</div>
+        ${renderShareStatus(invoice?.status)}
     </div>
   </div>
   <div class="card">
@@ -796,8 +766,7 @@ export default function FinancialsPage() {
       <div class="right">
         <div class="muted">Quotation ID</div>
         <div>${quote?.quotation_id || quote?.id || ""}</div>
-      <div class="muted" style="margin-top:8px;">Status</div>
-      <div>${quote?.status || "draft"}</div>
+        ${renderShareStatus(quote?.status)}
     </div>
   </div>
   <div class="card">
@@ -896,7 +865,7 @@ export default function FinancialsPage() {
     downloadPdfFile(html, filename);
   }
 
-  async function createFinancialShareLink(kind, record, customer, product) {
+  async function createFinancialShareLink(kind, record, customer, product, shareConfig = {}) {
     if (!record) return;
     setError(null);
     setShareNotice("Creating link...");
@@ -908,19 +877,14 @@ export default function FinancialsPage() {
       let token = null;
       let documentId = existingDocumentId;
 
-      if (existingDocumentId) {
-        const shareRes = await apiRequest(
-          `/blueprint/documents/${existingDocumentId}/share`,
-          "POST",
-          null,
-          { timeoutMs: 120000 }
-        );
-        token = shareRes?.token;
-      } else {
+      {
         const rawHtml = isInvoice ? buildInvoiceHtml(record, customer, product) : buildQuoteHtml(record, customer, product);
         const markdown = buildFinancialShareText(kind, record, customer, product);
         const res = await apiRequest("/blueprint/financial-documents/share", "POST", {
-          document_id: null,
+          access_mode: shareConfig.access_mode || "link",
+          email: shareConfig.email || null,
+          expires_in_days: shareConfig.expires_in_days || 7,
+          document_id: existingDocumentId,
           type: isInvoice ? `invoice_template:${record.id}` : `sales_quotation:${record.id}`,
           title: `${titlePrefix} — ${record?.invoice_id || record?.quotation_id || record?.id || workspaceName || "Document"}`,
           company_name: workspaceName || "EnterprateAI",
@@ -965,32 +929,15 @@ export default function FinancialsPage() {
     }
   }
 
-  async function shareFinancialDocument(kind, record, customer, product, mode = "copy") {
-    let url = await createFinancialShareLink(kind, record, customer, product);
-    if (!url) return;
-    if (mode === "mail") {
-      const isInvoice = kind === "invoice";
-      const recipient = encodeURIComponent(customer?.email || "");
-      const reference = isInvoice
-        ? record?.invoice_id || record?.id || ""
-        : record?.quotation_id || record?.id || "";
-      const subject = encodeURIComponent(`${isInvoice ? "Invoice" : "Quotation"} ${reference}`);
-      const body = encodeURIComponent(
-        `Hi${customer?.name ? ` ${customer.name}` : ""},\n\nHere is your shared document link:\n${url}\n\nThank you.`
-      );
-      window.location.href = `mailto:${recipient}?subject=${subject}&body=${body}`;
-      setShareNotice("Mail draft opened");
-      setTimeout(() => setShareNotice(null), 1800);
-      return;
-    }
-    setShareLinkUrl(url);
+  async function shareFinancialDocument(kind, record, customer, product, shareConfig) {
+    return createFinancialShareLink(kind, record, customer, product, shareConfig);
   }
 
   function addFinancialShareAction(items, kind, record, customer, product) {
     const shareItem = {
       label: "Share",
-      onClick: async () => {
-        await shareFinancialDocument(kind, record, customer, product, "copy");
+      onClick: () => {
+        setShareDialog({ kind, record, customer, product });
       }
     };
     const deleteIndex = items.findIndex((item) => item?.tone === "danger" || item?.label === "Delete");
@@ -1507,11 +1454,11 @@ export default function FinancialsPage() {
       </div>
 
       {activeTab === "overview" ? (
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-8">
         <SectionCard
           title="Operational snapshot"
           subtitle="Instant visibility into financial activity."
-          className="h-full"
+          className="h-full lg:col-span-5"
           icon={
             <CardIcon tone="bg-emerald-50 text-emerald-600">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1551,7 +1498,7 @@ export default function FinancialsPage() {
         <SectionCard
           title="Ready to invoice"
           subtitle="Your products, customers, and vendors are set."
-          className="h-full"
+          className="h-full lg:col-span-3"
           icon={
             <CardIcon tone="bg-sky-50 text-sky-600">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1576,99 +1523,101 @@ export default function FinancialsPage() {
         <IllustrationCard
           title="Financial workflow"
           subtitle="Invoices, expenses, and contracts feeding your decision engine."
-          className="h-full"
+          className="h-full lg:col-span-8"
         >
           <FinancialIllustration />
         </IllustrationCard>
 
-        <SectionCard
-          title="Integrations"
-          subtitle="Connect financial and CRM tools to keep your data in sync."
-          className="h-full"
-          icon={
-            <CardIcon tone="bg-indigo-50 text-indigo-600">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M7 7h10v10H7z" />
-                <path d="M3 12h4M17 12h4M12 3v4M12 17v4" />
-              </svg>
-            </CardIcon>
-          }
-        >
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="text-xs font-semibold text-slate-600">Financial tools</div>
-              <div className="mt-3 space-y-2">
-                {["quickbooks", "sap", "zoho_books"].map((key) => {
-                  const meta = integrationMeta[key];
-                  const badge = statusBadge(integrations.financial[key]);
-                  return (
-                    <div key={key} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-3">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <IntegrationLogo type={key} />
-                        <div>
-                          <div className="text-sm font-semibold text-slate-900">{meta.label}</div>
-                          <div className="text-xs text-slate-500">{meta.note}</div>
+        {false && (
+          <SectionCard
+            title="Integrations"
+            subtitle="Connect financial and CRM tools to keep your data in sync."
+            className="h-full"
+            icon={
+              <CardIcon tone="bg-indigo-50 text-indigo-600">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M7 7h10v10H7z" />
+                  <path d="M3 12h4M17 12h4M12 3v4M12 17v4" />
+                </svg>
+              </CardIcon>
+            }
+          >
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="text-xs font-semibold text-slate-600">Financial tools</div>
+                <div className="mt-3 space-y-2">
+                  {["quickbooks", "sap", "zoho_books"].map((key) => {
+                    const meta = integrationMeta[key];
+                    const badge = statusBadge(integrations.financial[key]);
+                    return (
+                      <div key={key} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-3">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <IntegrationLogo type={key} />
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">{meta.label}</div>
+                            <div className="text-xs text-slate-500">{meta.note}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              badge.tone === "emerald"
+                                ? "bg-emerald-50 text-emerald-700"
+                                : badge.tone === "amber"
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {badge.label}
+                          </span>
+                          <Button variant="secondary" onClick={() => updateIntegration("financial", key)}>
+                            {integrations.financial[key] === "connected" ? "Disconnect" : "Connect"}
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                            badge.tone === "emerald"
-                              ? "bg-emerald-50 text-emerald-700"
-                              : badge.tone === "amber"
-                                ? "bg-amber-50 text-amber-700"
-                                : "bg-slate-100 text-slate-600"
-                          }`}
-                        >
-                          {badge.label}
-                        </span>
-                        <Button variant="secondary" onClick={() => updateIntegration("financial", key)}>
-                          {integrations.financial[key] === "connected" ? "Disconnect" : "Connect"}
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="text-xs font-semibold text-slate-600">CRM tools</div>
-              <div className="mt-3 space-y-2">
-                {["zoho_crm", "hubspot", "salesforce"].map((key) => {
-                  const meta = integrationMeta[key];
-                  const badge = statusBadge(integrations.crm[key]);
-                  return (
-                    <div key={key} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-3">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <IntegrationLogo type={key} />
-                        <div>
-                          <div className="text-sm font-semibold text-slate-900">{meta.label}</div>
-                          <div className="text-xs text-slate-500">{meta.note}</div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="text-xs font-semibold text-slate-600">CRM tools</div>
+                <div className="mt-3 space-y-2">
+                  {["zoho_crm", "hubspot", "salesforce"].map((key) => {
+                    const meta = integrationMeta[key];
+                    const badge = statusBadge(integrations.crm[key]);
+                    return (
+                      <div key={key} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-3">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <IntegrationLogo type={key} />
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">{meta.label}</div>
+                            <div className="text-xs text-slate-500">{meta.note}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              badge.tone === "emerald"
+                                ? "bg-emerald-50 text-emerald-700"
+                                : badge.tone === "amber"
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {badge.label}
+                          </span>
+                          <Button variant="secondary" onClick={() => updateIntegration("crm", key)}>
+                            {integrations.crm[key] === "connected" ? "Disconnect" : "Connect"}
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                            badge.tone === "emerald"
-                              ? "bg-emerald-50 text-emerald-700"
-                              : badge.tone === "amber"
-                                ? "bg-amber-50 text-amber-700"
-                                : "bg-slate-100 text-slate-600"
-                          }`}
-                        >
-                          {badge.label}
-                        </span>
-                        <Button variant="secondary" onClick={() => updateIntegration("crm", key)}>
-                          {integrations.crm[key] === "connected" ? "Disconnect" : "Connect"}
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          </div>
-        </SectionCard>
+          </SectionCard>
+        )}
       </div>
       ) : null}
 
@@ -2823,7 +2772,7 @@ export default function FinancialsPage() {
             onClick={async () => {
               const { kind, record, customer, product } = shareMenu;
               setShareMenu(null);
-              await shareFinancialDocument(kind, record, customer, product, "copy");
+              setShareDialog({ kind, record, customer, product });
             }}
             className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
           >
@@ -2834,7 +2783,7 @@ export default function FinancialsPage() {
             onClick={async () => {
               const { kind, record, customer, product } = shareMenu;
               setShareMenu(null);
-              await shareFinancialDocument(kind, record, customer, product, "mail");
+              setShareDialog({ kind, record, customer, product });
             }}
             className="block w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
           >
@@ -2849,7 +2798,35 @@ export default function FinancialsPage() {
         </div>
       ) : null}
 
-      {shareLinkUrl ? <ShareLinkPopup url={shareLinkUrl} onClose={() => setShareLinkUrl(null)} /> : null}
+      {shareDialog ? (
+        <DocumentShareModal
+          title="Share financial document"
+          subtitle="Choose who can use this document link before generating it."
+          defaultEmail={shareDialog.customer?.email || ""}
+          onClose={() => setShareDialog(null)}
+          onGenerate={(config) =>
+            shareFinancialDocument(
+              shareDialog.kind,
+              shareDialog.record,
+              shareDialog.customer,
+              shareDialog.product,
+              config
+            )
+          }
+          getMailtoHref={({ url, email, expiryDays }) => {
+            const isInvoice = shareDialog.kind === "invoice";
+            const recipient = encodeURIComponent(email || shareDialog.customer?.email || "");
+            const reference = isInvoice
+              ? shareDialog.record?.invoice_id || shareDialog.record?.id || ""
+              : shareDialog.record?.quotation_id || shareDialog.record?.id || "";
+            const subject = encodeURIComponent(`${isInvoice ? "Invoice" : "Quotation"} ${reference}`);
+            const body = encodeURIComponent(
+              `Hi${shareDialog.customer?.name ? ` ${shareDialog.customer.name}` : ""},\n\nHere is your shared document link:\n${url}\n\nThis link expires in ${expiryDays} day${expiryDays !== 1 ? "s" : ""}.\n\nThank you.`
+            );
+            return `mailto:${recipient}?subject=${subject}&body=${body}`;
+          }}
+        />
+      ) : null}
     </div>
   );
 }

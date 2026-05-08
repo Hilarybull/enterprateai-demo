@@ -57,6 +57,7 @@ function StatusBadge({ status }) {
   const styles = {
     pending: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400",
     accepted: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400",
+    expired: "bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-400",
     revoked: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
   };
   return (
@@ -77,6 +78,43 @@ function PermissionPill({ type, permissions }) {
       <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[180px] sm:max-w-none">{desc}</span>
     </div>
   );
+}
+
+function InviteModePill({ email }) {
+  const isEmailOnly = Boolean(email);
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+      isEmailOnly
+        ? "bg-sky-50 text-sky-700 dark:bg-slate-800 dark:text-sky-400"
+        : "bg-amber-50 text-amber-700 dark:bg-slate-800 dark:text-amber-400"
+    }`}>
+      {isEmailOnly ? "Email only" : "Anyone with link"}
+    </span>
+  );
+}
+
+function SourcePill({ source }) {
+  const isFinancials = source === "financials";
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+      isFinancials
+        ? "bg-emerald-50 text-emerald-700 dark:bg-slate-800 dark:text-emerald-400"
+        : "bg-violet-50 text-violet-700 dark:bg-slate-800 dark:text-violet-400"
+    }`}>
+      {isFinancials ? "Financials" : "Blueprint"}
+    </span>
+  );
+}
+
+function formatDocumentType(type) {
+  const map = {
+    business_plan: "Business plan",
+    client_proposal: "Business proposal",
+    sales_letter: "Sales letter",
+    sales_quotation: "Quotation",
+    invoice_template: "Invoice",
+  };
+  return map[type] || String(type || "Document").replaceAll("_", " ");
 }
 
 function EmptyState({ icon, title, subtitle, action, illustration }) {
@@ -105,6 +143,7 @@ export default function TeamPage() {
   const [tab, setTab] = useState("members");
   const [members, setMembers] = useState([]);
   const [invitations, setInvitations] = useState([]);
+  const [shareLinks, setShareLinks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showInvite, setShowInvite] = useState(false);
@@ -115,12 +154,14 @@ export default function TeamPage() {
     setLoading(true);
     setError(null);
     try {
-      const [mem, inv] = await Promise.all([
+      const [mem, inv, shares] = await Promise.all([
         apiRequest("/workspace/members", "GET"),
         apiRequest("/workspace/invitations", "GET"),
+        apiRequest("/workspace/share-links", "GET"),
       ]);
       setMembers(mem || []);
       setInvitations(inv || []);
+      setShareLinks(shares || []);
     } catch (e) {
       setError(e.message || "Failed to load team data.");
     } finally {
@@ -144,6 +185,20 @@ export default function TeamPage() {
     }
   }
 
+  async function revokeShareLink(shareId) {
+    setActionLoading(shareId);
+    try {
+      await apiRequest(`/workspace/share-links/${shareId}`, "DELETE");
+      setShareLinks((prev) =>
+        prev.map((item) => (item.id === shareId ? { ...item, status: "revoked" } : item))
+      );
+    } catch (e) {
+      alert(e.message || "Failed to revoke share link.");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   async function removeMember(memberId) {
     if (!confirm("Remove this member from the workspace?")) return;
     setActionLoading(memberId);
@@ -159,6 +214,8 @@ export default function TeamPage() {
 
   const pendingInvites = invitations.filter((i) => i.status === "pending");
   const pastInvites = invitations.filter((i) => i.status !== "pending");
+  const activeShareLinks = shareLinks.filter((i) => i.status === "pending");
+  const pastShareLinks = shareLinks.filter((i) => i.status !== "pending");
 
   return (
     <div className="space-y-5">
@@ -184,7 +241,7 @@ export default function TeamPage() {
       <div className="flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800 w-fit">
         {[
           { value: "members", label: `Members${members.length > 0 ? ` (${members.length})` : ""}` },
-          { value: "invitations", label: `Invitations${pendingInvites.length > 0 ? ` (${pendingInvites.length})` : ""}` },
+          { value: "invitations", label: `Invitations & links${pendingInvites.length + activeShareLinks.length > 0 ? ` (${pendingInvites.length + activeShareLinks.length})` : ""}` },
         ].map((t) => (
           <button
             key={t.value}
@@ -328,11 +385,11 @@ export default function TeamPage() {
       {/* ── Invitations tab ── */}
       {!loading && !error && tab === "invitations" && (
         <div className="space-y-5">
-          {invitations.length === 0 ? (
+          {invitations.length === 0 && shareLinks.length === 0 ? (
             <EmptyState
               icon={<LinkIcon className="h-5 w-5" />}
-              title="No invitations sent yet"
-              subtitle="Generate an invite link to get started."
+              title="No invitations or shared links yet"
+              subtitle="Generate an invite link or share a blueprint or financial document to get started."
             />
           ) : (
             <>
@@ -355,11 +412,17 @@ export default function TeamPage() {
                           <tr key={inv.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
                             <td className="px-4 py-3">
                               {inv.email ? (
-                                <span className="font-medium text-slate-700 dark:text-slate-300">{inv.email}</span>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-medium text-slate-700 dark:text-slate-300">{inv.email}</span>
+                                  <InviteModePill email={inv.email} />
+                                </div>
                               ) : (
-                                <span className="flex items-center gap-1.5 text-slate-400 text-xs">
-                                  <LinkIcon />Link only
-                                </span>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="flex items-center gap-1.5 text-slate-400 text-xs">
+                                    <LinkIcon />Link only
+                                  </span>
+                                  <InviteModePill email={inv.email} />
+                                </div>
                               )}
                             </td>
                             <td className="px-4 py-3">
@@ -396,6 +459,9 @@ export default function TeamPage() {
                             <div className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate">
                               {inv.email || "Link invite"}
                             </div>
+                            <div className="mt-1">
+                              <InviteModePill email={inv.email} />
+                            </div>
                             <div className="mt-0.5 flex items-center gap-2">
                               <PermissionPill type={inv.permission_type} permissions={inv.permissions} />
                             </div>
@@ -409,6 +475,90 @@ export default function TeamPage() {
                             type="button"
                             onClick={() => revoke(inv.id)}
                             disabled={actionLoading === inv.id}
+                            className="shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-rose-500 hover:bg-rose-50 disabled:opacity-40 dark:hover:bg-rose-950/30 transition"
+                          >
+                            Revoke
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeShareLinks.length > 0 && (
+                <div>
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Active document links</p>
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+                    <table className="hidden w-full text-sm sm:table">
+                      <thead>
+                        <tr className="border-b border-slate-100 dark:border-slate-800">
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Document</th>
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Recipient</th>
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Status</th>
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Expires</th>
+                          <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-400">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {activeShareLinks.map((item) => (
+                          <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-medium text-slate-800 dark:text-slate-200">{item.document_title}</span>
+                                <SourcePill source={item.source} />
+                                <span className="text-[11px] text-slate-400">{formatDocumentType(item.document_type)}</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-slate-600 dark:text-slate-300">{item.email || "Link only"}</span>
+                                <InviteModePill email={item.email} />
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <StatusBadge status={item.status} />
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-400">
+                              {item.expires_at ? new Date(item.expires_at).toLocaleDateString() : "—"}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => revokeShareLink(item.id)}
+                                disabled={actionLoading === item.id}
+                                className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-rose-500 hover:bg-rose-50 disabled:opacity-40 dark:hover:bg-rose-950/30 transition"
+                              >
+                                Revoke
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="sm:hidden divide-y divide-slate-100 dark:divide-slate-800">
+                      {activeShareLinks.map((item) => (
+                        <div key={item.id} className="px-4 py-3 flex items-center gap-3">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800">
+                            <LinkIcon className="h-3.5 w-3.5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[13px] font-medium text-slate-700 dark:text-slate-300">{item.document_title}</div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2">
+                              <SourcePill source={item.source} />
+                              <InviteModePill email={item.email} />
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-slate-500">{item.email || "Link only"} · {formatDocumentType(item.document_type)}</div>
+                            {item.expires_at && (
+                              <div className="mt-0.5 text-[10px] text-slate-400">
+                                Expires {new Date(item.expires_at).toLocaleDateString()}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => revokeShareLink(item.id)}
+                            disabled={actionLoading === item.id}
                             className="shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-rose-500 hover:bg-rose-50 disabled:opacity-40 dark:hover:bg-rose-950/30 transition"
                           >
                             Revoke
@@ -437,8 +587,16 @@ export default function TeamPage() {
                         {pastInvites.map((inv) => (
                           <tr key={inv.id} className="opacity-60">
                             <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
-                              {inv.email || (
-                                <span className="flex items-center gap-1.5 text-xs text-slate-400"><LinkIcon />Link only</span>
+                              {inv.email ? (
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span>{inv.email}</span>
+                                  <InviteModePill email={inv.email} />
+                                </div>
+                              ) : (
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="flex items-center gap-1.5 text-xs text-slate-400"><LinkIcon />Link only</span>
+                                  <InviteModePill email={inv.email} />
+                                </div>
                               )}
                             </td>
                             <td className="px-4 py-3">
@@ -465,11 +623,71 @@ export default function TeamPage() {
                             <div className="text-[13px] text-slate-600 dark:text-slate-400 truncate">
                               {inv.email || "Link invite"}
                             </div>
+                            <div className="mt-1">
+                              <InviteModePill email={inv.email} />
+                            </div>
                             <div className="mt-0.5">
                               <PermissionPill type={inv.permission_type} permissions={inv.permissions} />
                             </div>
                           </div>
                           <StatusBadge status={inv.status} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {pastShareLinks.length > 0 && (
+                <div>
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Past document links</p>
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+                    <table className="hidden w-full text-sm sm:table">
+                      <thead>
+                        <tr className="border-b border-slate-100 dark:border-slate-800">
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Document</th>
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Recipient</th>
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {pastShareLinks.map((item) => (
+                          <tr key={item.id} className="opacity-60">
+                            <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span>{item.document_title}</span>
+                                <SourcePill source={item.source} />
+                                <span className="text-[11px] text-slate-400">{formatDocumentType(item.document_type)}</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span>{item.email || "Link only"}</span>
+                                <InviteModePill email={item.email} />
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <StatusBadge status={item.status} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="sm:hidden divide-y divide-slate-100 dark:divide-slate-800">
+                      {pastShareLinks.map((item) => (
+                        <div key={item.id} className="flex items-center gap-3 px-4 py-3 opacity-60">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">
+                            <LinkIcon className="h-3.5 w-3.5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[13px] text-slate-600 dark:text-slate-400">{item.document_title}</div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2">
+                              <SourcePill source={item.source} />
+                              <InviteModePill email={item.email} />
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-slate-500">{item.email || "Link only"} · {formatDocumentType(item.document_type)}</div>
+                          </div>
+                          <StatusBadge status={item.status} />
                         </div>
                       ))}
                     </div>

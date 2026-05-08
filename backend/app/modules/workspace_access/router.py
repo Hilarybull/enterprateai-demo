@@ -8,9 +8,11 @@ from app.modules.workspace_access.service import (
     create_invitation,
     get_my_memberships,
     get_owner_workspace_id,
+    list_document_share_links,
     list_invitations,
     list_members,
     remove_member,
+    revoke_document_share,
     revoke_invitation,
     update_member,
 )
@@ -42,15 +44,27 @@ async def get_workspace_invitations(user=Depends(get_current_user)) -> list:
     return await list_invitations(workspace_id)
 
 
+@router.get("/share-links")
+async def get_workspace_share_links(user=Depends(get_current_user)) -> list:
+    workspace_id = await get_owner_workspace_id(user["id"])
+    return await list_document_share_links(workspace_id)
+
+
 @router.delete("/invitations/{invitation_id}", status_code=204)
 async def delete_workspace_invitation(invitation_id: str, user=Depends(get_current_user)) -> None:
     workspace_id = await get_owner_workspace_id(user["id"])
     await revoke_invitation(invitation_id, workspace_id)
 
 
+@router.delete("/share-links/{share_id}", status_code=204)
+async def delete_workspace_share_link(share_id: str, user=Depends(get_current_user)) -> None:
+    workspace_id = await get_owner_workspace_id(user["id"])
+    await revoke_document_share(share_id, workspace_id)
+
+
 @router.get("/join/{token}")
 async def join_workspace(token: str, user=Depends(get_current_user)) -> dict:
-    return await accept_invitation(token=token, user_id=user["id"])
+    return await accept_invitation(token=token, user_id=user["id"], user_email=user["email"])
 
 
 @router.get("/members")

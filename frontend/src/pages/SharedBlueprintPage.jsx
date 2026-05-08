@@ -183,6 +183,9 @@ export default function SharedBlueprintPage() {
   const { token } = useParams();
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState("");
+  const [shareEmail, setShareEmail] = useState("");
+  const [submittedEmail, setSubmittedEmail] = useState("");
+  const [emailRequired, setEmailRequired] = useState(false);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
 
@@ -233,11 +236,21 @@ export default function SharedBlueprintPage() {
       setLoading(true);
       setError("");
       try {
-        const data = await apiRequest(`/blueprint/share/${token}`, "GET");
-        if (!cancelled) setDoc(data);
+        const suffix = submittedEmail.trim() ? `?email=${encodeURIComponent(submittedEmail.trim())}` : "";
+        const data = await apiRequest(`/blueprint/share/${token}${suffix}`, "GET");
+        if (!cancelled) {
+          setDoc(data);
+          setEmailRequired(false);
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Unable to load shared document.";
-        if (!cancelled) setError(msg);
+        if (!cancelled) {
+          setError(msg);
+          setEmailRequired(
+            msg.includes("Email address required for this share link") ||
+            msg.includes("restricted to a different email address")
+          );
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -246,7 +259,7 @@ export default function SharedBlueprintPage() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, submittedEmail]);
 
   const title = doc?.title || "Document";
   const renderedDoc = useMemo(() => {
@@ -274,7 +287,8 @@ export default function SharedBlueprintPage() {
     setDownloading(true);
     try {
       const url = `${getApiBaseUrl()}/blueprint/share/${token}/export?format=pdf`;
-      window.open(url, "_blank", "noopener,noreferrer");
+      const exportUrl = submittedEmail.trim() ? `${url}&email=${encodeURIComponent(submittedEmail.trim())}` : url;
+      window.open(exportUrl, "_blank", "noopener,noreferrer");
     } finally {
       setDownloading(false);
     }
@@ -313,8 +327,28 @@ export default function SharedBlueprintPage() {
             <Spinner />
           </div>
         ) : error ? (
-          <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {error}
+          <div className="mt-6 space-y-4">
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {error}
+            </div>
+            {emailRequired ? (
+              <div className="max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-sm font-semibold text-slate-900">Enter the approved email address</div>
+                <p className="mt-1 text-xs text-slate-500">This document was shared as a specific-email-only link.</p>
+                <input
+                  type="email"
+                  value={shareEmail}
+                  onChange={(e) => setShareEmail(e.target.value)}
+                  placeholder="recipient@company.com"
+                  className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
+                />
+                <div className="mt-3">
+                  <Button onClick={() => setSubmittedEmail(shareEmail.trim())} disabled={!shareEmail.trim()}>
+                    Try email
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : bodyHtml.trim() ? (
           <div className={`mt-6 rounded-2xl border border-slate-200 bg-white shadow-sm ${isFullHtml ? "px-3 py-3 sm:px-6 sm:py-6" : "px-6 py-6"}`}>

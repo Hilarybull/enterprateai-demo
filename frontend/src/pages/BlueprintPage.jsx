@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import html2pdf from "html2pdf.js";
 import DocumentEditor from "../components/DocumentEditor";
+import DocumentShareModal from "../components/DocumentShareModal";
 import Input from "../components/Input";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
@@ -228,51 +229,34 @@ function ServicesDropdown({ workspaceServices, selectedServices, setSelectedServ
   );
 }
 
-function ShareLinkPopup({ url, onClose }) {
-  const inputRef = useRef(null);
-  const [copied, setCopied] = useState(false);
-  useEffect(() => { inputRef.current?.select(); }, []);
-  async function handleCopy() {
-    try { await navigator.clipboard.writeText(url); } catch {}
-    try { inputRef.current?.select(); document.execCommand("copy"); } catch {}
-    setCopied(true);
-    setTimeout(onClose, 1200);
-  }
-  return (
-    <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/30 sm:items-center" onClick={onClose}>
-      <div className="relative mx-4 mb-6 w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl sm:mb-0" onClick={(e) => e.stopPropagation()}>
-        <button type="button" onClick={onClose} className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
-          <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
-        </button>
-        <div className="mb-3 text-sm font-semibold text-slate-900">Share link ready</div>
-        <div className="flex gap-2">
-          <input
-            ref={inputRef}
-            readOnly
-            value={url}
-            className="ea-input min-w-0 flex-1 font-mono text-xs"
-            onClick={() => inputRef.current?.select()}
-          />
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-brand-700"
-          >
-            {copied ? "Copied!" : "Copy"}
-          </button>
-        </div>
-        <p className="mt-2 text-[11px] text-slate-400">Anyone with this link can view the document.</p>
-      </div>
-    </div>
-  );
-}
-
 // Map document id to blueprint feature key
 const DOC_FEATURE_KEY = {
   business_plan: "business_plan",
   client_proposal: "business_proposal",
   sales_letter: "sales_letter",
 };
+
+const BLUEPRINT_CACHE_KEY = "ea_blueprint_docs";
+
+function readBlueprintCache(ownerKey) {
+  if (!ownerKey || typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(`${BLUEPRINT_CACHE_KEY}:${ownerKey}`);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeBlueprintCache(ownerKey, docs) {
+  if (!ownerKey || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`${BLUEPRINT_CACHE_KEY}:${ownerKey}`, JSON.stringify(docs));
+  } catch {
+    // ignore local cache failures
+  }
+}
 
 export default function BlueprintPage() {
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
@@ -286,6 +270,7 @@ export default function BlueprintPage() {
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
+  const authEmail = useAuthStore((s) => s.email);
 
   function canBlueprintDoc(docId) {
     const featureKey = DOC_FEATURE_KEY[docId];
@@ -373,7 +358,7 @@ export default function BlueprintPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
   const [shareNotice, setShareNotice] = useState(null);
-  const [shareLinkUrl, setShareLinkUrl] = useState(null);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [sectionsByDoc, setSectionsByDoc] = useState({
     business_plan: [],
     client_proposal: [],
@@ -475,12 +460,33 @@ export default function BlueprintPage() {
       const allowedTypes = new Set(DOCUMENTS.map((doc) => doc.id));
       const docs = (Array.isArray(res) ? res : []).filter((doc) => allowedTypes.has(doc?.type));
       setSavedDocs(docs);
+      writeBlueprintCache(authEmail, docs);
       return docs;
     } catch {
-      // ignore
-      return [];
+      const cached = readBlueprintCache(authEmail);
+      setSavedDocs(cached);
+      return cached;
     }
   }
+
+  const visibleSavedDocs = useMemo(() => {
+    const list = [...savedDocs];
+    for (const doc of DOCUMENTS) {
+      const local = docByType[doc.id];
+      if (!local?.document_markdown) continue;
+      const localId = docIdByType[doc.id] || null;
+      const alreadyListed = list.some((item) => item.id === localId || item.type === doc.id);
+      if (alreadyListed) continue;
+      list.push({
+        id: localId || `local:${doc.id}`,
+        type: doc.id,
+        title: expectedDocumentTitle(doc.id, companyName || workspaceProfile?.company_name || ""),
+        company_name: companyName || workspaceProfile?.company_name || "",
+        updated_at: new Date().toISOString(),
+      });
+    }
+    return list.sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime());
+  }, [savedDocs, docByType, docIdByType, companyName, workspaceProfile]);
 
   function expectedDocumentTitle(docId, company) {
     const name = String(company || "").trim() || "Untitled";
@@ -490,9 +496,23 @@ export default function BlueprintPage() {
     return `Document — ${name}`;
   }
 
+  function buildCachedDocEntry(docId, docState, documentId = null) {
+    return {
+      id: documentId || `local:${docId}`,
+      type: docId,
+      title: expectedDocumentTitle(docId, companyName || workspaceProfile?.company_name || ""),
+      company_name: companyName || workspaceProfile?.company_name || "",
+      updated_at: new Date().toISOString(),
+      document_markdown: docState?.document_markdown || "",
+      document_html: docState?.document_html || "",
+      provider: docState?.provider || "local",
+      model: docState?.model || "local",
+    };
+  }
+
   useEffect(() => {
     refreshSavedDocs();
-  }, []);
+  }, [authEmail]);
 
   useEffect(() => {
     if (selectedDoc !== "client_proposal" && selectedDoc !== "sales_letter") {
@@ -731,7 +751,31 @@ export default function BlueprintPage() {
       }));
       setSectionTabByDoc((prev) => ({ ...prev, [type]: null }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to open saved document");
+      const cached = readBlueprintCache(authEmail).find((item) => item.id === docItem?.id || item.type === docItem?.type);
+      if (cached?.type && cached?.document_markdown) {
+        const type = cached.type;
+        setSelectedDoc(type);
+        setDocIdByType((prev) => ({ ...prev, [type]: String(cached.id || "").startsWith("local:") ? null : cached.id }));
+        setDocByType((prev) => ({
+          ...prev,
+          [type]: {
+            document_markdown: cached.document_markdown || "",
+            document_html: cached.document_html || null,
+            provider: cached.provider || "cached",
+            model: cached.model || "cached",
+            warnings: [],
+          }
+        }));
+        setEditedHtmlByType((prev) => ({ ...prev, [type]: cached.document_html || "" }));
+        setSectionDraftsByDoc((prev) => ({ ...prev, [type]: cached.document_markdown || "" }));
+        setDraftSectionsByDoc((prev) => ({
+          ...prev,
+          [type]: sectionsForDoc(type).map((s) => s.id)
+        }));
+        setSectionTabByDoc((prev) => ({ ...prev, [type]: null }));
+      } else {
+        setError(e instanceof Error ? e.message : "Failed to open saved document");
+      }
       setIsModalOpen(true);
     } finally {
       setIsLoading(false);
@@ -759,9 +803,17 @@ export default function BlueprintPage() {
   }
 
   function openDoc(docId) {
-    const saved = savedDocs.find((d) => d.type === docId);
+    const saved = visibleSavedDocs.find((d) => d.type === docId && !String(d.id || "").startsWith("local:"));
     if (saved) {
       openSavedDocument(saved);
+      return;
+    }
+    const localDoc = visibleSavedDocs.find((d) => d.type === docId && String(d.id || "").startsWith("local:"));
+    if (localDoc) {
+      setSelectedDoc(docId);
+      setError(null);
+      setShowInputs(false);
+      setIsModalOpen(true);
       return;
     }
     setSelectedDoc(docId);
@@ -1349,7 +1401,17 @@ export default function BlueprintPage() {
         if (saveWarning) setError(saveWarning);
       }
       setShowInputs(false);
-      refreshSavedDocs();
+      const nextDocState = {
+        ...res,
+        document_id: resolvedDocumentId,
+        document_markdown: incomingMarkdown || res?.document_markdown || "",
+        document_html: (res?.document_html ?? null),
+      };
+      writeBlueprintCache(authEmail, [
+        buildCachedDocEntry(selectedDoc, nextDocState, resolvedDocumentId),
+        ...savedDocs.filter((item) => item.type !== selectedDoc),
+      ]);
+      await refreshSavedDocs();
     } catch (e) {
       const msg = String(e?.message || "").toLowerCase();
       const isNetwork = msg.includes("network") || msg.includes("failed to fetch") || msg.includes("load");
@@ -1505,7 +1567,16 @@ export default function BlueprintPage() {
           }
         });
       }
-      refreshSavedDocs();
+      writeBlueprintCache(authEmail, [
+        buildCachedDocEntry(selectedDoc, {
+          document_markdown: fullDocumentMarkdown,
+          document_html: html,
+          provider: selectedDocResult?.provider || "saved",
+          model: selectedDocResult?.model || "saved",
+        }, docId),
+        ...savedDocs.filter((item) => item.id !== docId && item.type !== selectedDoc),
+      ]);
+      await refreshSavedDocs();
       setSavedNotice("Saved");
       setTimeout(() => setSavedNotice(null), 1800);
     } catch (e) {
@@ -1515,7 +1586,46 @@ export default function BlueprintPage() {
     }
   }
 
-  async function copyShareLink() {
+  function getSelectedDocumentPayload() {
+    if (!selectedDoc) return { html: "", fullDocumentMarkdown: "" };
+    const html =
+      (editedHtmlByType[selectedDoc] && String(editedHtmlByType[selectedDoc]).trim()
+        ? editedHtmlByType[selectedDoc]
+        : (selectedDocResult?.document_html || ""));
+    const draftsMarkdown = (sectionDraftsByDoc[selectedDoc] || "");
+    const fullDocumentMarkdown = selectedDocResult?.document_markdown || draftsMarkdown || "";
+    return { html, fullDocumentMarkdown };
+  }
+
+  async function syncSelectedDocumentForExport() {
+    const docId = selectedDoc ? docIdByType[selectedDoc] : null;
+    if (!selectedDoc || !docId) return null;
+    const { html, fullDocumentMarkdown } = getSelectedDocumentPayload();
+    await apiRequest(`/blueprint/documents/${docId}`, "PATCH", {
+      document_html: html,
+      document_markdown: fullDocumentMarkdown,
+    });
+    setDocByType((prev) => ({
+      ...prev,
+      [selectedDoc]: {
+        ...prev[selectedDoc],
+        document_html: html,
+        document_markdown: fullDocumentMarkdown,
+      },
+    }));
+    writeBlueprintCache(authEmail, [
+      buildCachedDocEntry(selectedDoc, {
+        document_markdown: fullDocumentMarkdown,
+        document_html: html,
+        provider: selectedDocResult?.provider || "saved",
+        model: selectedDocResult?.model || "saved",
+      }, docId),
+      ...savedDocs.filter((item) => item.id !== docId && item.type !== selectedDoc),
+    ]);
+    return { docId, html, fullDocumentMarkdown };
+  }
+
+  async function createShareLink(shareConfig) {
     const docId = selectedDoc ? docIdByType[selectedDoc] : null;
     if (!selectedDoc || !docId) {
       const warnings = Array.isArray(selectedDocResult?.warnings) ? selectedDocResult.warnings : [];
@@ -1527,15 +1637,16 @@ export default function BlueprintPage() {
     }
     setShareNotice("Creating link...");
     try {
-      const res = await apiRequest(`/blueprint/documents/${docId}/share`, "POST");
+      await syncSelectedDocumentForExport();
+      const res = await apiRequest(`/blueprint/documents/${docId}/share`, "POST", shareConfig);
       const token = res?.token;
       if (!token) throw new Error("Share link could not be created.");
       const url = `${window.location.origin}/share/${token}`;
       setShareNotice(null);
-      setShareLinkUrl(url);
+      return url;
     } catch (e) {
       setShareNotice(null);
-      setError(e instanceof Error ? e.message : "Share failed");
+      throw new Error(e instanceof Error ? e.message : "Share failed");
     }
   }
 
@@ -1624,6 +1735,7 @@ export default function BlueprintPage() {
           return;
         }
       }
+      await syncSelectedDocumentForExport();
       const url = `${getApiBaseUrl()}/blueprint/documents/${docId}/export?format=${format}`;
       const res = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
@@ -1769,37 +1881,45 @@ export default function BlueprintPage() {
           </div>
         </SectionCard>
 
-        {savedDocs.length ? (
+        {visibleSavedDocs.length ? (
           <SectionCard title="Saved Documents" subtitle="Open and edit your generated documents anytime.">
             <div className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-              {savedDocs.slice(0, 10).map((d) => (
+              {visibleSavedDocs.slice(0, 10).map((d) => (
                 <div
                   key={d.id}
                   className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-50"
                 >
                   <button
                     type="button"
-                    onClick={() => openSavedDocument(d)}
+                    onClick={() => {
+                      if (String(d.id || "").startsWith("local:")) {
+                        openDoc(d.type);
+                        return;
+                      }
+                      openSavedDocument(d);
+                    }}
                     className="min-w-0 flex-1 text-left"
                   >
                     <div className="truncate text-sm font-semibold text-slate-900">{d.title}</div>
                     <div className="mt-0.5 truncate text-xs text-slate-600">{d.company_name}</div>
                   </button>
                   <div className="shrink-0 text-[11px] font-semibold text-slate-500">{fmtDate(d.updated_at)}</div>
-                  <button
-                    type="button"
-                    onClick={() => deleteDocument(d.id, d.type)}
-                    className="ml-2 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
-                    title="Delete"
-                    aria-label="Delete document"
-                  >
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M3 6h18" />
-                      <path d="M8 6V4h8v2" />
-                      <path d="M6 6l1 14h10l1-14" />
-                      <path d="M10 11v6M14 11v6" />
-                    </svg>
-                  </button>
+                  {!String(d.id || "").startsWith("local:") ? (
+                    <button
+                      type="button"
+                      onClick={() => deleteDocument(d.id, d.type)}
+                      className="ml-2 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
+                      title="Delete"
+                      aria-label="Delete document"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 6h18" />
+                        <path d="M8 6V4h8v2" />
+                        <path d="M6 6l1 14h10l1-14" />
+                        <path d="M10 11v6M14 11v6" />
+                      </svg>
+                    </button>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -1952,7 +2072,7 @@ export default function BlueprintPage() {
                           {
                             id: "copy_link",
                             label: "Copy link",
-                            onClick: copyShareLink,
+                            onClick: () => setShareDialogOpen(true),
                           },
                         ]}
                         toolbarRightSlot={
@@ -2511,7 +2631,23 @@ export default function BlueprintPage() {
         </div>
       ) : null}
 
-      {shareLinkUrl ? <ShareLinkPopup url={shareLinkUrl} onClose={() => setShareLinkUrl(null)} /> : null}
+      {shareDialogOpen ? (
+        <DocumentShareModal
+          title="Share blueprint document"
+          subtitle="Choose who can use this document link before generating it."
+          defaultEmail={selectedCustomerId === OTHER_CUSTOMER_ID ? "" : (activeCustomers.find((c) => c.id === selectedCustomerId)?.email || "")}
+          onClose={() => setShareDialogOpen(false)}
+          onGenerate={createShareLink}
+          getMailtoHref={({ url, email, expiryDays }) => {
+            const recipient = encodeURIComponent(email || (selectedCustomerId === OTHER_CUSTOMER_ID ? "" : (activeCustomers.find((c) => c.id === selectedCustomerId)?.email || "")));
+            const subject = encodeURIComponent(`${selectedMeta?.title || "Document"} from ${companyName || "EnterprateAI"}`);
+            const body = encodeURIComponent(
+              `Hi,\n\nHere is your shared document link:\n${url}\n\nThis link expires in ${expiryDays} day${expiryDays !== 1 ? "s" : ""}.\n`
+            );
+            return `mailto:${recipient}?subject=${subject}&body=${body}`;
+          }}
+        />
+      ) : null}
     </div>
   );
 }

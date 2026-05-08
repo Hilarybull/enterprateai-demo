@@ -44,14 +44,19 @@ def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name)
 
     if settings.environment == "development":
-        allow_origins = list(dict.fromkeys(settings.cors_origins))
+        allow_origins = list(dict.fromkeys(settings.cors_origins + [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:8001",
+            "http://127.0.0.1:8001",
+        ]))
         cors_kwargs = dict(
             allow_origins=allow_origins,
-            allow_credentials=True,
+            allow_credentials=False,
             allow_methods=["*"],
             allow_headers=["*"],
         )
-        # Allow localhost in dev and Render preview domains as a safe fallback.
+        # Allow any localhost port in dev and Render preview domains as a safe fallback.
         cors_kwargs["allow_origin_regex"] = r"(^https?://(localhost|127\.0\.0\.1)(:\d+)?$)|(^https?://.*\.onrender\.com$)"
     else:
         # Production: allow any origin (no cookies), to avoid blocked auth/signup across Render domains.

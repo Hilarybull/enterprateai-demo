@@ -12,6 +12,7 @@ from app.modules.blueprint.schemas import (
     BlueprintFinancialShareResponse,
     BlueprintGenerateRequest,
     BlueprintGenerateResponse,
+    BlueprintShareCreateRequest,
     BlueprintShareLinkResponse,
     BlueprintSharedDocument,
 )
@@ -76,9 +77,16 @@ async def blueprint_documents_delete(
 @router.post("/documents/{document_id}/share", response_model=BlueprintShareLinkResponse)
 async def blueprint_documents_share_create(
     document_id: str,
+    payload: BlueprintShareCreateRequest | None = None,
     user=Depends(get_current_user),
 ) -> BlueprintShareLinkResponse:
-    token = await create_share_token(user_id=user["id"], document_id=document_id)
+    payload = payload or BlueprintShareCreateRequest()
+    token = await create_share_token(
+        user_id=user["id"],
+        document_id=document_id,
+        email=payload.email,
+        expires_in_days=payload.expires_in_days,
+    )
     if not token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return BlueprintShareLinkResponse(token=token)
@@ -103,7 +111,12 @@ async def blueprint_financial_documents_share(
         provider="financials",
         model="workspace",
     )
-    token = await create_share_token(user_id=user["id"], document_id=document_id)
+    token = await create_share_token(
+        user_id=user["id"],
+        document_id=document_id,
+        email=payload.email,
+        expires_in_days=payload.expires_in_days,
+    )
     if not token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return BlueprintFinancialShareResponse(token=token, document_id=document_id)
@@ -121,8 +134,20 @@ async def blueprint_documents_share_revoke(
 
 
 @router.get("/share/{token}", response_model=BlueprintSharedDocument)
-async def blueprint_shared_document_get(token: str) -> BlueprintSharedDocument:
-    doc = await get_shared_document_by_token(token=token)
+async def blueprint_shared_document_get(token: str, email: str | None = Query(default=None)) -> BlueprintSharedDocument:
+    try:
+        doc = await get_shared_document_by_token(token=token, viewer_email=email)
+    except RuntimeError as exc:
+        if str(exc) == "EXPIRED":
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail="This share link has expired.")
+        raise
+    except PermissionError as exc:
+        code = str(exc)
+        if code == "EMAIL_REQUIRED":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email address required for this share link.")
+        if code == "EMAIL_MISMATCH":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This share link is restricted to a different email address.")
+        raise
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
     return doc
@@ -132,8 +157,21 @@ async def blueprint_shared_document_get(token: str) -> BlueprintSharedDocument:
 async def blueprint_shared_document_export(
     token: str,
     format: str = Query(default="pdf", pattern="^(pdf|doc)$"),
+    email: str | None = Query(default=None),
 ):
-    doc = await get_shared_document_by_token(token=token)
+    try:
+        doc = await get_shared_document_by_token(token=token, viewer_email=email)
+    except RuntimeError as exc:
+        if str(exc) == "EXPIRED":
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail="This share link has expired.")
+        raise
+    except PermissionError as exc:
+        code = str(exc)
+        if code == "EMAIL_REQUIRED":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email address required for this share link.")
+        if code == "EMAIL_MISMATCH":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This share link is restricted to a different email address.")
+        raise
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
 

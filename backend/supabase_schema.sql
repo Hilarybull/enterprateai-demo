@@ -96,12 +96,18 @@ create table if not exists blueprint_document_shares (
   user_id text references users(id) on delete cascade,
   document_id text references blueprint_documents(id) on delete cascade,
   token text unique not null,
+  email text,
   revoked boolean not null default false,
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   last_accessed_at timestamptz,
+  accepted_at timestamptz,
   expires_at timestamptz
 );
+
+alter table blueprint_document_shares add column if not exists email text;
+alter table blueprint_document_shares add column if not exists accepted_at timestamptz;
+alter table blueprint_document_shares add column if not exists expires_at timestamptz;
 
 create index if not exists blueprint_document_shares_token_idx on blueprint_document_shares(token);
 create index if not exists blueprint_document_shares_document_idx on blueprint_document_shares(document_id);
