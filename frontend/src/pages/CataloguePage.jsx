@@ -25,6 +25,16 @@ export default function CataloguePage() {
     return !isMemberMode || hasFeatureAccess("catalogue", featureKey, memberPermissionType, memberPermissions);
   }
 
+  const canViewCatalogueOverview = canCatalogueFeature("view_catalogue");
+
+  function firstAccessibleCatalogueTab() {
+    if (canViewCatalogueOverview) return "overview";
+    if (canCatalogueFeature("manage_products")) return "products";
+    if (canCatalogueFeature("manage_customers")) return "customers";
+    if (canCatalogueFeature("manage_vendors")) return "vendors";
+    return "overview";
+  }
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [products, setProducts] = useState([]);
@@ -40,17 +50,18 @@ export default function CataloguePage() {
   const [editingProductId, setEditingProductId] = useState(null);
   const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [editingVendorId, setEditingVendorId] = useState(null);
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState(() => firstAccessibleCatalogueTab());
 
   // Reset to overview if current tab is locked by feature permissions
   useEffect(() => {
     const locked = {
+      overview: !canViewCatalogueOverview,
       products: !canCatalogueFeature("manage_products"),
       customers: !canCatalogueFeature("manage_customers"),
       vendors: !canCatalogueFeature("manage_vendors"),
     };
-    if (locked[activeTab]) setActiveTab("overview");
-  }, [isMemberMode, memberPermissionType, memberPermissions]); // eslint-disable-line
+    if (locked[activeTab]) setActiveTab(firstAccessibleCatalogueTab());
+  }, [activeTab, canViewCatalogueOverview, isMemberMode, memberPermissionType, memberPermissions]); // eslint-disable-line
 
   const [productForm, setProductForm] = useState({
     name: "",
@@ -609,7 +620,7 @@ export default function CataloguePage() {
           value={activeTab}
           onChange={setActiveTab}
           options={[
-            { value: "overview", label: "Overview" },
+            ...(canViewCatalogueOverview ? [{ value: "overview", label: "Overview" }] : []),
             ...(canCatalogueFeature("manage_products") ? [{ value: "products", label: "Products" }] : []),
             ...(canCatalogueFeature("manage_customers") ? [{ value: "customers", label: "Customers" }] : []),
             ...(canCatalogueFeature("manage_vendors") ? [{ value: "vendors", label: "Vendors" }] : []),

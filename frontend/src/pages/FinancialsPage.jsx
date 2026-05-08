@@ -153,6 +153,17 @@ export default function FinancialsPage() {
     return !isMemberMode || hasFeatureAccess("financials", featureKey, memberPermissionType, memberPermissions);
   }
 
+  const canViewFinancialsOverview = canFinancialsFeature("view_financials");
+
+  function firstAccessibleFinancialsTab() {
+    if (canViewFinancialsOverview) return "overview";
+    if (canFinancialsFeature("invoices")) return "invoices";
+    if (canFinancialsFeature("quotations")) return "quotes";
+    if (canFinancialsFeature("expenses")) return "expenses";
+    if (canFinancialsFeature("contracts")) return "contracts";
+    return "overview";
+  }
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [shareNotice, setShareNotice] = useState(null);
@@ -174,18 +185,19 @@ export default function FinancialsPage() {
   const [editingQuoteId, setEditingQuoteId] = useState(null);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [editingContractId, setEditingContractId] = useState(null);
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState(() => firstAccessibleFinancialsTab());
 
   // Reset to overview if current tab is locked by feature permissions
   useEffect(() => {
     const locked = {
+      overview: !canViewFinancialsOverview,
       invoices: !canFinancialsFeature("invoices"),
       quotes: !canFinancialsFeature("quotations"),
       expenses: !canFinancialsFeature("expenses"),
       contracts: !canFinancialsFeature("contracts"),
     };
-    if (locked[activeTab]) setActiveTab("overview");
-  }, [isMemberMode, memberPermissionType, memberPermissions]); // eslint-disable-line
+    if (locked[activeTab]) setActiveTab(firstAccessibleFinancialsTab());
+  }, [activeTab, canViewFinancialsOverview, isMemberMode, memberPermissionType, memberPermissions]); // eslint-disable-line
 
   const [previewInvoiceId, setPreviewInvoiceId] = useState(null);
   const [previewQuoteId, setPreviewQuoteId] = useState(null);
@@ -1485,7 +1497,7 @@ export default function FinancialsPage() {
           value={activeTab}
           onChange={setActiveTab}
           options={[
-            { value: "overview", label: "Overview" },
+            ...(canViewFinancialsOverview ? [{ value: "overview", label: "Overview" }] : []),
             ...(canFinancialsFeature("invoices") ? [{ value: "invoices", label: "Invoices" }] : []),
             ...(canFinancialsFeature("quotations") ? [{ value: "quotes", label: "Quotations" }] : []),
             ...(canFinancialsFeature("expenses") ? [{ value: "expenses", label: "Expenses" }] : []),
@@ -2841,4 +2853,3 @@ export default function FinancialsPage() {
     </div>
   );
 }
-

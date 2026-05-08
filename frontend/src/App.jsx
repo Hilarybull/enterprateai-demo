@@ -17,6 +17,8 @@ import SharedBlueprintPage from "./pages/SharedBlueprintPage";
 import TeamPage from "./pages/TeamPage";
 import JoinPage from "./pages/JoinPage";
 import AdminPage from "./pages/AdminPage";
+import PricingPage from "./pages/PricingPage";
+import PricingSuccessPage from "./pages/PricingSuccessPage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -42,6 +44,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/pricing" element={<PricingPage />} />
+      <Route path="/pricing/success" element={<PricingSuccessPage />} />
       <Route path="/share/:token" element={<SharedBlueprintPage />} />
       <Route path="/join/:token" element={<JoinPage />} />
       <Route

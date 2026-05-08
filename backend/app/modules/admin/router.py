@@ -141,6 +141,19 @@ async def list_all_users(user=Depends(require_admin)) -> list:
     return await _select_users_with_block(order="created_at", desc=True)
 
 
+@router.get("/waitlist")
+async def list_plan_waitlist(user=Depends(require_admin)) -> list:
+    try:
+        return await sb_select(
+            "plan_waitlist",
+            columns="id,email,plan_key,billing_period,joined_at",
+            order="joined_at",
+            desc=True,
+        )
+    except Exception:
+        return []
+
+
 @router.get("/upgrade-clicks")
 async def list_upgrade_clicks(user=Depends(require_admin)) -> list:
     return await sb_select(

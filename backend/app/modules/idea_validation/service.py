@@ -73,15 +73,32 @@ async def get_user_workspace(*, user_id: str) -> WorkspaceDocument | None:
     return WorkspaceDocument(**doc)
 
 
-async def get_workspace(*, user_id: str, workspace_id: str) -> WorkspaceDocument:
+async def _get_accessible_workspace(*, user_id: str, workspace_id: str) -> tuple[WorkspaceDocument, bool]:
     doc = await sb_select(
         "workspaces",
-        filters=[("id", "eq", workspace_id), ("user_id", "eq", user_id)],
+        filters=[("id", "eq", workspace_id)],
         single=True,
     )
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
-    return WorkspaceDocument(**doc)
+
+    workspace = WorkspaceDocument(**doc)
+    if workspace.user_id == user_id:
+        return workspace, True
+
+    membership = await sb_select(
+        "workspace_members",
+        filters=[("workspace_id", "eq", workspace_id), ("user_id", "eq", user_id)],
+        single=True,
+    )
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    return workspace, False
+
+
+async def get_workspace(*, user_id: str, workspace_id: str) -> WorkspaceDocument:
+    workspace, _is_owner = await _get_accessible_workspace(user_id=user_id, workspace_id=workspace_id)
+    return workspace
 
 
 def _inputs_from_payload(payload: FinancialInputsPayload) -> FinancialInputs:
@@ -252,7 +269,7 @@ async def update_workspace(
     data_patch: Dict[str, Any],
     name: str | None = None,
 ) -> WorkspaceDocument:
-    ws = await get_workspace(user_id=user_id, workspace_id=workspace_id)
+    ws, _is_owner = await _get_accessible_workspace(user_id=user_id, workspace_id=workspace_id)
     now = datetime.now(timezone.utc)
 
     merged = dict(ws.data or {})
@@ -267,7 +284,7 @@ async def update_workspace(
 
     await sb_update(
         "workspaces",
-        filters=[("id", "eq", ws.id), ("user_id", "eq", user_id)],
+        filters=[("id", "eq", ws.id), ("user_id", "eq", ws.user_id)],
         payload=update,
     )
     return await get_workspace(user_id=user_id, workspace_id=workspace_id)

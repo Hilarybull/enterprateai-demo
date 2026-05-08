@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { apiRequest } from "../api/client";
 import { MODULES, hasModuleAccess } from "../lib/permissions";
+import { useWorkspaceStore } from "../store/workspace";
 import logoUrl from "../enterprate-logo.png";
 
 const MODULE_ICONS = {
@@ -52,6 +53,10 @@ export default function JoinPage() {
   const navigate = useNavigate();
   const authToken = useAuthStore((s) => s.token);
   const hydrated = useAuthStore((s) => s.hydrated);
+  const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
+  const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
+  const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
+  const setMemberMode = useWorkspaceStore((s) => s.setMemberMode);
 
   const [status, setStatus] = useState("idle"); // idle | loading | success | already_member | error
   const [error, setError] = useState(null);
@@ -68,8 +73,35 @@ export default function JoinPage() {
 
     setStatus("loading");
     apiRequest(`/workspace/join/${token}`, "GET")
-      .then((m) => {
-        setMember(m);
+      .then(async (m) => {
+        let membership = m;
+        try {
+          const memberships = await apiRequest("/workspace/me/memberships", "GET");
+          if (Array.isArray(memberships) && memberships.length > 0) {
+            membership =
+              memberships.find((entry) => entry.id === m.id) ||
+              memberships.find((entry) => entry.workspace_id === m.workspace_id) ||
+              m;
+          }
+        } catch {
+          membership = m;
+        }
+
+        const workspaceName = membership.workspace_name || m.workspace_name || "Shared workspace";
+        setWorkspaceId(membership.workspace_id || m.workspace_id || null);
+        setWorkspaceName(workspaceName);
+        setWorkspaceLogo(null);
+        setMemberMode(
+          membership.id || m.id,
+          membership.permission_type || m.permission_type,
+          membership.permissions || m.permissions,
+          workspaceName
+        );
+        setMember({
+          ...m,
+          ...membership,
+          workspace_name: workspaceName,
+        });
         setStatus("success");
         sessionStorage.removeItem("ea_pending_join");
       })
@@ -82,7 +114,7 @@ export default function JoinPage() {
           setStatus("error");
         }
       });
-  }, [hydrated, authToken, token, navigate]);
+  }, [hydrated, authToken, token, navigate, setMemberMode, setWorkspaceId, setWorkspaceLogo, setWorkspaceName]);
 
   return (
     <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-gradient-to-br from-purple-50 via-white to-blue-50 px-4 py-10 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">

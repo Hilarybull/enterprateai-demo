@@ -30,6 +30,16 @@ async function fetchPlatformRestrictions() {
   }
 }
 
+async function fetchSubscription() {
+  try {
+    return await apiRequest("/plans/my", "GET");
+  } catch {
+    return { plan_key: "free_trial", billing_period: "monthly", status: "trial" };
+  }
+}
+
+const DEFAULT_SUB = { plan_key: "free_trial", billing_period: "monthly", status: "trial" };
+
 export const useAuthStore = create((set, get) => ({
   token: null,
   email: null,
@@ -37,14 +47,43 @@ export const useAuthStore = create((set, get) => ({
   isLoading: false,
   error: null,
   platformRestrictions: [],
+  subscription: DEFAULT_SUB,
 
-  hydrate: () => {
+  hydrate: async () => {
     const token = localStorage.getItem("ea_token");
     const email = localStorage.getItem("ea_email");
-    set({ token: token || null, email: email || null, hydrated: true });
-    if (token) {
-      fetchPlatformRestrictions().then((r) => set({ platformRestrictions: r }));
+
+    if (!token) {
+      set({ token: null, email: null, hydrated: true });
+      return;
     }
+
+    // Verify the token is still valid before marking as hydrated.
+    // If it's expired the API returns 401 and we clear it now rather than
+    // letting protected pages discover it one call at a time.
+    try {
+      const [restrictions, sub] = await Promise.all([
+        apiRequest("/auth/restrictions", "GET"),
+        apiRequest("/plans/my", "GET"),
+      ]);
+      set({
+        token,
+        email,
+        platformRestrictions: restrictions ?? [],
+        subscription: sub ?? DEFAULT_SUB,
+        hydrated: true,
+      });
+    } catch {
+      localStorage.removeItem("ea_token");
+      localStorage.removeItem("ea_email");
+      set({ token: null, email: null, hydrated: true });
+    }
+  },
+
+  refreshSubscription: async () => {
+    const sub = await fetchSubscription();
+    set({ subscription: sub ?? DEFAULT_SUB });
+    return sub;
   },
 
   setPlatformRestrictions: (restrictions) => set({ platformRestrictions: restrictions }),
@@ -70,8 +109,11 @@ export const useAuthStore = create((set, get) => ({
       localStorage.setItem("ea_token", token);
       localStorage.setItem("ea_email", email);
       set({ token, email });
-      const restrictions = await fetchPlatformRestrictions();
-      set({ platformRestrictions: restrictions });
+      const [restrictions, sub] = await Promise.all([
+        fetchPlatformRestrictions(),
+        fetchSubscription(),
+      ]);
+      set({ platformRestrictions: restrictions, subscription: sub ?? DEFAULT_SUB });
     } catch (e) {
       set({ error: humanizeAuthError(e) });
     } finally {
@@ -89,8 +131,11 @@ export const useAuthStore = create((set, get) => ({
       const me = await apiRequest("/auth/me", "GET");
       localStorage.setItem("ea_email", me.email);
       set({ token, email: me.email });
-      const restrictions = await fetchPlatformRestrictions();
-      set({ platformRestrictions: restrictions });
+      const [restrictions, sub] = await Promise.all([
+        fetchPlatformRestrictions(),
+        fetchSubscription(),
+      ]);
+      set({ platformRestrictions: restrictions, subscription: sub ?? DEFAULT_SUB });
     } catch (e) {
       set({ error: humanizeAuthError(e) });
     } finally {
@@ -101,6 +146,6 @@ export const useAuthStore = create((set, get) => ({
   logout: () => {
     localStorage.removeItem("ea_token");
     localStorage.removeItem("ea_email");
-    set({ token: null, email: null, hydrated: true, platformRestrictions: [] });
+    set({ token: null, email: null, hydrated: true, platformRestrictions: [], subscription: DEFAULT_SUB });
   }
 }));

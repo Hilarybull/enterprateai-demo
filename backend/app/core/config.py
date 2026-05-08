@@ -65,6 +65,17 @@ class Settings(BaseSettings):
     google_client_id: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_ID",))
     google_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_SECRET",))
 
+    # Stripe
+    stripe_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_SECRET_KEY",))
+    stripe_webhook_secret: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_WEBHOOK_SECRET",))
+    stripe_price_insight_starter_monthly: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_INSIGHT_STARTER_MONTHLY",))
+    stripe_price_insight_starter_annual: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_INSIGHT_STARTER_ANNUAL",))
+    stripe_price_decision_engine_monthly: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_DECISION_ENGINE_MONTHLY",))
+    stripe_price_decision_engine_annual: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_DECISION_ENGINE_ANNUAL",))
+    stripe_price_strategic_intelligence_monthly: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_STRATEGIC_INTELLIGENCE_MONTHLY",))
+    stripe_price_strategic_intelligence_annual: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_STRATEGIC_INTELLIGENCE_ANNUAL",))
+    frontend_url: str = Field(default="http://localhost:5173", validation_alias=AliasChoices("FRONTEND_URL", "CORS_ORIGINS"))
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _parse_cors_origins(cls, v):

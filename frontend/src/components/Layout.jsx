@@ -8,6 +8,7 @@ import BusinessAssistant from "./BusinessAssistant";
 import InviteModal from "./InviteModal";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 import { hasModuleAccess, isPlatformModuleRestricted } from "../lib/permissions";
+import { planHasModuleAccess, planLabel } from "../lib/plans";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid", moduleKey: "dashboard" },
@@ -240,6 +241,7 @@ export default function Layout() {
     : (acceptedAny && workspaceName ? workspaceName : workspaceName || "My workspace");
   const email = useAuthStore((s) => s.email);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
+  const subscription = useAuthStore((s) => s.subscription);
   const profileInitials = initialsFromEmail(email);
 
   useEffect(() => {
@@ -318,29 +320,17 @@ export default function Layout() {
         try {
           const memberships = await apiRequest("/workspace/me/memberships", "GET");
           if (cancelled) return;
-          const membership = Array.isArray(memberships) && memberships.length > 0 ? memberships[0] : null;
+          const membership = Array.isArray(memberships) && memberships.length > 0
+            ? memberships.find((entry) => entry.id === persisted.membershipId) || memberships[0]
+            : null;
           if (membership) {
-            const ownerWs = await apiRequest(`/validation/${membership.workspace_id}`, "GET");
-            if (cancelled) return;
             setWorkspaceId(membership.workspace_id);
-            setWorkspaceName(ownerWs?.name || membership.workspace_name || null);
-            setWorkspaceLogo(ownerWs?.data?.workspace_profile?.logo_data_url || null);
+            setWorkspaceName(membership.workspace_name || null);
+            setWorkspaceLogo(null);
             setWorkspaceLoadedAt(new Date().toISOString());
-            setMemberMode(membership.id, membership.permission_type, membership.permissions, ownerWs?.name || membership.workspace_name || "Shared workspace");
-            const status = ownerWs?.data?.decision?.status;
-            if (status === "accepted" || status === "rejected") setDecisionStatus(status);
-            else setDecisionStatus(null);
-            const acceptedServiceEntry = getAcceptedServiceValidationEntry(ownerWs?.data);
-            if (acceptedServiceEntry?.decision_status === "accepted") {
-              setServiceDecisionStatus("accepted");
-              if (acceptedServiceEntry?.result) setValidation(acceptedServiceEntry.result);
-            } else {
-              setServiceDecisionStatus(null);
-            }
-            if (ownerWs?.data?.idea_validation) setIdeaValidation(ownerWs.data.idea_validation);
-            if (ownerWs?.data?.inputs || ownerWs?.data?.assumptions) setInputs(ownerWs.data.inputs || ownerWs.data.assumptions);
-            const currency = ownerWs?.data?.idea_validation?.context?.currency || ownerWs?.data?.business_profile?.currency;
-            if (currency) setCurrency(currency);
+            setMemberMode(membership.id, membership.permission_type, membership.permissions, membership.workspace_name || "Shared workspace");
+            setDecisionStatus(null);
+            setServiceDecisionStatus(null);
             return; // Done — member mode successfully reloaded
           }
         } catch {
@@ -388,36 +378,18 @@ export default function Layout() {
             if (cancelled) return;
             if (Array.isArray(memberships) && memberships.length > 0) {
               const membership = memberships[0]; // use the first (most recent) membership
-              // Load the owner's workspace data
-              const ownerWs = await apiRequest(`/validation/${membership.workspace_id}`, "GET");
-              if (cancelled) return;
               setWorkspaceId(membership.workspace_id);
-              setWorkspaceName(ownerWs?.name || membership.workspace_name || null);
-              setWorkspaceLogo(ownerWs?.data?.workspace_profile?.logo_data_url || null);
+              setWorkspaceName(membership.workspace_name || null);
+              setWorkspaceLogo(null);
               setWorkspaceLoadedAt(new Date().toISOString());
               setMemberMode(
                 membership.id,
                 membership.permission_type,
                 membership.permissions,
-                ownerWs?.name || membership.workspace_name || "Shared workspace"
+                membership.workspace_name || "Shared workspace"
               );
-              const status = ownerWs?.data?.decision?.status;
-              if (status === "accepted" || status === "rejected") setDecisionStatus(status);
-              else setDecisionStatus(null);
-              const acceptedServiceEntry = getAcceptedServiceValidationEntry(ownerWs?.data);
-              if (acceptedServiceEntry?.decision_status === "accepted") {
-                setServiceDecisionStatus("accepted");
-                if (acceptedServiceEntry?.result) setValidation(acceptedServiceEntry.result);
-              } else {
-                setServiceDecisionStatus(null);
-              }
-              if (ownerWs?.data?.idea_validation) setIdeaValidation(ownerWs.data.idea_validation);
-              if (ownerWs?.data?.inputs || ownerWs?.data?.assumptions) setInputs(ownerWs.data.inputs || ownerWs.data.assumptions);
-              const currency =
-                ownerWs?.data?.idea_validation?.context?.currency ||
-                ownerWs?.data?.business_profile?.currency ||
-                ownerWs?.data?.business_context?.currency;
-              if (currency) setCurrency(currency);
+              setDecisionStatus(null);
+              setServiceDecisionStatus(null);
             } else {
               // No memberships either
               setWorkspaceId(null);
@@ -448,12 +420,21 @@ export default function Layout() {
   const filteredNav = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
     const base = !q ? NAV : NAV.filter((i) => `${i.label} ${i.subtitle}`.toLowerCase().includes(q));
-    return base.map((item) => ({
-      ...item,
-      locked: isPlatformModuleRestricted(item.moduleKey, platformRestrictions) ||
-              (isMemberMode && !hasModuleAccess(item.moduleKey, memberPermissionType, memberPermissions)),
-    }));
-  }, [search, isMemberMode, memberPermissionType, memberPermissions, platformRestrictions]);
+    return base.map((item) => {
+      const planLocked = !planHasModuleAccess(
+        subscription?.plan_key ?? "free_trial",
+        item.moduleKey,
+        subscription?.status ?? "trial",
+      );
+      const adminLocked = isPlatformModuleRestricted(item.moduleKey, platformRestrictions);
+      const memberLocked = isMemberMode && !hasModuleAccess(item.moduleKey, memberPermissionType, memberPermissions);
+      return {
+        ...item,
+        locked: adminLocked || memberLocked || planLocked,
+        planLocked,
+      };
+    });
+  }, [search, isMemberMode, memberPermissionType, memberPermissions, platformRestrictions, subscription]);
 
   // Determine if the current route is locked for this member
   const currentRouteModuleKey = useMemo(() => {
@@ -467,9 +448,14 @@ export default function Layout() {
     return null;
   }, [location.pathname]);
 
+  const isCurrentRoutePlanLocked = currentRouteModuleKey
+    ? !planHasModuleAccess(subscription?.plan_key ?? "free_trial", currentRouteModuleKey, subscription?.status ?? "trial")
+    : false;
+
   const isCurrentRouteLocked =
     (currentRouteModuleKey && isPlatformModuleRestricted(currentRouteModuleKey, platformRestrictions)) ||
-    (isMemberMode && currentRouteModuleKey && !hasModuleAccess(currentRouteModuleKey, memberPermissionType, memberPermissions));
+    (isMemberMode && currentRouteModuleKey && !hasModuleAccess(currentRouteModuleKey, memberPermissionType, memberPermissions)) ||
+    isCurrentRoutePlanLocked;
 
   const isCreateWorkspaceRoute =
     location.pathname === "/validation" &&
@@ -546,16 +532,36 @@ export default function Layout() {
               </svg>
               Guest member
             </div>
-            <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-              You have limited access. Locked modules are faded in the nav.
-            </p>
           </>
         ) : (
           <>
-            <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-              Starter Plan
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => navigate("/pricing")}
+                className={
+                  "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold transition " +
+                  (subscription?.plan_key && subscription.plan_key !== "free_trial"
+                    ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                    : "bg-brand-50 text-brand-700 hover:bg-brand-100 dark:bg-slate-800 dark:text-brand-400 dark:hover:bg-slate-700")
+                }
+              >
+                <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2Z" />
+                </svg>
+                {planLabel(subscription?.plan_key, subscription?.status)}
+              </button>
+              {(!subscription?.plan_key || subscription.plan_key === "free_trial") && (
+                <button
+                  type="button"
+                  onClick={() => navigate("/pricing")}
+                  className="text-[11px] font-medium text-brand-600 hover:underline dark:text-brand-400"
+                >
+                  Upgrade →
+                </button>
+              )}
             </div>
-            <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+            <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
               {acceptedAny
                 ? "Workspace verified"
                 : rejectedAny
@@ -735,20 +741,57 @@ export default function Layout() {
             <div className="mx-auto w-full max-w-7xl p-4 md:p-6">
               {isCurrentRouteLocked ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
-                    <Icon name="lock" className="h-7 w-7 text-slate-400" />
+                  <div className={
+                    "flex h-16 w-16 items-center justify-center rounded-full " +
+                    (isCurrentRoutePlanLocked ? "bg-brand-50 dark:bg-brand-900/20" : "bg-slate-100 dark:bg-slate-800")
+                  }>
+                    {isCurrentRoutePlanLocked ? (
+                      <svg className="h-7 w-7 text-brand-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2Z" />
+                      </svg>
+                    ) : (
+                      <Icon name="lock" className="h-7 w-7 text-slate-400" />
+                    )}
                   </div>
-                  <h2 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">Access restricted</h2>
-                  <p className="mt-2 max-w-sm text-sm text-slate-500 dark:text-slate-400">
-                    You don't have permission to view this module. Contact the workspace owner to request access.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => navigate("/dashboard")}
-                    className="mt-6 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition"
-                  >
-                    Back to dashboard
-                  </button>
+                  {isCurrentRoutePlanLocked ? (
+                    <>
+                      <h2 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">Upgrade to unlock this module</h2>
+                      <p className="mt-2 max-w-sm text-sm text-slate-500 dark:text-slate-400">
+                        This feature isn't included in your current plan (<strong>{planLabel(subscription?.plan_key, subscription?.status)}</strong>).
+                        Upgrade to access it.
+                      </p>
+                      <div className="mt-6 flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => navigate("/pricing")}
+                          className="rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition"
+                        >
+                          View plans & upgrade
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate("/dashboard")}
+                          className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                          Back to dashboard
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">Access restricted</h2>
+                      <p className="mt-2 max-w-sm text-sm text-slate-500 dark:text-slate-400">
+                        You don't have permission to view this module. Contact the workspace owner to request access.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => navigate("/dashboard")}
+                        className="mt-6 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition"
+                      >
+                        Back to dashboard
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <Outlet />
