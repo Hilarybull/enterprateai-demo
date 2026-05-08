@@ -23,6 +23,39 @@ from app.shared.auth.deps import get_current_user
 router = APIRouter(prefix="/blueprint", tags=["blueprint"])
 
 
+def _looks_like_markdown_text(value: str | None) -> bool:
+    source = str(value or "").strip()
+    if not source:
+        return False
+    lower = source.lower()
+    if "<html" in lower or "<body" in lower:
+        return False
+    return (
+        source.startswith("# ")
+        or source.startswith("## ")
+        or source.startswith("### ")
+        or source.startswith("![")
+        or "\n![" in source
+        or "\n# " in source
+        or "\n## " in source
+        or "\n### " in source
+        or "\n* " in source
+        or "\n- " in source
+        or source.startswith("**")
+        or "\n**" in source
+    )
+
+
+def _resolved_document_html(document_html: str | None, document_markdown: str | None) -> str:
+    html = str(document_html or "").strip()
+    markdown = str(document_markdown or "").strip()
+    if markdown:
+        return markdown_to_html(markdown)
+    if html:
+        return markdown_to_html(html) if _looks_like_markdown_text(html) else html
+    return ""
+
+
 @router.post("/generate", response_model=BlueprintGenerateResponse)
 async def blueprint_generate(
     payload: BlueprintGenerateRequest,
@@ -176,7 +209,7 @@ async def blueprint_shared_document_export(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
 
     title = doc.title or doc.type or "document"
-    raw_html = doc.document_html or markdown_to_html(doc.document_markdown or "")
+    raw_html = _resolved_document_html(doc.document_html, doc.document_markdown)
     body_html = extract_export_body(raw_html)
     html = render_export_html(title=title, body_html=body_html)
 
@@ -212,7 +245,7 @@ async def blueprint_documents_export(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     title = doc.title or doc.type or "document"
-    raw_html = doc.document_html or markdown_to_html(doc.document_markdown or "")
+    raw_html = _resolved_document_html(doc.document_html, doc.document_markdown)
     body_html = extract_export_body(raw_html)
     html = render_export_html(title=title, body_html=body_html)
 
