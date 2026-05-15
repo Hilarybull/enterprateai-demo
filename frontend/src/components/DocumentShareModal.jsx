@@ -29,19 +29,26 @@ function MailIcon() {
 export default function DocumentShareModal({
   onClose,
   onGenerate,
+  onSendEmail,
   getMailtoHref,
   defaultEmail = "",
+  defaultAccessMode = "link",
   title = "Share document",
   subtitle = "Choose who can use this link before generating it.",
 }) {
   const backdropRef = useRef(null);
-  const [accessMode, setAccessMode] = useState(defaultEmail ? "email" : "link");
+  const [accessMode, setAccessMode] = useState(defaultAccessMode);
   const [email, setEmail] = useState(defaultEmail);
+  const [mailRecipient, setMailRecipient] = useState(defaultEmail);
   const [expiryDays, setExpiryDays] = useState(7);
   const [shareLink, setShareLink] = useState("");
+  const [shareToken, setShareToken] = useState("");
+  const [emailStatus, setEmailStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [mailPromptOpen, setMailPromptOpen] = useState(false);
+  const [mailSending, setMailSending] = useState(false);
 
   useEffect(() => {
     function onKey(e) {
@@ -53,8 +60,11 @@ export default function DocumentShareModal({
 
   useEffect(() => {
     setShareLink("");
+    setShareToken("");
+    setEmailStatus(null);
     setCopied(false);
     setError("");
+    setMailPromptOpen(false);
   }, [accessMode, email, expiryDays]);
 
   async function handleGenerate() {
@@ -65,13 +75,19 @@ export default function DocumentShareModal({
     setLoading(true);
     setError("");
     try {
-      const url = await onGenerate({
+      const result = await onGenerate({
         access_mode: accessMode,
         email: accessMode === "email" ? email.trim() : null,
         expires_in_days: expiryDays,
       });
-      if (!url) throw new Error("Share link could not be created.");
-      setShareLink(url);
+      const normalized = typeof result === "string" ? { url: result } : result;
+      if (!normalized?.url) throw new Error("Share link could not be created.");
+      setShareLink(normalized.url);
+      setShareToken(normalized.token || "");
+      setEmailStatus({
+        sent: Boolean(normalized.emailSent),
+        error: normalized.emailError || "",
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create share link.");
     } finally {
@@ -88,14 +104,51 @@ export default function DocumentShareModal({
     } catch {}
   }
 
-  function openMailto() {
-    if (!shareLink || !getMailtoHref) return;
-    window.location.href = getMailtoHref({
-      url: shareLink,
-      accessMode,
-      email: accessMode === "email" ? email.trim() : "",
-      expiryDays,
-    });
+  async function handleSendViaEmail() {
+    if (!shareLink) return;
+    if (accessMode === "link" && !mailPromptOpen) {
+      setMailPromptOpen(true);
+      setMailRecipient(defaultEmail);
+      return;
+    }
+    const recipient = accessMode === "email" ? email.trim() : mailRecipient.trim();
+    if (!recipient) {
+      setError("Enter a recipient email.");
+      return;
+    }
+    setError("");
+    if (onSendEmail && shareToken) {
+      setMailSending(true);
+      try {
+        const result = await onSendEmail({
+          token: shareToken,
+          email: recipient,
+          url: shareLink,
+          accessMode,
+          expiryDays,
+        });
+        setEmailStatus({
+          sent: Boolean(result?.sent),
+          error: result?.error || "",
+        });
+      } catch (e) {
+        setEmailStatus({
+          sent: false,
+          error: e instanceof Error ? e.message : "Email could not be sent.",
+        });
+      } finally {
+        setMailSending(false);
+      }
+      return;
+    }
+    if (getMailtoHref) {
+      window.location.href = getMailtoHref({
+        url: shareLink,
+        accessMode,
+        email: recipient,
+        expiryDays,
+      });
+    }
   }
 
   return (
@@ -214,9 +267,16 @@ export default function DocumentShareModal({
                   <CheckIcon className="h-3 w-3" />
                 </span>
                 <span className="text-[12px] font-semibold text-emerald-700">
-                  Share link ready - {accessMode === "email" ? "email-only" : "multi-use"} - expires in {expiryDays} day{expiryDays !== 1 ? "s" : ""}
+                  {emailStatus?.sent
+                    ? `Email sent to ${(accessMode === "email" ? email : mailRecipient).trim()}`
+                    : `Share link ready - ${accessMode === "email" ? "email-only" : "multi-use"} - expires in ${expiryDays} day${expiryDays !== 1 ? "s" : ""}`}
                 </span>
               </div>
+              {emailStatus && !emailStatus.sent ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                  {emailStatus.error || "The secure link was created, but the email was not sent."}
+                </div>
+              ) : null}
               <div className="flex items-center gap-2 rounded-lg bg-white py-1 pl-2.5 pr-1 ring-1 ring-slate-200">
                 <span className="min-w-0 flex-1 truncate text-[11px] font-mono text-slate-600">
                   {shareLink}
@@ -233,14 +293,43 @@ export default function DocumentShareModal({
                   {copied ? "Copied!" : "Copy"}
                 </button>
               </div>
-              {getMailtoHref ? (
+              {(onSendEmail || getMailtoHref) && accessMode === "link" && mailPromptOpen ? (
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <label className="mb-1.5 block text-[12px] font-semibold text-slate-700">
+                    Recipient email
+                    <span className="ml-1 font-normal text-slate-400">(required)</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={mailRecipient}
+                    onChange={(e) => setMailRecipient(e.target.value)}
+                    placeholder="recipient@company.com"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
+                  />
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    This does not lock the link to this address. It only chooses where the app should send the open link.
+                  </div>
+                </div>
+              ) : null}
+              {(onSendEmail || getMailtoHref) ? (
                 <button
                   type="button"
-                  onClick={openMailto}
+                  onClick={handleSendViaEmail}
+                  disabled={mailSending}
                   className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white py-2 text-[13px] font-semibold text-slate-700 transition hover:bg-emerald-50"
                 >
                   <MailIcon />
-                  Send via email
+                  {mailSending ? "Sending..." : emailStatus?.sent ? "Sent" : "Send via email"}
+                </button>
+              ) : null}
+              {accessMode === "email" ? (
+                <button
+                  type="button"
+                  onClick={handleGenerate}
+                  disabled={loading}
+                  className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {loading ? "Sending..." : emailStatus?.sent ? "Send again" : "Try sending again"}
                 </button>
               ) : null}
             </div>
@@ -262,7 +351,7 @@ export default function DocumentShareModal({
               disabled={loading}
               className="w-full rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50 sm:w-auto"
             >
-              {loading ? "Generating..." : "Generate share link"}
+              {loading ? "Creating..." : accessMode === "email" ? "Create and send" : "Generate share link"}
             </button>
           ) : null}
         </div>

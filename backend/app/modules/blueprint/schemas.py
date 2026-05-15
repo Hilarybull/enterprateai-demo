@@ -109,6 +109,17 @@ class BlueprintDocumentUpdateRequest(BaseModel):
 
 class BlueprintShareLinkResponse(BaseModel):
     token: str = Field(min_length=16, max_length=256)
+    email_sent: bool = False
+    email_error: Optional[str] = None
+
+
+class BlueprintShareEmailRequest(BaseModel):
+    email: EmailStr
+
+
+class BlueprintShareEmailResponse(BaseModel):
+    sent: bool = False
+    error: Optional[str] = None
 
 
 class BlueprintShareCreateRequest(BaseModel):

@@ -92,5 +92,11 @@ class Settings(BaseSettings):
 
 
 @lru_cache
-def get_settings() -> Settings:
+def _get_cached_settings() -> Settings:
     return Settings()
+
+
+def get_settings(*, refresh: bool = False) -> Settings:
+    if refresh:
+        _get_cached_settings.cache_clear()
+    return _get_cached_settings()

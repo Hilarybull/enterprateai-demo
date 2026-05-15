@@ -1642,11 +1642,24 @@ export default function BlueprintPage() {
       if (!token) throw new Error("Share link could not be created.");
       const url = `${window.location.origin}/share/${token}`;
       setShareNotice(null);
-      return url;
+      return {
+        token,
+        url,
+        emailSent: Boolean(res?.email_sent),
+        emailError: res?.email_error || "",
+      };
     } catch (e) {
       setShareNotice(null);
       throw new Error(e instanceof Error ? e.message : "Share failed");
     }
+  }
+
+  async function sendBlueprintShareEmail({ token, email }) {
+    const res = await apiRequest(`/blueprint/share/${token}/email`, "POST", { email });
+    return {
+      sent: Boolean(res?.sent),
+      error: res?.error || "",
+    };
   }
 
   function downloadPdfFromHtml(html, filename) {
@@ -2610,6 +2623,7 @@ export default function BlueprintPage() {
           defaultEmail={selectedCustomerId === OTHER_CUSTOMER_ID ? "" : (activeCustomers.find((c) => c.id === selectedCustomerId)?.email || "")}
           onClose={() => setShareDialogOpen(false)}
           onGenerate={createShareLink}
+          onSendEmail={sendBlueprintShareEmail}
           getMailtoHref={({ url, email, expiryDays }) => {
             const recipient = encodeURIComponent(email || (selectedCustomerId === OTHER_CUSTOMER_ID ? "" : (activeCustomers.find((c) => c.id === selectedCustomerId)?.email || "")));
             const subject = encodeURIComponent(`${selectedMeta?.title || "Document"} from ${companyName || "EnterprateAI"}`);

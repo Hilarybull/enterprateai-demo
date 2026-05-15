@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
+from app.core.config import get_settings
+from app.shared.email.sendgrid import send_workspace_invitation_email_with_link
 
 
 def _normalize_expiry_days(expires_in_days: int | None) -> int:
@@ -30,6 +32,7 @@ async def get_owner_workspace_id(user_id: str) -> str:
 async def create_invitation(
     workspace_id: str,
     invited_by_user_id: str,
+    invited_by_email: str,
     email: Optional[str],
     permission_type: str,
     permissions: Dict[str, Any],
@@ -50,7 +53,24 @@ async def create_invitation(
         "expires_at": expires_at,
     }
     result = await sb_insert("workspace_invitations", row)
-    return result[0] if result else row
+    invitation = result[0] if result else row
+
+    if normalized_email:
+        invite_url = f"{get_settings().frontend_url.rstrip('/')}/join/{token}"
+        delivery = await send_workspace_invitation_email_with_link(
+            to_email=normalized_email,
+            inviter_email=invited_by_email,
+            invite_url=invite_url,
+            expires_in_days=expires_in_days,
+            permission_type=permission_type,
+        )
+        invitation["email_sent"] = delivery.sent
+        invitation["email_error"] = delivery.error
+    else:
+        invitation["email_sent"] = False
+        invitation["email_error"] = None
+
+    return invitation
 
 
 async def list_invitations(workspace_id: str) -> list:

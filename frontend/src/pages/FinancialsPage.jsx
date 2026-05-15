@@ -876,11 +876,12 @@ export default function FinancialsPage() {
       const existingDocumentId = record?.[shareIdField] || null;
       let token = null;
       let documentId = existingDocumentId;
+      let shareResponse = null;
 
       {
         const rawHtml = isInvoice ? buildInvoiceHtml(record, customer, product) : buildQuoteHtml(record, customer, product);
         const markdown = buildFinancialShareText(kind, record, customer, product);
-        const res = await apiRequest("/blueprint/financial-documents/share", "POST", {
+        shareResponse = await apiRequest("/blueprint/financial-documents/share", "POST", {
           access_mode: shareConfig.access_mode || "link",
           email: shareConfig.email || null,
           expires_in_days: shareConfig.expires_in_days || 7,
@@ -892,8 +893,8 @@ export default function FinancialsPage() {
           document_markdown: markdown,
           document_html: rawHtml,
         }, { timeoutMs: 120000 });
-        token = res?.token;
-        documentId = res?.document_id;
+        token = shareResponse?.token;
+        documentId = shareResponse?.document_id;
       }
 
       if (!token || !documentId) throw new Error("Share link could not be created.");
@@ -914,9 +915,14 @@ export default function FinancialsPage() {
         }
       }
 
-      const url = `${window.location.origin}/share/${token}`;
-      setShareNotice(null);
-      return url;
+        const url = `${window.location.origin}/share/${token}`;
+        setShareNotice(null);
+        return {
+          token,
+          url,
+          emailSent: Boolean(shareResponse?.email_sent),
+          emailError: shareResponse?.email_error || "",
+        };
     } catch (e) {
       setShareNotice(null);
       const raw = e instanceof Error ? e.message : "";
@@ -931,6 +937,14 @@ export default function FinancialsPage() {
 
   async function shareFinancialDocument(kind, record, customer, product, shareConfig) {
     return createFinancialShareLink(kind, record, customer, product, shareConfig);
+  }
+
+  async function sendFinancialShareEmail({ token, email }) {
+    const res = await apiRequest(`/blueprint/share/${token}/email`, "POST", { email });
+    return {
+      sent: Boolean(res?.sent),
+      error: res?.error || "",
+    };
   }
 
   function addFinancialShareAction(items, kind, record, customer, product) {
@@ -2813,6 +2827,7 @@ export default function FinancialsPage() {
               config
             )
           }
+          onSendEmail={sendFinancialShareEmail}
           getMailtoHref={({ url, email, expiryDays }) => {
             const isInvoice = shareDialog.kind === "invoice";
             const recipient = encodeURIComponent(email || shareDialog.customer?.email || "");

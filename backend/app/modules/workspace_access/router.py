@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, status
 
 from app.modules.workspace_access.schemas import CreateInvitationRequest, UpdateMemberRequest
@@ -30,12 +32,16 @@ async def create_workspace_invitation(
     invitation = await create_invitation(
         workspace_id=workspace_id,
         invited_by_user_id=user["id"],
+        invited_by_email=user["email"],
         email=payload.email,
         permission_type=payload.permission_type,
         permissions=payload.permissions,
         expires_in_days=payload.expires_in_days or 7,
     )
-    return {k: str(v) if v is not None else None for k, v in invitation.items()}
+    return {
+        k: v.isoformat() if isinstance(v, datetime) else v
+        for k, v in invitation.items()
+    }
 
 
 @router.get("/invitations")

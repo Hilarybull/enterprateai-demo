@@ -84,6 +84,28 @@ async def revoke_share_tokens(*, user_id: str, document_id: str) -> bool:
     return bool(rows)
 
 
+async def get_share_record_for_owner(*, token: str, user_id: str) -> dict[str, Any] | None:
+    try:
+        return await sb_select(
+            "blueprint_document_shares",
+            filters=[("token", "eq", token), ("user_id", "eq", user_id), ("revoked", "eq", False)],
+            columns="user_id,document_id,token,email,expires_at,revoked",
+            single=True,
+        )
+    except Exception as exc:
+        if _missing_column(exc, "email"):
+            share = await sb_select(
+                "blueprint_document_shares",
+                filters=[("token", "eq", token), ("user_id", "eq", user_id), ("revoked", "eq", False)],
+                columns="user_id,document_id,token,expires_at,revoked",
+                single=True,
+            )
+            if share is not None and "email" not in share:
+                share["email"] = None
+            return share
+        raise
+
+
 async def get_shared_document_by_token(*, token: str, viewer_email: str | None = None) -> BlueprintSharedDocument | None:
     try:
         share = await sb_select(

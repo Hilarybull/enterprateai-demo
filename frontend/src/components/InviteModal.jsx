@@ -208,6 +208,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [inviteLink, setInviteLink] = useState(null);
+  const [emailStatus, setEmailStatus] = useState(null);
   const [copied, setCopied] = useState(false);
 
   const backdropRef = useRef(null);
@@ -239,6 +240,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
     if (accessMode === "email" && !email.trim()) { setError("Enter the email address for this invite."); return; }
     setLoading(true);
     setError(null);
+    setEmailStatus(null);
     try {
       const result = await apiRequest("/workspace/invitations", "POST", {
         access_mode: accessMode,
@@ -248,6 +250,10 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
         expires_in_days: expiryDays,
       });
       setInviteLink(`${window.location.origin}/join/${result.token}`);
+      setEmailStatus({
+        sent: Boolean(result?.email_sent),
+        error: result?.email_error || "",
+      });
     } catch (e) {
       setError(e.message || "Failed to create invitation.");
     } finally {
@@ -452,9 +458,16 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
                   <CheckIcon className="h-3 w-3" />
                 </span>
                 <span className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">
-                  Invite link ready - {accessMode === "email" ? "email-only" : "multi-use"} - expires in {expiryDays} day{expiryDays !== 1 ? "s" : ""}
+                  {accessMode === "email" && emailStatus?.sent
+                    ? `Invitation email sent to ${email.trim()}`
+                    : `Invite link ready - ${accessMode === "email" ? "email-only" : "multi-use"} - expires in ${expiryDays} day${expiryDays !== 1 ? "s" : ""}`}
                 </span>
               </div>
+              {accessMode === "email" && emailStatus && !emailStatus.sent ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                  {emailStatus.error || "The invitation link was created, but the email was not sent. You can still copy the link and send it manually."}
+                </div>
+              ) : null}
               <div className="flex items-center gap-2 rounded-lg bg-white ring-1 ring-slate-200 pl-2.5 pr-1 py-1 dark:bg-slate-900 dark:ring-slate-700">
                 <span className="min-w-0 flex-1 truncate text-[11px] font-mono text-slate-600 dark:text-slate-400">
                   {inviteLink}
@@ -479,7 +492,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white py-2 text-[13px] font-semibold text-slate-700 hover:bg-emerald-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 transition"
               >
                 <MailIcon />
-                Send via email
+                {emailStatus?.sent ? "Open email app anyway" : "Send via email app"}
               </button>
             </div>
           )}
@@ -510,7 +523,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
               disabled={loading || !hasSelection()}
               className="w-full sm:w-auto rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50 transition"
             >
-              {loading ? "Generating..." : "Generate invite link"}
+              {loading ? "Creating..." : accessMode === "email" ? "Create and send" : "Generate invite link"}
             </button>
           )}
         </div>

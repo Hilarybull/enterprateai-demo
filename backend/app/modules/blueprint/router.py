@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from app.core.config import get_settings
+from app.core.supabase import sb_select
 from app.modules.blueprint.repository import delete_document, get_document, list_documents, save_document, update_document
 from app.modules.blueprint.exporter import extract_export_body, html_to_pdf, markdown_to_html, render_export_html, render_pdf_html
 from app.modules.blueprint.schemas import (
@@ -12,15 +16,38 @@ from app.modules.blueprint.schemas import (
     BlueprintFinancialShareResponse,
     BlueprintGenerateRequest,
     BlueprintGenerateResponse,
+    BlueprintShareEmailRequest,
+    BlueprintShareEmailResponse,
     BlueprintShareCreateRequest,
     BlueprintShareLinkResponse,
     BlueprintSharedDocument,
 )
 from app.modules.blueprint.service import generate_blueprint
-from app.modules.blueprint.share_repository import create_share_token, get_shared_document_by_token, revoke_share_tokens
+from app.modules.blueprint.share_repository import (
+    create_share_token,
+    get_share_record_for_owner,
+    get_shared_document_by_token,
+    revoke_share_tokens,
+)
+from app.shared.email.sendgrid import send_document_share_email
 from app.shared.auth.deps import get_current_user
 
 router = APIRouter(prefix="/blueprint", tags=["blueprint"])
+
+
+def _shared_document_url(token: str) -> str:
+    return f"{get_settings().frontend_url.rstrip('/')}/share/{token}"
+
+
+def _remaining_expiry_days(expires_at: str | None) -> int:
+    if not expires_at:
+        return 7
+    try:
+        expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+        delta = expiry - datetime.now(timezone.utc)
+        return max(1, int(delta.total_seconds() // 86400) + (1 if delta.total_seconds() % 86400 else 0))
+    except Exception:
+        return 7
 
 
 def _looks_like_markdown_text(value: str | None) -> bool:
@@ -49,10 +76,10 @@ def _looks_like_markdown_text(value: str | None) -> bool:
 def _resolved_document_html(document_html: str | None, document_markdown: str | None) -> str:
     html = str(document_html or "").strip()
     markdown = str(document_markdown or "").strip()
-    if markdown:
-        return markdown_to_html(markdown)
     if html:
         return markdown_to_html(html) if _looks_like_markdown_text(html) else html
+    if markdown:
+        return markdown_to_html(markdown)
     return ""
 
 
@@ -122,7 +149,23 @@ async def blueprint_documents_share_create(
     )
     if not token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    return BlueprintShareLinkResponse(token=token)
+    email_sent = False
+    email_error = None
+    if payload.email:
+        doc = await get_document(user_id=user["id"], document_id=document_id)
+        document_title = doc.title if doc else "Shared document"
+        company_name = doc.company_name if doc else get_settings().app_name
+        delivery = await send_document_share_email(
+            to_email=payload.email,
+            sender_email=user["email"],
+            share_url=_shared_document_url(token),
+            document_title=document_title,
+            company_name=company_name,
+            expires_in_days=payload.expires_in_days,
+        )
+        email_sent = delivery.sent
+        email_error = delivery.error
+    return BlueprintShareLinkResponse(token=token, email_sent=email_sent, email_error=email_error)
 
 
 @router.post("/financial-documents/share", response_model=BlueprintFinancialShareResponse)
@@ -152,7 +195,25 @@ async def blueprint_financial_documents_share(
     )
     if not token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    return BlueprintFinancialShareResponse(token=token, document_id=document_id)
+    email_sent = False
+    email_error = None
+    if payload.email:
+        delivery = await send_document_share_email(
+            to_email=payload.email,
+            sender_email=user["email"],
+            share_url=_shared_document_url(token),
+            document_title=payload.title,
+            company_name=payload.company_name,
+            expires_in_days=payload.expires_in_days,
+        )
+        email_sent = delivery.sent
+        email_error = delivery.error
+    return BlueprintFinancialShareResponse(
+        token=token,
+        document_id=document_id,
+        email_sent=email_sent,
+        email_error=email_error,
+    )
 
 
 @router.delete("/documents/{document_id}/share", status_code=status.HTTP_204_NO_CONTENT)
@@ -164,6 +225,35 @@ async def blueprint_documents_share_revoke(
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
     return None
+
+
+@router.post("/share/{token}/email", response_model=BlueprintShareEmailResponse)
+async def blueprint_share_send_email(
+    token: str,
+    payload: BlueprintShareEmailRequest,
+    user=Depends(get_current_user),
+) -> BlueprintShareEmailResponse:
+    share = await get_share_record_for_owner(token=token, user_id=user["id"])
+    if not share:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
+
+    doc = await sb_select(
+        "blueprint_documents",
+        filters=[("id", "eq", share["document_id"]), ("user_id", "eq", user["id"])],
+        single=True,
+    )
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    delivery = await send_document_share_email(
+        to_email=str(payload.email),
+        sender_email=user["email"],
+        share_url=_shared_document_url(token),
+        document_title=str(doc.get("title") or "Shared document"),
+        company_name=str(doc.get("company_name") or get_settings().app_name),
+        expires_in_days=_remaining_expiry_days(share.get("expires_at")),
+    )
+    return BlueprintShareEmailResponse(sent=delivery.sent, error=delivery.error)
 
 
 @router.get("/share/{token}", response_model=BlueprintSharedDocument)
