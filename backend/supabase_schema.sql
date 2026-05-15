@@ -253,3 +253,19 @@ create unique index if not exists upr_user_module_feature_idx
   on user_platform_restrictions(user_id, module_key, feature_key);
 
 create index if not exists upr_user_idx on user_platform_restrictions(user_id);
+
+-- ── Marketplace ratings ───────────────────────────────────────────────────────
+
+create table if not exists marketplace_ratings (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id text references workspaces(id) on delete cascade,
+  user_id text references users(id) on delete cascade,
+  rating int not null check (rating >= 1 and rating <= 5),
+  review text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique(workspace_id, user_id)
+);
+
+create index if not exists marketplace_ratings_workspace_idx on marketplace_ratings(workspace_id);
+create index if not exists marketplace_ratings_user_idx on marketplace_ratings(user_id);

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import html2pdf from "html2pdf.js";
 import Spinner from "../components/Spinner";
 import Button from "../components/Button";
 import { apiRequest, getApiBaseUrl } from "../api/client";
@@ -203,74 +202,6 @@ function parseHtmlDocument(html) {
   }
 }
 
-async function downloadPdfFromHtml(html, filename) {
-  try {
-    const container = document.createElement("div");
-    const source = String(html || "");
-    const pdfStyles = `
-      <style>
-        * { box-sizing: border-box; }
-        :root { color-scheme: light; }
-        body { margin: 0; padding: 0; }
-        .pdf-doc { width: 100%; max-width: 190mm; padding: 14mm 10mm; font-family: "Inter", "Segoe UI", Arial, sans-serif; background: #ffffff; margin: 0 auto; box-sizing: border-box; }
-        .pdf-doc, .pdf-doc * { color: #0f172a !important; }
-        h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }
-        h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
-        h3 { font-size: 14px; font-weight: 800; margin: 16px 0 6px; }
-        h1, h2, h3 { break-after: avoid-page; page-break-after: avoid; }
-        h1 + p, h2 + p, h3 + p, h2 + ul, h3 + ul { break-before: avoid-page; page-break-before: avoid; }
-        p, li { font-size: 12.5px; line-height: 1.7; orphans: 3; widows: 3; }
-        ul { margin: 8px 0 0 18px; padding: 0; }
-        li { margin: 6px 0; }
-        table { width: 100%; border-collapse: collapse; margin: 12px 0 6px; font-size: 12.5px; }
-        th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
-        th { background: #f8fafc; font-weight: 700; }
-        .cover-page { min-height: 70vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
-        .cover-page p { margin: 6px 0; }
-        .document-logo { display: block; max-width: 180px; max-height: 90px; width: auto; height: auto; margin: 0 auto 20px; object-fit: contain; }
-        .page-break { page-break-after: always; break-after: page; height: 1px; }
-      </style>
-    `;
-    const pageParts = source.split('<div class="page-break"></div>');
-    const withBreaks = pageParts
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .join('<div class="page-break"></div>');
-    container.innerHTML = `${pdfStyles}<div class="pdf-doc">${withBreaks || source}</div>`;
-    container.style.width = "210mm";
-    container.style.padding = "0";
-    container.style.boxSizing = "border-box";
-    container.style.fontSize = "14px";
-    container.style.lineHeight = "1.5";
-    container.style.color = "#0f172a";
-    container.style.background = "#ffffff";
-    container.className = "pdf-root";
-    document.body.appendChild(container);
-    await html2pdf()
-      .set({
-        filename,
-        margin: [6, 6, 6, 6],
-        pagebreak: { mode: ["css", "legacy", "avoid-all"] },
-        image: { type: "jpeg", quality: 0.98 },
-        html2canvas: {
-          scale: 2,
-          useCORS: true,
-          windowWidth: 1100,
-          windowHeight: 1550,
-          backgroundColor: "#ffffff",
-          letterRendering: true
-        },
-        jsPDF: { unit: "mm", format: "a4", orientation: "portrait", compress: true }
-      })
-      .from(container)
-      .save();
-    document.body.removeChild(container);
-  } finally {
-    const stale = document.querySelector(".pdf-root");
-    if (stale?.parentNode) stale.parentNode.removeChild(stale);
-  }
-}
-
 export default function SharedBlueprintPage() {
   const { token } = useParams();
   const [doc, setDoc] = useState(null);
@@ -381,14 +312,26 @@ export default function SharedBlueprintPage() {
   const isFullHtml = renderedDoc.isFullHtml;
 
   async function downloadPdf() {
-    if (!token || !bodyHtml.trim()) return;
+    if (!token) return;
     setDownloading(true);
     try {
       const safeTitle = String(title || "document")
         .toLowerCase()
         .replace(/\s+/g, "-")
         .replace(/[^a-z0-9-_]/g, "") || "document";
-      await downloadPdfFromHtml(bodyHtml, `${safeTitle}.pdf`);
+      const res = await fetch(`${getApiBaseUrl()}/blueprint/share/${token}/export?format=pdf`);
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${safeTitle}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+    } catch {
+      alert("Unable to generate PDF. Please try again.");
     } finally {
       setDownloading(false);
     }

@@ -43,6 +43,8 @@ async def sb_select(
                 q = q.neq(col, value)
             elif op == "in":
                 q = q.in_(col, value)
+            elif op == "cs":
+                q = q.contains(col, value)
         if order:
             q = q.order(order, desc=desc)
         if limit:

@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from io import BytesIO
+import base64
 from html import escape
+from html.parser import HTMLParser
+from io import BytesIO
 import re
 
-from html2text import HTML2Text
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.pdfgen import canvas
+from reportlab.platypus import (
+    Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+)
 
 
 def _inline_format(text: str) -> str:
@@ -278,53 +284,240 @@ def render_pdf_html(title: str, body_html: str) -> str:
 
 
 def html_to_pdf(html: str) -> bytes:
+    """Convert HTML (from render_pdf_html) to PDF bytes using ReportLab Platypus."""
     if not html:
         return b""
 
-    # Replace explicit page-break divs with a marker so we can paginate.
-    html = (html or "").replace('<div class="page-break"></div>', "<p>[[PAGE_BREAK]]</p>")
+    margin = 18 * mm
+    avail_w = A4[0] - 2 * margin
 
-    converter = HTML2Text()
-    converter.ignore_links = False
-    converter.body_width = 0
-    text = converter.handle(html)
+    def S(**kw: object) -> ParagraphStyle:
+        return ParagraphStyle("", **kw)
 
+    sH1  = S(fontSize=20, leading=26, spaceAfter=10, spaceBefore=4,  alignment=TA_CENTER, fontName="Helvetica-Bold", textColor=colors.HexColor("#0f172a"))
+    sH2  = S(fontSize=14, leading=20, spaceAfter=8,  spaceBefore=14, alignment=TA_CENTER, fontName="Helvetica-Bold", textColor=colors.HexColor("#0f172a"))
+    sH3  = S(fontSize=12, leading=16, spaceAfter=5,  spaceBefore=10,                     fontName="Helvetica-Bold", textColor=colors.HexColor("#111827"))
+    sP   = S(fontSize=11, leading=18, spaceAfter=5,                                      fontName="Helvetica",      textColor=colors.HexColor("#1f2937"))
+    sLI  = S(fontSize=11, leading=16, spaceAfter=3,  leftIndent=12,                      fontName="Helvetica",      textColor=colors.HexColor("#1f2937"))
+    sSub = S(fontSize=11, leading=16, spaceAfter=6,  spaceBefore=4,  alignment=TA_CENTER, fontName="Helvetica-Bold", textColor=colors.HexColor("#0f172a"))
+    sTH      = S(fontSize=10, leading=14,                                                    fontName="Helvetica-Bold", textColor=colors.HexColor("#111827"))
+    sTD      = S(fontSize=10, leading=14,                                                    fontName="Helvetica",      textColor=colors.HexColor("#1f2937"))
+    sCoverP  = S(fontSize=11, leading=16, spaceAfter=4,               alignment=TA_CENTER,  fontName="Helvetica",      textColor=colors.HexColor("#374151"))
+
+    class _Parser(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.flows: list = []
+            self._block: str | None = None
+            self._block_cls = ""
+            self._buf: list[str] = []
+            self._in_ul = False
+            self._li_items: list[str] = []
+            self._in_li = False
+            self._in_table = False
+            self._tbl_rows: list = []
+            self._tbl_row: list = []
+            self._in_cell = False
+            self._cell_buf: list[str] = []
+            self._is_th = False
+            self._in_cover = False
+            self._cover_divs = 0
+
+        def _rl(self, s: str) -> str:
+            s = re.sub(r"<strong>(.*?)</strong>", r"<b>\1</b>", s, flags=re.IGNORECASE | re.DOTALL)
+            s = re.sub(r"<em>(.*?)</em>", r"<i>\1</i>", s, flags=re.IGNORECASE | re.DOTALL)
+            s = re.sub(r"<(?!/?(b|i)>)[^>]+>", "", s)
+            return s.strip()
+
+        def handle_starttag(self, tag: str, attrs: list) -> None:
+            tag = tag.lower()
+            ad = dict(attrs)
+            if self._in_cell:
+                if tag in ("b", "strong"): self._cell_buf.append("<b>")
+                elif tag in ("i", "em"):   self._cell_buf.append("<i>")
+                return
+            if self._in_table:
+                if tag == "tr":
+                    self._tbl_row = []
+                elif tag in ("th", "td"):
+                    self._in_cell = True
+                    self._cell_buf = []
+                    self._is_th = (tag == "th")
+                return
+            if tag == "table":
+                self._in_table = True
+                self._tbl_rows = []
+                return
+            if self._in_li:
+                if tag in ("b", "strong"): self._buf.append("<b>")
+                elif tag in ("i", "em"):   self._buf.append("<i>")
+                return
+            if self._in_ul:
+                if tag == "li":
+                    self._in_li = True
+                    self._buf = []
+                return
+            if tag == "ul":
+                self._in_ul = True
+                self._li_items = []
+                return
+            if self._block:
+                if tag in ("b", "strong"): self._buf.append("<b>")
+                elif tag in ("i", "em"):   self._buf.append("<i>")
+                return
+            if tag == "div":
+                cls = ad.get("class", "")
+                if "cover-page" in cls and not self._in_cover:
+                    self._in_cover = True
+                    self._cover_divs = 1
+                    self.flows.append(Spacer(1, 55 * mm))
+                elif self._in_cover:
+                    self._cover_divs += 1
+                return
+            if tag in ("h1", "h2", "h3", "p"):
+                self._block = tag
+                self._block_cls = ad.get("class", "")
+                self._buf = []
+            elif tag == "img":
+                self._emit_img(ad.get("src", ""))
+            elif tag == "hr" and "page-break" in ad.get("class", ""):
+                self.flows.append(PageBreak())
+
+        def handle_startendtag(self, tag: str, attrs: list) -> None:
+            tag = tag.lower()
+            ad = dict(attrs)
+            if tag == "img":
+                self._emit_img(ad.get("src", ""))
+            elif tag == "hr" and "page-break" in ad.get("class", ""):
+                self.flows.append(PageBreak())
+
+        def handle_endtag(self, tag: str) -> None:
+            tag = tag.lower()
+            if self._in_cell:
+                if tag in ("th", "td"):
+                    text = self._rl("".join(self._cell_buf).strip())
+                    self._tbl_row.append((text, self._is_th))
+                    self._in_cell = False
+                    self._cell_buf = []
+                    self._is_th = False
+                elif tag in ("b", "strong"): self._cell_buf.append("</b>")
+                elif tag in ("i", "em"):     self._cell_buf.append("</i>")
+                return
+            if self._in_table:
+                if tag == "tr":
+                    if self._tbl_row:
+                        self._tbl_rows.append(self._tbl_row[:])
+                    self._tbl_row = []
+                elif tag == "table":
+                    self._emit_table()
+                    self._in_table = False
+                    self._tbl_rows = []
+                return
+            if self._in_li:
+                if tag == "li":
+                    text = self._rl("".join(self._buf).strip())
+                    if text:
+                        self._li_items.append(text)
+                    self._in_li = False
+                    self._buf = []
+                elif tag in ("b", "strong"): self._buf.append("</b>")
+                elif tag in ("i", "em"):     self._buf.append("</i>")
+                return
+            if self._in_ul:
+                if tag == "ul":
+                    self._emit_list()
+                    self._in_ul = False
+                    self._li_items = []
+                return
+            if tag == "div" and self._in_cover:
+                self._cover_divs -= 1
+                if self._cover_divs == 0:
+                    self._in_cover = False
+                return
+            if self._block:
+                if tag in ("b", "strong"): self._buf.append("</b>")
+                elif tag in ("i", "em"):   self._buf.append("</i>")
+                if tag in ("h1", "h2", "h3", "p") and tag == self._block:
+                    text = self._rl("".join(self._buf).strip())
+                    self._emit_block(self._block, self._block_cls, text)
+                    self._block = None
+                    self._block_cls = ""
+                    self._buf = []
+
+        def handle_data(self, data: str) -> None:
+            if self._in_cell:   self._cell_buf.append(data)
+            elif self._in_li:   self._buf.append(data)
+            elif self._block:   self._buf.append(data)
+
+        def _emit_block(self, tag: str, cls: str, text: str) -> None:
+            if not text:
+                return
+            style_map = {"h1": sH1, "h2": sH2, "h3": sH3}
+            if tag in style_map:
+                self.flows.append(Paragraph(text, style_map[tag]))
+            elif "subject-line" in cls:
+                self.flows.append(Paragraph(text, sSub))
+            elif self._in_cover:
+                self.flows.append(Paragraph(text, sCoverP))
+            else:
+                self.flows.append(Paragraph(text, sP))
+
+        def _emit_list(self) -> None:
+            for item in self._li_items:
+                if item:
+                    self.flows.append(Paragraph(f"• {item}", sLI))
+
+        def _emit_table(self) -> None:
+            rows = self._tbl_rows
+            if not rows:
+                return
+            col_n = max(len(r) for r in rows)
+            col_w = avail_w / col_n
+            tbl_data = []
+            for row in rows:
+                cells = [Paragraph(t or "", sTH if h else sTD) for t, h in row]
+                while len(cells) < col_n:
+                    cells.append(Paragraph("", sTD))
+                tbl_data.append(cells)
+            tbl = Table(tbl_data, colWidths=[col_w] * col_n, repeatRows=1)
+            tbl.setStyle(TableStyle([
+                ("GRID",         (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                ("BACKGROUND",   (0, 0), (-1,  0), colors.HexColor("#f8fafc")),
+                ("TOPPADDING",   (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING",(0, 0), (-1, -1), 6),
+                ("LEFTPADDING",  (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("VALIGN",       (0, 0), (-1, -1), "TOP"),
+            ]))
+            self.flows.extend([Spacer(1, 4), tbl, Spacer(1, 4)])
+
+        def _emit_img(self, src: str) -> None:
+            if not src:
+                return
+            try:
+                if src.startswith("data:image/"):
+                    _, b64 = src.split(",", 1)
+                    img = Image(BytesIO(base64.b64decode(b64)), width=100, height=50, kind="proportional")
+                else:
+                    img = Image(src, width=100, height=50, kind="proportional")
+                img.hAlign = "CENTER"
+                self.flows.extend([Spacer(1, 4), img, Spacer(1, 8)])
+            except Exception:
+                pass
+
+    body_m = re.search(r"<body[^>]*>(.*?)</body>", html, re.IGNORECASE | re.DOTALL)
+    body = body_m.group(1).strip() if body_m else html.strip()
+    body = re.sub(r"<pdf:nextpage\s*/?>", '<hr class="page-break"/>', body, flags=re.IGNORECASE)
+
+    parser = _Parser()
+    parser.feed(body)
+
+    flows = parser.flows or [Paragraph("(empty document)", sP)]
     output = BytesIO()
-    c = canvas.Canvas(output, pagesize=A4)
-    width, height = A4
-    left = 18 * mm
-    top = height - 18 * mm
-    bottom = 18 * mm
-    line_height = 12
-
-    c.setFont("Helvetica", 11)
-    y = top
-
-    for raw_line in text.splitlines():
-        line = raw_line.rstrip()
-        if not line:
-            y -= line_height
-        elif "[[PAGE_BREAK]]" in line:
-            c.showPage()
-            c.setFont("Helvetica", 11)
-            y = top
-            continue
-        else:
-            # Simple wrap based on page width.
-            max_chars = int((width - 2 * left) / 6.2)
-            parts = [line[i:i + max_chars] for i in range(0, len(line), max_chars)] or [""]
-            for part in parts:
-                if y <= bottom:
-                    c.showPage()
-                    c.setFont("Helvetica", 11)
-                    y = top
-                c.drawString(left, y, part)
-                y -= line_height
-
-        if y <= bottom:
-            c.showPage()
-            c.setFont("Helvetica", 11)
-            y = top
-
-    c.save()
+    doc = SimpleDocTemplate(
+        output, pagesize=A4,
+        leftMargin=margin, rightMargin=margin,
+        topMargin=margin, bottomMargin=margin,
+    )
+    doc.build(flows)
     return output.getvalue()

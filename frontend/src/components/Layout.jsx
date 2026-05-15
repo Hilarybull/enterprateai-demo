@@ -16,7 +16,8 @@ const NAV = [
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
   { to: "/simulation", label: "Simulation", subtitle: "What-if scenarios", icon: "beaker", moduleKey: "simulation" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
-  { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" }
+  { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
+  { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
 ];
 
 // { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" }
@@ -96,6 +97,15 @@ function Icon({ name, className = "h-4 w-4" }) {
         <path d="M7 7v10" />
         <path d="M17 7v10" />
         <path d="M12 10a2 2 0 1 0 0 4a2 2 0 0 0 0-4Z" />
+      </svg>
+    );
+  if (name === "store")
+    return (
+      <svg {...base}>
+        <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z" />
+        <path d="M3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9" />
+        <path d="M12 3v6" />
+        <path d="M9 14h6" />
       </svg>
     );
   if (name === "settings")
@@ -421,6 +431,7 @@ export default function Layout() {
     const q = String(search || "").trim().toLowerCase();
     const base = !q ? NAV : NAV.filter((i) => `${i.label} ${i.subtitle}`.toLowerCase().includes(q));
     return base.map((item) => {
+      if (item.public) return { ...item, locked: false, planLocked: false };
       const planLocked = !planHasModuleAccess(
         subscription?.plan_key ?? "free_trial",
         item.moduleKey,

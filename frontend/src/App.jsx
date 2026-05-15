@@ -19,6 +19,7 @@ import JoinPage from "./pages/JoinPage";
 import AdminPage from "./pages/AdminPage";
 import PricingPage from "./pages/PricingPage";
 import PricingSuccessPage from "./pages/PricingSuccessPage";
+import MarketplacePage from "./pages/MarketplacePage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -75,6 +76,7 @@ export default function App() {
           </Protected>
         }
       />
+      <Route path="/marketplace" element={<MarketplacePage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

@@ -967,32 +967,42 @@ export default function PricingPage() {
             {[
               {
                 title: "Idea Validation",
-                desc: "Score and stress-test your business ideas with AI-powered market fit analysis.",
+                desc: "Submit a product or service idea and get an AI-driven viability assessment covering market fit, revenue potential, and a clear accept or reject outcome to guide your next step.",
+                plans: ["Insight Starter", "Decision Engine", "Strategic Intelligence"],
+              },
+              {
+                title: "Business Blueprints",
+                desc: "Turn your validated idea into professional documents: business plans, investor-ready proposals, and sales letters, all generated from your actual business profile.",
+                plans: ["Insight Starter", "Decision Engine", "Strategic Intelligence"],
+              },
+              {
+                title: "Catalogue",
+                desc: "Manage your products and services in one place. Organise offerings by category, maintain a customer list, track vendors, and keep your business inventory structured and accessible.",
+                plans: ["Insight Starter", "Decision Engine", "Strategic Intelligence"],
+              },
+              {
+                title: "Financials",
+                desc: "Handle the numbers side of your business: create invoices, raise quotations, log expenses, manage contracts, and export financial reports for review or filing.",
                 plans: ["Insight Starter", "Decision Engine", "Strategic Intelligence"],
               },
               {
                 title: "Scenario Simulation",
-                desc: "Run unlimited what-if simulations to model growth, cashflow and risk.",
-                plans: ["Decision Engine", "Strategic Intelligence", "Free Trial"],
-              },
-              {
-                title: "Business Blueprints",
-                desc: "Generate business plans, proposals, and sales letters with AI.",
-                plans: ["Insight Starter", "Decision Engine", "Strategic Intelligence"],
+                desc: "Run what-if analyses to see how your business holds up under different conditions. Adjust revenue, costs, and growth assumptions to stress-test decisions before committing.",
+                plans: ["Free Trial", "Decision Engine", "Strategic Intelligence"],
               },
               {
                 title: "Risk Detection",
-                desc: "AI-powered alerts when your business scenarios show risk signals.",
-                plans: ["Decision Engine", "Strategic Intelligence"],
+                desc: "As you run simulations, the system flags variables that put your business model under stress, surfacing risk signals early so you can course-correct before they become real problems.",
+                plans: ["Free Trial", "Decision Engine", "Strategic Intelligence"],
               },
               {
-                title: "Multi-user Collaboration",
-                desc: "Invite your team and control access per module or feature.",
+                title: "Multi-user Access",
+                desc: "Invite team members or collaborators to your workspace. Assign access at the module or feature level so the right people see exactly what they need.",
                 plans: ["Strategic Intelligence"],
               },
               {
                 title: "Priority Support",
-                desc: "Get faster responses and direct access to our team.",
+                desc: "Get prioritised responses from the EnterprateAI team, with dedicated onboarding help and direct access for any platform queries or account needs.",
                 plans: ["Strategic Intelligence"],
               },
             ].map((item) => (

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import html2pdf from "html2pdf.js";
 import DocumentEditor from "../components/DocumentEditor";
 import DocumentShareModal from "../components/DocumentShareModal";
 import Input from "../components/Input";
@@ -1650,71 +1649,53 @@ export default function BlueprintPage() {
     }
   }
 
-  async function downloadPdfFromHtml(html, filename) {
-    try {
-      const container = document.createElement("div");
-      const source = String(html || "");
-      const pdfStyles = `
-        <style>
-          * { box-sizing: border-box; }
-          :root { color-scheme: light; }
-          body { margin: 0; padding: 0; }
-          .pdf-doc { width: 100%; max-width: 190mm; padding: 14mm 10mm; font-family: "Inter", "Segoe UI", Arial, sans-serif; background: #ffffff; margin: 0 auto; box-sizing: border-box; }
-          .pdf-doc, .pdf-doc * { color: #0f172a !important; }
-          h1 { text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 14px; letter-spacing: -0.02em; }
-          h2 { text-align: center; font-size: 16px; font-weight: 800; margin: 22px 0 10px; letter-spacing: -0.01em; }
-          h3 { font-size: 14px; font-weight: 800; margin: 16px 0 6px; }
-          h1, h2, h3 { break-after: avoid-page; page-break-after: avoid; }
-          h1 + p, h2 + p, h3 + p, h2 + ul, h3 + ul { break-before: avoid-page; page-break-before: avoid; }
-          p, li { font-size: 12.5px; line-height: 1.7; orphans: 3; widows: 3; }
-          ul { margin: 8px 0 0 18px; padding: 0; }
-          li { margin: 6px 0; }
-          table { width: 100%; border-collapse: collapse; margin: 12px 0 6px; font-size: 12.5px; }
-          th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
-          th { background: #f8fafc; font-weight: 700; }
-          .cover-page { min-height: 70vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
-          .cover-page p { margin: 6px 0; }
-          .document-logo { display: block; max-width: 180px; max-height: 90px; width: auto; height: auto; margin: 0 auto 20px; object-fit: contain; }
-          .page-break { page-break-after: always; break-after: page; height: 1px; }
-        </style>
-      `;
-      const pageParts = source.split('<div class="page-break"></div>');
-      const withBreaks = pageParts
-        .map((p) => p.trim())
-        .filter(Boolean)
-        .join('<div class="page-break"></div>');
-      container.innerHTML = `${pdfStyles}<div class="pdf-doc">${withBreaks || source}</div>`;
-      container.style.width = "210mm";
-      container.style.padding = "0";
-      container.style.boxSizing = "border-box";
-      container.style.fontSize = "14px";
-      container.style.lineHeight = "1.5";
-      container.style.color = "#0f172a";
-      container.style.background = "#ffffff";
-      container.className = "pdf-root";
-      document.body.appendChild(container);
-      await html2pdf()
-        .set({
-          filename,
-          margin: [6, 6, 6, 6],
-          pagebreak: { mode: ["css", "legacy", "avoid-all"] },
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            windowWidth: 1100,
-            windowHeight: 1550,
-            backgroundColor: "#ffffff",
-            letterRendering: true
-          },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait", compress: true }
-        })
-        .from(container)
-        .save();
-      document.body.removeChild(container);
-    } catch (e) {
-      setError("Unable to generate the PDF. Please refresh and try again.");
-    }
+  function downloadPdfFromHtml(html, filename) {
+    const source = String(html || "")
+      .replace(/<p>\s*<\/p>/gi, "")
+      .replace(/<p>&nbsp;<\/p>/gi, "")
+      .replace(/(<br\s*\/?>\s*){3,}/gi, "<br>");
+    const title = filename.replace(/\.pdf$/i, "");
+    const win = window.open("", "_blank");
+    if (!win) { setError("Allow pop-ups for this site to download the PDF."); return; }
+    win.document.write(`<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>${title}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; color: #0f172a; font-family: "Segoe UI", Arial, sans-serif; }
+  .pdf-doc { max-width: 170mm; margin: 0 auto; padding: 16mm 0; }
+  h1 { text-align: center; font-size: 20pt; font-weight: 800; margin: 0 0 10pt; letter-spacing: -0.02em; }
+  h2 { text-align: center; font-size: 14pt; font-weight: 700; margin: 14pt 0 5pt; }
+  h3 { font-size: 12pt; font-weight: 700; margin: 10pt 0 3pt; }
+  p { font-size: 11pt; line-height: 1.55; margin: 0 0 6pt; }
+  p:empty { display: none; }
+  ul, ol { margin: 3pt 0 8pt 18pt; padding: 0; }
+  li { font-size: 11pt; line-height: 1.55; margin: 2pt 0; }
+  table { width: 100%; border-collapse: collapse; margin: 8pt 0; font-size: 11pt; }
+  th, td { border: 1pt solid #cbd5e1; padding: 5pt 8pt; text-align: left; vertical-align: top; }
+  th { background: #f8fafc; font-weight: 700; }
+  .cover-page { text-align: center; padding: 10pt 0 16pt; }
+  .cover-page p { margin: 3pt 0; }
+  .document-logo { display: block; max-width: 90pt; max-height: 45pt; width: auto; height: auto; margin: 0 auto 14pt; object-fit: contain; }
+  .page-break { page-break-after: always; break-after: page; }
+  @media screen { body { background: #e5e7eb; } .pdf-doc { background: #fff; box-shadow: 0 0 24px rgba(0,0,0,.12); padding: 16mm 14mm; } }
+  @media print {
+    html, body { margin: 0; background: #fff; }
+    .pdf-doc { max-width: 100%; padding: 0; box-shadow: none; }
+    h1, h2, h3 { page-break-after: avoid; break-after: avoid; }
+    h2 + p, h3 + p, h2 + ul, h3 + ul { page-break-before: avoid; break-before: avoid; }
+    p { orphans: 3; widows: 3; }
+    table { page-break-inside: avoid; }
+    ul, ol { page-break-inside: avoid; }
+  }
+  @page { size: A4; margin: 16mm 18mm; }
+</style>
+</head><body>
+<div class="pdf-doc">${source}</div>
+<script>setTimeout(function(){ window.print(); }, 400);<\/script>
+</body></html>`);
+    win.document.close();
   }
 
   async function downloadExport(format) {
@@ -1726,15 +1707,6 @@ export default function BlueprintPage() {
     setError(null);
     try {
       const token = localStorage.getItem("ea_token");
-      // PDF: if user has unsaved edits, export client-side so the download matches the preview.
-      if (format === "pdf") {
-        const editedHtml = String(editedHtmlByType[selectedDoc] || "").trim();
-        if (editedHtml) {
-          const filename = `${selectedMeta?.title || "document"}-${docId}.pdf`;
-          await downloadPdfFromHtml(editedHtml, filename);
-          return;
-        }
-      }
       await syncSelectedDocumentForExport();
       const url = `${getApiBaseUrl()}/blueprint/documents/${docId}/export?format=${format}`;
       const res = await fetch(url, {

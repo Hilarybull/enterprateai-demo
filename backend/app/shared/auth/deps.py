@@ -7,6 +7,25 @@ from app.core.supabase import sb_select
 from app.shared.auth.security import decode_token
 
 
+async def get_optional_user(request: Request) -> Dict[str, Any] | None:
+    """Like get_current_user but returns None instead of raising 401."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    token = auth.split(" ", 1)[1].strip()
+    try:
+        payload = decode_token(token)
+    except Exception:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    user = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
+    if not user or user.get("is_blocked"):
+        return None
+    return {"id": user["id"], "email": user["email"]}
+
+
 async def get_current_user(request: Request) -> Dict[str, Any]:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
