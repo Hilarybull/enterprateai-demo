@@ -30,17 +30,6 @@ function industryColor(industry) {
   return map[industry] || "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300";
 }
 
-function stageColor(stage) {
-  const map = {
-    idea: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",
-    pre_revenue: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300",
-    early_revenue: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
-    growing: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
-    established: "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
-  };
-  return map[stage] || "bg-slate-100 text-slate-600";
-}
-
 function initials(name) {
   return (name || "?").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
@@ -156,7 +145,6 @@ function BusinessCard({ listing, onClick }) {
 
         <div className="mt-3 flex flex-wrap gap-1.5">
           <span className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${industryColor(listing.primary_industry)}`}>{fmt(listing.primary_industry)}</span>
-          <span className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${stageColor(listing.operating_stage)}`}>{fmt(listing.operating_stage)}</span>
           {listing.business_type && (
             <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-400">{fmt(listing.business_type)}</span>
           )}
@@ -188,21 +176,39 @@ function BusinessCard({ listing, onClick }) {
             )}
             <span className="text-[11px] font-semibold text-brand-600 group-hover:text-brand-700 dark:text-brand-400 transition-colors">View Profile →</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            {listing.website && (
-              <a href={listing.website.startsWith("http") ? listing.website : `https://${listing.website}`} target="_blank" rel="noopener noreferrer"
-                className="flex h-7 w-7 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900"
-                onClick={(e) => e.stopPropagation()}>
-                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" /></svg>
-              </a>
-            )}
-            {listing.linkedin_url && (
-              <a href={listing.linkedin_url} target="_blank" rel="noopener noreferrer"
-                className="flex h-7 w-7 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900"
-                onClick={(e) => e.stopPropagation()}>
-                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6zM2 9h4v12H2z" /><circle cx="4" cy="4" r="2" /></svg>
-              </a>
-            )}
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 text-[11px] text-slate-500 dark:text-slate-400">
+              {listing.phone_number ? (
+                <a
+                  href={`tel:${listing.phone_number}`}
+                  className="inline-flex max-w-full items-center gap-1.5 truncate hover:text-brand-600 dark:hover:text-brand-400"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.63 2.62a2 2 0 0 1-.45 2.11L8 9.91a16 16 0 0 0 6.09 6.09l1.46-1.29a2 2 0 0 1 2.11-.45c.84.3 1.72.51 2.62.63A2 2 0 0 1 22 16.92z" />
+                  </svg>
+                  <span className="truncate">{listing.phone_number}</span>
+                </a>
+              ) : (
+                <span className="italic text-slate-400 dark:text-slate-500">Phone not listed</span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5">
+              {listing.website && (
+                <a href={listing.website.startsWith("http") ? listing.website : `https://${listing.website}`} target="_blank" rel="noopener noreferrer"
+                  className="flex h-7 w-7 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900"
+                  onClick={(e) => e.stopPropagation()}>
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" /></svg>
+                </a>
+              )}
+              {listing.linkedin_url && (
+                <a href={listing.linkedin_url} target="_blank" rel="noopener noreferrer"
+                  className="flex h-7 w-7 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900"
+                  onClick={(e) => e.stopPropagation()}>
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6zM2 9h4v12H2z" /><circle cx="4" cy="4" r="2" /></svg>
+                </a>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -381,7 +387,6 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
             </div>
             <div className="flex flex-wrap gap-1.5">
               <span className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${industryColor(listing.primary_industry)}`}>{fmt(listing.primary_industry)}</span>
-              <span className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${stageColor(listing.operating_stage)}`}>{fmt(listing.operating_stage)}</span>
             </div>
           </div>
 
@@ -410,7 +415,6 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
           {/* Details */}
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             <DetailRow icon={<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9M12 3v6" /></svg>} label="Business Type" value={fmt(listing.business_type)} />
-            <DetailRow icon={<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z" /></svg>} label="Operating Stage" value={fmt(listing.operating_stage)} />
             {listing.company_size && <DetailRow icon={<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>} label="Team Size" value={listing.company_size} />}
             {listing.year_established && <DetailRow icon={<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>} label="Est." value={String(listing.year_established)} />}
             {listing.delivery_model && <DetailRow icon={<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12H3l9-9 9 9h-2" /><path d="M9 21V12h6v9" /></svg>} label="Delivery" value={fmt(listing.delivery_model)} />}
@@ -425,6 +429,12 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
                 <a href={`mailto:${listing.email}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-medium text-slate-700 hover:border-brand-300 transition dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300" onClick={(e) => e.stopPropagation()}>
                   <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>
                   {listing.email}
+                </a>
+              )}
+              {listing.phone_number && (
+                <a href={`tel:${listing.phone_number}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-medium text-slate-700 hover:border-brand-300 transition dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300" onClick={(e) => e.stopPropagation()}>
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.63 2.62a2 2 0 0 1-.45 2.11L8 9.91a16 16 0 0 0 6.09 6.09l1.46-1.29a2 2 0 0 1 2.11-.45c.84.3 1.72.51 2.62.63A2 2 0 0 1 22 16.92z" /></svg>
+                  {listing.phone_number}
                 </a>
               )}
               {listing.website && (
@@ -544,7 +554,6 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
 // ─── filter constants ─────────────────────────────────────────────────────────
 
 const INDUSTRIES = ["consulting","technology","finance","healthcare","education","retail","ecommerce","logistics","manufacturing","real_estate","marketing"];
-const STAGES = ["idea","pre_revenue","early_revenue","growing","established"];
 const BIZ_TYPES = ["sole_trader","partnership","limited_company","llp","non_profit","startup"];
 
 // ─── main page ────────────────────────────────────────────────────────────────
@@ -565,7 +574,6 @@ export default function MarketplacePage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filterIndustry, setFilterIndustry] = useState("");
-  const [filterStage, setFilterStage] = useState("");
   const [filterType, setFilterType] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
@@ -590,7 +598,6 @@ export default function MarketplacePage() {
         const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
         if (debouncedSearch) params.set("search", debouncedSearch);
         if (filterIndustry) params.set("industry", filterIndustry);
-        if (filterStage) params.set("operating_stage", filterStage);
         if (filterType) params.set("business_type", filterType);
         const res = await apiRequest(`/marketplace/listings?${params}`, "GET");
         if (!alive) return;
@@ -605,7 +612,7 @@ export default function MarketplacePage() {
     }
     load();
     return () => { alive = false; };
-  }, [debouncedSearch, filterIndustry, filterStage, filterType, page]);
+  }, [debouncedSearch, filterIndustry, filterType, page]);
 
   // fetch own publish status (only when logged in)
   useEffect(() => {
@@ -619,7 +626,7 @@ export default function MarketplacePage() {
   }, [isLoggedIn, workspaceId]);
 
   function clearFilters() {
-    setFilterIndustry(""); setFilterStage(""); setFilterType(""); setSearch(""); setPage(1);
+    setFilterIndustry(""); setFilterType(""); setSearch(""); setPage(1);
   }
 
   function clearSearch() {
@@ -627,7 +634,7 @@ export default function MarketplacePage() {
   }
 
   function clearChipFilters() {
-    setFilterIndustry(""); setFilterStage(""); setFilterType(""); setPage(1);
+    setFilterIndustry(""); setFilterType(""); setPage(1);
   }
 
   function handleListMyBusiness() {
@@ -648,7 +655,7 @@ export default function MarketplacePage() {
     }
   }
 
-  const hasFilters = filterIndustry || filterStage || filterType || debouncedSearch;
+  const hasFilters = filterIndustry || filterType || debouncedSearch;
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
@@ -751,19 +758,19 @@ export default function MarketplacePage() {
                 <line x1="14" y1="2" x2="14" y2="6" /><line x1="8" y1="10" x2="8" y2="14" /><line x1="16" y1="18" x2="16" y2="22" />
               </svg>
               Filters
-              {[filterIndustry, filterStage, filterType].filter(Boolean).length > 0 && (
+              {[filterIndustry, filterType].filter(Boolean).length > 0 && (
                 <span className="flex h-4 w-4 items-center justify-center rounded-full bg-brand-500 text-[9px] font-bold text-white">
-                  {[filterIndustry, filterStage, filterType].filter(Boolean).length}
+                  {[filterIndustry, filterType].filter(Boolean).length}
                 </span>
               )}
             </button>
-            {(debouncedSearch && !filterIndustry && !filterStage && !filterType) && (
+            {(debouncedSearch && !filterIndustry && !filterType) && (
               <button onClick={clearSearch} className="text-[12px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition">Clear search</button>
             )}
-            {((filterIndustry || filterStage || filterType) && !debouncedSearch) && (
+            {((filterIndustry || filterType) && !debouncedSearch) && (
               <button onClick={clearChipFilters} className="text-[12px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition">Clear filters</button>
             )}
-            {(debouncedSearch && (filterIndustry || filterStage || filterType)) && (
+            {(debouncedSearch && (filterIndustry || filterType)) && (
               <button onClick={clearFilters} className="text-[12px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition">Clear all</button>
             )}
           </div>
@@ -772,22 +779,13 @@ export default function MarketplacePage() {
         {/* Filter panel */}
         {showFilters && (
           <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Industry</div>
                 <div className="flex flex-wrap gap-1.5">
                   {INDUSTRIES.map((ind) => (
                     <FilterChip key={ind} label={fmt(ind)} active={filterIndustry === ind}
                       onClick={() => { setFilterIndustry(filterIndustry === ind ? "" : ind); setPage(1); }} />
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Stage</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {STAGES.map((s) => (
-                    <FilterChip key={s} label={fmt(s)} active={filterStage === s}
-                      onClick={() => { setFilterStage(filterStage === s ? "" : s); setPage(1); }} />
                   ))}
                 </div>
               </div>

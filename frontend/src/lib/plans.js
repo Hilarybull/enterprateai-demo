@@ -86,10 +86,10 @@ export const PLANS = [
 
 // Which top-level modules each plan can access
 export const PLAN_MODULE_ACCESS = {
-  free_trial:              ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials"],
-  insight_starter:         ["dashboard", "validation", "blueprint", "catalogue", "financials"],
-  decision_engine:         ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials"],
-  strategic_intelligence:  ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials"],
+  free_trial:              ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration"],
+  insight_starter:         ["dashboard", "validation", "blueprint", "catalogue", "financials", "registration"],
+  decision_engine:         ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration"],
+  strategic_intelligence:  ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration"],
 };
 
 // Minimum plan needed to access a module (for upgrade prompts)

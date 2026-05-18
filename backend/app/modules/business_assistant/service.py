@@ -56,6 +56,12 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
     if not workspace:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
 
+    workspace_data = workspace.data or {}
+    registration_context = {
+        "registration": workspace_data.get("registration") or {},
+        "registration_status": workspace_data.get("registration_status") or {},
+    }
+
     docs = await sb_select(
         "blueprint_documents",
         filters=[("user_id", "eq", user_id)],
@@ -79,6 +85,34 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
             }
         )
 
+    try:
+        simulation_runs = await sb_select(
+            "scenario_runs",
+            filters=[("business_id", "eq", str(workspace.id))],
+            columns="scenario_run_id,scenario_name,scenario_type,scenario_mode,state_result,baseline_metrics,scenario_metrics,deltas,created_at,completed_at",
+            order="created_at",
+            desc=True,
+            limit=8,
+        )
+    except Exception:
+        simulation_runs = []
+    simulation_context = []
+    for run in simulation_runs or []:
+        simulation_context.append(
+            {
+                "scenario_run_id": run.get("scenario_run_id"),
+                "scenario_name": run.get("scenario_name"),
+                "scenario_type": run.get("scenario_type"),
+                "scenario_mode": run.get("scenario_mode"),
+                "state_result": run.get("state_result"),
+                "baseline_metrics": run.get("baseline_metrics") or {},
+                "scenario_metrics": run.get("scenario_metrics") or {},
+                "deltas": run.get("deltas") or {},
+                "created_at": run.get("created_at"),
+                "completed_at": run.get("completed_at"),
+            }
+        )
+
     conversation = []
     for message in payload.messages[-10:]:
         role = "User" if message.role == "user" else "Assistant"
@@ -86,14 +120,17 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
 
     system = (
         "You are a business assistant for the user's company, not a product support bot. "
-        "Answer only from the business context supplied. Be practical, concise, and helpful. "
+        "Answer only from the business context supplied. This includes workspace profile, registration details, and simulation history when available. "
+        "Be practical, concise, and helpful. "
         "If the answer is not supported by the available business data, say that clearly and state what is missing. "
         "Do not claim knowledge about EnterprateAI beyond the supplied workspace data. "
         "Return plain text only. Do not use markdown, bold markers, bullet lists, numbered lists, or hyphen-led list formatting."
     )
     prompt = (
         f"Workspace name: {workspace.name}\n\n"
-        f"Workspace data:\n{_compact_json(workspace.data)}\n\n"
+        f"Workspace data:\n{_compact_json(workspace_data)}\n\n"
+        f"Registration context:\n{_compact_json(registration_context, limit=6000)}\n\n"
+        f"Recent simulation runs:\n{_compact_json(simulation_context, limit=12000)}\n\n"
         f"Recent blueprint documents:\n{_compact_json(document_context, limit=12000)}\n\n"
         f"Conversation:\n" + "\n".join(conversation)
     )

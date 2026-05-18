@@ -5,7 +5,7 @@ export const MODULES = [
   { key: "simulation", label: "Simulation", subtitle: "What-if scenarios" },
   { key: "catalogue", label: "Catalogue", subtitle: "Products & offers" },
   { key: "financials", label: "Financials", subtitle: "Invoicing & tracking" },
-  // { key: "registration", label: "Business Registration", subtitle: "Legal & compliance" },
+  { key: "registration", label: "Business Registration", subtitle: "Legal & compliance" },
 ];
 
 export const FEATURES = {

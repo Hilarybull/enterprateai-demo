@@ -5,14 +5,16 @@ import { useWorkspaceStore } from "../store/workspace";
 
 const STARTER_PROMPTS = [
   "What does my business do?",
+  "What is my business registration status?",
   "Summarise my current services",
+  "What do my latest simulations suggest?",
   "Who is my target market?",
   "What should I improve next?",
 ];
 
 export default function BusinessAssistant() {
   const workspaceName = useWorkspaceStore((state) => state.workspaceName);
-  const intro = `Hi - ask me anything about ${workspaceName || "your business"}. I'll answer from your workspace, documents, catalogue, financials, and validations.`;
+  const intro = `Hi - ask me anything about ${workspaceName || "your business"}. I'll answer from your workspace, documents, catalogue, financials, validations, registrations, and simulations.`;
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState("");
@@ -159,7 +161,7 @@ export default function BusinessAssistant() {
                     void send();
                   }
                 }}
-                placeholder="Ask about customers, revenue, blueprints, validations, services..."
+                placeholder="Ask about customers, revenue, simulations, registration, blueprints, or services..."
                 className="min-h-[72px] flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-brand-200 focus:ring dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
               />
               <Button onClick={() => void send()} disabled={sendDisabled}>
