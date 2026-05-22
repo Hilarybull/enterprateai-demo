@@ -20,6 +20,9 @@ import AdminPage from "./pages/AdminPage";
 import PricingPage from "./pages/PricingPage";
 import PricingSuccessPage from "./pages/PricingSuccessPage";
 import MarketplacePage from "./pages/MarketplacePage";
+import AccountPage from "./pages/AccountPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -45,6 +48,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/pricing" element={<PricingPage />} />
       <Route path="/pricing/success" element={<PricingSuccessPage />} />
       <Route path="/share/:token" element={<SharedBlueprintPage />} />
@@ -67,6 +72,7 @@ export default function App() {
         <Route path="catalogue" element={<CataloguePage />} />
         <Route path="financials" element={<FinancialsPage />} />
         <Route path="team" element={<TeamPage />} />
+        <Route path="account" element={<AccountPage />} />
       </Route>
       <Route
         path="ent-admin"

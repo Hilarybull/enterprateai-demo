@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import Button from "../components/Button";
 import Input from "../components/Input";
 import InlineAlert from "../components/InlineAlert";
@@ -93,13 +93,12 @@ export default function LoginPage() {
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <div className="ea-label mb-0">Password</div>
-                  <button
-                    type="button"
+                  <Link
+                    to={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ""}`}
                     className="text-xs font-semibold text-brand-700 hover:underline"
-                    onClick={() => setForgotNotice("Password reset is not enabled yet.")}
                   >
                     Forgot password?
-                  </button>
+                  </Link>
                 </div>
                 <Input
                   type="password"

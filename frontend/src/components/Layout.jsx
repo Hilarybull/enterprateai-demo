@@ -249,9 +249,13 @@ export default function Layout() {
     ? (memberWorkspaceName || "Shared workspace")
     : (acceptedAny && workspaceName ? workspaceName : workspaceName || "My workspace");
   const email = useAuthStore((s) => s.email);
+  const userName = useAuthStore((s) => s.name);
+  const userPicture = useAuthStore((s) => s.picture);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
   const subscription = useAuthStore((s) => s.subscription);
-  const profileInitials = initialsFromEmail(email);
+  const profileInitials = userName
+    ? (userName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || initialsFromEmail(email))
+    : initialsFromEmail(email);
 
   useEffect(() => {
     if (theme === "dark") document.documentElement.classList.add("dark");
@@ -651,7 +655,11 @@ export default function Layout() {
                   onClick={() => setProfileOpen((v) => !v)}
                   className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
                 >
-                  {workspaceLogo ? (
+                  {userPicture ? (
+                    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white">
+                      <img src={userPicture} alt={userName || email} className="h-full w-full object-cover" />
+                    </span>
+                  ) : workspaceLogo ? (
                     <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white">
                       <img src={workspaceLogo} alt={workspaceDisplayName || "Workspace logo"} className="h-full w-full object-contain" />
                     </span>
@@ -663,7 +671,19 @@ export default function Layout() {
                 </button>
                 {profileOpen ? (
                   <div className="absolute right-0 top-12 z-30 w-56 rounded-2xl border border-slate-200 bg-white p-2 text-xs shadow-xl dark:border-slate-800 dark:bg-slate-900">
-                    <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Account</div>
+                    <div className="px-3 py-2">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Account</div>
+                      {(userName || email) && (
+                        <div className="mt-0.5 truncate text-[12px] font-medium text-slate-700 dark:text-slate-200">{userName || email}</div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                      onClick={() => { setProfileOpen(false); navigate("/account"); }}
+                    >
+                      Account settings
+                    </button>
                     {email === "tech.support@enterprateai.com" && (
                       <button
                         type="button"
@@ -749,7 +769,7 @@ export default function Layout() {
           </header>
 
           <div className="ea-scroll flex-1 overflow-auto">
-            <div className="mx-auto w-full max-w-7xl p-4 md:p-6">
+            <div className="mx-auto w-full max-w-7xl p-4 pb-24 md:p-6 md:pb-24">
               {isCurrentRouteLocked ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
                   <div className={

@@ -43,6 +43,10 @@ const DEFAULT_SUB = { plan_key: "free_trial", billing_period: "monthly", status:
 export const useAuthStore = create((set, get) => ({
   token: null,
   email: null,
+  name: null,
+  picture: null,
+  authProvider: null,
+  hasPassword: false,
   hydrated: false,
   isLoading: false,
   error: null,
@@ -62,13 +66,18 @@ export const useAuthStore = create((set, get) => ({
     // If it's expired the API returns 401 and we clear it now rather than
     // letting protected pages discover it one call at a time.
     try {
-      const [restrictions, sub] = await Promise.all([
+      const [me, restrictions, sub] = await Promise.all([
+        apiRequest("/auth/me", "GET"),
         apiRequest("/auth/restrictions", "GET"),
         apiRequest("/plans/my", "GET"),
       ]);
       set({
         token,
-        email,
+        email: me?.email ?? email,
+        name: me?.name ?? null,
+        picture: me?.picture ?? null,
+        authProvider: me?.auth_provider ?? null,
+        hasPassword: me?.has_password ?? false,
         platformRestrictions: restrictions ?? [],
         subscription: sub ?? DEFAULT_SUB,
         hydrated: true,
@@ -76,7 +85,7 @@ export const useAuthStore = create((set, get) => ({
     } catch {
       localStorage.removeItem("ea_token");
       localStorage.removeItem("ea_email");
-      set({ token: null, email: null, hydrated: true });
+      set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true });
     }
   },
 
@@ -109,11 +118,19 @@ export const useAuthStore = create((set, get) => ({
       localStorage.setItem("ea_token", token);
       localStorage.setItem("ea_email", email);
       set({ token, email });
-      const [restrictions, sub] = await Promise.all([
+      const [me, restrictions, sub] = await Promise.all([
+        apiRequest("/auth/me", "GET").catch(() => null),
         fetchPlatformRestrictions(),
         fetchSubscription(),
       ]);
-      set({ platformRestrictions: restrictions, subscription: sub ?? DEFAULT_SUB });
+      set({
+        name: me?.name ?? null,
+        picture: me?.picture ?? null,
+        authProvider: me?.auth_provider ?? null,
+        hasPassword: me?.has_password ?? false,
+        platformRestrictions: restrictions,
+        subscription: sub ?? DEFAULT_SUB,
+      });
     } catch (e) {
       set({ error: humanizeAuthError(e) });
     } finally {
@@ -130,7 +147,7 @@ export const useAuthStore = create((set, get) => ({
       localStorage.setItem("ea_token", token);
       const me = await apiRequest("/auth/me", "GET");
       localStorage.setItem("ea_email", me.email);
-      set({ token, email: me.email });
+      set({ token, email: me.email, name: me?.name ?? null, picture: me?.picture ?? null, authProvider: me?.auth_provider ?? null, hasPassword: me?.has_password ?? false });
       const [restrictions, sub] = await Promise.all([
         fetchPlatformRestrictions(),
         fetchSubscription(),
@@ -143,9 +160,11 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
+  setProfile: ({ name, picture, authProvider, hasPassword }) => set({ name, picture, authProvider, hasPassword: hasPassword ?? false }),
+
   logout: () => {
     localStorage.removeItem("ea_token");
     localStorage.removeItem("ea_email");
-    set({ token: null, email: null, hydrated: true, platformRestrictions: [], subscription: DEFAULT_SUB });
+    set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true, platformRestrictions: [], subscription: DEFAULT_SUB });
   }
 }));

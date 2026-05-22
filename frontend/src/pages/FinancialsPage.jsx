@@ -144,6 +144,7 @@ export default function FinancialsPage() {
   });
 
   const [editingInvoiceId, setEditingInvoiceId] = useState(null);
+  const [invoiceFormError, setInvoiceFormError] = useState(null);
   const [editingQuoteId, setEditingQuoteId] = useState(null);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [editingContractId, setEditingContractId] = useState(null);
@@ -170,6 +171,7 @@ export default function FinancialsPage() {
   const [invoiceForm, setInvoiceForm] = useState({
     invoice_id: "",
     customer_id: "",
+    contract_id: "",
     product_ids: [],
     items: [],
     issued_at: new Date().toISOString().slice(0, 10),
@@ -1010,8 +1012,9 @@ export default function FinancialsPage() {
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "" });
     setEditingInvoiceId(null);
+    setInvoiceFormError(null);
   }
 
   function resetQuoteForm() {
@@ -1083,28 +1086,38 @@ export default function FinancialsPage() {
   }
 
   async function upsertInvoice() {
+    setInvoiceFormError(null);
     if (!invoiceForm.customer_id || !Array.isArray(invoiceForm.product_ids) || !invoiceForm.product_ids.length) {
-      setError("Invoice must reference a customer and at least one product or service.");
+      setInvoiceFormError("Invoice must reference a customer and at least one product or service.");
       return;
     }
-    setError(null);
     const customer = resolveCustomer(invoiceForm.customer_id);
     const lineItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
     if (!lineItems.length) {
-      setError("Select at least one product or service for this invoice.");
+      setInvoiceFormError("Select at least one product or service for this invoice.");
       return;
     }
     if (lineItems.some((item) => !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0)) {
-      setError("Each selected product or service must have a quantity greater than zero.");
+      setInvoiceFormError("Each selected product or service must have a quantity greater than zero.");
       return;
     }
     if (lineItems.some((item) => item.product_id === OTHER_PRODUCT_ID && !String(item.product_name || "").trim())) {
-      setError("Enter a name for the custom product or service.");
+      setInvoiceFormError("Enter a name for the custom product or service.");
       return;
     }
     const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
+    if (invoiceForm.contract_id) {
+      const contract = activeContracts.find((c) => c.id === invoiceForm.contract_id);
+      if (contract) {
+        const remaining = contractRemaining(contract, editingInvoiceId);
+        if (grandTotal > remaining + 0.001) {
+          setInvoiceFormError(`Invoice total (${formatMoney(grandTotal)}) exceeds the remaining contract balance of ${formatMoney(remaining)}. Reduce the amount or unlink the contract.`);
+          return;
+        }
+      }
+    }
     const totalQuantity = sumLineItemQuantity(lineItems);
     const next = invoices.map((i) => ({ ...i }));
     const payload = {
@@ -1126,6 +1139,7 @@ export default function FinancialsPage() {
       status: editingInvoiceId ? next.find((i) => i.id === editingInvoiceId)?.status || "pending" : "pending",
       issued_at: invoiceForm.issued_at || null,
       due_date: invoiceForm.due_date || null,
+      contract_id: invoiceForm.contract_id || null,
       updated_at: new Date().toISOString()
     };
     if (editingInvoiceId) {
@@ -1399,11 +1413,46 @@ export default function FinancialsPage() {
     }
   }
 
+  function contractRemaining(c, excludeInvoiceId = null) {
+    const prior = activeInvoices.filter((i) => i.contract_id === c.id && i.id !== excludeInvoiceId);
+    const usedPrice = prior.reduce((sum, i) => {
+      const hasCos = Number(i.cost_of_sales) > 0;
+      return sum + (hasCos ? (Number(i.subtotal_amount) || 0) : (Number(i.total_amount) || 0));
+    }, 0);
+    const usedCos = prior.reduce((sum, i) => sum + (Number(i.cost_of_sales) || 0), 0);
+    const remPrice = Math.max(0, (Number(c.price) || 0) - usedPrice);
+    const remCos = Math.max(0, (Number(c.cost_of_sales) || 0) - usedCos);
+    return Number((remPrice + remCos).toFixed(2));
+  }
+
+  const availableSalesContracts = useMemo(() => {
+    return activeContracts.filter((c) => {
+      if (c.contract_type !== "sales") return false;
+      const contractTotal = (Number(c.price) || 0) + (Number(c.cost_of_sales) || 0);
+      if (contractTotal <= 0) return true;
+      return contractRemaining(c, editingInvoiceId) > 0.001;
+    });
+  }, [activeContracts, activeInvoices, editingInvoiceId]); // eslint-disable-line
+
   const requiresCatalogue = !activeProducts.length || !activeCustomers.length || !activeVendors.length;
   const invoicePreviewItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
   const invoiceSubtotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceCostOfSalesTotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceGrandTotal = Number((invoiceSubtotal + invoiceCostOfSalesTotal).toFixed(2));
+  const linkedContract = invoiceForm.contract_id ? activeContracts.find((c) => c.id === invoiceForm.contract_id) : null;
+  const contractInvoiceLimit = linkedContract
+    ? (() => {
+        const priorInvoices = activeInvoices.filter((i) => i.contract_id === invoiceForm.contract_id && i.id !== editingInvoiceId);
+        const usedPrice = priorInvoices.reduce((sum, i) => {
+          const hasCos = Number(i.cost_of_sales) > 0;
+          return sum + (hasCos ? (Number(i.subtotal_amount) || 0) : (Number(i.total_amount) || 0));
+        }, 0);
+        const usedCos = priorInvoices.reduce((sum, i) => sum + (Number(i.cost_of_sales) || 0), 0);
+        const remPrice = Math.max(0, (Number(linkedContract.price) || 0) - usedPrice);
+        const remCos = Math.max(0, (Number(linkedContract.cost_of_sales) || 0) - usedCos);
+        return Number((remPrice + remCos).toFixed(2));
+      })()
+    : null;
   const quotePreviewItems = syncProductLineItems(quoteForm.product_ids, Array.isArray(quoteForm.items) ? quoteForm.items : []);
   const quoteSubtotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const quoteCostOfSalesTotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
@@ -1667,9 +1716,76 @@ export default function FinancialsPage() {
                   list="financial-customers"
                   placeholder={activeCustomers.length ? "Select or type customer" : "Type customer"}
                   value={invoiceForm.customer_id}
-                  onChange={(e) => setInvoiceForm((f) => ({ ...f, customer_id: e.target.value }))}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, customer_id: e.target.value, contract_id: "" }))}
                 />
               </div>
+              {availableSalesContracts.length > 0 && (
+                <div>
+                  <div className="ea-label">Link to contract (optional)</div>
+                  <div className="relative">
+                    <select
+                      className={`w-full appearance-none rounded-xl border border-slate-200 bg-white pl-3.5 pr-10 py-2.5 text-sm outline-none ring-brand-200 focus:ring-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${invoiceForm.contract_id ? "text-slate-900 dark:text-slate-100" : "text-slate-400 dark:text-slate-500"}`}
+                      value={invoiceForm.contract_id}
+                      onChange={(e) => {
+                        const contractId = e.target.value;
+                        if (!contractId) {
+                          setInvoiceForm((f) => ({ ...f, contract_id: "" }));
+                          return;
+                        }
+                        const contract = activeContracts.find((c) => c.id === contractId);
+                        if (!contract) {
+                          setInvoiceForm((f) => ({ ...f, contract_id: contractId }));
+                          return;
+                        }
+                        const productIds = Array.isArray(contract.product_ids) && contract.product_ids.length
+                          ? contract.product_ids
+                          : contract.product_id ? [contract.product_id] : [];
+                        const linkedPriorInvoices = activeInvoices
+                          .filter((i) => i.contract_id === contractId && i.id !== editingInvoiceId);
+                        // Track remaining per category: price (subtotal) and cost of sales separately
+                        const usedPrice = linkedPriorInvoices.reduce((sum, i) => {
+                          // subtotal_amount is the price portion; fall back to total_amount for legacy invoices with no COS
+                          const hasCos = Number(i.cost_of_sales) > 0;
+                          return sum + (hasCos ? (Number(i.subtotal_amount) || 0) : (Number(i.total_amount) || 0));
+                        }, 0);
+                        const usedCos = linkedPriorInvoices.reduce((sum, i) => sum + (Number(i.cost_of_sales) || 0), 0);
+                        const remainingPrice = Math.max(0, Number(((Number(contract.price) || 0) - usedPrice).toFixed(2)));
+                        const remainingCos = Math.max(0, Number(((Number(contract.cost_of_sales) || 0) - usedCos).toFixed(2)));
+                        const count = productIds.length || 1;
+                        const perUnitPrice = Number((remainingPrice / count).toFixed(2));
+                        const perUnitCos = Number((remainingCos / count).toFixed(2));
+                        const newItems = syncProductLineItems(productIds, []).map((item) => ({
+                          ...item,
+                          unit_price: perUnitPrice,
+                          unit_cost_of_sales: perUnitCos,
+                        }));
+                        setInvoiceForm((f) => ({
+                          ...f,
+                          contract_id: contractId,
+                          customer_id: contract.counterparty_name || contract.counterparty_id || f.customer_id,
+                          product_ids: productIds.length ? productIds : f.product_ids,
+                          items: productIds.length ? newItems : f.items,
+                          due_date: contract.due_date || contract.end_date || f.due_date,
+                        }));
+                      }}
+                    >
+                      <option value="">Select contract</option>
+                      {availableSalesContracts.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.counterparty_name || "Unnamed"} — {formatMoney(contractRemaining(c, editingInvoiceId))} remaining{c.end_date ? ` (ends ${new Date(c.end_date).toLocaleDateString()})` : ""}
+                          </option>
+                        ))}
+                    </select>
+                    <svg
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                </div>
+              )}
               <div>
                 <div className="ea-label">Products / Services *</div>
                 <MultiProductDropdown
@@ -1752,6 +1868,15 @@ export default function FinancialsPage() {
               <div className="ea-label">Grand Total</div>
               <Input value={formatMoney(invoiceGrandTotal)} disabled />
             </div>
+            {linkedContract && contractInvoiceLimit !== null && (
+              <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400">
+                <span>Contract remaining balance</span>
+                <span className={`font-semibold tabular-nums ${contractInvoiceLimit <= 0 ? "text-emerald-600" : "text-slate-900 dark:text-slate-100"}`}>
+                  {formatMoney(contractInvoiceLimit)}
+                </span>
+              </div>
+            )}
+            {invoiceFormError && <InlineAlert kind="error" message={invoiceFormError} />}
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertInvoice}>{editingInvoiceId ? "Update invoice" : "Add invoice"}</Button>
               {editingInvoiceId ? (
@@ -1800,6 +1925,7 @@ export default function FinancialsPage() {
                               setInvoiceForm({
                                   invoice_id: inv.invoice_id || "",
                                   customer_id: inv.customer_name || inv.customer_id,
+                                  contract_id: inv.contract_id || "",
                                   product_ids: Array.isArray(inv.product_ids) && inv.product_ids.length ? inv.product_ids : inv.product_id ? [inv.product_id] : [],
                                   items: normalizeRecordItems(inv),
                                   issued_at: inv.issued_at || "",
@@ -2367,7 +2493,7 @@ export default function FinancialsPage() {
                       contractForm.contract_type === "sales" ? resolveCustomer(value) : resolveVendor(value);
                     setContractForm((f) => ({
                       ...f,
-                      counterparty_id: party?.id || value,
+                      counterparty_id: party?.name || value,
                       payment_terms: party?.payment_terms ? String(party.payment_terms) : f.payment_terms
                     }));
                   }}
@@ -2379,7 +2505,17 @@ export default function FinancialsPage() {
               <MultiProductDropdown
                 products={activeProducts}
                 selectedIds={Array.isArray(contractForm.product_ids) ? contractForm.product_ids : []}
-                onChange={(nextIds) => setContractForm((f) => ({ ...f, product_ids: nextIds }))}
+                onChange={(nextIds) => {
+                  const selected = resolveProducts(nextIds);
+                  const defaultPrice = selected.reduce((sum, p) => sum + Number(getProductPrice(p) || 0), 0);
+                  const defaultCos = selected.reduce((sum, p) => sum + Number(getProductDefaultCost(p) || 0), 0);
+                  setContractForm((f) => ({
+                    ...f,
+                    product_ids: nextIds,
+                    price: nextIds.length ? String(Number(defaultPrice.toFixed(2))) : f.price,
+                    cost_of_sales: nextIds.length ? String(Number(defaultCos.toFixed(2))) : f.cost_of_sales,
+                  }));
+                }}
               />
             </div>
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
@@ -2473,16 +2609,23 @@ export default function FinancialsPage() {
                       ? resolveCustomer(contract.counterparty_id, contract.counterparty_name)
                       : resolveVendor(contract.counterparty_id, contract.counterparty_name);
                   const product = resolveProduct(contract.product_id, contract.product_name);
+                  const contractTotal = (Number(contract.price) || 0) + (Number(contract.cost_of_sales) || 0);
+                  const linkedInvoices = activeInvoices.filter((i) => i.contract_id === contract.id);
+                  const totalInvoiced = linkedInvoices.reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
+                  const totalPaid = linkedInvoices.filter((i) => i.status === "paid").reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
+                  const remaining = contractTotal - totalPaid;
+                  const paidPct = contractTotal > 0 ? Math.min(100, Math.round((totalPaid / contractTotal) * 100)) : 0;
                   return (
-                    <div key={contract.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900">
-                          {contract.contract_type === "sales" ? "Sales" : "Purchase"} • {party?.name || "Partner"}
+                    <div key={contract.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-900">
+                            {contract.contract_type === "sales" ? "Sales" : "Purchase"} • {party?.name || "Partner"}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {summariseProductNames(contract)} • {formatMoney(contract.price)} • {contract.end_date ? `Ends ${new Date(contract.end_date).toLocaleDateString()}` : "No end date"} • Status {contract.status}
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-500">
-                          {summariseProductNames(contract)} • {formatMoney(contract.price)} • {contract.end_date ? `Ends ${new Date(contract.end_date).toLocaleDateString()}` : "No end date"} • Status {contract.status}
-                        </div>
-                      </div>
                       <ActionMenu
                         items={[
                           {
@@ -2519,6 +2662,28 @@ export default function FinancialsPage() {
                           }
                         ]}
                       />
+                      </div>
+                      {contract.contract_type === "sales" && (
+                        <div className="mt-2 border-t border-slate-100 pt-2">
+                          <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-500">
+                            <span>Invoiced {formatMoney(totalInvoiced)} of {formatMoney(contractTotal)}</span>
+                            <span className={remaining < 0 ? "font-semibold text-rose-600" : remaining === 0 ? "font-semibold text-emerald-600" : "font-semibold text-slate-700"}>
+                              {remaining <= 0 ? "Fully paid" : `${formatMoney(remaining)} remaining`}
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className={`h-full rounded-full transition-all ${paidPct >= 100 ? "bg-emerald-500" : "bg-brand-500"}`}
+                              style={{ width: `${paidPct}%` }}
+                            />
+                          </div>
+                          {linkedInvoices.length > 0 && (
+                            <div className="mt-1 text-[10px] text-slate-400">
+                              {linkedInvoices.length} invoice{linkedInvoices.length !== 1 ? "s" : ""} linked • {formatMoney(totalPaid)} paid
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })

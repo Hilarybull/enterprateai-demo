@@ -2541,8 +2541,8 @@ export default function ValidationWizardPage() {
         )}
 
         {contentTab === "builder" ? (
-        <div className="sticky bottom-0 z-20 -mx-6 mt-4 border-t border-slate-200 bg-transparent px-6 py-3">
-          <div className="mx-auto flex max-w-6xl items-center justify-between gap-2">
+        <div className="sticky bottom-0 z-20 -mx-6 mt-4 border-t border-slate-200 bg-white px-6 py-3 dark:bg-slate-950">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 pr-0 sm:pr-52">
             <div>
               {mode === "fill" && !isCreateWorkspace ? (
                 <Button variant="ghost" disabled={!canEdit} onClick={() => setMode("select")}>Change sections</Button>

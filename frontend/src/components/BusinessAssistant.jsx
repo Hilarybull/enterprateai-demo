@@ -56,13 +56,18 @@ export default function BusinessAssistant() {
         listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
       });
     } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: error instanceof Error ? error.message : "I couldn't answer that right now.",
-        },
-      ]);
+      const raw = error instanceof Error ? error.message : String(error || "");
+      let friendly = "I couldn't answer that right now. Please try again.";
+      if (raw.includes("404") || raw.toLowerCase().includes("workspace not found")) {
+        friendly = "It looks like you haven't set up a workspace yet. Create one first and I'll be able to answer questions about your business.";
+      } else if (raw.includes("401") || raw.includes("403")) {
+        friendly = "Your session may have expired. Try refreshing the page and signing in again.";
+      } else if (raw === "NETWORK_ERROR" || raw.toLowerCase().includes("network")) {
+        friendly = "I can't reach the server right now. Check your connection and try again.";
+      } else if (raw.includes("500")) {
+        friendly = "Something went wrong on our end. Please try again in a moment.";
+      }
+      setMessages((prev) => [...prev, { role: "assistant", content: friendly }]);
     } finally {
       setLoading(false);
     }
