@@ -180,13 +180,12 @@ export default function BusinessAssistant() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] right-3 z-30 flex items-center gap-2 rounded-full bg-brand-600 px-3 py-3 text-sm font-semibold text-white shadow-lg hover:bg-brand-700 sm:bottom-4 sm:right-4 sm:px-4"
+        className="group fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] right-5 z-30 flex items-center overflow-hidden rounded-full bg-brand-600 p-4 text-sm font-semibold text-white shadow-lg transition-all duration-300 hover:bg-brand-700 sm:bottom-20 sm:right-6"
       >
-        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
-        <span className="hidden sm:inline">Ask about your business</span>
-        <span className="sm:hidden">Ask</span>
+        <span className="max-w-0 overflow-hidden whitespace-nowrap transition-all duration-300 group-hover:max-w-[200px] group-hover:ml-2">Ask about your business</span>
       </button>
     </>
   );

@@ -288,14 +288,20 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       item.total_amount
     );
   });
-  salesContracts
-    .filter((item) => normaliseStatus(item.status) !== "paid")
-    .forEach((item) => {
-      addToSchedule(
-        pendingReceivablesSchedule,
-        effectiveDueDate(item, item.payment_terms || 30),
-        item.price
-      );
+  salesContracts.forEach((item) => {
+      const contractTotal = toNumber(item.price);
+      // Deduct all linked invoices (paid or pending) to avoid double-counting
+      const linkedTotal = invoices
+        .filter((inv) => inv.contract_id === item.id)
+        .reduce((sum, inv) => sum + toNumber(inv.total_amount), 0);
+      const uninvoiced = Math.max(0, contractTotal - linkedTotal);
+      if (uninvoiced > 0) {
+        addToSchedule(
+          pendingReceivablesSchedule,
+          effectiveDueDate(item, item.payment_terms || 30),
+          uninvoiced
+        );
+      }
     });
   pendingExpenses.forEach((item) => {
     addToSchedule(
@@ -304,14 +310,19 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       item.price
     );
   });
-  purchaseContracts
-    .filter((item) => normaliseStatus(item.status) !== "paid")
-    .forEach((item) => {
-      addToSchedule(
-        pendingPayablesSchedule,
-        effectiveDueDate(item, item.payment_terms || 30),
-        item.price
-      );
+  purchaseContracts.forEach((item) => {
+      const contractTotal = toNumber(item.price);
+      const linkedTotal = invoices
+        .filter((inv) => inv.contract_id === item.id)
+        .reduce((sum, inv) => sum + toNumber(inv.total_amount), 0);
+      const uninvoiced = Math.max(0, contractTotal - linkedTotal);
+      if (uninvoiced > 0) {
+        addToSchedule(
+          pendingPayablesSchedule,
+          effectiveDueDate(item, item.payment_terms || 30),
+          uninvoiced
+        );
+      }
     });
 
   const recognisedRevenue = invoiceRevenue;
@@ -362,11 +373,15 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   const paymentTermsDays = customers.length
     ? Math.round(customers.reduce((sum, item) => sum + parsePaymentTerms(item.payment_terms), 0) / customers.length)
     : null;
+  const uninvoicedContractBalance = salesContracts.reduce((sum, item) => {
+      const contractTotal = toNumber(item.price);
+      const linkedTotal = invoices
+        .filter((inv) => inv.contract_id === item.id)
+        .reduce((s, inv) => s + toNumber(inv.total_amount), 0);
+      return sum + Math.max(0, contractTotal - linkedTotal);
+    }, 0);
   const openingAccrualBalance = Number(
-    (
-      pendingInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0) +
-      salesContracts.filter((item) => normaliseStatus(item.status) !== "paid").reduce((sum, item) => sum + toNumber(item.price), 0)
-    ).toFixed(2)
+    (pendingInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0) + uninvoicedContractBalance).toFixed(2)
   );
   const startingCash = Math.max(0, toNumber(inputs?.starting_cash));
   const runwayMonths = netProfit >= 0 ? 999 : Math.max(0, startingCash / Math.max(Math.abs(netProfit), 1));

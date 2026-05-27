@@ -138,6 +138,7 @@ export default function FinancialsPage() {
   const [quotes, setQuotes] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [contracts, setContracts] = useState([]);
+  const [rfqRequests, setRfqRequests] = useState([]);
   const [integrations, setIntegrations] = useState({
     financial: { quickbooks: "not_connected", sap: "not_connected", zoho_books: "not_connected" },
     crm: { zoho_crm: "not_connected", hubspot: "not_connected", salesforce: "not_connected" }
@@ -145,6 +146,7 @@ export default function FinancialsPage() {
 
   const [editingInvoiceId, setEditingInvoiceId] = useState(null);
   const [invoiceFormError, setInvoiceFormError] = useState(null);
+  const [invoiceSubmitAttempted, setInvoiceSubmitAttempted] = useState(false);
   const [editingQuoteId, setEditingQuoteId] = useState(null);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [editingContractId, setEditingContractId] = useState(null);
@@ -319,6 +321,7 @@ export default function FinancialsPage() {
         setQuotes(Array.isArray(fin.quotes) ? fin.quotes : []);
         setExpenses(Array.isArray(fin.expenses) ? fin.expenses : []);
         setContracts(Array.isArray(fin.contracts) ? fin.contracts : []);
+        setRfqRequests(Array.isArray(fin.rfq_requests) ? fin.rfq_requests : []);
         setIntegrations({
           financial: {
             quickbooks: integ?.financial?.quickbooks || "not_connected",
@@ -1014,7 +1017,9 @@ export default function FinancialsPage() {
   function resetInvoiceForm() {
     setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "" });
     setEditingInvoiceId(null);
+    setPreviewInvoiceId(null);
     setInvoiceFormError(null);
+    setInvoiceSubmitAttempted(false);
   }
 
   function resetQuoteForm() {
@@ -1046,6 +1051,7 @@ export default function FinancialsPage() {
   }
 
   function updateInvoiceSelectedProducts(nextIds) {
+    setInvoiceSubmitAttempted(false);
     setInvoiceForm((prev) => ({
       ...prev,
       product_ids: nextIds,
@@ -1086,6 +1092,7 @@ export default function FinancialsPage() {
   }
 
   async function upsertInvoice() {
+    setInvoiceSubmitAttempted(true);
     setInvoiceFormError(null);
     if (!invoiceForm.customer_id || !Array.isArray(invoiceForm.product_ids) || !invoiceForm.product_ids.length) {
       setInvoiceFormError("Invoice must reference a customer and at least one product or service.");
@@ -1112,8 +1119,16 @@ export default function FinancialsPage() {
       const contract = activeContracts.find((c) => c.id === invoiceForm.contract_id);
       if (contract) {
         const remaining = contractRemaining(contract, editingInvoiceId);
-        if (grandTotal > remaining + 0.001) {
-          setInvoiceFormError(`Invoice total (${formatMoney(grandTotal)}) exceeds the remaining contract balance of ${formatMoney(remaining)}. Reduce the amount or unlink the contract.`);
+        if (subtotal > remaining.price + 0.001) {
+          setInvoiceFormError(`Invoice subtotal (${formatMoney(subtotal)}) exceeds the remaining contract price allowance of ${formatMoney(remaining.price)}.`);
+          return;
+        }
+        if (totalCostOfSales > remaining.cost_of_sales + 0.001) {
+          setInvoiceFormError(`Invoice cost of sales (${formatMoney(totalCostOfSales)}) exceeds the remaining contract cost-of-sales allowance of ${formatMoney(remaining.cost_of_sales)}.`);
+          return;
+        }
+        if (grandTotal > remaining.total + 0.001) {
+          setInvoiceFormError(`Invoice grand total (${formatMoney(grandTotal)}) exceeds the remaining contract balance of ${formatMoney(remaining.total)}. Reduce the amount or unlink the contract.`);
           return;
         }
       }
@@ -1413,16 +1428,128 @@ export default function FinancialsPage() {
     }
   }
 
+  async function approveRfq(rfqId) {
+    setError(null);
+    try {
+      const result = await apiRequest(`/marketplace/rfq/${rfqId}/approve`, "POST", { validity_days: 30 });
+      const { rfq, quote, workspace_id: wsId, company_name } = result;
+      setRfqRequests((prev) => prev.map((r) => r.id === rfqId ? rfq : r));
+      setQuotes((prev) => [quote, ...prev.filter((q) => q.id !== quote.id)]);
+      // Build PDF HTML and send share link to customer
+      const customer = { name: rfq.customer_name };
+      const quoteHtml = buildRfqQuoteHtml(quote, customer, company_name);
+      const shareTitle = `Quotation ${quote.quotation_id || quote.id} — ${company_name}`;
+      const shareRes = await apiRequest("/blueprint/financial-documents/share", "POST", {
+        access_mode: "email",
+        email: rfq.customer_email,
+        expires_in_days: 30,
+        type: `quotation_acceptance::${wsId}::${rfqId}::${quote.id}`,
+        title: shareTitle,
+        company_name: company_name || workspaceName || "Business",
+        workspace_id: wsId || workspaceId,
+        document_html: quoteHtml,
+        document_markdown: "",
+      }, { timeoutMs: 120000 });
+      if (shareRes?.token) {
+        const nextQuotes = quotes.map((q) => q.id === quote.id ? { ...q, share_document_id: shareRes.document_id, share_token: shareRes.token } : q);
+        setQuotes(nextQuotes);
+        await persist({ invoices, quotes: nextQuotes, expenses, contracts });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to approve RFQ.");
+    }
+  }
+
+  async function rejectRfq(rfqId) {
+    setError(null);
+    try {
+      const rfq = await apiRequest(`/marketplace/rfq/${rfqId}/reject`, "POST", {});
+      setRfqRequests((prev) => prev.map((r) => r.id === rfqId ? rfq : r));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to reject RFQ.");
+    }
+  }
+
+  function buildRfqQuoteHtml(quote, customer, companyName) {
+    const items = Array.isArray(quote.items) && quote.items.length ? quote.items : [];
+    const subtotal = Number(quote.subtotal_amount || 0);
+    const cos = Number(quote.cost_of_sales || 0);
+    const grandTotal = Number(quote.total_amount || subtotal + cos);
+    const validUntil = quote.validity_days ? (() => { const d = new Date(); d.setDate(d.getDate() + quote.validity_days); return d.toLocaleDateString(); })() : "";
+    const logoSrc = workspaceLogo && String(workspaceLogo).trim() ? workspaceLogo : null;
+    return `<!doctype html><html><head><meta charset="utf-8"/>
+<title>Quotation ${quote.quotation_id || quote.id}</title>
+<style>*{color:#0f172a !important;}body{font-family:Inter,Arial,sans-serif;background:#fff;padding:32px;font-size:14px;line-height:1.5;}
+.header{display:flex;justify-content:space-between;align-items:flex-start;}
+.brand-block img{display:block;max-width:160px;max-height:60px;margin:0 0 12px;}
+.brand-block h2{margin:0 0 4px;}
+.muted{color:#1f2937;font-size:12px;}
+.card{border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-top:16px;}
+table{width:100%;border-collapse:collapse;margin-top:16px;}
+th,td{border-bottom:1px solid #e2e8f0;padding:10px;text-align:left;font-size:13px;}
+th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
+.right{text-align:right;}
+.actions{margin-top:28px;display:flex;gap:12px;}
+.btn{display:inline-block;padding:12px 28px;border-radius:8px;font-weight:600;font-size:14px;text-decoration:none;cursor:pointer;}
+.btn-accept{background:#16a34a;color:#fff !important;}
+.btn-reject{background:#f1f5f9;color:#374151 !important;border:1px solid #e2e8f0;}
+</style></head><body>
+<div class="header">
+  <div class="brand-block">
+    ${logoSrc ? `<img src="${logoSrc}" alt="${companyName}"/>` : ""}
+    <h2>${companyName || workspaceName || "Business"}</h2>
+    <div class="muted">Sales Quotation</div>
+  </div>
+  <div class="right">
+    <div class="muted">Quotation ID</div>
+    <div>${quote.quotation_id || quote.id}</div>
+    ${quote.issued_at ? `<div class="muted" style="margin-top:4px;">Date: ${new Date(quote.issued_at).toLocaleDateString()}</div>` : ""}
+    ${validUntil ? `<div class="muted">Valid until: ${validUntil}</div>` : ""}
+  </div>
+</div>
+<div class="card">
+  <div class="muted">Prepared for</div>
+  <div><strong>${customer?.name || "Customer"}</strong></div>
+</div>
+<table>
+  <thead><tr><th>Item</th><th class="right">Qty</th><th class="right">Unit Price</th><th class="right">Subtotal</th></tr></thead>
+  <tbody>
+    ${items.map((item) => `<tr>
+      <td>${item.product_name || "Item"}</td>
+      <td class="right">${item.quantity || 0}</td>
+      <td class="right">${formatMoney(item.unit_price || 0)}</td>
+      <td class="right"><strong>${formatMoney((Number(item.unit_price || 0) * Number(item.quantity || 0)))}</strong></td>
+    </tr>`).join("")}
+  </tbody>
+</table>
+<div class="card">
+  <div style="display:flex;justify-content:space-between;gap:12px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
+</div>
+<p class="muted" style="margin-top:16px;">This quotation is valid for ${quote.validity_days || 30} days.</p>
+<div class="muted" style="margin-top:24px;font-size:13px;">Please use the buttons below to accept or reject this quotation.</div>
+</body></html>`;
+  }
+
   function contractRemaining(c, excludeInvoiceId = null) {
     const prior = activeInvoices.filter((i) => i.contract_id === c.id && i.id !== excludeInvoiceId);
     const usedPrice = prior.reduce((sum, i) => {
-      const hasCos = Number(i.cost_of_sales) > 0;
-      return sum + (hasCos ? (Number(i.subtotal_amount) || 0) : (Number(i.total_amount) || 0));
+      const subtotal = Number(i.subtotal_amount);
+      if (Number.isFinite(subtotal) && subtotal >= 0) return sum + subtotal;
+      const total = Number(i.total_amount) || 0;
+      const costOfSales = Number(i.cost_of_sales) || 0;
+      return sum + Math.max(0, total - costOfSales);
     }, 0);
     const usedCos = prior.reduce((sum, i) => sum + (Number(i.cost_of_sales) || 0), 0);
-    const remPrice = Math.max(0, (Number(c.price) || 0) - usedPrice);
-    const remCos = Math.max(0, (Number(c.cost_of_sales) || 0) - usedCos);
-    return Number((remPrice + remCos).toFixed(2));
+    const contractPrice = Number(c.price) || 0;
+    const contractCos = Number(c.cost_of_sales) || 0;
+    const remainingPrice = Math.max(0, contractPrice - usedPrice);
+    const remainingCostOfSales = Math.max(0, contractCos - usedCos);
+    const remainingTotal = Math.max(0, remainingPrice + remainingCostOfSales);
+    return {
+      price: Number(remainingPrice.toFixed(2)),
+      cost_of_sales: Number(remainingCostOfSales.toFixed(2)),
+      total: Number(remainingTotal.toFixed(2)),
+    };
   }
 
   const availableSalesContracts = useMemo(() => {
@@ -1430,9 +1557,23 @@ export default function FinancialsPage() {
       if (c.contract_type !== "sales") return false;
       const contractTotal = (Number(c.price) || 0) + (Number(c.cost_of_sales) || 0);
       if (contractTotal <= 0) return true;
-      return contractRemaining(c, editingInvoiceId) > 0.001;
+      return contractRemaining(c, editingInvoiceId).total > 0.001;
     });
   }, [activeContracts, activeInvoices, editingInvoiceId]); // eslint-disable-line
+
+  const customerSalesContracts = useMemo(() => {
+    if (!invoiceForm.customer_id) return [];
+    const customer = resolveCustomer(invoiceForm.customer_id);
+    return availableSalesContracts.filter((c) => {
+      if (customer) return c.counterparty_id === customer.id || c.counterparty_name === customer.name;
+      // free-typed name match
+      const typed = String(invoiceForm.customer_id).trim().toLowerCase();
+      return (
+        String(c.counterparty_name || "").toLowerCase() === typed ||
+        String(c.counterparty_id || "").toLowerCase() === typed
+      );
+    });
+  }, [availableSalesContracts, invoiceForm.customer_id]); // eslint-disable-line
 
   const requiresCatalogue = !activeProducts.length || !activeCustomers.length || !activeVendors.length;
   const invoicePreviewItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
@@ -1440,19 +1581,32 @@ export default function FinancialsPage() {
   const invoiceCostOfSalesTotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceGrandTotal = Number((invoiceSubtotal + invoiceCostOfSalesTotal).toFixed(2));
   const linkedContract = invoiceForm.contract_id ? activeContracts.find((c) => c.id === invoiceForm.contract_id) : null;
-  const contractInvoiceLimit = linkedContract
-    ? (() => {
-        const priorInvoices = activeInvoices.filter((i) => i.contract_id === invoiceForm.contract_id && i.id !== editingInvoiceId);
-        const usedPrice = priorInvoices.reduce((sum, i) => {
-          const hasCos = Number(i.cost_of_sales) > 0;
-          return sum + (hasCos ? (Number(i.subtotal_amount) || 0) : (Number(i.total_amount) || 0));
-        }, 0);
-        const usedCos = priorInvoices.reduce((sum, i) => sum + (Number(i.cost_of_sales) || 0), 0);
-        const remPrice = Math.max(0, (Number(linkedContract.price) || 0) - usedPrice);
-        const remCos = Math.max(0, (Number(linkedContract.cost_of_sales) || 0) - usedCos);
-        return Number((remPrice + remCos).toFixed(2));
-      })()
-    : null;
+  const contractInvoiceLimit = linkedContract ? contractRemaining(linkedContract, editingInvoiceId) : null;
+  const invoiceExceedsContractPrice = Boolean(linkedContract && contractInvoiceLimit && invoiceSubtotal > contractInvoiceLimit.price + 0.001);
+  const invoiceExceedsContractCost = Boolean(linkedContract && contractInvoiceLimit && invoiceCostOfSalesTotal > contractInvoiceLimit.cost_of_sales + 0.001);
+  const invoiceExceedsContractTotal = Boolean(linkedContract && contractInvoiceLimit && invoiceGrandTotal > contractInvoiceLimit.total + 0.001);
+  const invoiceContractWarning = useMemo(() => {
+    if (!linkedContract || !contractInvoiceLimit) return "";
+    if (invoiceExceedsContractPrice) {
+      return `Unit price / subtotal is above the remaining contract price allowance. Allowed: ${formatMoney(contractInvoiceLimit.price)}. Current subtotal: ${formatMoney(invoiceSubtotal)}.`;
+    }
+    if (invoiceExceedsContractCost) {
+      return `Cost of sales is above the remaining contract cost-of-sales allowance. Allowed: ${formatMoney(contractInvoiceLimit.cost_of_sales)}. Current cost of sales: ${formatMoney(invoiceCostOfSalesTotal)}.`;
+    }
+    if (invoiceExceedsContractTotal) {
+      return `Grand total is above the remaining contract balance. Allowed: ${formatMoney(contractInvoiceLimit.total)}. Current grand total: ${formatMoney(invoiceGrandTotal)}.`;
+    }
+    return "";
+  }, [
+    contractInvoiceLimit,
+    invoiceCostOfSalesTotal,
+    invoiceExceedsContractCost,
+    invoiceExceedsContractPrice,
+    invoiceExceedsContractTotal,
+    invoiceGrandTotal,
+    invoiceSubtotal,
+    linkedContract,
+  ]);
   const quotePreviewItems = syncProductLineItems(quoteForm.product_ids, Array.isArray(quoteForm.items) ? quoteForm.items : []);
   const quoteSubtotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const quoteCostOfSalesTotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
@@ -1719,7 +1873,7 @@ export default function FinancialsPage() {
                   onChange={(e) => setInvoiceForm((f) => ({ ...f, customer_id: e.target.value, contract_id: "" }))}
                 />
               </div>
-              {availableSalesContracts.length > 0 && (
+              {customerSalesContracts.length > 0 && (
                 <div>
                   <div className="ea-label">Link to contract (optional)</div>
                   <div className="relative">
@@ -1742,15 +1896,9 @@ export default function FinancialsPage() {
                           : contract.product_id ? [contract.product_id] : [];
                         const linkedPriorInvoices = activeInvoices
                           .filter((i) => i.contract_id === contractId && i.id !== editingInvoiceId);
-                        // Track remaining per category: price (subtotal) and cost of sales separately
-                        const usedPrice = linkedPriorInvoices.reduce((sum, i) => {
-                          // subtotal_amount is the price portion; fall back to total_amount for legacy invoices with no COS
-                          const hasCos = Number(i.cost_of_sales) > 0;
-                          return sum + (hasCos ? (Number(i.subtotal_amount) || 0) : (Number(i.total_amount) || 0));
-                        }, 0);
-                        const usedCos = linkedPriorInvoices.reduce((sum, i) => sum + (Number(i.cost_of_sales) || 0), 0);
-                        const remainingPrice = Math.max(0, Number(((Number(contract.price) || 0) - usedPrice).toFixed(2)));
-                        const remainingCos = Math.max(0, Number(((Number(contract.cost_of_sales) || 0) - usedCos).toFixed(2)));
+                        const remaining = contractRemaining(contract, editingInvoiceId);
+                        const remainingPrice = remaining.price;
+                        const remainingCos = remaining.cost_of_sales;
                         const count = productIds.length || 1;
                         const perUnitPrice = Number((remainingPrice / count).toFixed(2));
                         const perUnitCos = Number((remainingCos / count).toFixed(2));
@@ -1770,9 +1918,9 @@ export default function FinancialsPage() {
                       }}
                     >
                       <option value="">Select contract</option>
-                      {availableSalesContracts.map((c) => (
+                      {customerSalesContracts.map((c) => (
                           <option key={c.id} value={c.id}>
-                            {c.counterparty_name || "Unnamed"} — {formatMoney(contractRemaining(c, editingInvoiceId))} remaining{c.end_date ? ` (ends ${new Date(c.end_date).toLocaleDateString()})` : ""}
+                            {c.counterparty_name || "Unnamed"} — {formatMoney(contractRemaining(c, editingInvoiceId).total)} remaining{c.end_date ? ` (ends ${new Date(c.end_date).toLocaleDateString()})` : ""}
                           </option>
                         ))}
                     </select>
@@ -1854,29 +2002,40 @@ export default function FinancialsPage() {
                 <Input type="date" value={invoiceForm.due_date} onChange={(e) => setInvoiceForm((f) => ({ ...f, due_date: e.target.value }))} />
               </div>
             </div>
-            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+            <div className={`grid grid-cols-1 items-start gap-3 ${invoiceCostOfSalesTotal > 0 ? "sm:grid-cols-2" : ""}`}>
               <div>
                 <div className="ea-label">Subtotal</div>
                 <Input value={formatMoney(invoiceSubtotal)} disabled />
               </div>
+              {invoiceCostOfSalesTotal > 0 && (
+                <div>
+                  <div className="ea-label">Total cost of sales</div>
+                  <Input value={formatMoney(invoiceCostOfSalesTotal)} disabled />
+                </div>
+              )}
+            </div>
+            {invoiceCostOfSalesTotal > 0 && (
               <div>
-                <div className="ea-label">Total cost of sales</div>
-                <Input value={formatMoney(invoiceCostOfSalesTotal)} disabled />
-              </div>
-            </div>
-            <div>
-              <div className="ea-label">Grand Total</div>
-              <Input value={formatMoney(invoiceGrandTotal)} disabled />
-            </div>
-            {linkedContract && contractInvoiceLimit !== null && (
-              <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400">
-                <span>Contract remaining balance</span>
-                <span className={`font-semibold tabular-nums ${contractInvoiceLimit <= 0 ? "text-emerald-600" : "text-slate-900 dark:text-slate-100"}`}>
-                  {formatMoney(contractInvoiceLimit)}
-                </span>
+                <div className="ea-label">Grand Total</div>
+                <Input value={formatMoney(invoiceGrandTotal)} disabled />
               </div>
             )}
-            {invoiceFormError && <InlineAlert kind="error" message={invoiceFormError} />}
+            {invoiceSubmitAttempted && invoiceContractWarning ? <InlineAlert kind="error" message={invoiceContractWarning} /> : null}
+            {linkedContract && contractInvoiceLimit !== null && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400">
+                <div className="flex items-center justify-between">
+                  <span>Contract remaining balance</span>
+                  <span className={`font-semibold tabular-nums ${contractInvoiceLimit.total <= 0 ? "text-emerald-600" : "text-slate-900 dark:text-slate-100"}`}>
+                    {formatMoney(contractInvoiceLimit.total)}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-slate-500">
+                  <span>Price left: {formatMoney(contractInvoiceLimit.price)}</span>
+                  <span>Cost of sales left: {formatMoney(contractInvoiceLimit.cost_of_sales)}</span>
+                </div>
+              </div>
+            )}
+            {invoiceFormError && !invoiceContractWarning ? <InlineAlert kind="error" message={invoiceFormError} /> : null}
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertInvoice}>{editingInvoiceId ? "Update invoice" : "Add invoice"}</Button>
               {editingInvoiceId ? (
@@ -2258,6 +2417,70 @@ export default function FinancialsPage() {
             )}
           </div>
         </SectionCard>
+
+        {/* Incoming RFQ Requests */}
+        <SectionCard
+          title="Incoming Requests"
+          subtitle="Quotation requests from marketplace visitors."
+          className="lg:col-span-5"
+          icon={
+            <CardIcon tone="bg-sky-50 text-sky-600">
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14,2 14,8 20,8" />
+                <line x1="12" y1="18" x2="12" y2="12" />
+                <line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+            </CardIcon>
+          }
+        >
+          <div className="mt-2 space-y-2 max-h-96 overflow-auto pr-1">
+            {rfqRequests.length ? (
+              [...rfqRequests].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((rfq) => {
+                const statusColors = {
+                  pending: "bg-amber-50 text-amber-700 border-amber-200",
+                  approved: "bg-emerald-50 text-emerald-700 border-emerald-200",
+                  rejected: "bg-rose-50 text-rose-700 border-rose-200",
+                };
+                const customerResponse = rfq.customer_response;
+                return (
+                  <div key={rfq.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-900">{rfq.customer_name}</div>
+                        <div className="text-xs text-slate-500">{rfq.customer_email}</div>
+                        {rfq.message && <div className="mt-1 text-xs text-slate-500 italic line-clamp-2">"{rfq.message}"</div>}
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {(rfq.items || []).map((item, i) => (
+                            <span key={i} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
+                              {item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="mt-1 text-[10px] text-slate-400">{rfq.created_at ? new Date(rfq.created_at).toLocaleDateString() : ""}</div>
+                      </div>
+                      <div className="flex flex-col items-end gap-1.5">
+                        <span className={`rounded-lg border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusColors[rfq.status] || "bg-slate-50 text-slate-600 border-slate-200"}`}>
+                          {customerResponse ? `Customer ${customerResponse}` : rfq.status}
+                        </span>
+                        {rfq.status === "pending" && (
+                          <div className="flex gap-1.5">
+                            <Button onClick={() => approveRfq(rfq.id)}>Approve & Send</Button>
+                            <Button variant="secondary" onClick={() => rejectRfq(rfq.id)}>Reject</Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
+                No incoming requests yet. Once your business is listed in the marketplace, quotation requests will appear here.
+              </div>
+            )}
+          </div>
+        </SectionCard>
         </div>
         ) : null}
 
@@ -2613,7 +2836,7 @@ export default function FinancialsPage() {
                   const linkedInvoices = activeInvoices.filter((i) => i.contract_id === contract.id);
                   const totalInvoiced = linkedInvoices.reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
                   const totalPaid = linkedInvoices.filter((i) => i.status === "paid").reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
-                  const remaining = contractTotal - totalPaid;
+                  const remainingToInvoice = contractRemaining(contract);
                   const paidPct = contractTotal > 0 ? Math.min(100, Math.round((totalPaid / contractTotal) * 100)) : 0;
                   return (
                     <div key={contract.id} className="rounded-xl border border-slate-200 bg-white p-3">
@@ -2623,7 +2846,7 @@ export default function FinancialsPage() {
                             {contract.contract_type === "sales" ? "Sales" : "Purchase"} • {party?.name || "Partner"}
                           </div>
                           <div className="text-xs text-slate-500">
-                            {summariseProductNames(contract)} • {formatMoney(contract.price)} • {contract.end_date ? `Ends ${new Date(contract.end_date).toLocaleDateString()}` : "No end date"} • Status {contract.status}
+                            {summariseProductNames(contract)} • {formatMoney(contractTotal)} total • {contract.end_date ? `Ends ${new Date(contract.end_date).toLocaleDateString()}` : "No end date"} • Status {contract.status}
                           </div>
                         </div>
                       <ActionMenu
@@ -2667,8 +2890,8 @@ export default function FinancialsPage() {
                         <div className="mt-2 border-t border-slate-100 pt-2">
                           <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-500">
                             <span>Invoiced {formatMoney(totalInvoiced)} of {formatMoney(contractTotal)}</span>
-                            <span className={remaining < 0 ? "font-semibold text-rose-600" : remaining === 0 ? "font-semibold text-emerald-600" : "font-semibold text-slate-700"}>
-                              {remaining <= 0 ? "Fully paid" : `${formatMoney(remaining)} remaining`}
+                            <span className={remainingToInvoice.total <= 0 ? "font-semibold text-emerald-600" : "font-semibold text-slate-700"}>
+                              {remainingToInvoice.total <= 0 ? "Fully invoiced" : `${formatMoney(remainingToInvoice.total)} left to invoice`}
                             </span>
                           </div>
                           <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
@@ -2679,7 +2902,7 @@ export default function FinancialsPage() {
                           </div>
                           {linkedInvoices.length > 0 && (
                             <div className="mt-1 text-[10px] text-slate-400">
-                              {linkedInvoices.length} invoice{linkedInvoices.length !== 1 ? "s" : ""} linked • {formatMoney(totalPaid)} paid
+                              {linkedInvoices.length} invoice{linkedInvoices.length !== 1 ? "s" : ""} linked • {formatMoney(totalPaid)} paid • Price left {formatMoney(remainingToInvoice.price)} • Cost of sales left {formatMoney(remainingToInvoice.cost_of_sales)}
                             </div>
                           )}
                         </div>
@@ -2791,7 +3014,7 @@ export default function FinancialsPage() {
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-slate-500">Invoice ID</div>
-                  <div className="text-sm font-semibold text-slate-900">{previewInvoice.invoice_id || previewInvoice.id}</div>
+                  <div className="text-sm font-semibold text-slate-900">{previewInvoice.invoice_id || `INV-${previewInvoice.id.substring(0, 8).toUpperCase()}`}</div>
                   <div className="mt-2 text-xs text-slate-500">Status</div>
                   <div className="text-sm font-semibold text-slate-900">{previewInvoice.status}</div>
                 </div>
@@ -2832,9 +3055,24 @@ export default function FinancialsPage() {
                     <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(item.subtotal_amount || (Number(item.unit_price || 0) * Number(item.quantity || 0)))}</div>
                   </div>
                 ))}
+                {Number(previewInvoice.cost_of_sales) > 0 && (
+                  <div className="grid grid-cols-12 gap-2 border-t border-slate-100 px-3 py-3 text-sm text-slate-500">
+                    <div className="col-span-6 italic">Cost of sales</div>
+                    <div className="col-span-2 text-right">—</div>
+                    <div className="col-span-2 text-right">—</div>
+                    <div className="col-span-2 text-right font-semibold text-slate-700">{formatMoney(Number(previewInvoice.cost_of_sales))}</div>
+                  </div>
+                )}
               </div>
 
-              <div className="mt-6 text-xs text-slate-500">
+              <div className="mt-4 flex justify-end border-t border-slate-200 pt-3">
+                <div className="text-sm">
+                  <span className="mr-6 text-slate-500">Grand Total</span>
+                  <span className="font-semibold text-slate-900">{formatMoney(getDocumentGrandTotal(previewInvoice))}</span>
+                </div>
+              </div>
+
+              <div className="mt-4 text-xs text-slate-500">
                 Thank you for your business. If you have questions about this invoice, contact us to update details.
               </div>
             </div>
@@ -2889,7 +3127,7 @@ export default function FinancialsPage() {
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-slate-500">Quotation ID</div>
-                  <div className="text-sm font-semibold text-slate-900">{previewQuote.quotation_id || previewQuote.id}</div>
+                  <div className="text-sm font-semibold text-slate-900">{previewQuote.quotation_id || `QUO-${previewQuote.id.substring(0, 8).toUpperCase()}`}</div>
                   <div className="mt-2 text-xs text-slate-500">Status</div>
                   <div className="text-sm font-semibold text-slate-900">{previewQuote.status || "draft"}</div>
                 </div>
@@ -2930,9 +3168,24 @@ export default function FinancialsPage() {
                     <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(item.subtotal_amount || (Number(item.unit_price || 0) * Number(item.quantity || 0)))}</div>
                   </div>
                 ))}
+                {Number(previewQuote.cost_of_sales) > 0 && (
+                  <div className="grid grid-cols-12 gap-2 border-t border-slate-100 px-3 py-3 text-sm text-slate-500">
+                    <div className="col-span-6 italic">Cost of sales</div>
+                    <div className="col-span-2 text-right">—</div>
+                    <div className="col-span-2 text-right">—</div>
+                    <div className="col-span-2 text-right font-semibold text-slate-700">{formatMoney(Number(previewQuote.cost_of_sales))}</div>
+                  </div>
+                )}
               </div>
 
-              <div className="mt-6 text-xs text-slate-500">
+              <div className="mt-4 flex justify-end border-t border-slate-200 pt-3">
+                <div className="text-sm">
+                  <span className="mr-6 text-slate-500">Grand Total</span>
+                  <span className="font-semibold text-slate-900">{formatMoney(getDocumentGrandTotal(previewQuote))}</span>
+                </div>
+              </div>
+
+              <div className="mt-4 text-xs text-slate-500">
                 This quotation is valid for {previewQuote.validity_days || 30} days unless otherwise stated.
               </div>
             </div>

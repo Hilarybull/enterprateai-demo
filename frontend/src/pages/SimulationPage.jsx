@@ -1717,5 +1717,3 @@ function isProjection(run) {
 
 
 
-
-

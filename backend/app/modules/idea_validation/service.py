@@ -262,6 +262,31 @@ async def market_fit(
         return build_fallback_market_fit(**params, reason="error")
 
 
+MAX_SNAPSHOTS = 50
+
+
+async def _save_snapshot_to_mongo(workspace_id: str, workspace_name: str, data: Dict[str, Any], now_iso: str) -> None:
+    try:
+        from app.core.database import get_mongo_db
+        db = get_mongo_db()
+        col = db["workspace_snapshots"]
+        await col.insert_one({
+            "workspace_id": workspace_id,
+            "workspace_name": workspace_name,
+            "data": data,
+            "created_at": now_iso,
+        })
+        # Keep only the most recent MAX_SNAPSHOTS per workspace
+        oldest_ids = await col.find(
+            {"workspace_id": workspace_id},
+            {"_id": 1},
+        ).sort("created_at", -1).skip(MAX_SNAPSHOTS).to_list(length=None)
+        if oldest_ids:
+            await col.delete_many({"_id": {"$in": [d["_id"] for d in oldest_ids]}})
+    except Exception:
+        pass  # Snapshot failure must never break the main save path
+
+
 async def update_workspace(
     *,
     user_id: str,
@@ -274,9 +299,13 @@ async def update_workspace(
 
     merged = dict(ws.data or {})
     data_patch = _augment_workspace_patch(data_patch or {}, existing=merged)
-    # Shallow merge: replace top-level keys (idea_validation is treated as a whole object).
     for k, v in (data_patch or {}).items():
         merged[k] = v
+
+    ws_name = (name and str(name).strip()) or ws.name or "Unnamed"
+
+    # Fire-and-forget snapshot to MongoDB (never blocks the save)
+    await _save_snapshot_to_mongo(str(ws.id), ws_name, dict(ws.data or {}), now.isoformat())
 
     update = {"data": merged, "updated_at": now.isoformat()}
     if name and str(name).strip():

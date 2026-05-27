@@ -432,6 +432,98 @@ async def delete_user(user_id: str, user=Depends(require_admin)) -> None:
     await sb_delete("users", filters=[("id", "eq", user_id)])
 
 
+@router.patch("/workspaces/{workspace_id}")
+async def rename_workspace(
+    workspace_id: str,
+    payload: dict = Body(...),
+    user=Depends(require_admin),
+) -> dict:
+    new_name = str(payload.get("name") or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Name is required.")
+    result = await sb_update(
+        "workspaces",
+        payload={"name": new_name},
+        filters=[("id", "eq", workspace_id)],
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return {"id": workspace_id, "name": new_name}
+
+
+@router.get("/workspaces/{workspace_id}/snapshots")
+async def list_workspace_snapshots(workspace_id: str, user=Depends(require_admin)) -> list:
+    try:
+        from app.core.database import get_mongo_db
+        from bson import ObjectId
+        db = get_mongo_db()
+        col = db["workspace_snapshots"]
+        docs = await col.find(
+            {"workspace_id": workspace_id},
+            {"_id": 1, "workspace_name": 1, "created_at": 1},
+        ).sort("created_at", -1).to_list(length=50)
+        return [
+            {"snapshot_id": str(d["_id"]), "ws_name": d.get("workspace_name") or "Unnamed", "saved_at": d.get("created_at")}
+            for d in docs
+        ]
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"MongoDB unavailable: {exc}")
+
+
+@router.post("/workspaces/{workspace_id}/restore")
+async def restore_workspace_snapshot(
+    workspace_id: str,
+    payload: dict = Body(...),
+    user=Depends(require_admin),
+) -> dict:
+    snapshot_id = payload.get("snapshot_id")
+    if not snapshot_id:
+        raise HTTPException(status_code=400, detail="snapshot_id is required.")
+
+    try:
+        from app.core.database import get_mongo_db
+        from bson import ObjectId
+        db = get_mongo_db()
+        col = db["workspace_snapshots"]
+        snap = await col.find_one({"_id": ObjectId(snapshot_id), "workspace_id": workspace_id})
+        if not snap:
+            raise HTTPException(status_code=404, detail="Snapshot not found.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"MongoDB unavailable: {exc}")
+
+    ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Save current state as a snapshot before overwriting
+    try:
+        from app.core.database import get_mongo_db
+        db = get_mongo_db()
+        await db["workspace_snapshots"].insert_one({
+            "workspace_id": workspace_id,
+            "workspace_name": ws.get("name") or "Unnamed",
+            "data": ws.get("data") or {},
+            "created_at": now,
+        })
+    except Exception:
+        pass
+
+    restored_data = snap.get("data") or {}
+    restored_name = snap.get("workspace_name") or ws.get("name") or "Unnamed"
+
+    await sb_update(
+        "workspaces",
+        payload={"data": restored_data, "name": restored_name, "updated_at": now},
+        filters=[("id", "eq", workspace_id)],
+    )
+    return {"restored": True, "ws_name": restored_name, "saved_at": snap.get("created_at")}
+
+
 @router.delete("/workspaces/{workspace_id}", status_code=204)
 async def delete_workspace(workspace_id: str, user=Depends(require_admin)) -> None:
     await sb_delete("workspaces", filters=[("id", "eq", workspace_id)])

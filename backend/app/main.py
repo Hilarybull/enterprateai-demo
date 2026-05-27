@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from app.core.config import get_settings
+from app.core.database import connect_to_mongo, close_mongo_connection
 from app.modules.blueprint.router import router as blueprint_router
 from app.modules.business_assistant.router import router as business_assistant_router
 from app.modules.business_registration.router import router as registration_router
@@ -86,6 +87,14 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
     app.include_router(plans_router)
     app.include_router(marketplace_router)
+
+    @app.on_event("startup")
+    async def startup():
+        await connect_to_mongo()
+
+    @app.on_event("shutdown")
+    async def shutdown():
+        await close_mongo_connection()
 
     @app.get("/health")
     async def health() -> dict:

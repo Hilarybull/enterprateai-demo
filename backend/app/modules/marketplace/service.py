@@ -271,3 +271,239 @@ async def delete_rating(*, workspace_id: str, user_id: str) -> dict:
         filters=[("workspace_id", "eq", workspace_id), ("user_id", "eq", user_id)],
     )
     return await get_ratings(workspace_id=workspace_id, user_id=user_id)
+
+
+# ─── RFQ (Request for Quotation) ─────────────────────────────────────────────
+
+async def submit_rfq(
+    *,
+    workspace_id: str,
+    customer_name: str,
+    customer_email: str,
+    items: list[dict],
+    message: str | None,
+) -> dict:
+    ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
+    if not ws:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    data = ws.get("data") or {}
+    marketplace = data.get("marketplace") or {}
+    if not marketplace.get("is_active"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not listed in marketplace")
+
+    financials = data.get("financials") or {}
+    rfq_requests = list(financials.get("rfq_requests") or [])
+    now = datetime.now(timezone.utc).isoformat()
+    rfq_id = str(uuid4())
+    rfq = {
+        "id": rfq_id,
+        "workspace_id": workspace_id,
+        "customer_name": customer_name,
+        "customer_email": customer_email,
+        "items": items,
+        "message": message,
+        "status": "pending",
+        "created_at": now,
+        "quote_id": None,
+    }
+    rfq_requests.append(rfq)
+    merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
+    await sb_update("workspaces", filters=[("id", "eq", workspace_id)], payload={"data": merged, "updated_at": now})
+    return rfq
+
+
+async def list_rfqs(*, user_id: str, workspace_id: str | None = None) -> dict:
+    ws = await _load_workspace(user_id, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    _, data = _ws_fields(ws)
+    financials = data.get("financials") or {}
+    items = list(financials.get("rfq_requests") or [])
+    return {"items": items, "total": len(items)}
+
+
+async def approve_rfq(
+    *,
+    user_id: str,
+    workspace_id: str | None = None,
+    rfq_id: str,
+    validity_days: int = 30,
+) -> dict:
+    ws = await _load_workspace(user_id, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    ws_id, data = _ws_fields(ws)
+    financials = data.get("financials") or {}
+    rfq_requests = list(financials.get("rfq_requests") or [])
+
+    rfq = next((r for r in rfq_requests if r.get("id") == rfq_id), None)
+    if not rfq:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RFQ not found")
+    if rfq.get("status") != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="RFQ is not pending")
+
+    now = datetime.now(timezone.utc).isoformat()
+    quote_id = str(uuid4())
+    items = rfq.get("items") or []
+
+    # Try to match catalogue products by name for pricing
+    catalogue = data.get("catalogue") or {}
+    products = catalogue.get("products") or []
+
+    def _find_product(name: str):
+        n = str(name or "").strip().lower()
+        return next((p for p in products if str(p.get("name") or "").strip().lower() == n), None)
+
+    def _product_price(p):
+        if not p:
+            return 0.0
+        base = float(p.get("base_price") or 0)
+        disc = float(p.get("discount") or 0)
+        freight = float(p.get("freight_cost") or 0)
+        return max(0.0, base - disc + freight)
+
+    def _product_cos(p):
+        if not p:
+            return 0.0
+        return float(p.get("cost_of_sales") or p.get("unit_cost") or 0)
+
+    quote_items = []
+    for item in items:
+        name = str(item.get("name") or "").strip()
+        qty = max(1, int(item.get("quantity") or 1))
+        product = _find_product(name)
+        quote_items.append({
+            "product_id": product["id"] if product else f"rfq-item-{uuid4().hex[:8]}",
+            "product_name": name or "Item",
+            "quantity": qty,
+            "unit_price": _product_price(product),
+            "unit_cost_of_sales": _product_cos(product),
+        })
+
+    subtotal = round(sum(i["unit_price"] * i["quantity"] for i in quote_items), 2)
+    cos_total = round(sum(i["unit_cost_of_sales"] * i["quantity"] for i in quote_items), 2)
+
+    profile = data.get("workspace_profile") or {}
+    company_name = profile.get("company_name") or "Business"
+
+    quote = {
+        "id": quote_id,
+        "quotation_id": f"Q-{quote_id[:8].upper()}",
+        "customer_id": rfq["customer_email"],
+        "customer_name": rfq["customer_name"],
+        "customer_email": rfq["customer_email"],
+        "product_ids": [i["product_id"] for i in quote_items],
+        "product_names": [i["product_name"] for i in quote_items],
+        "items": quote_items,
+        "quantity": sum(i["quantity"] for i in quote_items),
+        "subtotal_amount": subtotal,
+        "cost_of_sales": cos_total,
+        "total_amount": round(subtotal + cos_total, 2),
+        "validity_days": validity_days,
+        "status": "draft",
+        "rfq_id": rfq_id,
+        "issued_at": now[:10],
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    quotes = list(financials.get("quotes") or [])
+    quotes.insert(0, quote)
+
+    rfq["status"] = "approved"
+    rfq["quote_id"] = quote_id
+    rfq["approved_at"] = now
+
+    merged = {**data, "financials": {**financials, "quotes": quotes, "rfq_requests": rfq_requests}}
+    await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
+
+    return {
+        "rfq": rfq,
+        "quote": quote,
+        "workspace_id": ws_id,
+        "company_name": company_name,
+    }
+
+
+async def reject_rfq(*, user_id: str, workspace_id: str | None = None, rfq_id: str) -> dict:
+    ws = await _load_workspace(user_id, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    ws_id, data = _ws_fields(ws)
+    financials = data.get("financials") or {}
+    rfq_requests = list(financials.get("rfq_requests") or [])
+
+    rfq = next((r for r in rfq_requests if r.get("id") == rfq_id), None)
+    if not rfq:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RFQ not found")
+    if rfq.get("status") != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="RFQ is not pending")
+
+    now = datetime.now(timezone.utc).isoformat()
+    rfq["status"] = "rejected"
+    rfq["rejected_at"] = now
+
+    merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
+    await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
+    return rfq
+
+
+async def respond_to_quote(*, token: str, viewer_email: str, action: str) -> dict:
+    """Called when a customer accepts or rejects a shared quotation."""
+    from app.modules.blueprint.share_repository import get_shared_document_by_token
+    from app.core.supabase import sb_select as _sel
+
+    try:
+        doc = await get_shared_document_by_token(token=token, viewer_email=viewer_email)
+    except PermissionError as exc:
+        code = str(exc)
+        if code == "EMAIL_REQUIRED":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email address required.")
+        if code == "EMAIL_MISMATCH":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email address does not match the quotation recipient.")
+        raise
+    except RuntimeError as exc:
+        if str(exc) == "EXPIRED":
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail="This quotation link has expired.")
+        raise
+
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quotation link not found.")
+
+    doc_type = str(doc.type or "")
+    if not doc_type.startswith("quotation_acceptance::"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This link is not a quotation acceptance link.")
+
+    parts = doc_type.split("::")
+    if len(parts) < 4:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid quotation link format.")
+
+    ws_id, rfq_id, quote_id = parts[1], parts[2], parts[3]
+
+    ws = await _sel("workspaces", filters=[("id", "eq", ws_id)], single=True)
+    if not ws:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found.")
+
+    data = ws.get("data") or {}
+    financials = data.get("financials") or {}
+    now = datetime.now(timezone.utc).isoformat()
+
+    quotes = list(financials.get("quotes") or [])
+    rfq_requests = list(financials.get("rfq_requests") or [])
+
+    new_status = "accepted" if action == "accept" else "rejected"
+    quote = next((q for q in quotes if q.get("id") == quote_id), None)
+    rfq = next((r for r in rfq_requests if r.get("id") == rfq_id), None)
+
+    if not quote:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quotation not found.")
+
+    quote["status"] = new_status
+    quote["responded_at"] = now
+    if rfq:
+        rfq["customer_response"] = new_status
+        rfq["responded_at"] = now
+
+    merged = {**data, "financials": {**financials, "quotes": quotes, "rfq_requests": rfq_requests}}
+    await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
+    return {"action": new_status, "quote_id": quote_id}

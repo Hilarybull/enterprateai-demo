@@ -213,13 +213,57 @@ function ConfirmModal({ confirm, onCancel, onConfirm, loading }) {
 
 // ── Workspace detail panel ────────────────────────────────────────────────────
 
-function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitation, actionLoading }) {
+function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitation, actionLoading, onRestore, onRename }) {
   const backdropRef = useRef(null);
+  const [snapshots, setSnapshots] = useState(null);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState("");
+  const [nameSaving, setNameSaving] = useState(false);
+
   useEffect(() => {
     function onKey(e) { if (e.key === "Escape") onClose(); }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  useEffect(() => {
+    if (!detail?.id) return;
+    setSnapshots(null);
+    setSnapshotsLoading(true);
+    apiRequest(`/admin/workspaces/${detail.id}/snapshots`, "GET")
+      .then(setSnapshots)
+      .catch(() => setSnapshots([]))
+      .finally(() => setSnapshotsLoading(false));
+  }, [detail?.id]);
+
+  async function handleRestore(snap) {
+    if (!window.confirm(`Restore to snapshot from ${snap.saved_at ? new Date(snap.saved_at).toLocaleString() : "unknown time"} ("${snap.ws_name}")?\n\nThe current state will be saved as a new snapshot first so you can undo.`)) return;
+    setRestoring(true);
+    try {
+      const res = await apiRequest(`/admin/workspaces/${detail.id}/restore`, "POST", { snapshot_id: snap.snapshot_id });
+      onRestore && onRestore(res);
+    } catch (e) {
+      alert(e.message || "Restore failed.");
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  async function handleRenameSave() {
+    if (!nameValue.trim()) return;
+    setNameSaving(true);
+    try {
+      await apiRequest(`/admin/workspaces/${detail.id}`, "PATCH", { name: nameValue.trim() });
+      onRename && onRename(detail.id, nameValue.trim());
+      setEditingName(false);
+    } catch (e) {
+      alert(e.message || "Rename failed.");
+    } finally {
+      setNameSaving(false);
+    }
+  }
 
   if (!detail) return null;
 
@@ -231,8 +275,27 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
     >
       <div className="flex h-full w-full flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl sm:max-w-md">
         <div className="flex shrink-0 items-start justify-between border-b border-slate-100 px-5 py-4">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">{detail.name}</h2>
+          <div className="min-w-0 flex-1 pr-3">
+            {editingName ? (
+              <div className="flex items-center gap-2">
+                <input
+                  autoFocus
+                  className="flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm font-semibold text-slate-900 outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-200"
+                  value={nameValue}
+                  onChange={(e) => setNameValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleRenameSave(); if (e.key === "Escape") setEditingName(false); }}
+                />
+                <button onClick={handleRenameSave} disabled={nameSaving} className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+                  {nameSaving ? "…" : "Save"}
+                </button>
+                <button onClick={() => setEditingName(false)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-50">Cancel</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <h2 className="truncate text-base font-semibold text-slate-900">{detail.name}</h2>
+                <button onClick={() => { setNameValue(detail.name || ""); setEditingName(true); }} className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold text-slate-400 hover:bg-slate-100 hover:text-slate-600">Edit</button>
+              </div>
+            )}
             <p className="mt-0.5 font-mono text-[11px] text-slate-400">{detail.id}</p>
           </div>
           <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition">
@@ -310,6 +373,35 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
               </div>
             ) : (
               <p className="text-xs text-slate-400">No invitations.</p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Snapshots (restore points)
+            </h3>
+            {snapshotsLoading ? (
+              <p className="text-xs text-slate-400">Loading…</p>
+            ) : !snapshots || snapshots.length === 0 ? (
+              <p className="text-xs text-slate-400">No snapshots yet. Snapshots are created automatically on each workspace save.</p>
+            ) : (
+              <div className="divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
+                {snapshots.map((snap) => (
+                  <div key={snap.snapshot_id} className="flex items-center gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium text-slate-800">{snap.ws_name}</div>
+                      <div className="mt-0.5 text-[10px] text-slate-400">{snap.saved_at ? new Date(snap.saved_at).toLocaleString() : "Unknown time"}</div>
+                    </div>
+                    <button
+                      onClick={() => handleRestore(snap)}
+                      disabled={restoring}
+                      className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 transition"
+                    >
+                      {restoring ? "…" : "Restore"}
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -1332,6 +1424,11 @@ export default function AdminPage() {
           onDeleteMember={(id) => removeMember(id, detail?.members?.find((m) => m.id === id)?.email)}
           onRevokeInvitation={(id) => revokeInvitation(id, detail?.invitations?.find((i) => i.id === id)?.email)}
           actionLoading={actionLoading}
+          onRestore={() => { loadStats(true); refreshDetail(); }}
+          onRename={(wsId, newName) => {
+            setDetail((d) => d ? { ...d, name: newName } : d);
+            loadStats(true);
+          }}
         />
       )}
 

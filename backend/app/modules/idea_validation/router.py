@@ -5,6 +5,7 @@ from app.modules.idea_validation.schemas import (
     CreateValidationWorkspaceRequest,
     CreateWorkspaceResponse,
     EvaluateRequest,
+    MarketResearchRequest,
     UpdateWorkspaceRequest,
     ValidationResult,
     WorkspaceResponse,
@@ -17,6 +18,10 @@ from app.modules.idea_validation.service import (
     market_fit,
     update_workspace,
     upsert_user_workspace,
+)
+from app.modules.idea_validation.market_research_service import (
+    flatten_fields_from_payload,
+    run_market_research,
 )
 from app.shared.auth.deps import get_current_user
 
@@ -110,3 +115,20 @@ async def patch_validation_workspace(
         name=payload.name,
     )
     return WorkspaceResponse.from_doc(ws)
+
+
+@router.post("/market-research")
+async def market_research_endpoint(
+    payload: MarketResearchRequest,
+    user=Depends(get_current_user),
+) -> dict:
+    if payload.idea_validation:
+        fields = flatten_fields_from_payload(payload.idea_validation)
+    elif payload.workspace_id:
+        ws = await get_workspace(user_id=user["id"], workspace_id=payload.workspace_id)
+        ws_data = ws.data or {}
+        iv = ws_data.get("idea_validation") or ws_data.get("draft_idea_validation") or {}
+        fields = flatten_fields_from_payload(iv)
+    else:
+        fields = {}
+    return await run_market_research(fields)

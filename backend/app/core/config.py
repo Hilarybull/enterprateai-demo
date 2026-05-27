@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     emergent_llm_key: str | None = Field(default=None, validation_alias=AliasChoices("EMERGENT_LLM_KEY",))
 
     # Optional integrations (placeholders for future modules)
+    serp_api_key: str | None = Field(default=None, validation_alias=AliasChoices("SERP_API_KEY", "SERPAPI_KEY"))
+    serper_api_key: str | None = Field(default=None, validation_alias=AliasChoices("SERPER_API_KEY",))
+    perplexity_api_key: str | None = Field(default=None, validation_alias=AliasChoices("PERPLEXITY_API_KEY",))
     companies_house_api_key: str | None = Field(default=None, validation_alias=AliasChoices("COMPANIES_HOUSE_API_KEY",))
     fred_api_key: str | None = Field(default=None, validation_alias=AliasChoices("FRED_API_KEY",))
     dataforseo_login: str | None = Field(default=None, validation_alias=AliasChoices("DATAFORSEO_LOGIN",))

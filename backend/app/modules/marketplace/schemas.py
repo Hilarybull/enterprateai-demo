@@ -73,3 +73,38 @@ class RatingResponse(BaseModel):
     rating_count: int = 0
     user_rating: int | None = None
     user_review: str | None = None
+
+
+class RFQItemRequest(BaseModel):
+    name: str
+    quantity: int = 1
+    notes: str | None = None
+
+
+class RFQSubmitRequest(BaseModel):
+    customer_name: str
+    customer_email: str
+    items: list[RFQItemRequest]
+    message: str | None = None
+
+
+class RFQOut(BaseModel):
+    id: str
+    workspace_id: str
+    customer_name: str
+    customer_email: str
+    items: list[dict]
+    message: str | None = None
+    status: str
+    created_at: str
+    quote_id: str | None = None
+
+
+class RFQListResponse(BaseModel):
+    items: list[RFQOut]
+    total: int
+
+
+class RFQApproveRequest(BaseModel):
+    validity_days: int = 30
+    notes: str | None = None

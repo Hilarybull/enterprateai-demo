@@ -229,6 +229,130 @@ function FilterChip({ label, active, onClick }) {
   );
 }
 
+// ─── RFQ modal ────────────────────────────────────────────────────────────────
+
+function RFQModal({ listing, onClose }) {
+  const [form, setForm] = useState({ name: "", email: "", message: "" });
+  const [items, setItems] = useState([{ name: "", quantity: 1, notes: "" }]);
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  function addItem() {
+    setItems((prev) => [...prev, { name: "", quantity: 1, notes: "" }]);
+  }
+
+  function removeItem(idx) {
+    setItems((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function updateItem(idx, field, value) {
+    setItems((prev) => prev.map((item, i) => i === idx ? { ...item, [field]: field === "quantity" ? Math.max(1, Number(value) || 1) : value } : item));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.name.trim() || !form.email.trim()) { setError("Name and email are required."); return; }
+    if (!items.some((item) => item.name.trim())) { setError("Add at least one product or service."); return; }
+    setSubmitting(true); setError(null);
+    try {
+      await apiRequest(`/marketplace/rfq/${listing.workspace_id}`, "POST", {
+        customer_name: form.name.trim(),
+        customer_email: form.email.trim(),
+        items: items.filter((item) => item.name.trim()).map((item) => ({ name: item.name.trim(), quantity: item.quantity, notes: item.notes.trim() || null })),
+        message: form.message.trim() || null,
+      });
+      setDone(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to send request.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="ea-dialog relative z-10 w-full max-w-lg overflow-hidden" style={{ maxHeight: "90vh" }}>
+        <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800">
+          <div>
+            <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Request Quotation</h3>
+            <p className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">from {listing.company_name}</p>
+          </div>
+          <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+
+        {done ? (
+          <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>
+            </div>
+            <h4 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Request sent!</h4>
+            <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">{listing.company_name} will review your request and send a quotation to your email.</p>
+            <button onClick={onClose} className="mt-6 rounded-xl bg-brand-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 transition">Done</button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="ea-scroll overflow-y-auto px-5 py-4" style={{ maxHeight: "calc(90vh - 80px)" }}>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="ea-label">Your Name *</label>
+                <input className="ea-input" placeholder="Full name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              </div>
+              <div>
+                <label className="ea-label">Your Email *</label>
+                <input type="email" className="ea-input" placeholder="email@example.com" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between">
+                <label className="ea-label mb-0">Products / Services *</label>
+                <button type="button" onClick={addItem} className="text-[11px] font-semibold text-brand-600 hover:text-brand-700 dark:text-brand-400">+ Add item</button>
+              </div>
+              <div className="space-y-2">
+                {items.map((item, idx) => (
+                  <div key={idx} className="grid grid-cols-[1fr,80px,auto] items-start gap-2">
+                    <input className="ea-input" placeholder="Product or service name" value={item.name} onChange={(e) => updateItem(idx, "name", e.target.value)} />
+                    <input type="number" min="1" className="ea-input" placeholder="Qty" value={item.quantity} onChange={(e) => updateItem(idx, "quantity", e.target.value)} />
+                    {items.length > 1 ? (
+                      <button type="button" onClick={() => removeItem(idx)} className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500 dark:border-slate-700">
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                      </button>
+                    ) : <div className="h-9 w-9" />}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <label className="ea-label">Message (optional)</label>
+              <textarea className="ea-input resize-none" rows={3} placeholder="Additional details, timeline, or requirements…" value={form.message} onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))} />
+            </div>
+
+            {error && <p className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700 dark:border-rose-800 dark:bg-rose-900/20 dark:text-rose-400">{error}</p>}
+
+            <div className="mt-4 flex gap-2">
+              <button type="submit" disabled={submitting} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 transition disabled:opacity-50">
+                {submitting ? <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg> : null}
+                Send Request
+              </button>
+              <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-[13px] font-medium text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">Cancel</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── sign up gate modal ────────────────────────────────────────────────────────
 
 function SignUpGateModal({ action, onClose }) {
@@ -291,7 +415,7 @@ function DetailRow({ icon, label, value }) {
 
 // ─── business profile modal ───────────────────────────────────────────────────
 
-function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, onNeedAuth }) {
+function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, onNeedAuth, onRequestQuote }) {
   const grad = avatarGradient(listing.company_name);
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
   const isOwnListing = isLoggedIn && ownWorkspaceId === listing.workspace_id;
@@ -462,6 +586,25 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
             </div>
           </div>
 
+          {/* Request Quotation */}
+          {!isOwnListing && (
+            <div className="mt-5 rounded-2xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-800 dark:bg-brand-900/20">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-[13px] font-bold text-brand-800 dark:text-brand-300">Request a Quotation</div>
+                  <div className="mt-0.5 text-[11px] text-brand-600 dark:text-brand-400">Send your requirements and get a formal quote from {listing.company_name}.</div>
+                </div>
+                <button
+                  onClick={() => onRequestQuote(listing)}
+                  className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-brand-700 transition"
+                >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
+                  Request Quotation
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Ratings section */}
           <div className="mt-6 border-t border-slate-100 dark:border-slate-800 pt-5">
             <h4 className="mb-4 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Ratings & Reviews</h4>
@@ -580,6 +723,7 @@ export default function MarketplacePage() {
 
   const [selected, setSelected] = useState(null);
   const [gateAction, setGateAction] = useState(null); // "rate" | "publish" | null
+  const [rfqTarget, setRfqTarget] = useState(null);
 
   const PAGE_SIZE = 24;
 
@@ -875,15 +1019,17 @@ export default function MarketplacePage() {
       </div>
 
       {/* Modals */}
-      {selected && (
+      {selected && !rfqTarget && (
         <BusinessProfileModal
           listing={selected}
           onClose={() => setSelected(null)}
           isLoggedIn={isLoggedIn}
           ownWorkspaceId={myStatus?.workspace_id || workspaceId}
           onNeedAuth={(action) => { setSelected(null); setGateAction(action); }}
+          onRequestQuote={(listing) => setRfqTarget(listing)}
         />
       )}
+      {rfqTarget && <RFQModal listing={rfqTarget} onClose={() => setRfqTarget(null)} />}
       {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}
     </div>
   );

@@ -11,15 +11,23 @@ from app.modules.marketplace.schemas import (
     MarketplaceUnpublishRequest,
     RatingSubmitRequest,
     RatingResponse,
+    RFQApproveRequest,
+    RFQListResponse,
+    RFQOut,
+    RFQSubmitRequest,
 )
 from app.modules.marketplace.service import (
+    approve_rfq,
     delete_rating,
     get_listing,
     get_listing_status,
     get_ratings,
     list_marketplace,
+    list_rfqs,
     publish_workspace,
+    reject_rfq,
     submit_rating,
+    submit_rfq,
     unpublish_workspace,
 )
 
@@ -104,3 +112,52 @@ async def remove_rating(
     user=Depends(get_current_user),
 ):
     return await delete_rating(workspace_id=workspace_id, user_id=user["id"])
+
+
+# ─── RFQ endpoints ────────────────────────────────────────────────────────────
+
+@router.post("/rfq/{workspace_id}", response_model=RFQOut)
+async def submit_rfq_endpoint(workspace_id: str, payload: RFQSubmitRequest):
+    """Public: any visitor can submit a request for quotation to a listed business."""
+    return await submit_rfq(
+        workspace_id=workspace_id,
+        customer_name=payload.customer_name,
+        customer_email=payload.customer_email,
+        items=[i.model_dump() for i in payload.items],
+        message=payload.message,
+    )
+
+
+@router.get("/rfq", response_model=RFQListResponse)
+async def list_rfq_endpoint(
+    workspace_id: str | None = Query(default=None),
+    user=Depends(get_current_user),
+):
+    """Owner: view incoming RFQs for their workspace."""
+    return await list_rfqs(user_id=user["id"], workspace_id=workspace_id)
+
+
+@router.post("/rfq/{rfq_id}/approve")
+async def approve_rfq_endpoint(
+    rfq_id: str,
+    payload: RFQApproveRequest,
+    workspace_id: str | None = Query(default=None),
+    user=Depends(get_current_user),
+):
+    """Owner: approve an RFQ — creates a draft quote and returns data for the frontend to share."""
+    return await approve_rfq(
+        user_id=user["id"],
+        workspace_id=workspace_id,
+        rfq_id=rfq_id,
+        validity_days=payload.validity_days,
+    )
+
+
+@router.post("/rfq/{rfq_id}/reject", response_model=RFQOut)
+async def reject_rfq_endpoint(
+    rfq_id: str,
+    workspace_id: str | None = Query(default=None),
+    user=Depends(get_current_user),
+):
+    """Owner: reject an incoming RFQ."""
+    return await reject_rfq(user_id=user["id"], workspace_id=workspace_id, rfq_id=rfq_id)

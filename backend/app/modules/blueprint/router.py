@@ -21,6 +21,7 @@ from app.modules.blueprint.schemas import (
     BlueprintShareCreateRequest,
     BlueprintShareLinkResponse,
     BlueprintSharedDocument,
+    QuotationRespondRequest,
 )
 from app.modules.blueprint.service import generate_blueprint
 from app.modules.blueprint.share_repository import (
@@ -322,6 +323,20 @@ async def blueprint_shared_document_export(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}.pdf"'},
     )
+
+
+@router.post("/share/{token}/respond")
+async def blueprint_quotation_respond(
+    token: str,
+    payload: QuotationRespondRequest,
+    email: str | None = Query(default=None),
+):
+    """Public: customer accepts or rejects a shared quotation."""
+    if payload.action not in ("accept", "reject"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="action must be 'accept' or 'reject'")
+    viewer_email = str(payload.email or email or "").strip()
+    from app.modules.marketplace.service import respond_to_quote
+    return await respond_to_quote(token=token, viewer_email=viewer_email, action=payload.action)
 
 
 @router.get("/documents/{document_id}/export")

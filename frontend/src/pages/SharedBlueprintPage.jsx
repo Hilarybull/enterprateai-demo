@@ -213,6 +213,9 @@ export default function SharedBlueprintPage() {
   const [emailRequired, setEmailRequired] = useState(false);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  const [respondAction, setRespondAction] = useState(null); // "accept" | "reject" | null
+  const [respondDone, setRespondDone] = useState(false);
+  const [respondError, setRespondError] = useState(null);
 
   function isEmailGateMessage(message) {
     return (
@@ -380,6 +383,24 @@ export default function SharedBlueprintPage() {
     }
   }
 
+  const isQuotationAcceptance = String(doc?.type || "").startsWith("quotation_acceptance");
+
+  async function handleRespond(action) {
+    setRespondAction(action);
+    setRespondError(null);
+    try {
+      await apiRequest(`/blueprint/share/${token}/respond`, "POST", {
+        action,
+        email: submittedEmail.trim() || null,
+      });
+      setRespondDone(action);
+    } catch (e) {
+      setRespondError(e instanceof Error ? e.message : "Failed to submit response.");
+    } finally {
+      setRespondAction(null);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fbff_0%,#f8fafc_45%,#f8fafc_100%)]">
       <div className="fixed left-0 right-0 top-0 z-50 border-b border-slate-200/80 bg-white/90 backdrop-blur">
@@ -493,6 +514,57 @@ export default function SharedBlueprintPage() {
         ) : (
             <div className="mt-8 rounded-[28px] border border-slate-200 bg-white px-5 py-6 text-center text-sm text-slate-600 shadow-[0_20px_60px_rgba(15,23,42,0.06)]">
             This share link is valid, but the document is empty.
+          </div>
+        )}
+
+        {/* Quotation Accept/Reject */}
+        {isQuotationAcceptance && !loading && bodyHtml.trim() && (
+          <div className="mt-6 rounded-[28px] border border-slate-200 bg-white px-6 py-6 shadow-[0_20px_60px_rgba(15,23,42,0.06)]">
+            {respondDone ? (
+              <div className="flex flex-col items-center gap-3 py-4 text-center">
+                <div className={`flex h-14 w-14 items-center justify-center rounded-2xl ${respondDone === "accept" ? "bg-emerald-100 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
+                  {respondDone === "accept" ? (
+                    <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>
+                  ) : (
+                    <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                  )}
+                </div>
+                <div className="text-[15px] font-bold text-slate-900">
+                  {respondDone === "accept" ? "Quotation accepted!" : "Quotation rejected."}
+                </div>
+                <p className="text-sm text-slate-500">
+                  {respondDone === "accept"
+                    ? "Your acceptance has been recorded. The business will be in touch to confirm next steps."
+                    : "Your rejection has been recorded. Thank you for your response."}
+                </p>
+              </div>
+            ) : (
+              <>
+                <h3 className="mb-1 text-[15px] font-bold text-slate-900">Respond to this Quotation</h3>
+                <p className="mb-4 text-sm text-slate-500">Please review the quotation above and let us know if you accept or reject it.</p>
+                {respondError && (
+                  <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{respondError}</div>
+                )}
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    disabled={Boolean(respondAction)}
+                    onClick={() => handleRespond("accept")}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-50"
+                  >
+                    {respondAction === "accept" ? <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg> : <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>}
+                    Accept Quotation
+                  </button>
+                  <button
+                    disabled={Boolean(respondAction)}
+                    onClick={() => handleRespond("reject")}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-6 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                  >
+                    {respondAction === "reject" ? <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg> : <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>}
+                    Reject Quotation
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

@@ -122,6 +122,11 @@ class BlueprintShareEmailResponse(BaseModel):
     error: Optional[str] = None
 
 
+class QuotationRespondRequest(BaseModel):
+    action: str  # "accept" or "reject"
+    email: Optional[EmailStr] = None
+
+
 class BlueprintShareCreateRequest(BaseModel):
     access_mode: str = "link"
     email: Optional[EmailStr] = None

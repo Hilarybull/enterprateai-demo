@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 import anyio
-import httpx
 from supabase import Client, ClientOptions, create_client
 
 from app.core.config import get_settings
@@ -17,8 +16,11 @@ def get_supabase_client() -> Client:
         settings = get_settings()
         if not settings.supabase_url or not settings.supabase_service_role_key:
             raise RuntimeError("Supabase URL / service role key not configured")
-        httpx_client = httpx.Client(http2=False, timeout=25)
-        options = ClientOptions(httpx_client=httpx_client)
+        try:
+            options = ClientOptions(http2=False)
+        except TypeError:
+            # Older/newer supabase-py releases expose different ClientOptions signatures.
+            options = ClientOptions()
         _client = create_client(settings.supabase_url, settings.supabase_service_role_key, options=options)
     return _client
 

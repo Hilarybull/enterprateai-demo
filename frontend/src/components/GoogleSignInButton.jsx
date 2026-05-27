@@ -20,7 +20,7 @@ function loadGoogleScript() {
 }
 
 export default function GoogleSignInButton({ onCredential, disabled }) {
-  const clientId = import.meta.env.REACT_APP_GOOGLE_CLIENT_ID;
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || import.meta.env.REACT_APP_GOOGLE_CLIENT_ID;
   const ref = useRef(null);
   const wrapRef = useRef(null);
   const callbackRef = useRef(onCredential);

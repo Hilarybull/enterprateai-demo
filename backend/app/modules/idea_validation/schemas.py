@@ -67,9 +67,9 @@ class BusinessContext(BaseModel):
 class ProblemCustomer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     customer_segment: str = Field(default="", max_length=120)
-    problem_type: str = Field(default="", max_length=32)
-    frequency: str = Field(default="", max_length=32)
-    alternatives: Optional[str] = Field(default=None, max_length=280)
+    problem_type: str = Field(default="", max_length=160)
+    frequency: str = Field(default="", max_length=80)
+    alternatives: Optional[str] = Field(default=None, max_length=400)
 
 
 class OfferDefinition(BaseModel):
@@ -148,3 +148,8 @@ class ValidationResult(BaseModel):
 class UpdateWorkspaceRequest(BaseModel):
     name: Optional[str] = Field(default=None, max_length=64)
     data: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MarketResearchRequest(BaseModel):
+    workspace_id: Optional[str] = None
+    idea_validation: Optional[Dict[str, Any]] = None

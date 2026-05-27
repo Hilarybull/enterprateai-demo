@@ -40,6 +40,101 @@ function FieldLabel({ children, info }) {
 }
 
 const UPPER_ABBREVIATIONS = new Set(["llp", "sme", "smes", "b2b", "b2c", "b2g", "it", "hr", "uk", "usa"]);
+const VALIDATION_DEFAULTS_KEY = "ea_validation_stage_defaults";
+const FREQUENCY_OPTIONS = ["daily", "weekly", "monthly", "yearly", "custom"];
+
+function loadValidationStageDefaults() {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(VALIDATION_DEFAULTS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function deriveFrequencyFields(value) {
+  const raw = String(value || "").trim();
+  const normalized = raw.toLowerCase();
+  if (!raw) {
+    return { frequency: "", frequency_category: "", frequency_custom: "" };
+  }
+  if (["daily", "weekly", "monthly", "yearly"].includes(normalized)) {
+    return { frequency: normalized, frequency_category: normalized, frequency_custom: "" };
+  }
+  return { frequency: raw, frequency_category: "custom", frequency_custom: raw };
+}
+
+function buildInitialBusinessForm() {
+  const defaults = loadValidationStageDefaults();
+  const frequencyFields = deriveFrequencyFields(defaults.frequency || "");
+  return {
+    pathway: "business_idea",
+    context: {
+      business_name: defaults.business_name || "",
+      business_type_category: defaults.business_type_category || "Technology",
+      business_type_other: defaults.business_type_other || "",
+      primary_industry_category: defaults.primary_industry_category || "IT",
+      primary_industry_other: defaults.primary_industry_other || "",
+      location: defaults.location || "",
+      currency: defaults.currency || "GBP",
+      founder_hours_per_week: "40",
+      stage: "idea"
+    },
+    problem: {
+      customer_segment_category: defaults.customer_segment_category || "SMEs",
+      customer_segment_other: defaults.customer_segment_other || "",
+      problem_type: defaults.problem_type || "",
+      frequency: frequencyFields.frequency,
+      frequency_category: frequencyFields.frequency_category,
+      frequency_custom: frequencyFields.frequency_custom,
+      alternatives: defaults.alternatives || ""
+    },
+    offer: {
+      service_type: defaults.service_type || "",
+      pricing_model: "fixed_job",
+      price_per_unit: "",
+      deliverable_unit_category: "unit",
+      deliverable_unit_other: ""
+    },
+    demand: { expected_units_per_month: "", expected_customers: "", sales_cycle_days: "", payment_terms_days: "14" },
+    costs: { variable_cost_per_unit: "", fixed_costs_monthly: "", founder_draw_monthly: "", contractor_costs_monthly: "" },
+    capacity: { team_size: "1", capacity_units_per_person_per_month: "" },
+    cash: { starting_cash: "", upfront_costs: "" },
+    go_to_market: { target_market: "B2C", customer_budget_level: "Unknown", sub_industry: "", channels: [] }
+  };
+}
+
+function mergeStageDefaultsIntoBusinessForm(source) {
+  const defaults = loadValidationStageDefaults();
+  const next = structuredClone(source || buildInitialBusinessForm());
+  next.context ||= {};
+  next.problem ||= {};
+  next.offer ||= {};
+
+  next.context.business_name ||= defaults.business_name || "";
+  next.context.business_type_category ||= defaults.business_type_category || "Technology";
+  next.context.business_type_other ||= defaults.business_type_other || "";
+  next.context.primary_industry_category ||= defaults.primary_industry_category || "IT";
+  next.context.primary_industry_other ||= defaults.primary_industry_other || "";
+  next.context.location ||= defaults.location || "";
+  next.context.currency ||= defaults.currency || "GBP";
+
+  next.problem.customer_segment_category ||= defaults.customer_segment_category || "SMEs";
+  next.problem.customer_segment_other ||= defaults.customer_segment_other || "";
+  next.problem.problem_type ||= defaults.problem_type || "";
+  next.problem.alternatives ||= defaults.alternatives || "";
+
+  if (!String(next.problem.frequency || "").trim()) {
+    next.problem.frequency = defaults.frequency || "";
+  }
+
+  next.offer.service_type ||= defaults.service_type || "";
+  return next;
+}
+
 function formatEnumLabel(value) {
   const raw = String(value || "");
   if (!raw) return "";
@@ -102,8 +197,14 @@ export default function ValidationWizardPage() {
   const [contentTab, setContentTab] = useState("builder");
   const [historyFilter, setHistoryFilter] = useState("all");
   const [historyRequestHandled, setHistoryRequestHandled] = useState(false);
+  const [marketResearch, setMarketResearch] = useState(null);
+  const [mrLoading, setMrLoading] = useState(false);
+  const [mrError, setMrError] = useState(null);
+  const [stageOneResearchReady, setStageOneResearchReady] = useState(false);
+  const [showBuilderMarketInsight, setShowBuilderMarketInsight] = useState(false);
+  const initialStageDefaults = useMemo(() => loadValidationStageDefaults(), []);
 
-  const [workspaceName, setWorkspaceName] = useState("");
+  const [workspaceName, setWorkspaceName] = useState(() => String(loadValidationStageDefaults().workspace_name || "").trim());
   const [workspaceNameTouched, setWorkspaceNameTouched] = useState(false);
 
   const BUSINESS_TYPE_OPTIONS = useMemo(() => ["Technology", "Health", "Finance", "Cleaning", "Education", "Retail", "Logistics", "Real Estate", "Hospitality", "Manufacturing", "Agriculture", "Media", "Other"], []);
@@ -176,17 +277,7 @@ export default function ValidationWizardPage() {
   );
   const DIFFERENTIATION_OPTIONS = useMemo(() => ["low", "medium", "high"], []);
 
-  const [form, setForm] = useState(() => ({
-    pathway: "business_idea",
-    context: { business_name: "", business_type_category: "Technology", business_type_other: "", primary_industry_category: "IT", primary_industry_other: "", location: "", currency: "GBP", founder_hours_per_week: "40", stage: "idea" },
-    problem: { customer_segment_category: "SMEs", customer_segment_other: "", problem_type: "", frequency: "", alternatives: "" },
-    offer: { service_type: "", pricing_model: "fixed_job", price_per_unit: "", deliverable_unit_category: "unit", deliverable_unit_other: "" },
-    demand: { expected_units_per_month: "", expected_customers: "", sales_cycle_days: "", payment_terms_days: "14" },
-    costs: { variable_cost_per_unit: "", fixed_costs_monthly: "", founder_draw_monthly: "", contractor_costs_monthly: "" },
-    capacity: { team_size: "1", capacity_units_per_person_per_month: "" },
-    cash: { starting_cash: "", upfront_costs: "" },
-    go_to_market: { target_market: "B2C", customer_budget_level: "Unknown", sub_industry: "", channels: [] }
-  }));
+  const [form, setForm] = useState(() => buildInitialBusinessForm());
   const [serviceForm, setServiceForm] = useState(() => ({
     service_name: "",
     service_category: "consulting",
@@ -345,6 +436,154 @@ export default function ValidationWizardPage() {
         : { business: true, offer_demand: true, costs: true, capacity_cash: true, go_to_market: true }
   );
   const selectedCount = useMemo(() => Object.values(enabledForms).filter(Boolean).length, [enabledForms]);
+  const isBusinessStageFlow = !isCreateWorkspace && !isProductPath;
+  const isServiceStageFlow = !isCreateWorkspace && isProductPath;
+  const businessStageKeys = useMemo(
+    () => (isBusinessStageFlow ? formBlocks.map((block) => block.key) : []),
+    [formBlocks, isBusinessStageFlow]
+  );
+  const serviceStageKeys = useMemo(
+    () => (isServiceStageFlow ? formBlocks.map((block) => block.key) : []),
+    [formBlocks, isServiceStageFlow]
+  );
+  const [currentBusinessStageIndex, setCurrentBusinessStageIndex] = useState(0);
+  const [currentServiceStageIndex, setCurrentServiceStageIndex] = useState(0);
+  const currentBusinessStageKey = businessStageKeys[currentBusinessStageIndex] || null;
+  const currentBusinessStageMeta = formBlocks[currentBusinessStageIndex] || null;
+  const isLastBusinessStage = isBusinessStageFlow && currentBusinessStageIndex === businessStageKeys.length - 1;
+  const currentServiceStageKey = serviceStageKeys[currentServiceStageIndex] || null;
+  const currentServiceStageMeta = formBlocks[currentServiceStageIndex] || null;
+  const isLastServiceStage = isServiceStageFlow && currentServiceStageIndex === serviceStageKeys.length - 1;
+  const currentInsightStageKey = isBusinessStageFlow ? currentBusinessStageKey : isServiceStageFlow ? currentServiceStageKey : null;
+  const insightVisibility = useMemo(() => {
+    const base = {
+      showSummary: true,
+      showValidationResult: true,
+      showMarketOpportunity: true,
+      showTargetCustomer: true,
+      showProblemValidation: true,
+      showDemandSignals: true,
+      showAlternativeSolutions: false,
+      showCompetitorMatrix: false,
+      showCompetitorPricing: false,
+      showPricingStrategy: false,
+      showRecommendedPriceRange: false,
+      showViabilityScore: false,
+      showPositioning: false,
+      showGoToMarket: false,
+      showRisks: false,
+      showNextActions: false,
+    };
+
+    const byStage = {
+      business: base,
+      offer_demand: {
+        ...base,
+        showAlternativeSolutions: true,
+        showCompetitorMatrix: true,
+        showCompetitorPricing: true,
+        showPricingStrategy: true,
+        showRecommendedPriceRange: true,
+      },
+      costs: {
+        ...base,
+        showAlternativeSolutions: true,
+        showCompetitorMatrix: true,
+        showCompetitorPricing: true,
+        showPricingStrategy: true,
+        showRecommendedPriceRange: true,
+        showViabilityScore: true,
+        showRisks: true,
+      },
+      capacity_cash: {
+        ...base,
+        showAlternativeSolutions: true,
+        showCompetitorMatrix: true,
+        showCompetitorPricing: true,
+        showPricingStrategy: true,
+        showRecommendedPriceRange: true,
+        showViabilityScore: true,
+        showRisks: true,
+      },
+      go_to_market: {
+        ...base,
+        showAlternativeSolutions: true,
+        showCompetitorMatrix: true,
+        showCompetitorPricing: true,
+        showPricingStrategy: true,
+        showRecommendedPriceRange: true,
+        showViabilityScore: true,
+        showPositioning: true,
+        showGoToMarket: true,
+        showRisks: true,
+        showNextActions: true,
+      },
+      service_basics: base,
+      revenue_inputs: {
+        ...base,
+        showAlternativeSolutions: true,
+        showCompetitorMatrix: true,
+        showCompetitorPricing: true,
+        showPricingStrategy: true,
+        showRecommendedPriceRange: true,
+      },
+      direct_costs: {
+        ...base,
+        showAlternativeSolutions: true,
+        showCompetitorMatrix: true,
+        showCompetitorPricing: true,
+        showPricingStrategy: true,
+        showRecommendedPriceRange: true,
+        showViabilityScore: true,
+      },
+      fixed_costs: {
+        ...base,
+        showAlternativeSolutions: true,
+        showCompetitorMatrix: true,
+        showCompetitorPricing: true,
+        showPricingStrategy: true,
+        showRecommendedPriceRange: true,
+        showViabilityScore: true,
+        showRisks: true,
+      },
+      capacity_inputs: {
+        ...base,
+        showAlternativeSolutions: true,
+        showCompetitorMatrix: true,
+        showCompetitorPricing: true,
+        showPricingStrategy: true,
+        showRecommendedPriceRange: true,
+        showViabilityScore: true,
+        showRisks: true,
+      },
+      demand_inputs: {
+        ...base,
+        showAlternativeSolutions: true,
+        showCompetitorMatrix: true,
+        showCompetitorPricing: true,
+        showPricingStrategy: true,
+        showRecommendedPriceRange: true,
+        showViabilityScore: true,
+        showRisks: true,
+        showNextActions: true,
+      },
+      competition: {
+        ...base,
+        showAlternativeSolutions: true,
+        showCompetitorMatrix: true,
+        showCompetitorPricing: true,
+        showPricingStrategy: true,
+        showRecommendedPriceRange: true,
+        showViabilityScore: true,
+        showPositioning: true,
+        showGoToMarket: true,
+        showRisks: true,
+        showNextActions: true,
+      },
+    };
+
+    return byStage[currentInsightStageKey] || base;
+  }, [currentInsightStageKey]);
 
   const derivedWorkspaceName = useMemo(() => {
     if (isCreateWorkspace) {
@@ -484,7 +723,7 @@ export default function ValidationWizardPage() {
         };
         setServiceForm((prev) => ({ ...prev, ...safeServiceDraft }));
       } else {
-        const safeDraft = {
+        const safeDraft = mergeStageDefaultsIntoBusinessForm({
           ...draft,
           context: { ...draft.context ?? {} },
           problem: { ...draft.problem ?? {} },
@@ -494,7 +733,7 @@ export default function ValidationWizardPage() {
           capacity: { ...draft.capacity ?? {} },
           cash: { ...draft.cash ?? {} },
           go_to_market: { ...draft.go_to_market ?? {} }
-        };
+        });
         setForm((prev) => ({
           ...prev,
           ...safeDraft,
@@ -514,6 +753,46 @@ export default function ValidationWizardPage() {
       console.error("Error applying draft:", err);
     }
   }, [draftIdeaValidation, draftServiceIdea, hasAppliedDrafts, isCreateWorkspace, isPrefilling]);
+
+  useEffect(() => {
+    if (isCreateWorkspace || isProductPath) return;
+    const payload = {
+      workspace_name: String(workspaceName || "").trim(),
+      business_name: String(form?.context?.business_name || "").trim(),
+      service_type: String(form?.offer?.service_type || "").trim(),
+      business_type_category: String(form?.context?.business_type_category || "").trim(),
+      business_type_other: String(form?.context?.business_type_other || "").trim(),
+      primary_industry_category: String(form?.context?.primary_industry_category || "").trim(),
+      primary_industry_other: String(form?.context?.primary_industry_other || "").trim(),
+      location: String(form?.context?.location || "").trim(),
+      currency: String(form?.context?.currency || "GBP").trim(),
+      customer_segment_category: String(form?.problem?.customer_segment_category || "").trim(),
+      customer_segment_other: String(form?.problem?.customer_segment_other || "").trim(),
+      problem_type: String(form?.problem?.problem_type || "").trim(),
+      frequency: String(form?.problem?.frequency || "").trim(),
+      alternatives: String(form?.problem?.alternatives || "").trim(),
+    };
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(VALIDATION_DEFAULTS_KEY, JSON.stringify(payload));
+    }
+  }, [
+    form?.context?.business_name,
+    workspaceName,
+    form?.offer?.service_type,
+    form?.context?.business_type_category,
+    form?.context?.business_type_other,
+    form?.context?.primary_industry_category,
+    form?.context?.primary_industry_other,
+    form?.context?.location,
+    form?.context?.currency,
+    form?.problem?.customer_segment_category,
+    form?.problem?.customer_segment_other,
+    form?.problem?.problem_type,
+    form?.problem?.frequency,
+    form?.problem?.alternatives,
+    isCreateWorkspace,
+    isProductPath,
+  ]);
 
   useEffect(() => {
     if (!isProductPath) return;
@@ -588,12 +867,17 @@ export default function ValidationWizardPage() {
   }, [isCreateWorkspace, isProductPath]);
 
   useEffect(() => {
+    setCurrentBusinessStageIndex(0);
+  }, [isBusinessStageFlow, form.pathway]);
+
+  useEffect(() => {
     async function prefill() {
       const wsId = editingWorkspaceId || storedWorkspaceId;
       if (!wsId) return;
       setIsPrefilling(true);
       setError(null);
       try {
+        const defaults = loadValidationStageDefaults();
         const ws = await apiRequest(`/validation/${wsId}`, "GET");
         const iv = ws?.data?.idea_validation || ws?.data?.draft_idea_validation;
         setExistingCatalogue(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
@@ -640,7 +924,7 @@ export default function ValidationWizardPage() {
           setWorkspaceId(wsId);
           setWorkspaceNameStore(ws?.name || null);
           if (!isProductPath) setDecisionStatus(ws?.data?.decision?.status || null);
-          setWorkspaceName(ws?.name || "");
+          setWorkspaceName(ws?.name || String(defaults.workspace_name || "").trim() || "");
           setWorkspaceNameTouched(true);
           return;
         }
@@ -648,10 +932,10 @@ export default function ValidationWizardPage() {
         setWorkspaceNameStore(ws?.name || null);
         if (!isProductPath) setDecisionStatus(ws?.data?.decision?.status || null);
         setIdeaValidation(iv);
-        setWorkspaceName(ws?.name || "");
+        setWorkspaceName(ws?.name || String(defaults.workspace_name || "").trim() || "");
         setWorkspaceNameTouched(true);
         const wp = ws?.data?.workspace_profile;
-        const next = structuredClone(iv);
+        const next = mergeStageDefaultsIntoBusinessForm(structuredClone(iv));
         next.pathway = form.pathway || next.pathway || "business_idea";
         if (wp && typeof wp === "object") {
           setWorkspaceLogoStore(wp.logo_data_url || null);
@@ -688,6 +972,10 @@ export default function ValidationWizardPage() {
         const cs = String(next?.problem?.customer_segment ?? "").trim();
         next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "SMEs";
         next.problem.customer_segment_other = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? "" : cs;
+        const frequencyFields = deriveFrequencyFields(next?.problem?.frequency ?? "");
+        next.problem.frequency = frequencyFields.frequency;
+        next.problem.frequency_category = frequencyFields.frequency_category;
+        next.problem.frequency_custom = frequencyFields.frequency_custom;
         const du = String(next?.offer?.deliverable_unit ?? "").trim();
         next.offer.deliverable_unit_category = DELIVERABLE_UNIT_OPTIONS.includes(du) ? du : du ? "Other" : "unit";
         next.offer.deliverable_unit_other = DELIVERABLE_UNIT_OPTIONS.includes(du) ? "" : du;
@@ -716,6 +1004,12 @@ export default function ValidationWizardPage() {
   }, [BUSINESS_TYPE_OPTIONS, CUSTOMER_SEGMENT_OPTIONS, DELIVERABLE_UNIT_OPTIONS, PRIMARY_INDUSTRY_OPTIONS, editingWorkspaceId, setDecisionStatus, setIdeaValidation, setWorkspaceId, setWorkspaceNameStore, storedWorkspaceId]);
 
   function selectPathway(value) {
+    setStageOneResearchReady(false);
+    setMarketResearch(null);
+    setMrError(null);
+    setShowBuilderMarketInsight(false);
+    setCurrentBusinessStageIndex(0);
+    setCurrentServiceStageIndex(0);
     setForm((prev) => ({
       ...prev,
       pathway: value
@@ -723,6 +1017,11 @@ export default function ValidationWizardPage() {
   }
 
   function update(path, value) {
+    setStageOneResearchReady(false);
+    setMarketResearch(null);
+    setMrError(null);
+    setShowBuilderMarketInsight(false);
+    setError(null);
     setForm((prev) => {
       const next = structuredClone(prev);
       const keys = path.split(".");
@@ -734,6 +1033,11 @@ export default function ValidationWizardPage() {
   }
 
   function updateService(path, value) {
+    setStageOneResearchReady(false);
+    setMarketResearch(null);
+    setMrError(null);
+    setShowBuilderMarketInsight(false);
+    setError(null);
     setServiceForm((prev) => {
       const next = structuredClone(prev);
       const keys = path.split(".");
@@ -856,6 +1160,10 @@ export default function ValidationWizardPage() {
     const cs = String(next?.problem?.customer_segment ?? "").trim();
     next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "SMEs";
     next.problem.customer_segment_other = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? "" : cs;
+    const frequencyFields = deriveFrequencyFields(next?.problem?.frequency ?? "");
+    next.problem.frequency = frequencyFields.frequency;
+    next.problem.frequency_category = frequencyFields.frequency_category;
+    next.problem.frequency_custom = frequencyFields.frequency_custom;
 
     const du = String(next?.offer?.deliverable_unit ?? "").trim();
     next.offer.deliverable_unit_category = DELIVERABLE_UNIT_OPTIONS.includes(du) ? du : du ? "Other" : "unit";
@@ -1079,7 +1387,210 @@ export default function ValidationWizardPage() {
   function startFilling() {
     if (!selectedCount) return setError("Select at least one section to continue.");
     setError(null);
+    if (isBusinessStageFlow) setCurrentBusinessStageIndex(0);
+    if (isServiceStageFlow) setCurrentServiceStageIndex(0);
     setMode("fill");
+  }
+
+  function updateFrequency(value) {
+    const nextValue = String(value || "").trim().toLowerCase();
+    setError(null);
+    setStageOneResearchReady(false);
+    setMarketResearch(null);
+    setMrError(null);
+    setForm((prev) => {
+      const next = structuredClone(prev);
+      next.problem.frequency_category = nextValue;
+      if (nextValue === "custom") {
+        next.problem.frequency = String(next.problem.frequency_custom || "").trim();
+      } else {
+        next.problem.frequency_custom = "";
+        next.problem.frequency = nextValue;
+      }
+      return next;
+    });
+  }
+
+  function updateCustomFrequency(value) {
+    setError(null);
+    setStageOneResearchReady(false);
+    setMarketResearch(null);
+    setMrError(null);
+    setForm((prev) => {
+      const next = structuredClone(prev);
+      next.problem.frequency_custom = value;
+      next.problem.frequency = value;
+      next.problem.frequency_category = "custom";
+      return next;
+    });
+  }
+
+  function buildBusinessIdeaPayloadForResearch() {
+    const payload = structuredClone(form);
+    payload.existing_business = null;
+    payload.context ||= {};
+    payload.problem ||= {};
+    payload.offer ||= {};
+    payload.demand ||= {};
+    payload.costs ||= {};
+    payload.capacity ||= {};
+    payload.cash ||= {};
+
+    const bt = String(payload.context.business_type_category || "").trim();
+    const btOther = String(payload.context.business_type_other || "").trim();
+    payload.context.business_type = bt === "Other" ? btOther || "Other" : bt || "Other";
+
+    const pi = String(payload.context.primary_industry_category || "").trim();
+    const piOther = String(payload.context.primary_industry_other || "").trim();
+    payload.context.primary_industry = pi === "Other" ? piOther || "Other" : pi || "Other";
+
+    const cs = String(payload.problem.customer_segment_category || "").trim();
+    const csOther = String(payload.problem.customer_segment_other || "").trim();
+    payload.problem.customer_segment = cs === "Other" ? csOther || "Other" : cs || "Other";
+
+    const duCat = String(payload.offer.deliverable_unit_category || "").trim();
+    const duOther = String(payload.offer.deliverable_unit_other || "").trim();
+    payload.offer.deliverable_unit = duCat === "Other" ? duOther || "unit" : duCat || "unit";
+
+    payload.context.founder_hours_per_week = parseNumber(payload.context.founder_hours_per_week, 40);
+    payload.offer.price_per_unit = parseNumber(payload.offer.price_per_unit, 0);
+    payload.demand.expected_units_per_month = parseNumber(payload.demand.expected_units_per_month, 0);
+    payload.demand.expected_customers = parseIntSafe(payload.demand.expected_customers, 0);
+    payload.demand.sales_cycle_days = parseIntSafe(payload.demand.sales_cycle_days, 0);
+    payload.demand.payment_terms_days = parseIntSafe(payload.demand.payment_terms_days, 14);
+    payload.costs.variable_cost_per_unit = parseNumber(payload.costs.variable_cost_per_unit, 0);
+    payload.costs.fixed_costs_monthly = parseNumber(payload.costs.fixed_costs_monthly, 0);
+    payload.costs.founder_draw_monthly = parseNumber(payload.costs.founder_draw_monthly, 0);
+    payload.costs.contractor_costs_monthly = parseNumber(payload.costs.contractor_costs_monthly, 0);
+    payload.capacity.team_size = Math.max(1, parseIntSafe(payload.capacity.team_size, 1));
+    payload.capacity.capacity_units_per_person_per_month = parseNumber(payload.capacity.capacity_units_per_person_per_month, 0);
+    payload.cash.starting_cash = parseNumber(payload.cash.starting_cash, 0);
+    payload.cash.upfront_costs = parseNumber(payload.cash.upfront_costs, 0);
+
+    delete payload.context.business_type_category;
+    delete payload.context.business_type_other;
+    delete payload.context.primary_industry_category;
+    delete payload.context.primary_industry_other;
+    delete payload.problem.customer_segment_category;
+    delete payload.problem.customer_segment_other;
+    delete payload.offer.deliverable_unit_category;
+    delete payload.offer.deliverable_unit_other;
+    return payload;
+  }
+
+  function buildServiceIdeaPayloadForResearch() {
+    return {
+      ...structuredClone(serviceForm),
+      currency: serviceCurrency || "GBP",
+    };
+  }
+
+  function validateBusinessStage(stageKey) {
+    if (!isBusinessStageFlow) return null;
+    if (stageKey === "business") {
+      if (!String(workspaceName || "").trim()) return "Business idea name is required.";
+      if (!String(form.context.business_name || "").trim()) return "Business name is required.";
+      if (!String(form.offer.service_type || "").trim()) return "What are you building is required.";
+      if (!String(form.context.business_type_category || "").trim()) return "Business type is required.";
+      if (!String(form.context.primary_industry_category || "").trim()) return "Primary industry is required.";
+      if (!String(form.context.location || "").trim()) return "Location is required.";
+      if (!String(form.context.currency || "").trim()) return "Currency is required.";
+      if (!String(form.problem.customer_segment_category || "").trim()) return "Customer segment is required.";
+      if (!String(form.problem.problem_type || "").trim()) return "Problem short is required.";
+      if (!String(form.problem.frequency || "").trim()) return "Frequency is required.";
+      if (!String(form.problem.alternatives || "").trim()) return "Alternatives is required.";
+      return null;
+    }
+    if (stageKey === "go_to_market") {
+      if (!String(form.go_to_market.target_market || "").trim()) return "Target market is required.";
+    }
+    return null;
+  }
+
+  function validateServiceStage(stageKey) {
+    if (!isServiceStageFlow) return null;
+    if (stageKey === "service_basics") {
+      if (!String(serviceForm.service_name || "").trim()) return "Service name is required.";
+      if (String(serviceForm.service_name || "").trim().length < 3) return "Service name should be at least 3 characters.";
+      if (!String(serviceForm.service_description || "").trim()) return "Service description is required.";
+      if (String(serviceForm.service_description || "").trim().length < 10) return "Service description should be at least 10 characters.";
+      if (!String(serviceForm.service_category || "").trim()) return "Service category is required.";
+      if (!String(serviceForm.target_customer_type || "").trim()) return "Target customer type is required.";
+      if (!String(serviceForm.target_market_scope || "").trim()) return "Target market scope is required.";
+      return null;
+    }
+    if (stageKey === "revenue_inputs") {
+      if (parseNumber(serviceForm.price_per_sale, 0) <= 0) return "Price per sale must be greater than 0.";
+      if (parseNumber(serviceForm.expected_sales_per_month, -1) < 0) return "Expected sales per month cannot be negative.";
+      return null;
+    }
+    if (stageKey === "direct_costs") {
+      if (String(serviceForm.direct_labour_cost_per_sale || "").trim() === "") return "Direct labour cost per sale is required.";
+      return null;
+    }
+    if (stageKey === "fixed_costs") {
+      if (String(serviceForm.monthly_software_cost || "").trim() === "") return "Monthly software cost is required.";
+      if (String(serviceForm.monthly_marketing_cost || "").trim() === "") return "Monthly marketing cost is required.";
+      if (String(serviceForm.monthly_admin_cost || "").trim() === "") return "Monthly admin cost is required.";
+      return null;
+    }
+    if (stageKey === "capacity_inputs") {
+      if (parseNumber(serviceForm.hours_required_per_sale, 0) <= 0) return "Hours required must be greater than 0.";
+      if (parseNumber(serviceForm.available_delivery_hours_per_month, 0) <= 0) return "Available delivery hours per month must be greater than 0.";
+      return null;
+    }
+    if (stageKey === "demand_inputs") {
+      if (!String(serviceForm.demand_evidence_type || "").trim()) return "Demand evidence type is required.";
+      return null;
+    }
+    if (stageKey === "competition") {
+      if (!String(serviceForm.differentiation_level || "").trim()) return "Differentiation level is required.";
+      return null;
+    }
+    return null;
+  }
+
+  async function goToNextBusinessStage() {
+    const stageError = validateBusinessStage(currentBusinessStageKey);
+    if (stageError) {
+      setError(stageError);
+      return;
+    }
+    if (!isLastBusinessStage) {
+      await runMarketResearch({ useCurrentForm: true, markStageOneReady: true, showInBuilder: true });
+      return;
+    }
+    setError(null);
+    setCurrentBusinessStageIndex((prev) => Math.min(prev + 1, Math.max(0, businessStageKeys.length - 1)));
+  }
+
+  function goToPreviousBusinessStage() {
+    setError(null);
+    setCurrentBusinessStageIndex((prev) => Math.max(prev - 1, 0));
+  }
+
+  async function goToNextServiceStage() {
+    const stageError = validateServiceStage(currentServiceStageKey);
+    if (stageError) {
+      setError(stageError);
+      return;
+    }
+    if (!isLastServiceStage) {
+      await runMarketResearch({
+        useCurrentForm: true,
+        markStageOneReady: true,
+        showInBuilder: true,
+        researchSource: "service",
+      });
+      return;
+    }
+    setError(null);
+    setCurrentServiceStageIndex((prev) => Math.min(prev + 1, Math.max(0, serviceStageKeys.length - 1)));
+  }
+
+  function goToPreviousServiceStage() {
+    setError(null);
+    setCurrentServiceStageIndex((prev) => Math.max(prev - 1, 0));
   }
 
   async function saveWorkspace(shouldEvaluate = false) {
@@ -1524,6 +2035,38 @@ export default function ValidationWizardPage() {
     }
   }
 
+  async function runMarketResearch(options = {}) {
+    const {
+      useCurrentForm = false,
+      markStageOneReady = false,
+      showInBuilder = false,
+      researchSource = isProductPath ? "service" : "business",
+    } = options;
+    if (showInBuilder) {
+      setShowBuilderMarketInsight(true);
+      setContentTab("builder");
+    }
+    setMrLoading(true);
+    setMrError(null);
+    setError(null);
+    try {
+      const wsId = editingWorkspaceId || storedWorkspaceId;
+      const body = useCurrentForm
+        ? { idea_validation: researchSource === "service" ? buildServiceIdeaPayloadForResearch() : buildBusinessIdeaPayloadForResearch() }
+        : wsId
+          ? { workspace_id: wsId }
+          : { idea_validation: researchSource === "service" ? buildServiceIdeaPayloadForResearch() : buildBusinessIdeaPayloadForResearch() };
+      const result = await apiRequest("/validation/market-research", "POST", body, { timeoutMs: 120000 });
+      setMarketResearch(result);
+      if (markStageOneReady) setStageOneResearchReady(true);
+    } catch (e) {
+      setMrError(e instanceof Error ? e.message : "Market research failed. Please try again.");
+      if (markStageOneReady) setStageOneResearchReady(false);
+    } finally {
+      setMrLoading(false);
+    }
+  }
+
   return (
     <div>
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between [@media(max-height:820px)]:gap-2">
@@ -1548,7 +2091,7 @@ export default function ValidationWizardPage() {
         </div>
         {!isCreateWorkspace ? (
           <div className="flex items-center gap-2">
-            <div className="w-[220px] max-w-full">
+            <div className="w-[240px] max-w-full">
               <SegmentedTabs
                 ariaLabel="Validation content tabs"
                 value={contentTab}
@@ -1556,12 +2099,17 @@ export default function ValidationWizardPage() {
                 size="sm"
                 options={[
                   { value: "builder", label: "Builder" },
+                  { value: "market_research", label: "Market research" },
                   { value: "history", label: "History" }
                 ]}
               />
             </div>
             <div className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
-              Sections selected: {selectedCount} / {formBlocks.length}
+              {isBusinessStageFlow
+                ? `Stage ${Math.min(currentBusinessStageIndex + 1, formBlocks.length)} of ${formBlocks.length}`
+                : isServiceStageFlow
+                  ? `Stage ${Math.min(currentServiceStageIndex + 1, formBlocks.length)} of ${formBlocks.length}`
+                : `Sections selected: ${selectedCount} / ${formBlocks.length}`}
             </div>
           </div>
         ) : null}
@@ -1587,7 +2135,751 @@ export default function ValidationWizardPage() {
           </div>
         ) : null}
 
-        {contentTab === "history" && !isCreateWorkspace ? (
+        {(contentTab === "builder" &&
+          showBuilderMarketInsight &&
+          (isBusinessStageFlow || isServiceStageFlow)) &&
+          !isCreateWorkspace ? (
+          <div className="space-y-4">
+            <SectionCard
+              title="Stage Insight"
+              subtitle="These insights were updated from the information you entered in this stage."
+            >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-sm text-slate-600">
+                    We searched the web and updated these insights using the information from this stage.
+                  </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setError(null);
+                      setShowBuilderMarketInsight(false);
+                    }}
+                  >
+                    Back to stage
+                  </Button>
+                  {mrError ? (
+                    <Button
+                      onClick={() => runMarketResearch({
+                        useCurrentForm: isBusinessStageFlow || isServiceStageFlow,
+                        markStageOneReady: true,
+                        showInBuilder: true,
+                        researchSource: isServiceStageFlow ? "service" : "business",
+                      })}
+                    >
+                      Retry insight
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              {mrError ? <div className="mt-3"><InlineAlert kind="error" message={mrError} /></div> : null}
+            </SectionCard>
+
+            {mrLoading ? (
+              <SectionCard title="Updating Insight">
+                <div className="flex items-center gap-3 text-sm text-slate-600">
+                  <Spinner size={20} />
+                  Searching live market data and synthesising the next stage insight... This may take up to 30 seconds.
+                </div>
+              </SectionCard>
+            ) : marketResearch ? (
+              <>
+                {(insightVisibility.showSummary || insightVisibility.showValidationResult) && (marketResearch.idea_validation_result || marketResearch.executive_summary) ? (
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+                    {insightVisibility.showSummary && marketResearch.executive_summary ? (
+                      <SectionCard title="Executive Summary" subtitle="Plain-English verdict on whether this idea is worth pursuing.">
+                        <div className="text-sm leading-6 text-slate-700">{marketResearch.executive_summary}</div>
+                      </SectionCard>
+                    ) : null}
+
+                    {insightVisibility.showValidationResult && marketResearch.idea_validation_result ? (
+                      <SectionCard title="Idea Validation Result" subtitle="The final recommendation distilled from the live market research.">
+                        <div className="space-y-3 text-sm">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded-xl bg-slate-50 p-3">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Overall Score</div>
+                              <div className="mt-1 text-base font-semibold text-slate-900">{marketResearch.idea_validation_result.overall_score || "Fair"}</div>
+                            </div>
+                            <div className="rounded-xl bg-slate-50 p-3">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended Action</div>
+                              <div className="mt-1 text-base font-semibold text-slate-900">{marketResearch.idea_validation_result.recommended_action || "Research more"}</div>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            {marketResearch.idea_validation_result.market_demand ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Market demand: {marketResearch.idea_validation_result.market_demand}</span> : null}
+                            {marketResearch.idea_validation_result.competition_level ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Competition: {marketResearch.idea_validation_result.competition_level}</span> : null}
+                            {marketResearch.idea_validation_result.pricing_opportunity ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Pricing: {marketResearch.idea_validation_result.pricing_opportunity}</span> : null}
+                            {marketResearch.idea_validation_result.execution_risk ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Execution risk: {marketResearch.idea_validation_result.execution_risk}</span> : null}
+                          </div>
+                        </div>
+                      </SectionCard>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* Viability Score */}
+                {insightVisibility.showViabilityScore && marketResearch.viability_score ? (() => {
+                  const vs = marketResearch.viability_score;
+                  const scoreColors = {
+                    "Very Strong": "bg-emerald-50 border-emerald-200 text-emerald-900",
+                    "Strong": "bg-green-50 border-green-200 text-green-900",
+                    "Fair": "bg-amber-50 border-amber-200 text-amber-900",
+                    "Weak": "bg-rose-50 border-rose-200 text-rose-900",
+                  };
+                  const barColors = {
+                    "Very Strong": "bg-emerald-500",
+                    "Strong": "bg-green-500",
+                    "Fair": "bg-amber-500",
+                    "Weak": "bg-rose-500",
+                  };
+                  const colorClass = scoreColors[vs.label] || scoreColors["Fair"];
+                  const barClass = barColors[vs.label] || barColors["Fair"];
+                  return (
+                    <div className={`rounded-2xl border p-5 ${colorClass}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide opacity-60">Viability Score</div>
+                          <div className="mt-1 text-3xl font-bold">{vs.score ?? "–"}<span className="text-base font-semibold opacity-60">/100</span></div>
+                          <div className="mt-1 text-lg font-semibold">{vs.label}</div>
+                        </div>
+                        <div className="max-w-sm flex-1 text-sm opacity-80">{vs.summary}</div>
+                      </div>
+                      <div className="mt-3 h-2 w-full rounded-full bg-black/10">
+                        <div className={`h-2 rounded-full ${barClass}`} style={{ width: `${Math.min(100, vs.score ?? 0)}%` }} />
+                      </div>
+                      {vs.recommended_action ? (
+                        <div className="mt-3 text-sm font-semibold opacity-80">Recommended action: {vs.recommended_action}</div>
+                      ) : null}
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                        {vs.market_demand ? <span className="rounded-full bg-black/10 px-2 py-0.5 font-semibold">Demand: {vs.market_demand}</span> : null}
+                        {vs.competition_level ? <span className="rounded-full bg-black/10 px-2 py-0.5 font-semibold">Competition: {vs.competition_level}</span> : null}
+                        {vs.pricing_opportunity ? <span className="rounded-full bg-black/10 px-2 py-0.5 font-semibold">Pricing: {vs.pricing_opportunity}</span> : null}
+                        {vs.execution_risk ? <span className="rounded-full bg-black/10 px-2 py-0.5 font-semibold">Exec risk: {vs.execution_risk}</span> : null}
+                      </div>
+                    </div>
+                  );
+                })() : null}
+
+                {/* Market Opportunity */}
+                {insightVisibility.showMarketOpportunity && marketResearch.market_opportunity ? (
+                  <SectionCard title="Market Opportunity">
+                    <div className="mb-3 text-sm text-slate-700">{marketResearch.market_opportunity.summary}</div>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Size</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">{marketResearch.market_opportunity.market_size || "–"}</div>
+                      </div>
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Growth Rate</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">{marketResearch.market_opportunity.growth_rate || "–"}</div>
+                      </div>
+                      {Array.isArray(marketResearch.market_opportunity.key_trends) && marketResearch.market_opportunity.key_trends.length ? (
+                        <div className="rounded-xl bg-slate-50 p-3">
+                          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Key Trends</div>
+                          <ul className="list-disc list-inside space-y-0.5 text-xs text-slate-700">
+                            {marketResearch.market_opportunity.key_trends.map((t, i) => <li key={i}>{t}</li>)}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
+                    {marketResearch.market_opportunity.location_opportunity ? (
+                      <div className="mt-3 rounded-xl bg-brand-50 p-3 text-sm text-brand-900">
+                        {marketResearch.market_opportunity.location_opportunity}
+                      </div>
+                    ) : null}
+                  </SectionCard>
+                ) : null}
+
+                {/* Target Customer + Problem Validation */}
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {insightVisibility.showTargetCustomer && marketResearch.target_customer ? (
+                    <SectionCard title="Target Customer">
+                      <div className="space-y-2 text-sm">
+                        {marketResearch.target_customer.profile ? (
+                          <div><span className="font-semibold text-slate-700">Profile: </span>{marketResearch.target_customer.profile}</div>
+                        ) : null}
+                        {marketResearch.target_customer.willingness_to_pay ? (
+                          <div><span className="font-semibold text-slate-700">Willingness to pay: </span>{marketResearch.target_customer.willingness_to_pay}</div>
+                        ) : null}
+                        {marketResearch.target_customer.urgency ? (
+                          <div><span className="font-semibold text-slate-700">Urgency: </span>{marketResearch.target_customer.urgency}</div>
+                        ) : null}
+                        {Array.isArray(marketResearch.target_customer.pain_points) && marketResearch.target_customer.pain_points.length ? (
+                          <div>
+                            <div className="font-semibold text-slate-700 mb-1">Pain Points</div>
+                            <ul className="list-disc list-inside space-y-0.5 text-slate-600">
+                              {marketResearch.target_customer.pain_points.map((p, i) => <li key={i}>{p}</li>)}
+                            </ul>
+                          </div>
+                        ) : null}
+                        {marketResearch.target_customer.buying_behaviour ? (
+                          <div><span className="font-semibold text-slate-700">Buying behaviour: </span>{marketResearch.target_customer.buying_behaviour}</div>
+                        ) : null}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+
+                  {insightVisibility.showProblemValidation && marketResearch.problem_validation ? (
+                    <SectionCard title="Problem Validation">
+                      <div className="space-y-2 text-sm">
+                        {marketResearch.problem_validation.evidence_strength ? (
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${marketResearch.problem_validation.evidence_strength === "Strong" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : marketResearch.problem_validation.evidence_strength === "Weak" ? "bg-rose-50 text-rose-700 ring-rose-200" : "bg-amber-50 text-amber-700 ring-amber-200"}`}>
+                              Evidence: {marketResearch.problem_validation.evidence_strength}
+                            </span>
+                          </div>
+                        ) : null}
+                        {marketResearch.problem_validation.frequency_assessment ? (
+                          <div className="text-slate-600">{marketResearch.problem_validation.frequency_assessment}</div>
+                        ) : null}
+                        {marketResearch.problem_validation.severity ? (
+                          <div><span className="font-semibold text-slate-700">Severity: </span>{marketResearch.problem_validation.severity}</div>
+                        ) : null}
+                        {Array.isArray(marketResearch.problem_validation.evidence) && marketResearch.problem_validation.evidence.length ? (
+                          <ul className="list-disc list-inside space-y-0.5 text-slate-600">
+                            {marketResearch.problem_validation.evidence.map((e, i) => <li key={i}>{e}</li>)}
+                          </ul>
+                        ) : null}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+                </div>
+
+                {/* Demand Signals */}
+                {insightVisibility.showDemandSignals && marketResearch.demand_signals ? (
+                  <SectionCard title="Demand Signals">
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {marketResearch.demand_signals.search_trend ? (
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ${marketResearch.demand_signals.search_trend === "rising" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : marketResearch.demand_signals.search_trend === "declining" ? "bg-rose-50 text-rose-700 ring-rose-200" : "bg-slate-100 text-slate-600 ring-slate-200"}`}>
+                          Search: {marketResearch.demand_signals.search_trend}
+                        </span>
+                      ) : null}
+                    </div>
+                    {Array.isArray(marketResearch.demand_signals.signals) && marketResearch.demand_signals.signals.length ? (
+                      <ul className="list-disc list-inside space-y-1 text-sm text-slate-600">
+                        {marketResearch.demand_signals.signals.map((s, i) => <li key={i}>{s}</li>)}
+                      </ul>
+                    ) : null}
+                    {marketResearch.demand_signals.online_discussion ? (
+                      <div className="mt-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">{marketResearch.demand_signals.online_discussion}</div>
+                    ) : null}
+                  </SectionCard>
+                ) : null}
+
+                {/* Alternative Solutions */}
+                {insightVisibility.showAlternativeSolutions && Array.isArray(marketResearch.alternative_solutions) && marketResearch.alternative_solutions.length ? (
+                  <SectionCard title="Alternative Solutions">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            <th className="pb-2 pr-4">Name</th>
+                            <th className="pb-2 pr-4">Type</th>
+                            <th className="pb-2">Weakness</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {marketResearch.alternative_solutions.map((alt, i) => (
+                            <tr key={i}>
+                              <td className="py-2 pr-4 font-medium text-slate-900">{alt.name}</td>
+                              <td className="py-2 pr-4 text-slate-500">{alt.type || "–"}</td>
+                              <td className="py-2 text-slate-600">{alt.weakness}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                ) : null}
+
+                {/* Competitor Matrix */}
+                {insightVisibility.showCompetitorMatrix && Array.isArray(marketResearch.competitor_matrix) && marketResearch.competitor_matrix.length ? (
+                  <SectionCard title="Competitor Matrix">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            <th className="pb-2 pr-4">Competitor</th>
+                            <th className="pb-2 pr-4">Positioning</th>
+                            <th className="pb-2 pr-4">Strengths</th>
+                            <th className="pb-2 pr-4">Weaknesses</th>
+                            <th className="pb-2">Est. Price</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {marketResearch.competitor_matrix.map((comp, i) => (
+                            <tr key={i}>
+                              <td className="py-2 pr-4 font-medium text-slate-900 align-top">{comp.name}</td>
+                              <td className="py-2 pr-4 text-slate-600 align-top">{comp.positioning || "–"}</td>
+                              <td className="py-2 pr-4 text-slate-600 align-top">{Array.isArray(comp.strengths) ? comp.strengths.join(", ") : comp.strengths || "–"}</td>
+                              <td className="py-2 pr-4 text-slate-600 align-top">{Array.isArray(comp.weaknesses) ? comp.weaknesses.join(", ") : comp.weaknesses || "–"}</td>
+                              <td className="py-2 text-slate-600 align-top">{comp.est_price || "–"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                ) : null}
+
+                {/* Competitor Pricing */}
+                {insightVisibility.showCompetitorPricing && Array.isArray(marketResearch.competitor_pricing) && marketResearch.competitor_pricing.length ? (
+                  <SectionCard title="Competitor Pricing Intelligence">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            <th className="pb-2 pr-4">Competitor</th>
+                            <th className="pb-2 pr-4">Price Range</th>
+                            <th className="pb-2 pr-4">Model</th>
+                            <th className="pb-2">Free Plan</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {marketResearch.competitor_pricing.map((cp, i) => (
+                            <tr key={i}>
+                              <td className="py-2 pr-4 font-medium text-slate-900">{cp.competitor}</td>
+                              <td className="py-2 pr-4 text-slate-600">{cp.price_range || "–"}</td>
+                              <td className="py-2 pr-4 text-slate-600">{cp.model || "–"}</td>
+                              <td className="py-2 text-slate-600">{cp.free_plan ? "Yes" : "No"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                ) : null}
+
+                {/* Pricing Strategy + Recommended Range */}
+                {insightVisibility.showPricingStrategy || insightVisibility.showRecommendedPriceRange ? (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {insightVisibility.showPricingStrategy && marketResearch.pricing_strategy ? (
+                    <SectionCard title="Pricing Strategy">
+                      <div className="space-y-2 text-sm">
+                        {marketResearch.pricing_strategy.recommended_model ? (
+                          <div><span className="font-semibold text-slate-700">Recommended model: </span>{marketResearch.pricing_strategy.recommended_model}</div>
+                        ) : null}
+                        {marketResearch.pricing_strategy.rationale ? (
+                          <div className="text-slate-600">{marketResearch.pricing_strategy.rationale}</div>
+                        ) : null}
+                        {marketResearch.pricing_strategy.launch_offer ? (
+                          <div className="rounded-xl bg-brand-50 p-3 text-brand-900 text-xs font-medium">
+                            Launch offer: {marketResearch.pricing_strategy.launch_offer}
+                          </div>
+                        ) : null}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+
+                  {insightVisibility.showRecommendedPriceRange && marketResearch.recommended_price_range ? (
+                    <SectionCard title="Recommended Price Range">
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        {[["low", "Entry"], ["mid", "Mid"], ["premium", "Premium"]].map(([key, label]) => (
+                          <div key={key} className="rounded-xl bg-slate-50 p-3">
+                            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</div>
+                            <div className="mt-1 text-sm font-bold text-slate-900">
+                              {marketResearch.recommended_price_range[key] ?? "–"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {marketResearch.recommended_price_range.notes ? (
+                        <div className="mt-2 text-xs text-slate-500">{marketResearch.recommended_price_range.notes}</div>
+                      ) : null}
+                    </SectionCard>
+                  ) : null}
+                </div>
+                ) : null}
+
+                {/* Positioning + Go-to-Market */}
+                {insightVisibility.showPositioning || insightVisibility.showGoToMarket ? (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {insightVisibility.showPositioning && marketResearch.positioning ? (
+                    <SectionCard title="Positioning Recommendation">
+                      <div className="space-y-2 text-sm">
+                        {marketResearch.positioning.headline_message ? (
+                          <div className="rounded-xl bg-brand-50 p-3 text-sm font-semibold text-brand-900">
+                            &ldquo;{marketResearch.positioning.headline_message}&rdquo;
+                          </div>
+                        ) : null}
+                        {marketResearch.positioning.value_proposition ? (
+                          <div><span className="font-semibold text-slate-700">Value prop: </span>{marketResearch.positioning.value_proposition}</div>
+                        ) : null}
+                        {marketResearch.positioning.differentiation ? (
+                          <div><span className="font-semibold text-slate-700">Differentiation: </span>{marketResearch.positioning.differentiation}</div>
+                        ) : null}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+
+                  {insightVisibility.showGoToMarket && marketResearch.go_to_market ? (
+                    <SectionCard title="Go-To-Market Recommendation">
+                      <div className="space-y-2 text-sm">
+                        {Array.isArray(marketResearch.go_to_market.primary_channels) && marketResearch.go_to_market.primary_channels.length ? (
+                          <div>
+                            <span className="font-semibold text-slate-700">Primary channels: </span>
+                            {marketResearch.go_to_market.primary_channels.join(", ")}
+                          </div>
+                        ) : null}
+                        {marketResearch.go_to_market.timeline ? (
+                          <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-700">{marketResearch.go_to_market.timeline}</div>
+                        ) : null}
+                        {Array.isArray(marketResearch.go_to_market.quick_wins) && marketResearch.go_to_market.quick_wins.length ? (
+                          <div>
+                            <div className="font-semibold text-slate-700 mb-1">Quick wins</div>
+                            <ul className="list-disc list-inside space-y-0.5 text-slate-600">
+                              {marketResearch.go_to_market.quick_wins.map((t, i) => <li key={i}>{t}</li>)}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+                </div>
+                ) : null}
+
+                {/* Risks */}
+                {insightVisibility.showRisks && Array.isArray(marketResearch.risks) && marketResearch.risks.length ? (
+                  <SectionCard title="Risks &amp; Barriers">
+                    <div className="space-y-2">
+                      {marketResearch.risks.map((r, i) => {
+                        const severityClass = r.severity === "High" ? "bg-rose-50 text-rose-700 ring-rose-200" : r.severity === "Medium" ? "bg-amber-50 text-amber-700 ring-amber-200" : "bg-slate-100 text-slate-600 ring-slate-200";
+                        return (
+                          <div key={i} className="rounded-xl border border-slate-100 bg-white p-3 text-sm">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-semibold text-slate-900">{r.risk}</span>
+                              {r.severity ? (
+                                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${severityClass}`}>{r.severity}</span>
+                              ) : null}
+                            </div>
+                            {r.mitigation ? <div className="mt-1 text-slate-600">{r.mitigation}</div> : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </SectionCard>
+                ) : null}
+
+                {/* Next Best Actions */}
+                {insightVisibility.showNextActions && Array.isArray(marketResearch.next_actions) && marketResearch.next_actions.length ? (
+                  <SectionCard title="Next Best Actions">
+                    <div className="space-y-3">
+                      {marketResearch.next_actions.map((action, i) => (
+                        <div key={i} className="flex gap-3">
+                          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">
+                            {action.step ?? i + 1}
+                          </div>
+                          <div className="flex-1 text-sm">
+                            <div className="font-semibold text-slate-900">{action.action}</div>
+                            {action.why ? <div className="mt-0.5 text-slate-600">{action.why}</div> : null}
+                            {action.timeframe ? (
+                              <div className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">{action.timeframe}</div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </SectionCard>
+                ) : null}
+
+                {stageOneResearchReady ? (
+                  <div className="flex justify-end">
+                    <Button onClick={() => {
+                      setError(null);
+                      setStageOneResearchReady(false);
+                      setShowBuilderMarketInsight(false);
+                      if (isBusinessStageFlow) {
+                        setCurrentBusinessStageIndex((prev) => Math.min(prev + 1, Math.max(0, businessStageKeys.length - 1)));
+                        return;
+                      }
+                      setCurrentServiceStageIndex((prev) => Math.min(prev + 1, Math.max(0, serviceStageKeys.length - 1)));
+                    }}>
+                      Proceed to next stage
+                    </Button>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        ) : contentTab === "market_research" && !isCreateWorkspace ? (
+          <div className="space-y-4">
+            <SectionCard
+              title="Market research"
+              subtitle="This tab shows the fuller research accumulated from the stages you have completed so far."
+            >
+              <div className="text-sm text-slate-600">
+                Each time you complete a stage, we refresh this report using the latest information you have entered.
+              </div>
+              {mrError ? <div className="mt-3"><InlineAlert kind="error" message={mrError} /></div> : null}
+            </SectionCard>
+
+            {mrLoading ? (
+              <SectionCard title="Updating Market Research">
+                <div className="flex items-center gap-3 text-sm text-slate-600">
+                  <Spinner size={20} />
+                  Updating the accumulated market research... This may take up to 30 seconds.
+                </div>
+              </SectionCard>
+            ) : marketResearch ? (
+              <>
+                {marketResearch.idea_validation_result || marketResearch.executive_summary ? (
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+                    {marketResearch.executive_summary ? (
+                      <SectionCard title="Executive Summary" subtitle="Plain-English verdict on whether this idea is worth pursuing.">
+                        <div className="text-sm leading-6 text-slate-700">{marketResearch.executive_summary}</div>
+                      </SectionCard>
+                    ) : null}
+
+                    {marketResearch.idea_validation_result ? (
+                      <SectionCard title="Idea Validation Result" subtitle="The latest combined recommendation from the research gathered so far.">
+                        <div className="space-y-3 text-sm">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded-xl bg-slate-50 p-3">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Overall Score</div>
+                              <div className="mt-1 text-base font-semibold text-slate-900">{marketResearch.idea_validation_result.overall_score || "Fair"}</div>
+                            </div>
+                            <div className="rounded-xl bg-slate-50 p-3">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended Action</div>
+                              <div className="mt-1 text-base font-semibold text-slate-900">{marketResearch.idea_validation_result.recommended_action || "Research more"}</div>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            {marketResearch.idea_validation_result.market_demand ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Market demand: {marketResearch.idea_validation_result.market_demand}</span> : null}
+                            {marketResearch.idea_validation_result.competition_level ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Competition: {marketResearch.idea_validation_result.competition_level}</span> : null}
+                            {marketResearch.idea_validation_result.pricing_opportunity ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Pricing: {marketResearch.idea_validation_result.pricing_opportunity}</span> : null}
+                            {marketResearch.idea_validation_result.execution_risk ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Execution risk: {marketResearch.idea_validation_result.execution_risk}</span> : null}
+                          </div>
+                        </div>
+                      </SectionCard>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {marketResearch.viability_score ? (() => {
+                  const vs = marketResearch.viability_score;
+                  const scoreColors = {
+                    "Very Strong": "bg-emerald-50 border-emerald-200 text-emerald-900",
+                    "Strong": "bg-green-50 border-green-200 text-green-900",
+                    "Fair": "bg-amber-50 border-amber-200 text-amber-900",
+                    "Weak": "bg-rose-50 border-rose-200 text-rose-900",
+                  };
+                  const barColors = {
+                    "Very Strong": "bg-emerald-500",
+                    "Strong": "bg-green-500",
+                    "Fair": "bg-amber-500",
+                    "Weak": "bg-rose-500",
+                  };
+                  const colorClass = scoreColors[vs.label] || scoreColors["Fair"];
+                  const barClass = barColors[vs.label] || barColors["Fair"];
+                  return (
+                    <div className={`rounded-2xl border p-5 ${colorClass}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide opacity-60">Viability Score</div>
+                          <div className="mt-1 text-3xl font-bold">{vs.score ?? "-"}<span className="text-base font-semibold opacity-60">/100</span></div>
+                          <div className="mt-1 text-lg font-semibold">{vs.label}</div>
+                        </div>
+                        <div className="max-w-sm flex-1 text-sm opacity-80">{vs.summary}</div>
+                      </div>
+                      <div className="mt-3 h-2 w-full rounded-full bg-black/10">
+                        <div className={`h-2 rounded-full ${barClass}`} style={{ width: `${Math.min(100, vs.score ?? 0)}%` }} />
+                      </div>
+                    </div>
+                  );
+                })() : null}
+
+                {marketResearch.market_opportunity ? (
+                  <SectionCard title="Market Opportunity">
+                    <div className="mb-3 text-sm text-slate-700">{marketResearch.market_opportunity.summary}</div>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Size</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">{marketResearch.market_opportunity.market_size || "-"}</div>
+                      </div>
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Growth Rate</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">{marketResearch.market_opportunity.growth_rate || "-"}</div>
+                      </div>
+                      {Array.isArray(marketResearch.market_opportunity.key_trends) && marketResearch.market_opportunity.key_trends.length ? (
+                        <div className="rounded-xl bg-slate-50 p-3">
+                          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Key Trends</div>
+                          <ul className="list-disc list-inside space-y-0.5 text-xs text-slate-700">
+                            {marketResearch.market_opportunity.key_trends.map((t, i) => <li key={i}>{t}</li>)}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
+                  </SectionCard>
+                ) : null}
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {marketResearch.target_customer ? (
+                    <SectionCard title="Target Customer">
+                      <div className="space-y-2 text-sm">
+                        {marketResearch.target_customer.profile ? <div><span className="font-semibold text-slate-700">Profile: </span>{marketResearch.target_customer.profile}</div> : null}
+                        {Array.isArray(marketResearch.target_customer.pain_points) && marketResearch.target_customer.pain_points.length ? (
+                          <div>
+                            <div className="font-semibold text-slate-700 mb-1">Pain Points</div>
+                            <ul className="list-disc list-inside space-y-0.5 text-slate-600">
+                              {marketResearch.target_customer.pain_points.map((p, i) => <li key={i}>{p}</li>)}
+                            </ul>
+                          </div>
+                        ) : null}
+                        {marketResearch.target_customer.buying_behaviour ? <div><span className="font-semibold text-slate-700">Buying behaviour: </span>{marketResearch.target_customer.buying_behaviour}</div> : null}
+                        {marketResearch.target_customer.urgency ? <div><span className="font-semibold text-slate-700">Urgency: </span>{marketResearch.target_customer.urgency}</div> : null}
+                        {marketResearch.target_customer.willingness_to_pay ? <div><span className="font-semibold text-slate-700">Willingness to pay: </span>{marketResearch.target_customer.willingness_to_pay}</div> : null}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+
+                  {marketResearch.problem_validation ? (
+                    <SectionCard title="Problem Validation">
+                      <div className="space-y-2 text-sm">
+                        {marketResearch.problem_validation.frequency_assessment ? <div className="text-slate-600">{marketResearch.problem_validation.frequency_assessment}</div> : null}
+                        {marketResearch.problem_validation.severity ? <div><span className="font-semibold text-slate-700">Severity: </span>{marketResearch.problem_validation.severity}</div> : null}
+                        {Array.isArray(marketResearch.problem_validation.evidence) && marketResearch.problem_validation.evidence.length ? (
+                          <ul className="list-disc list-inside space-y-0.5 text-slate-600">
+                            {marketResearch.problem_validation.evidence.map((e, i) => <li key={i}>{e}</li>)}
+                          </ul>
+                        ) : null}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+                </div>
+
+                {marketResearch.demand_signals ? (
+                  <SectionCard title="Demand Signals">
+                    {Array.isArray(marketResearch.demand_signals.signals) && marketResearch.demand_signals.signals.length ? (
+                      <ul className="list-disc list-inside space-y-1 text-sm text-slate-600">
+                        {marketResearch.demand_signals.signals.map((s, i) => <li key={i}>{s}</li>)}
+                      </ul>
+                    ) : null}
+                    {marketResearch.demand_signals.online_discussion ? (
+                      <div className="mt-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">{marketResearch.demand_signals.online_discussion}</div>
+                    ) : null}
+                  </SectionCard>
+                ) : null}
+
+                {Array.isArray(marketResearch.competitor_matrix) && marketResearch.competitor_matrix.length ? (
+                  <SectionCard title="Competitor Matrix">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            <th className="pb-2 pr-4">Competitor</th>
+                            <th className="pb-2 pr-4">Positioning</th>
+                            <th className="pb-2 pr-4">Strengths</th>
+                            <th className="pb-2 pr-4">Weaknesses</th>
+                            <th className="pb-2">Est. Price</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {marketResearch.competitor_matrix.map((comp, i) => (
+                            <tr key={i}>
+                              <td className="py-2 pr-4 font-medium text-slate-900 align-top">{comp.name}</td>
+                              <td className="py-2 pr-4 text-slate-600 align-top">{comp.positioning || "-"}</td>
+                              <td className="py-2 pr-4 text-slate-600 align-top">{Array.isArray(comp.strengths) ? comp.strengths.join(", ") : comp.strengths || "-"}</td>
+                              <td className="py-2 pr-4 text-slate-600 align-top">{Array.isArray(comp.weaknesses) ? comp.weaknesses.join(", ") : comp.weaknesses || "-"}</td>
+                              <td className="py-2 text-slate-600 align-top">{comp.est_price || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                ) : null}
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {marketResearch.pricing_strategy ? (
+                    <SectionCard title="Pricing Strategy">
+                      <div className="space-y-2 text-sm">
+                        {marketResearch.pricing_strategy.recommended_model ? <div><span className="font-semibold text-slate-700">Recommended model: </span>{marketResearch.pricing_strategy.recommended_model}</div> : null}
+                        {marketResearch.pricing_strategy.rationale ? <div className="text-slate-600">{marketResearch.pricing_strategy.rationale}</div> : null}
+                        {marketResearch.pricing_strategy.launch_offer ? <div className="rounded-xl bg-brand-50 p-3 text-brand-900 text-xs font-medium">Launch offer: {marketResearch.pricing_strategy.launch_offer}</div> : null}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+
+                  {marketResearch.recommended_price_range ? (
+                    <SectionCard title="Recommended Price Range">
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        {[["low", "Entry"], ["mid", "Mid"], ["premium", "Premium"]].map(([key, label]) => (
+                          <div key={key} className="rounded-xl bg-slate-50 p-3">
+                            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</div>
+                            <div className="mt-1 text-sm font-bold text-slate-900">{marketResearch.recommended_price_range[key] ?? "-"}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {marketResearch.positioning ? (
+                    <SectionCard title="Positioning Recommendation">
+                      <div className="space-y-2 text-sm">
+                        {marketResearch.positioning.headline_message ? <div className="rounded-xl bg-brand-50 p-3 text-sm font-semibold text-brand-900">&ldquo;{marketResearch.positioning.headline_message}&rdquo;</div> : null}
+                        {marketResearch.positioning.value_proposition ? <div><span className="font-semibold text-slate-700">Value prop: </span>{marketResearch.positioning.value_proposition}</div> : null}
+                        {marketResearch.positioning.differentiation ? <div><span className="font-semibold text-slate-700">Differentiation: </span>{marketResearch.positioning.differentiation}</div> : null}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+
+                  {marketResearch.go_to_market ? (
+                    <SectionCard title="Go-To-Market Recommendation">
+                      <div className="space-y-2 text-sm">
+                        {Array.isArray(marketResearch.go_to_market.primary_channels) && marketResearch.go_to_market.primary_channels.length ? (
+                          <div><span className="font-semibold text-slate-700">Primary channels: </span>{marketResearch.go_to_market.primary_channels.join(", ")}</div>
+                        ) : null}
+                        {marketResearch.go_to_market.timeline ? <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-700">{marketResearch.go_to_market.timeline}</div> : null}
+                      </div>
+                    </SectionCard>
+                  ) : null}
+                </div>
+
+                {Array.isArray(marketResearch.risks) && marketResearch.risks.length ? (
+                  <SectionCard title="Risks &amp; Barriers">
+                    <div className="space-y-2">
+                      {marketResearch.risks.map((r, i) => (
+                        <div key={i} className="rounded-xl border border-slate-100 bg-white p-3 text-sm">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-slate-900">{r.risk}</span>
+                            {r.severity ? <span className="rounded-full px-2 py-0.5 text-xs font-semibold ring-1 bg-slate-100 text-slate-600 ring-slate-200">{r.severity}</span> : null}
+                          </div>
+                          {r.mitigation ? <div className="mt-1 text-slate-600">{r.mitigation}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </SectionCard>
+                ) : null}
+
+                {Array.isArray(marketResearch.next_actions) && marketResearch.next_actions.length ? (
+                  <SectionCard title="Next Best Actions">
+                    <div className="space-y-3">
+                      {marketResearch.next_actions.map((action, i) => (
+                        <div key={i} className="flex gap-3">
+                          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">
+                            {action.step ?? i + 1}
+                          </div>
+                          <div className="flex-1 text-sm">
+                            <div className="font-semibold text-slate-900">{action.action}</div>
+                            {action.why ? <div className="mt-0.5 text-slate-600">{action.why}</div> : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </SectionCard>
+                ) : null}
+              </>
+            ) : (
+              <SectionCard title="No Research Yet">
+                <div className="text-sm text-slate-600">
+                  Complete a stage in the builder to start accumulating market research here.
+                </div>
+              </SectionCard>
+            )}
+          </div>
+        ) : contentTab === "history" && !isCreateWorkspace ? (
           <SectionCard
             title="Validation history"
             subtitle="Track previous validations and their current status."
@@ -1700,49 +2992,98 @@ export default function ValidationWizardPage() {
             ) : null}
 
             <div className="mt-4">
-              <SectionCard
-                title={fromOtherModule ? "Select sections to build your workspace" : "Choose the sections you want to fill"}
-                subtitle={fromOtherModule ? "You'll fill them in any order." : "You'll fill them in any order."}
-              >
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {formBlocks.map((b) => {
-                    const checked = Boolean(enabledForms[b.key]);
-                    return (
-                      <button
-                        key={b.key}
-                        type="button"
-                        onClick={() => setEnabledForms((prev) => ({ ...prev, [b.key]: !checked }))}
-                        className={
-                          "flex items-start justify-between gap-3 rounded-2xl border p-4 text-left transition " +
-                          (checked ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
-                        }
-                      >
-                        <div>
-                          <div className={"text-sm font-semibold " + (checked ? "text-brand-900" : "text-slate-900")}>{b.label}</div>
-                          <div className="mt-1 text-xs text-slate-600">{b.desc}</div>
+              {isBusinessStageFlow || isServiceStageFlow ? (
+                <SectionCard
+                  title="Validation stages"
+                  subtitle="You’ll complete the validation one stage at a time."
+                >
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {formBlocks.map((b, index) => (
+                      <div key={b.key} className="rounded-2xl border border-slate-200 bg-white p-4 text-left">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-50 text-sm font-bold text-brand-700">
+                            {index + 1}
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">{b.label}</div>
+                            <div className="mt-1 text-xs text-slate-600">{b.desc}</div>
+                          </div>
                         </div>
-                        <div className="pt-1">
-                          <div
-                            className={
-                              "h-5 w-5 rounded-full ring-2 ring-offset-2 " +
-                              (checked ? "bg-brand-600 ring-brand-200 ring-offset-white" : "bg-white ring-slate-200 ring-offset-white")
-                            }
-                          />
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </SectionCard>
+                      </div>
+                    ))}
+                  </div>
+                </SectionCard>
+              ) : (
+                <SectionCard
+                  title={fromOtherModule ? "Select sections to build your workspace" : "Choose the sections you want to fill"}
+                  subtitle={fromOtherModule ? "You'll fill them in any order." : "You'll fill them in any order."}
+                >
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {formBlocks.map((b) => {
+                      const checked = Boolean(enabledForms[b.key]);
+                      return (
+                        <button
+                          key={b.key}
+                          type="button"
+                          onClick={() => setEnabledForms((prev) => ({ ...prev, [b.key]: !checked }))}
+                          className={
+                            "flex items-start justify-between gap-3 rounded-2xl border p-4 text-left transition " +
+                            (checked ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
+                          }
+                        >
+                          <div>
+                            <div className={"text-sm font-semibold " + (checked ? "text-brand-900" : "text-slate-900")}>{b.label}</div>
+                            <div className="mt-1 text-xs text-slate-600">{b.desc}</div>
+                          </div>
+                          <div className="pt-1">
+                            <div
+                              className={
+                                "h-5 w-5 rounded-full ring-2 ring-offset-2 " +
+                                (checked ? "bg-brand-600 ring-brand-200 ring-offset-white" : "bg-white ring-slate-200 ring-offset-white")
+                              }
+                            />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </SectionCard>
+              )}
             </div>
           </>
         ) : (
           <SectionCard
             title={fromOtherModule ? "Workspace inputs" : "Validation inputs"}
-            subtitle={fromOtherModule ? "Open any section and fill it in any order." : "Open any section and fill it in any order."}
+            subtitle={
+              isBusinessStageFlow
+                ? `Stage ${currentBusinessStageIndex + 1} of ${businessStageKeys.length}${currentBusinessStageMeta ? `: ${currentBusinessStageMeta.label}` : ""}`
+                : isServiceStageFlow
+                  ? `Stage ${currentServiceStageIndex + 1} of ${serviceStageKeys.length}${currentServiceStageMeta ? `: ${currentServiceStageMeta.label}` : ""}`
+                : (fromOtherModule ? "Open any section and fill it in any order." : "Open any section and fill it in any order.")
+            }
           >
+            {isBusinessStageFlow || isServiceStageFlow ? (
+              <div className="mb-4">
+                <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <span>Progress</span>
+                  <span>{isBusinessStageFlow ? currentBusinessStageIndex + 1 : currentServiceStageIndex + 1} / {isBusinessStageFlow ? businessStageKeys.length : serviceStageKeys.length}</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-brand-600 transition-all"
+                    style={{
+                      width: `${(
+                        ((isBusinessStageFlow ? currentBusinessStageIndex + 1 : currentServiceStageIndex + 1) /
+                          Math.max(1, isBusinessStageFlow ? businessStageKeys.length : serviceStageKeys.length)) *
+                        100
+                      )}%`
+                    }}
+                  />
+                </div>
+              </div>
+            ) : null}
             <div className="space-y-3">
-              {enabledForms.business && !isProductPath ? (
+              {enabledForms.business && !isProductPath && (!isBusinessStageFlow || currentBusinessStageKey === "business") ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">
                     {isProductPath ? "Product details" : "Workspace details"}
@@ -1845,6 +3186,52 @@ export default function ValidationWizardPage() {
                       <FieldLabel info="Your weekly availability.">Founder hours / week</FieldLabel>
                       <NumberInput placeholder="40" value={form.context.founder_hours_per_week} onChange={(v) => update("context.founder_hours_per_week", v)} />
                     </div>
+                    {isBusinessStageFlow ? (
+                      <>
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <FieldLabel info="Who you're selling to.">Customer segment</FieldLabel>
+                          <select value={form.problem.customer_segment_category} onChange={(e) => update("problem.customer_segment_category", e.target.value)} className="ea-input">
+                            {CUSTOMER_SEGMENT_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}
+                          </select>
+                          {form.problem.customer_segment_category === "Other" ? <div className="mt-2"><Input value={form.problem.customer_segment_other} onChange={(e) => update("problem.customer_segment_other", e.target.value)} placeholder="Type customer segment" /></div> : null}
+                        </div>
+
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <FieldLabel info="Short problem statement.">Problem (short)</FieldLabel>
+                          <Input value={form.problem.problem_type} onChange={(e) => update("problem.problem_type", e.target.value)} />
+                        </div>
+
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <FieldLabel info="How often does this problem occur?">Frequency</FieldLabel>
+                          <select
+                            value={form.problem.frequency_category || ""}
+                            onChange={(e) => updateFrequency(e.target.value)}
+                            className="ea-input"
+                          >
+                            <option value="">Select frequency</option>
+                            {FREQUENCY_OPTIONS.map((option) => (
+                              <option key={option} value={option}>
+                                {formatEnumLabel(option)}
+                              </option>
+                            ))}
+                          </select>
+                          {form.problem.frequency_category === "custom" ? (
+                            <div className="mt-2">
+                              <Input
+                                value={form.problem.frequency_custom || ""}
+                                onChange={(e) => updateCustomFrequency(e.target.value)}
+                                placeholder="Type custom frequency"
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <FieldLabel info="What alternatives do customers use today?">Alternatives</FieldLabel>
+                          <Input value={form.problem.alternatives} onChange={(e) => update("problem.alternatives", e.target.value)} />
+                        </div>
+                      </>
+                    ) : null}
                   </div>
                 </details>
               ) : null}
@@ -2117,7 +3504,7 @@ export default function ValidationWizardPage() {
 
               {isProductPath && (enabledForms.service_basics || enabledForms.revenue_inputs || enabledForms.direct_costs || enabledForms.fixed_costs || enabledForms.capacity_inputs || enabledForms.demand_inputs || enabledForms.competition) ? (
                 <>
-                  {enabledForms.service_basics ? (
+                  {enabledForms.service_basics && (!isServiceStageFlow || currentServiceStageKey === "service_basics") ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Service basics</summary>
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -2207,7 +3594,7 @@ export default function ValidationWizardPage() {
                     </details>
                   ) : null}
 
-                    {enabledForms.revenue_inputs ? (
+                    {enabledForms.revenue_inputs && (!isServiceStageFlow || currentServiceStageKey === "revenue_inputs") ? (
                       <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                         <summary className="cursor-pointer text-sm font-semibold text-slate-900">Revenue inputs</summary>
                         <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2">
@@ -2223,7 +3610,7 @@ export default function ValidationWizardPage() {
                     </details>
                   ) : null}
 
-                  {enabledForms.direct_costs ? (
+                  {enabledForms.direct_costs && (!isServiceStageFlow || currentServiceStageKey === "direct_costs") ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4">
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Direct delivery costs</summary>
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -2251,7 +3638,7 @@ export default function ValidationWizardPage() {
                     </details>
                   ) : null}
 
-                  {enabledForms.fixed_costs ? (
+                  {enabledForms.fixed_costs && (!isServiceStageFlow || currentServiceStageKey === "fixed_costs") ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4">
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Fixed monthly costs</summary>
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -2279,7 +3666,7 @@ export default function ValidationWizardPage() {
                     </details>
                   ) : null}
 
-                    {enabledForms.capacity_inputs ? (
+                    {enabledForms.capacity_inputs && (!isServiceStageFlow || currentServiceStageKey === "capacity_inputs") ? (
                       <details className="rounded-2xl border border-slate-200 bg-white p-4">
                         <summary className="cursor-pointer text-sm font-semibold text-slate-900">Capacity inputs</summary>
                         <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2">
@@ -2313,7 +3700,7 @@ export default function ValidationWizardPage() {
                     </details>
                   ) : null}
 
-                  {enabledForms.demand_inputs ? (
+                  {enabledForms.demand_inputs && (!isServiceStageFlow || currentServiceStageKey === "demand_inputs") ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4">
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Demand evidence</summary>
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -2335,7 +3722,7 @@ export default function ValidationWizardPage() {
                     </details>
                   ) : null}
 
-                  {enabledForms.competition ? (
+                  {enabledForms.competition && (!isServiceStageFlow || currentServiceStageKey === "competition") ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4">
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Competitive positioning</summary>
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -2359,32 +3746,56 @@ export default function ValidationWizardPage() {
                 </>
               ) : null}
 
-              {enabledForms.offer_demand ? (
+              {enabledForms.offer_demand && (!isBusinessStageFlow || currentBusinessStageKey === "offer_demand") ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">Offer & demand</summary>
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    <div className="md:col-span-2 xl:col-span-3">
-                      <FieldLabel info="Who you're selling to.">Customer segment</FieldLabel>
-                      <select value={form.problem.customer_segment_category} onChange={(e) => update("problem.customer_segment_category", e.target.value)} className="ea-input">
-                        {CUSTOMER_SEGMENT_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}
-                      </select>
-                      {form.problem.customer_segment_category === "Other" ? <div className="mt-2"><Input value={form.problem.customer_segment_other} onChange={(e) => update("problem.customer_segment_other", e.target.value)} placeholder="Type customer segment" /></div> : null}
-                    </div>
+                    {!isBusinessStageFlow ? (
+                      <>
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <FieldLabel info="Who you're selling to.">Customer segment</FieldLabel>
+                          <select value={form.problem.customer_segment_category} onChange={(e) => update("problem.customer_segment_category", e.target.value)} className="ea-input">
+                            {CUSTOMER_SEGMENT_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}
+                          </select>
+                          {form.problem.customer_segment_category === "Other" ? <div className="mt-2"><Input value={form.problem.customer_segment_other} onChange={(e) => update("problem.customer_segment_other", e.target.value)} placeholder="Type customer segment" /></div> : null}
+                        </div>
 
-                    <div className="md:col-span-2 xl:col-span-3">
-                      <FieldLabel info="Short problem statement.">Problem (short)</FieldLabel>
-                      <Input value={form.problem.problem_type} onChange={(e) => update("problem.problem_type", e.target.value)} />
-                    </div>
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <FieldLabel info="Short problem statement.">Problem (short)</FieldLabel>
+                          <Input value={form.problem.problem_type} onChange={(e) => update("problem.problem_type", e.target.value)} />
+                        </div>
 
-                    <div className="md:col-span-2 xl:col-span-3">
-                      <FieldLabel info="How often does this problem occur?">Frequency</FieldLabel>
-                      <Input value={form.problem.frequency} onChange={(e) => update("problem.frequency", e.target.value)} />
-                    </div>
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <FieldLabel info="How often does this problem occur?">Frequency</FieldLabel>
+                          <select
+                            value={form.problem.frequency_category || ""}
+                            onChange={(e) => updateFrequency(e.target.value)}
+                            className="ea-input"
+                          >
+                            <option value="">Select frequency</option>
+                            {FREQUENCY_OPTIONS.map((option) => (
+                              <option key={option} value={option}>
+                                {formatEnumLabel(option)}
+                              </option>
+                            ))}
+                          </select>
+                          {form.problem.frequency_category === "custom" ? (
+                            <div className="mt-2">
+                              <Input
+                                value={form.problem.frequency_custom || ""}
+                                onChange={(e) => updateCustomFrequency(e.target.value)}
+                                placeholder="Type custom frequency"
+                              />
+                            </div>
+                          ) : null}
+                        </div>
 
-                    <div className="md:col-span-2 xl:col-span-3">
-                      <FieldLabel info="What alternatives do customers use today?">Alternatives</FieldLabel>
-                      <Input value={form.problem.alternatives} onChange={(e) => update("problem.alternatives", e.target.value)} />
-                    </div>
+                        <div className="md:col-span-2 xl:col-span-3">
+                          <FieldLabel info="What alternatives do customers use today?">Alternatives</FieldLabel>
+                          <Input value={form.problem.alternatives} onChange={(e) => update("problem.alternatives", e.target.value)} />
+                        </div>
+                      </>
+                    ) : null}
 
                     <div>
                       <FieldLabel info="How you charge customers.">Pricing model</FieldLabel>
@@ -2429,7 +3840,7 @@ export default function ValidationWizardPage() {
                 </details>
               ) : null}
 
-              {enabledForms.costs ? (
+              {enabledForms.costs && (!isBusinessStageFlow || currentBusinessStageKey === "costs") ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4">
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">Costs</summary>
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -2453,7 +3864,7 @@ export default function ValidationWizardPage() {
                 </details>
               ) : null}
 
-              {enabledForms.capacity_cash ? (
+              {enabledForms.capacity_cash && (!isBusinessStageFlow || currentBusinessStageKey === "capacity_cash") ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4">
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">Capacity & cash</summary>
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -2490,7 +3901,7 @@ export default function ValidationWizardPage() {
                 </details>
               ) : null}
 
-              {enabledForms.go_to_market ? (
+              {enabledForms.go_to_market && (!isBusinessStageFlow || currentBusinessStageKey === "go_to_market") ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4">
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">Go-to-market</summary>
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -2540,22 +3951,52 @@ export default function ValidationWizardPage() {
           </SectionCard>
         )}
 
-        {contentTab === "builder" ? (
-        <div className="sticky bottom-0 z-20 -mx-6 mt-4 border-t border-slate-200 bg-white px-6 py-3 dark:bg-slate-950">
-          <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 pr-0 sm:pr-52">
+        {contentTab === "builder" &&
+        !(showBuilderMarketInsight &&
+          (isBusinessStageFlow || isServiceStageFlow)) ? (
+        <div className="sticky bottom-0 z-20 mt-4 py-3">
+          <div className="flex items-center justify-between gap-2">
             <div>
-              {mode === "fill" && !isCreateWorkspace ? (
+              {mode === "fill" && isBusinessStageFlow ? (
+                <Button
+                  variant="ghost"
+                  disabled={!canEdit || currentBusinessStageIndex === 0}
+                  onClick={goToPreviousBusinessStage}
+                >
+                  Back
+                </Button>
+              ) : mode === "fill" && isServiceStageFlow ? (
+                <Button
+                  variant="ghost"
+                  disabled={!canEdit || currentServiceStageIndex === 0}
+                  onClick={goToPreviousServiceStage}
+                >
+                  Back
+                </Button>
+              ) : mode === "fill" && !isCreateWorkspace ? (
                 <Button variant="ghost" disabled={!canEdit} onClick={() => setMode("select")}>Change sections</Button>
-              ) : (
-                <div className="h-10" />
-              )}
+              ) : null}
             </div>
             <div className="flex items-center gap-2">
               {mode === "select" ? (
                 <Button disabled={!canEdit || !selectedCount} onClick={startFilling}>Continue</Button>
               ) : (
                 <div className="flex items-center gap-2">
-                  {mode === "fill" ? (
+                  {mode === "fill" && isBusinessStageFlow && !isLastBusinessStage ? (
+                    <Button
+                      disabled={isLoading || isPrefilling}
+                      onClick={goToNextBusinessStage}
+                    >
+                      Next stage
+                    </Button>
+                  ) : mode === "fill" && isServiceStageFlow && !isLastServiceStage ? (
+                    <Button
+                      disabled={isLoading || isPrefilling}
+                      onClick={goToNextServiceStage}
+                    >
+                      Next stage
+                    </Button>
+                  ) : mode === "fill" ? (
                     <Button
                       variant="secondary"
                       disabled={isLoading || isPrefilling || !canRun}
@@ -2587,7 +4028,7 @@ export default function ValidationWizardPage() {
             </div>
           </div>
           {error ? (
-            <div className="mx-auto mt-2 max-w-6xl">
+            <div className="mt-2">
               <InlineAlert kind="error" message={error} />
             </div>
           ) : null}
