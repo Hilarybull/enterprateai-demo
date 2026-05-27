@@ -238,6 +238,21 @@ function RFQModal({ listing, onClose }) {
   const [done, setDone] = useState(false);
   const [error, setError] = useState(null);
 
+  // Build dropdown options: catalogue products first, then profile services, deduplicated by name
+  const productOptions = (() => {
+    const seen = new Set();
+    const opts = [];
+    for (const p of (listing.catalogue_products || [])) {
+      const n = String(p.name || "").trim();
+      if (n && !seen.has(n.toLowerCase())) { seen.add(n.toLowerCase()); opts.push(n); }
+    }
+    for (const s of (listing.services || [])) {
+      const n = String(s.service_name || "").trim();
+      if (n && !seen.has(n.toLowerCase())) { seen.add(n.toLowerCase()); opts.push(n); }
+    }
+    return opts;
+  })();
+
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
@@ -253,19 +268,33 @@ function RFQModal({ listing, onClose }) {
   }
 
   function updateItem(idx, field, value) {
-    setItems((prev) => prev.map((item, i) => i === idx ? { ...item, [field]: field === "quantity" ? Math.max(1, Number(value) || 1) : value } : item));
+    setItems((prev) => prev.map((item, i) => {
+      if (i !== idx) return item;
+      const updated = { ...item, [field]: field === "quantity" ? Math.max(1, Number(value) || 1) : value };
+      // clear custom name when switching away from "other"
+      if (field === "name" && value !== "__other__") updated.customName = "";
+      return updated;
+    }));
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     if (!form.name.trim() || !form.email.trim()) { setError("Name and email are required."); return; }
-    if (!items.some((item) => item.name.trim())) { setError("Add at least one product or service."); return; }
+    const validItems = items.filter((item) => item.name && item.name !== "__other__" ? item.name.trim() : (item.customName || "").trim());
+    if (!validItems.length) { setError("Select at least one product or service."); return; }
+    if (validItems.some((item) => item.name === "__other__" && !(item.customName || "").trim())) {
+      setError("Enter a name for the custom product or service."); return;
+    }
     setSubmitting(true); setError(null);
     try {
       await apiRequest(`/marketplace/rfq/${listing.workspace_id}`, "POST", {
         customer_name: form.name.trim(),
         customer_email: form.email.trim(),
-        items: items.filter((item) => item.name.trim()).map((item) => ({ name: item.name.trim(), quantity: item.quantity, notes: item.notes.trim() || null })),
+        items: validItems.map((item) => ({
+          name: item.name === "__other__" ? item.customName.trim() : item.name.trim(),
+          quantity: item.quantity,
+          notes: (item.notes || "").trim() || null,
+        })),
         message: form.message.trim() || null,
       });
       setDone(true);
@@ -319,14 +348,43 @@ function RFQModal({ listing, onClose }) {
               </div>
               <div className="space-y-2">
                 {items.map((item, idx) => (
-                  <div key={idx} className="grid grid-cols-[1fr,80px,auto] items-start gap-2">
-                    <input className="ea-input" placeholder="Product or service name" value={item.name} onChange={(e) => updateItem(idx, "name", e.target.value)} />
-                    <input type="number" min="1" className="ea-input" placeholder="Qty" value={item.quantity} onChange={(e) => updateItem(idx, "quantity", e.target.value)} />
-                    {items.length > 1 ? (
-                      <button type="button" onClick={() => removeItem(idx)} className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500 dark:border-slate-700">
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                      </button>
-                    ) : <div className="h-9 w-9" />}
+                  <div key={idx} className="space-y-1">
+                    <div className="grid grid-cols-[1fr,80px,auto] items-start gap-2">
+                      {productOptions.length > 0 ? (
+                        <div className="relative">
+                          <select
+                            className={`w-full appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-8 py-2.5 text-sm outline-none ring-brand-200 focus:ring-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${!item.name ? "text-slate-400 dark:text-slate-500" : "text-slate-900 dark:text-slate-100"}`}
+                            value={item.name}
+                            onChange={(e) => updateItem(idx, "name", e.target.value)}
+                          >
+                            <option value="">Select a product / service</option>
+                            {productOptions.map((opt) => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                            <option value="__other__">Other / Custom…</option>
+                          </select>
+                          <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                      ) : (
+                        <input className="ea-input" placeholder="Product or service name" value={item.name} onChange={(e) => updateItem(idx, "name", e.target.value)} />
+                      )}
+                      <input type="number" min="1" className="ea-input" placeholder="Qty" value={item.quantity} onChange={(e) => updateItem(idx, "quantity", e.target.value)} />
+                      {items.length > 1 ? (
+                        <button type="button" onClick={() => removeItem(idx)} className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500 dark:border-slate-700">
+                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                        </button>
+                      ) : <div className="h-9 w-9" />}
+                    </div>
+                    {item.name === "__other__" && (
+                      <input
+                        className="ea-input"
+                        placeholder="Describe the product or service you need"
+                        value={item.customName || ""}
+                        onChange={(e) => updateItem(idx, "customName", e.target.value)}
+                      />
+                    )}
                   </div>
                 ))}
               </div>

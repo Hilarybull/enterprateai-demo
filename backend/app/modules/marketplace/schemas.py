@@ -34,6 +34,7 @@ class MarketplaceListingItem(BaseModel):
     city: str
     state_or_region: str | None = None
     services: list[ServiceEntryOut] = []
+    catalogue_products: list[dict] = []
     logo_data_url: str | None = None
     website: str | None = None
     email: str
