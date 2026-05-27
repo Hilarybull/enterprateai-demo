@@ -202,6 +202,7 @@ export default function ValidationWizardPage() {
   const [mrError, setMrError] = useState(null);
   const [stageOneResearchReady, setStageOneResearchReady] = useState(false);
   const [showBuilderMarketInsight, setShowBuilderMarketInsight] = useState(false);
+  const [lastResearchHash, setLastResearchHash] = useState(null);
   const initialStageDefaults = useMemo(() => loadValidationStageDefaults(), []);
 
   const [workspaceName, setWorkspaceName] = useState(() => String(loadValidationStageDefaults().workspace_name || "").trim());
@@ -2041,21 +2042,35 @@ export default function ValidationWizardPage() {
       markStageOneReady = false,
       showInBuilder = false,
       researchSource = isProductPath ? "service" : "business",
+      forceRefresh = false,
     } = options;
     if (showInBuilder) {
       setShowBuilderMarketInsight(true);
       setContentTab("builder");
     }
+
+    // Skip API call if form data hasn't changed and we already have insights
+    if (!forceRefresh && marketResearch && useCurrentForm) {
+      const payload = researchSource === "service" ? buildServiceIdeaPayloadForResearch() : buildBusinessIdeaPayloadForResearch();
+      const currentHash = JSON.stringify(payload);
+      if (currentHash === lastResearchHash) {
+        if (markStageOneReady) setStageOneResearchReady(true);
+        return;
+      }
+    }
+
     setMrLoading(true);
     setMrError(null);
     setError(null);
     try {
       const wsId = editingWorkspaceId || storedWorkspaceId;
+      const payload = researchSource === "service" ? buildServiceIdeaPayloadForResearch() : buildBusinessIdeaPayloadForResearch();
       const body = useCurrentForm
-        ? { idea_validation: researchSource === "service" ? buildServiceIdeaPayloadForResearch() : buildBusinessIdeaPayloadForResearch() }
+        ? { idea_validation: payload }
         : wsId
           ? { workspace_id: wsId }
-          : { idea_validation: researchSource === "service" ? buildServiceIdeaPayloadForResearch() : buildBusinessIdeaPayloadForResearch() };
+          : { idea_validation: payload };
+      if (useCurrentForm) setLastResearchHash(JSON.stringify(payload));
       const result = await apiRequest("/validation/market-research", "POST", body, { timeoutMs: 120000 });
       setMarketResearch(result);
       if (markStageOneReady) setStageOneResearchReady(true);
@@ -2583,19 +2598,58 @@ export default function ValidationWizardPage() {
                 ) : null}
 
                 {stageOneResearchReady ? (
-                  <div className="flex justify-end">
-                    <Button onClick={() => {
-                      setError(null);
-                      setStageOneResearchReady(false);
-                      setShowBuilderMarketInsight(false);
-                      if (isBusinessStageFlow) {
-                        setCurrentBusinessStageIndex((prev) => Math.min(prev + 1, Math.max(0, businessStageKeys.length - 1)));
-                        return;
-                      }
-                      setCurrentServiceStageIndex((prev) => Math.min(prev + 1, Math.max(0, serviceStageKeys.length - 1)));
-                    }}>
-                      Proceed to next stage
-                    </Button>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+                    <div className="mb-3 text-[13px] font-semibold text-slate-700 dark:text-slate-300">What would you like to do?</div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setError(null);
+                          setStageOneResearchReady(false);
+                          setShowBuilderMarketInsight(false);
+                          setLastResearchHash(null);
+                        }}
+                      >
+                        Modify inputs
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setError(null);
+                          setStageOneResearchReady(false);
+                          setShowBuilderMarketInsight(false);
+                          saveWorkspace(true);
+                        }}
+                      >
+                        Reject idea
+                      </Button>
+                      {(isBusinessStageFlow ? !isLastBusinessStage : !isLastServiceStage) ? (
+                        <Button
+                          onClick={() => {
+                            setError(null);
+                            setStageOneResearchReady(false);
+                            setShowBuilderMarketInsight(false);
+                            if (isBusinessStageFlow) {
+                              setCurrentBusinessStageIndex((prev) => Math.min(prev + 1, Math.max(0, businessStageKeys.length - 1)));
+                            } else {
+                              setCurrentServiceStageIndex((prev) => Math.min(prev + 1, Math.max(0, serviceStageKeys.length - 1)));
+                            }
+                          }}
+                        >
+                          Get more insights
+                        </Button>
+                      ) : null}
+                      <Button
+                        onClick={() => {
+                          setError(null);
+                          setStageOneResearchReady(false);
+                          setShowBuilderMarketInsight(false);
+                          saveWorkspace(true);
+                        }}
+                      >
+                        Accept &amp; evaluate
+                      </Button>
+                    </div>
                   </div>
                 ) : null}
               </>
@@ -3987,14 +4041,14 @@ export default function ValidationWizardPage() {
                       disabled={isLoading || isPrefilling}
                       onClick={goToNextBusinessStage}
                     >
-                      Next stage
+                      Get insights
                     </Button>
                   ) : mode === "fill" && isServiceStageFlow && !isLastServiceStage ? (
                     <Button
                       disabled={isLoading || isPrefilling}
                       onClick={goToNextServiceStage}
                     >
-                      Next stage
+                      Get insights
                     </Button>
                   ) : mode === "fill" ? (
                     <Button
