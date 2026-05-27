@@ -35,7 +35,10 @@ async def create_workspace(
     if existing:
         merged = dict(existing.get("data") or {})
         for k, v in (data or {}).items():
-            merged[k] = v
+            if k == "financials" and isinstance(v, dict) and isinstance(merged.get("financials"), dict):
+                merged[k] = {**merged[k], **v}
+            else:
+                merged[k] = v
         update = {"data": merged, "updated_at": now.isoformat()}
         if name and name.strip():
             update["name"] = name.strip()
@@ -300,7 +303,12 @@ async def update_workspace(
     merged = dict(ws.data or {})
     data_patch = _augment_workspace_patch(data_patch or {}, existing=merged)
     for k, v in (data_patch or {}).items():
-        merged[k] = v
+        # Deep-merge financials so keys written by other endpoints (e.g. rfq_requests)
+        # are never wiped by a frontend patch that doesn't include them.
+        if k == "financials" and isinstance(v, dict) and isinstance(merged.get("financials"), dict):
+            merged[k] = {**merged[k], **v}
+        else:
+            merged[k] = v
 
     ws_name = (name and str(name).strip()) or ws.name or "Unnamed"
 
