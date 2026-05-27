@@ -404,7 +404,7 @@ export default function FinancialsPage() {
   }, [workspaceId, invoices, quotes, expenses, contracts]);
 
   async function persist(next) {
-    await apiRequest("/validation/me", "PATCH", { data: { financials: next } });
+    await apiRequest("/validation/me", "PATCH", { data: { financials: { ...next, rfq_requests: rfqRequests } } });
   }
   async function persistIntegrations(next) {
     await apiRequest("/validation/me", "PATCH", { data: { integrations: next } });
