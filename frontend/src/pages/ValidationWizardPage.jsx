@@ -1490,7 +1490,7 @@ export default function ValidationWizardPage() {
     if (stageKey === "business") {
       if (!String(workspaceName || "").trim()) return "Business idea name is required.";
       if (!String(form.context.business_name || "").trim()) return "Business name is required.";
-      if (!String(form.offer.service_type || "").trim()) return "What are you building is required.";
+      if (!String(form.offer.service_type || "").trim()) return "Business offering is required.";
       if (!String(form.context.business_type_category || "").trim()) return "Business type is required.";
       if (!String(form.context.primary_industry_category || "").trim()) return "Primary industry is required.";
       if (!String(form.context.location || "").trim()) return "Location is required.";
@@ -3108,8 +3108,8 @@ export default function ValidationWizardPage() {
                       <Input value={form.context.business_name} onChange={(e) => update("context.business_name", e.target.value)} />
                     </div>
                       <div className="md:col-span-2 xl:col-span-3">
-                      <FieldLabel info="Short description of what you're building.">
-                        {isProductPath ? "What product or service are you building?" : "What are you building?"}
+                      <FieldLabel info="Brief description of the product or service you are offering.">
+                        {isProductPath ? "Product / service offering *" : "Business offering *"}
                       </FieldLabel>
                       {isProductPath && workspaceServices.length ? (
                         <div className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
@@ -3147,7 +3147,7 @@ export default function ValidationWizardPage() {
                               setServiceSelection("__other__");
                               update("offer.service_type", e.target.value);
                             }}
-                            placeholder="Type product/service"
+                            placeholder="Describe your product or service"
                           />
                         </div>
                       ) : (
