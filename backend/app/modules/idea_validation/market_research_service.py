@@ -300,6 +300,9 @@ def _build_queries(fields: dict[str, Any]) -> dict[str, tuple[str, str, dict]]:
 
 # LLM synthesis
 def _build_synthesis_prompt(fields: dict[str, Any], evidence: dict[str, list[str]]) -> str:
+    idea_type = _clean_text(fields.get("idea_type") or "business_idea")
+    is_service = idea_type == "service_idea"
+
     business_idea_name = _clean_text(fields.get("business_idea_name"))
     business_name = _clean_text(fields.get("business_name"))
     what = _clean_text(fields.get("what_building"))
@@ -314,19 +317,37 @@ def _build_synthesis_prompt(fields: dict[str, Any], evidence: dict[str, list[str
     price = _clean_text(fields.get("price_per_unit"))
     expected_customers = _clean_text(fields.get("expected_customers"))
     expected_units = _clean_text(fields.get("expected_units_per_month"))
+    competitor_price_range = _clean_text(fields.get("competitor_price_range"))
+    delivery_capacity = _clean_text(fields.get("delivery_capacity"))
 
     evidence_text = ""
     for key, snippets in evidence.items():
         if snippets:
             evidence_text += f"\n### {key.upper().replace('_', ' ')}\n" + "\n".join(f"- {snippet}" for snippet in snippets)
 
-    return f"""You are an expert business analyst.
-
-Use the provided search evidence to produce a market insight report for EnterprateAI.
-The report must follow this reasoning flow:
-User Fields -> Search Queries -> Source Collection -> Market Insight -> Competitor Matrix -> Pricing Intelligence -> Viability Score -> Recommended Action
-
-BUSINESS IDEA DETAILS
+    if is_service:
+        idea_details = f"""SERVICE / PRODUCT OFFERING DETAILS
+- Service / product name: {business_idea_name or what or "Untitled offering"}
+- Service category: {business_type or industry or "Not provided"}
+- Service description: {problem or "Not provided"}
+- Target customer type: {segment or "Not provided"}
+- Market scope / location: {location}
+- Currency: {currency}
+- Demand evidence: {frequency or "Not provided"}
+- Differentiation vs alternatives: {alternatives or "Not provided"}
+- Competitor price range: {competitor_price_range or "Unknown"}
+- Current intended price per sale: {currency} {price or "Unknown"}
+- Expected paying customers: {expected_customers or "Unknown"}
+- Expected sales per month: {expected_units or "Unknown"}
+- Delivery capacity: {delivery_capacity or "Not provided"}"""
+        pathway_note = (
+            "This is a SERVICE / PRODUCT IDEA — the founder already has a specific offering in mind. "
+            "Focus on market demand for this specific service, pricing intelligence for comparable services, "
+            "how they can win customers away from incumbents, and whether their delivery capacity can meet demand. "
+            "Avoid framing insights as if this is a startup building software unless that is explicitly the case."
+        )
+    else:
+        idea_details = f"""BUSINESS IDEA DETAILS
 - Idea label: {business_idea_name or business_name or what or "Untitled idea"}
 - Business name: {business_name or "Not provided"}
 - What are you building: {what or "Not provided"}
@@ -335,95 +356,116 @@ BUSINESS IDEA DETAILS
 - Location: {location}
 - Currency: {currency}
 - Target customer segment: {segment or "Not provided"}
-- Problem short: {problem or "Not provided"}
-- Frequency: {frequency or "Not provided"}
+- Core problem being solved: {problem or "Not provided"}
+- Problem frequency: {frequency or "Not provided"}
 - Alternatives currently used: {alternatives or "Not provided"}
 - Current intended price: {currency} {price or "Unknown"}
 - Expected customers: {expected_customers or "Unknown"}
-- Expected units per month: {expected_units or "Unknown"}
+- Expected units per month: {expected_units or "Unknown"}"""
+        pathway_note = (
+            "This is a BUSINESS IDEA — the founder is validating whether a market opportunity exists for a new venture. "
+            "Focus on problem severity, market size, competitive landscape, and whether there is a viable path to first revenue. "
+            "Next actions should be founder-oriented: interviews, landing pages, MVP scoping, and early sales tests."
+        )
+
+    return f"""You are a senior commercial analyst writing a private intelligence briefing for a founder.
+
+Your job is to produce the sharpest, most grounded market insight report possible — not a generic template.
+Every sentence must add information the founder cannot find by Googling "is my idea good."
+
+REASONING CHAIN: User Fields → Search Evidence → Pattern Recognition → Specific Conclusions → Scored Verdict → Executable Actions
+
+PATHWAY NOTE: {pathway_note}
+
+{idea_details}
 
 LIVE SEARCH EVIDENCE
-{evidence_text or "Limited search evidence available. Use cautious reasoning and keep uncertainty explicit."}
+{evidence_text or "No live search evidence was retrieved. Rely on your training knowledge, clearly distinguish what is known vs inferred, and flag where the founder needs to do primary research."}
 
-OUTPUT RULES
-- Return JSON only.
-- Be specific and practical.
-- Use the fields exactly as provided to influence segment, pricing sensitivity, urgency, market angle, and local opportunity.
-- If evidence is thin, say so without fabricating.
-- Competitor matrix must include both direct and indirect competitors where useful.
-- Pricing should reference realistic ranges and mention uncertainty when required.
-- Next actions must be execution-ready for a founder.
+QUALITY RULES — READ THESE BEFORE WRITING A SINGLE WORD
+1. NAME REAL THINGS. Name actual competitors, actual platforms, actual trade publications. Never write "Generic SaaS tool" or "Specialist niche vendor" as a competitor — those are category labels, not insights.
+2. QUOTE THE EVIDENCE. Where a search snippet supports a claim, weave it in or paraphrase it. If evidence contradicts the founder's assumptions, say so directly.
+3. GIVE ACTUAL NUMBERS. Market size: give a figure with a source signal (e.g. "£2.4bn UK market per IBISWorld estimates from search results"). Growth rate: give a percentage or trend descriptor grounded in evidence. Pricing: give real ranges like "£300–£900/month" not "mid-tier pricing."
+4. MAKE JUDGEMENTS. Do not hedge every statement. Pick a side: "This segment is over-served at the low end, creating a gap for a premium specialist." "The founder's intended price of {price or 'N/A'} is below market — competitors charge 2× this and still win customers."
+5. CONNECT TO THE FOUNDER'S INPUTS. Every major section must reference at least one field from the idea details above. Generic advice that could apply to any business is a failure.
+6. SURFACE REAL RISKS. Identify the single biggest commercial threat (not "competition exists"). E.g. "The top 3 search results are dominated by VC-backed platforms with free tiers — price competition will be brutal in the first 12 months."
+7. MAKE NEXT ACTIONS SPECIFIC AND TIMED. Not "interview customers" — "Interview 8 {segment or "target customers"} in {location or "the target market"} using a 5-question problem-severity script on Calendly; aim to complete within 10 days."
+8. ANTI-PATTERNS TO AVOID — never write these phrases:
+   - "Automation adoption", "Cost sensitivity", "Demand for faster delivery" (lazy trend labels)
+   - "Varies" or "Unknown" as a price range when evidence exists
+   - "could", "might", "may want to consider" in the executive summary or verdict
+   - "the founder should do more research" without specifying exactly what research and where
 
-RETURN EXACTLY THIS JSON SHAPE
+RETURN EXACTLY THIS JSON SHAPE — fill every field with sharp, specific content:
 {{
-  "executive_summary": "Short plain-English summary saying whether the idea is worth pursuing.",
+  "executive_summary": "3-4 sentences. State the commercial opportunity in plain terms: what the market signal says, where the pricing sits vs competition, what the single biggest execution risk is, and a clear verdict (go / go with caveats / stop and rethink). Reference the founder's specific idea, location, and segment. No hedging.",
   "idea_validation_result": {{
     "overall_score": "Very Strong / Strong / Fair / Weak",
     "market_demand": "High / Medium / Low",
     "competition_level": "High / Medium / Low",
     "pricing_opportunity": "Strong / Moderate / Weak",
     "execution_risk": "High / Medium / Low",
-    "recommended_action": "Proceed to MVP test / landing page test / customer interviews / more research"
+    "recommended_action": "One specific action: e.g. 'Run a 2-week landing page test targeting [segment] on LinkedIn before building anything'"
   }},
   "market_opportunity": {{
-    "summary": "Size of market, demand, trends, growth, and local opportunity",
-    "market_size": "Estimated market size if known",
-    "growth_rate": "Growth indicator if known",
-    "key_trends": ["trend 1", "trend 2", "trend 3"],
-    "location_opportunity": "Why this location matters for the idea"
+    "summary": "Specific market size, category growth, and why this moment is or isn't a good entry window. Reference evidence snippets.",
+    "market_size": "Concrete figure or range with source signal, e.g. '£1.8bn UK HR tech market (Statista 2024 per search results)'",
+    "growth_rate": "Specific percentage or descriptor backed by evidence, e.g. '11% CAGR driven by hybrid work adoption'",
+    "key_trends": ["Specific trend backed by search evidence", "Second trend with evidence signal", "Third trend that directly affects this idea"],
+    "location_opportunity": "Why {location or 'this market'} specifically helps or hurts this idea — concentration of target customers, regulatory environment, competitor density"
   }},
   "target_customer": {{
-    "profile": "Who the customer is",
-    "pain_points": ["pain 1", "pain 2", "pain 3"],
-    "buying_behaviour": "How they buy",
-    "urgency": "Urgency of the problem",
-    "willingness_to_pay": "Assessment of willingness to pay"
+    "profile": "Precise description: company size, role of buyer, annual revenue band, tech maturity, pain trigger that makes them search for a solution",
+    "pain_points": ["Specific pain with consequence, e.g. 'Manual reconciliation takes 3–4 hours/week and causes end-of-month reporting delays'", "Second specific pain", "Third specific pain"],
+    "buying_behaviour": "How this segment actually buys: procurement cycle, who signs off, typical evaluation criteria, trial vs demo preference",
+    "urgency": "What forces the decision now vs next quarter — regulatory deadline, growth pressure, staff cost, compliance risk",
+    "willingness_to_pay": "Specific range backed by evidence, e.g. 'Evidence suggests £200–£500/month is the accepted range for this segment; above £600 requires a proven ROI case'"
   }},
   "problem_validation": {{
     "evidence_strength": "Strong / Moderate / Weak",
-    "evidence": ["evidence point 1", "evidence point 2"],
-    "frequency_assessment": "How often the problem happens and how painful it is",
-    "severity": "Severity of the problem"
+    "evidence": ["Direct quote or paraphrase from search evidence proving the problem exists", "Second evidence point — forum complaint, review, news item, or data point"],
+    "frequency_assessment": "How often this pain surfaces and what it costs when it does — time, money, or risk",
+    "severity": "Is this a 'nice to fix' problem or a 'must fix' problem? What happens if the customer does nothing?"
   }},
   "demand_signals": {{
     "search_trend": "rising / stable / declining",
-    "signals": ["signal 1", "signal 2", "signal 3"],
-    "online_discussion": "Summary of discussions, complaints, reviews, or forum demand",
-    "keyword_demand": "Any useful keyword-demand takeaway if known"
+    "signals": ["Specific signal from evidence, e.g. 'Reddit r/smallbusiness has 47 threads in the last 6 months about this exact pain'", "Second signal with source", "Third signal"],
+    "online_discussion": "Where customers are talking about this problem and what they're saying — name the platforms and the tone",
+    "keyword_demand": "Specific keyword insight: e.g. 'Search volume for [related term] is high and rising; top results are dominated by US tools with no UK-local option'"
   }},
   "alternative_solutions": [
-    {{"name": "solution", "type": "manual / software / agency / freelancer / competitor", "weakness": "why it falls short"}}
+    {{"name": "Real named solution the target customer actually uses today", "type": "manual / software / agency / freelancer / competitor", "weakness": "Specific reason this falls short for the described segment — not 'too generic' but e.g. 'No API integration with Xero, which 60% of UK SMEs use'"}}
   ],
   "competitor_matrix": [
-    {{"name": "competitor name", "positioning": "their angle", "strengths": ["strength 1"], "weaknesses": ["weakness 1"], "est_price": "price if known"}}
+    {{"name": "Real named competitor", "positioning": "Their actual market angle and who they target", "strengths": ["Specific strength grounded in evidence"], "weaknesses": ["Specific weakness the founder can exploit"], "est_price": "Actual price from search evidence or best estimate with note"}}
   ],
   "competitor_pricing": [
-    {{"competitor": "name", "model": "subscription / one-off / usage / hybrid", "price_range": "range", "free_plan": true, "notes": "optional notes"}}
+    {{"competitor": "Real named competitor", "model": "subscription / one-off / usage / hybrid", "price_range": "Specific range e.g. '£199–£499/month'", "free_plan": true, "notes": "What you get at each tier and where the upsell triggers are"}}
   ],
   "pricing_strategy": {{
     "recommended_model": "subscription / usage-based / freemium / one-off / tiered / commission / hybrid",
-    "rationale": "Why this pricing model fits",
-    "launch_offer": "Suggested launch pricing tactic"
+    "rationale": "Why this model fits this specific segment's buying behaviour and the competitive landscape — not just 'it matches recurring revenue needs'",
+    "launch_offer": "Specific launch tactic with numbers: e.g. 'Offer first 10 customers a 6-month pilot at 40% off in exchange for a case study and referral'"
   }},
   "recommended_price_range": {{
-    "low": "Entry price",
-    "mid": "Mid-market price",
-    "premium": "Premium price",
+    "low": "Specific entry price with justification",
+    "mid": "Specific mid-market price with justification",
+    "premium": "Specific premium price with justification",
     "currency": "{currency}",
-    "notes": "Reasoning for the range"
+    "notes": "Explain the spread: what earns each tier, how it compares to competitors, and where the founder's intended price sits"
   }},
   "positioning": {{
-    "value_proposition": "One clear value proposition",
-    "differentiation": "What makes it different",
-    "headline_message": "One headline message"
+    "value_proposition": "One sentence that names the customer, the problem, and the measurable outcome — not a category description",
+    "differentiation": "Specific wedge vs the named competitors above — what this idea can do that they structurally cannot",
+    "headline_message": "One punchy line a target customer would forward to a colleague"
   }},
   "go_to_market": {{
-    "primary_channels": ["channel 1", "channel 2", "channel 3"],
-    "quick_wins": ["quick win 1", "quick win 2"],
-    "timeline": "Suggested first 90 days"
+    "primary_channels": ["Channel with specific tactic, e.g. 'LinkedIn outreach targeting Finance Directors at UK SMEs using Sales Navigator'", "Second channel with tactic", "Third channel with tactic"],
+    "quick_wins": ["Specific win achievable in under 2 weeks, e.g. 'Post in 3 UK small business Facebook groups with a problem-survey link'", "Second quick win with concrete action"],
+    "timeline": "Days 1–30: [specific milestone]. Days 31–60: [specific milestone]. Days 61–90: [specific milestone with a revenue or lead target]"
   }},
   "risks": [
-    {{"risk": "risk", "severity": "High / Medium / Low", "mitigation": "mitigation"}}
+    {{"risk": "Specific risk with named cause, e.g. 'Xero and QuickBooks are adding native features that overlap with this idea — 2 product updates in the last 18 months'", "severity": "High / Medium / Low", "mitigation": "Specific mitigation: e.g. 'Focus on the workflow integration layer these platforms won't build; validate this gap with 10 customer calls before month 2'"}}
   ],
   "viability_score": {{
     "label": "Very Strong / Strong / Fair / Weak",
@@ -432,21 +474,22 @@ RETURN EXACTLY THIS JSON SHAPE
     "competition_level": "High / Medium / Low",
     "pricing_opportunity": "Strong / Moderate / Weak",
     "execution_risk": "High / Medium / Low",
-    "summary": "1-2 sentence verdict",
-    "recommended_action": "Proceed to MVP test / landing page test / customer interviews / more research"
+    "summary": "2 sentences that explain the score: what drove it up, what held it back. Be direct — no 'this idea has potential if executed well' non-answers.",
+    "recommended_action": "The single most important thing the founder should do in the next 7 days, named specifically"
   }},
   "next_actions": [
-    {{"step": 1, "action": "action", "why": "why this matters", "timeframe": "this week / this month"}}
+    {{"step": 1, "action": "Specific action with named platform, tool, or person type", "why": "The exact risk or opportunity this action resolves — tied to evidence above", "timeframe": "Specific deadline, e.g. 'Complete by day 7'"}}
   ]
 }}
 
 CONSTRAINTS
 - viability_score.score must be an integer from 0 to 100.
-- competitor_matrix must contain 3 to 6 entries.
-- competitor_pricing should contain 3 to 6 entries where possible.
-- risks must contain 3 to 5 entries.
-- next_actions must contain exactly 5 entries.
-- Keep executive_summary concise.
+- competitor_matrix must contain 3 to 6 entries — all named real companies or tools, not category labels.
+- competitor_pricing must contain 3 to 6 entries with specific price ranges.
+- risks must contain 3 to 5 entries — each risk must name a specific cause.
+- next_actions must contain exactly 5 entries — each must be completable in under 30 days.
+- executive_summary must be 3–4 sentences, direct, and verdict-first.
+- Do not write any field using generic placeholder language. Every sentence must be specific to the idea, segment, and location above.
 """
 
 
@@ -934,6 +977,7 @@ def flatten_fields_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         price_range = " - ".join(part for part in [price_low, price_high] if part)
 
         return {
+            "idea_type": "service_idea",
             "business_idea_name": service_name,
             "business_name": service_name,
             "what_building": service_name or service_description or "service business",
@@ -951,6 +995,7 @@ def flatten_fields_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "expected_customers": _clean_text(payload.get("number_of_paying_customers")),
             "expected_units_per_month": _clean_text(payload.get("expected_sales_per_month")),
             "competitor_price_range": price_range,
+            "delivery_capacity": _clean_text(payload.get("delivery_capacity")),
         }
 
     ctx = payload.get("context") or {}
@@ -962,6 +1007,7 @@ def flatten_fields_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     service_type = _clean_text(offer.get("service_type"))
 
     return {
+        "idea_type": "business_idea",
         "business_idea_name": business_name,
         "business_name": business_name,
         "what_building": service_type or business_name,

@@ -411,7 +411,7 @@ export default function ValidationWizardPage() {
     return [
       {
         key: "business",
-        label: "Workspace details",
+        label: "Business details",
         desc: "Name, industry, currency, and context."
       },
       { key: "offer_demand", label: "Offer & demand", desc: "Offer, pricing, volume assumptions, and sales cycle." },
@@ -591,10 +591,9 @@ export default function ValidationWizardPage() {
       const pn = String(profile?.company_name || "").trim();
       return pn || "Workspace";
     }
-    const bn = String(form?.context?.business_name || "").trim();
-    if (!bn) return isProductPath ? "Product Validation" : "Idea Validation";
-    return `${bn} - Validation`;
-  }, [form?.context?.business_name, isCreateWorkspace, isProductPath, profile?.company_name]);
+    // For business idea / service paths, workspace name is set independently — do not derive from idea fields.
+    return "";
+  }, [isCreateWorkspace, profile?.company_name]);
 
   const recommendedCapacityPerPerson = useMemo(() => {
     const target = parseNumber(form?.demand?.expected_units_per_month, 0);
@@ -922,6 +921,10 @@ export default function ValidationWizardPage() {
           if (serviceDraft && typeof serviceDraft === "object") {
             setServiceForm((prev) => ({ ...prev, ...serviceDraft }));
           }
+          if (ws?.data?.market_research && typeof ws.data.market_research === "object") {
+            setMarketResearch(ws.data.market_research);
+            setStageOneResearchReady(true);
+          }
           setWorkspaceId(wsId);
           setWorkspaceNameStore(ws?.name || null);
           if (!isProductPath) setDecisionStatus(ws?.data?.decision?.status || null);
@@ -954,6 +957,11 @@ export default function ValidationWizardPage() {
           if (wp.primary_industry && !next.context.primary_industry) {
             next.context.primary_industry = wp.primary_industry;
           }
+        }
+        // Restore previously generated insights
+        if (ws?.data?.market_research && typeof ws.data.market_research === "object") {
+          setMarketResearch(ws.data.market_research);
+          setStageOneResearchReady(true);
         }
         const serviceDraft = ws?.data?.draft_service_idea || ws?.data?.service_idea_validation;
         if (serviceDraft && typeof serviceDraft === "object") {
@@ -1486,25 +1494,8 @@ export default function ValidationWizardPage() {
     };
   }
 
-  function validateBusinessStage(stageKey) {
-    if (!isBusinessStageFlow) return null;
-    if (stageKey === "business") {
-      if (!String(workspaceName || "").trim()) return "Business idea name is required.";
-      if (!String(form.context.business_name || "").trim()) return "Business name is required.";
-      if (!String(form.offer.service_type || "").trim()) return "Business offering is required.";
-      if (!String(form.context.business_type_category || "").trim()) return "Business type is required.";
-      if (!String(form.context.primary_industry_category || "").trim()) return "Primary industry is required.";
-      if (!String(form.context.location || "").trim()) return "Location is required.";
-      if (!String(form.context.currency || "").trim()) return "Currency is required.";
-      if (!String(form.problem.customer_segment_category || "").trim()) return "Customer segment is required.";
-      if (!String(form.problem.problem_type || "").trim()) return "Problem short is required.";
-      if (!String(form.problem.frequency || "").trim()) return "Frequency is required.";
-      if (!String(form.problem.alternatives || "").trim()) return "Alternatives is required.";
-      return null;
-    }
-    if (stageKey === "go_to_market") {
-      if (!String(form.go_to_market.target_market || "").trim()) return "Target market is required.";
-    }
+  function validateBusinessStage(_stageKey) {
+    // Business idea stages are optional — the user can proceed at any point.
     return null;
   }
 
@@ -1605,7 +1596,11 @@ export default function ValidationWizardPage() {
         setIsLoading(false);
         return;
       }
-      const wsName = String((isCreateWorkspace ? profile.company_name : workspaceName) || "").trim() || derivedWorkspaceName;
+      // For idea validation, always keep the existing workspace name — never overwrite it with business idea name.
+      // workspaceName is the idea label only; the actual workspace name comes from the store.
+      const wsName = isCreateWorkspace
+        ? String(profile.company_name || "").trim() || derivedWorkspaceName
+        : String(useWorkspaceStore.getState().workspaceName || workspaceName || "").trim() || "My workspace";
 
       let wsId = editingWorkspaceId || storedWorkspaceId;
       if (isCreateWorkspace) {
@@ -1760,9 +1755,13 @@ export default function ValidationWizardPage() {
       setInputs({ price_per_unit: payload.offer.price_per_unit, units_per_month: payload.demand.expected_units_per_month, fixed_costs_monthly: fixedMonthly, variable_cost_per_unit: payload.costs.variable_cost_per_unit, starting_cash: startingCash });
       setCurrency(payload.context.currency || "GBP");
       const nextCatalogue = existingCatalogue || { products: [], customers: [], vendors: [] };
+      // Only write idea_validation to the live field when the user explicitly accepts.
+      // All other saves (draft, insight generation) stay in draft_idea_validation only
+      // so other modules never see unaccepted data.
       const workspacePatch = {
         draft_idea_validation: isProductPath ? null : payload,
         draft_service_idea: isProductPath ? serviceForm : null,
+        ...(shouldEvaluate && !isProductPath ? { idea_validation: payload } : {}),
         ...(isProductPath ? {} : { catalogue: nextCatalogue })
       };
       if (wsId) {
@@ -1773,9 +1772,11 @@ export default function ValidationWizardPage() {
           { timeoutMs: 120000 }
         );
         setWorkspaceId(wsId);
-        setWorkspaceNameStore(wsName);
+        // Don't touch the workspace name — validation is separate from workspace identity
         if (!isProductPath) setDecisionStatus(null);
-        setIdeaValidation(isProductPath ? null : payload);
+        // Only update the live ideaValidation store on explicit acceptance
+        if (shouldEvaluate && !isProductPath) setIdeaValidation(payload);
+        else setDraftIdeaValidation(payload);
       } else {
         const ws = await apiRequest(
           "/validation/create",
@@ -1787,7 +1788,8 @@ export default function ValidationWizardPage() {
         setWorkspaceId(wsId);
         setWorkspaceNameStore(ws.name || wsName);
         if (!isProductPath) setDecisionStatus(null);
-        setIdeaValidation(isProductPath ? null : payload);
+        if (shouldEvaluate && !isProductPath) setIdeaValidation(payload);
+        else setDraftIdeaValidation(payload);
       }
 
       if (enabledForms.workspace_profile) {
@@ -2074,6 +2076,12 @@ export default function ValidationWizardPage() {
       const result = await apiRequest("/validation/market-research", "POST", body, { timeoutMs: 120000 });
       setMarketResearch(result);
       if (markStageOneReady) setStageOneResearchReady(true);
+      // Persist insights to workspace so they survive page refreshes
+      try {
+        await apiRequest("/validation/me", "PATCH", { data: { market_research: result } });
+      } catch {
+        // non-critical — insights are already in state
+      }
     } catch (e) {
       setMrError(e instanceof Error ? e.message : "Market research failed. Please try again.");
       if (markStageOneReady) setStageOneResearchReady(false);
@@ -2119,13 +2127,6 @@ export default function ValidationWizardPage() {
                 ]}
               />
             </div>
-            <div className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
-              {isBusinessStageFlow
-                ? `Stage ${Math.min(currentBusinessStageIndex + 1, formBlocks.length)} of ${formBlocks.length}`
-                : isServiceStageFlow
-                  ? `Stage ${Math.min(currentServiceStageIndex + 1, formBlocks.length)} of ${formBlocks.length}`
-                : `Sections selected: ${selectedCount} / ${formBlocks.length}`}
-            </div>
           </div>
         ) : null}
       </div>
@@ -2155,40 +2156,47 @@ export default function ValidationWizardPage() {
           (isBusinessStageFlow || isServiceStageFlow)) &&
           !isCreateWorkspace ? (
           <div className="space-y-4">
-            <SectionCard
-              title="Stage Insight"
-              subtitle="These insights were updated from the information you entered in this stage."
-            >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-sm text-slate-600">
-                    We searched the web and updated these insights using the information from this stage.
+            {/* Stage Insight header bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand-100 bg-gradient-to-r from-brand-50 to-accent-50 px-4 py-3 dark:border-slate-700 dark:from-slate-900 dark:to-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M9 17l3-3 3 3M9 11l3-3 3 3" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    {isBusinessStageFlow ? currentBusinessStageMeta?.label || "Stage" : isServiceStageFlow ? currentServiceStageMeta?.label || "Stage" : "Stage"} insights
                   </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setError(null);
-                      setShowBuilderMarketInsight(false);
-                    }}
-                  >
-                    Back to stage
-                  </Button>
-                  {mrError ? (
-                    <Button
-                      onClick={() => runMarketResearch({
-                        useCurrentForm: isBusinessStageFlow || isServiceStageFlow,
-                        markStageOneReady: true,
-                        showInBuilder: true,
-                        researchSource: isServiceStageFlow ? "service" : "business",
-                      })}
-                    >
-                      Retry insight
-                    </Button>
-                  ) : null}
+                  <div className="text-xs text-slate-500 dark:text-slate-400">Generated from your inputs for this stage</div>
                 </div>
               </div>
-              {mrError ? <div className="mt-3"><InlineAlert kind="error" message={mrError} /></div> : null}
-            </SectionCard>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => runMarketResearch({
+                    useCurrentForm: isBusinessStageFlow || isServiceStageFlow,
+                    markStageOneReady: true,
+                    showInBuilder: true,
+                    researchSource: isServiceStageFlow ? "service" : "business",
+                    forceRefresh: true,
+                  })}
+                  disabled={mrLoading}
+                >
+                  {mrLoading ? <Spinner size={14} /> : null}
+                  Refresh
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setError(null); setShowBuilderMarketInsight(false); }}
+                >
+                  ← Back to stage
+                </Button>
+              </div>
+            </div>
+            {mrError ? <InlineAlert kind="error" message={mrError} /> : null}
 
             {mrLoading ? (
               <SectionCard title="Updating Insight">
@@ -2598,33 +2606,50 @@ export default function ValidationWizardPage() {
                 ) : null}
 
                 {stageOneResearchReady ? (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
-                    <div className="mb-3 text-[13px] font-semibold text-slate-700 dark:text-slate-300">What would you like to do?</div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="secondary"
+                  <div className="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50 to-accent-50 p-5 dark:border-slate-700 dark:from-slate-900 dark:to-slate-800">
+                    <div className="mb-1 text-sm font-semibold text-slate-900 dark:text-slate-100">What would you like to do next?</div>
+                    <div className="mb-4 text-xs text-slate-500 dark:text-slate-400">Choose how to proceed based on these insights.</div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <button
+                        type="button"
                         onClick={() => {
                           setError(null);
                           setStageOneResearchReady(false);
                           setShowBuilderMarketInsight(false);
                           setLastResearchHash(null);
                         }}
+                        className="flex flex-col items-start gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-slate-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
                       >
-                        Modify inputs
-                      </Button>
-                      <Button
-                        variant="secondary"
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </span>
+                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">Modify inputs</span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">Go back and adjust your stage inputs</span>
+                      </button>
+
+                      {/* Reject: always for business idea; only at last stage for product/service */}
+                      {(!isServiceStageFlow || isLastServiceStage) && (
+                      <button
+                        type="button"
                         onClick={() => {
                           setError(null);
                           setStageOneResearchReady(false);
                           setShowBuilderMarketInsight(false);
                           saveWorkspace(true);
                         }}
+                        className="flex flex-col items-start gap-1.5 rounded-xl border border-rose-100 bg-white px-4 py-3 text-left shadow-sm transition hover:border-rose-200 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
                       >
-                        Reject idea
-                      </Button>
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-500 dark:bg-rose-900/20">
+                          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                        </span>
+                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">Reject idea</span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">Mark this idea as rejected</span>
+                      </button>
+                      )}
+
                       {(isBusinessStageFlow ? !isLastBusinessStage : !isLastServiceStage) ? (
-                        <Button
+                        <button
+                          type="button"
                           onClick={() => {
                             setError(null);
                             setStageOneResearchReady(false);
@@ -2635,20 +2660,35 @@ export default function ValidationWizardPage() {
                               setCurrentServiceStageIndex((prev) => Math.min(prev + 1, Math.max(0, serviceStageKeys.length - 1)));
                             }
                           }}
+                          className="flex flex-col items-start gap-1.5 rounded-xl border border-brand-100 bg-white px-4 py-3 text-left shadow-sm transition hover:border-brand-200 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
                         >
-                          Get more insights
-                        </Button>
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/20">
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+                          </span>
+                          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">Next stage</span>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400">Continue to the next set of inputs</span>
+                        </button>
                       ) : null}
-                      <Button
+
+                      {/* Accept: always for business idea; only at last stage for product/service */}
+                      {(!isServiceStageFlow || isLastServiceStage) && (
+                      <button
+                        type="button"
                         onClick={() => {
                           setError(null);
                           setStageOneResearchReady(false);
                           setShowBuilderMarketInsight(false);
                           saveWorkspace(true);
                         }}
+                        className="flex flex-col items-start gap-1.5 rounded-xl border border-emerald-100 bg-white px-4 py-3 text-left shadow-sm transition hover:border-emerald-200 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
                       >
-                        Accept &amp; evaluate
-                      </Button>
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20">
+                          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5"/></svg>
+                        </span>
+                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">Accept & evaluate</span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">Save and run the financial evaluation</span>
+                      </button>
+                      )}
                     </div>
                   </div>
                 ) : null}
@@ -2659,12 +2699,9 @@ export default function ValidationWizardPage() {
           <div className="space-y-4">
             <SectionCard
               title="Market research"
-              subtitle="This tab shows the fuller research accumulated from the stages you have completed so far."
+              subtitle="Full research report accumulated from your validation inputs."
             >
-              <div className="text-sm text-slate-600">
-                Each time you complete a stage, we refresh this report using the latest information you have entered.
-              </div>
-              {mrError ? <div className="mt-3"><InlineAlert kind="error" message={mrError} /></div> : null}
+              {mrError ? <InlineAlert kind="error" message={mrError} /> : null}
             </SectionCard>
 
             {mrLoading ? (
@@ -3028,19 +3065,17 @@ export default function ValidationWizardPage() {
                     <div className="mt-1 text-xs text-slate-600">A service, marketplace, or company concept you want to start.</div>
                   </button>
                   )}
-                  {canServiceValidation && (
-                    <button
-                      type="button"
-                      onClick={() => selectPathway("product_service_idea")}
-                      className={
-                        "rounded-2xl border p-4 text-left transition " +
-                        (form.pathway === "product_service_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
-                      }
-                    >
-                      <div className="text-sm font-semibold text-slate-900">Product / service idea</div>
-                      <div className="mt-1 text-xs text-slate-600">A product or offering you want to build or add.</div>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => selectPathway("product_service_idea")}
+                    className={
+                      "rounded-2xl border p-4 text-left transition " +
+                      (form.pathway === "product_service_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
+                    }
+                  >
+                    <div className="text-sm font-semibold text-slate-900">Product / service idea</div>
+                    <div className="mt-1 text-xs text-slate-600">A product or offering you want to build or add.</div>
+                  </button>
                 </div>
               </SectionCard>
             ) : null}
@@ -3110,37 +3145,17 @@ export default function ValidationWizardPage() {
             title={fromOtherModule ? "Workspace inputs" : "Validation inputs"}
             subtitle={
               isBusinessStageFlow
-                ? `Stage ${currentBusinessStageIndex + 1} of ${businessStageKeys.length}${currentBusinessStageMeta ? `: ${currentBusinessStageMeta.label}` : ""}`
+                ? currentBusinessStageMeta?.label || ""
                 : isServiceStageFlow
-                  ? `Stage ${currentServiceStageIndex + 1} of ${serviceStageKeys.length}${currentServiceStageMeta ? `: ${currentServiceStageMeta.label}` : ""}`
-                : (fromOtherModule ? "Open any section and fill it in any order." : "Open any section and fill it in any order.")
+                  ? currentServiceStageMeta?.label || ""
+                  : (fromOtherModule ? "Open any section and fill it in any order." : "Open any section and fill it in any order.")
             }
           >
-            {isBusinessStageFlow || isServiceStageFlow ? (
-              <div className="mb-4">
-                <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <span>Progress</span>
-                  <span>{isBusinessStageFlow ? currentBusinessStageIndex + 1 : currentServiceStageIndex + 1} / {isBusinessStageFlow ? businessStageKeys.length : serviceStageKeys.length}</span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className="h-full rounded-full bg-brand-600 transition-all"
-                    style={{
-                      width: `${(
-                        ((isBusinessStageFlow ? currentBusinessStageIndex + 1 : currentServiceStageIndex + 1) /
-                          Math.max(1, isBusinessStageFlow ? businessStageKeys.length : serviceStageKeys.length)) *
-                        100
-                      )}%`
-                    }}
-                  />
-                </div>
-              </div>
-            ) : null}
             <div className="space-y-3">
               {enabledForms.business && !isProductPath && (!isBusinessStageFlow || currentBusinessStageKey === "business") ? (
                 <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                   <summary className="cursor-pointer text-sm font-semibold text-slate-900">
-                    {isProductPath ? "Product details" : "Workspace details"}
+                    {isProductPath ? "Product details" : "Business details"}
                   </summary>
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                       <div className="md:col-span-2 xl:col-span-3">
@@ -4009,7 +4024,7 @@ export default function ValidationWizardPage() {
         !(showBuilderMarketInsight &&
           (isBusinessStageFlow || isServiceStageFlow)) ? (
         <div className="sticky bottom-0 z-20 mt-4 py-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-center gap-3 pr-16 sm:pr-20">
             <div>
               {mode === "fill" && isBusinessStageFlow ? (
                 <Button

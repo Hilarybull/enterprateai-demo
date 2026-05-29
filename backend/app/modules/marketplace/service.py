@@ -333,6 +333,7 @@ async def approve_rfq(
     workspace_id: str | None = None,
     rfq_id: str,
     validity_days: int = 30,
+    item_prices: list[dict] | None = None,
 ) -> dict:
     ws = await _load_workspace(user_id, workspace_id)
     if not ws:
@@ -372,17 +373,34 @@ async def approve_rfq(
             return 0.0
         return float(p.get("cost_of_sales") or p.get("unit_cost") or 0)
 
+    # Build a lookup from item name -> price override supplied by the owner
+    price_overrides: dict[str, dict] = {}
+    if item_prices:
+        for idx, override in enumerate(item_prices):
+            key = str(override.get("product_name") or "").strip().lower()
+            if key:
+                price_overrides[key] = override
+            else:
+                price_overrides[f"__idx_{idx}"] = override
+
     quote_items = []
-    for item in items:
+    for idx, item in enumerate(items):
         name = str(item.get("name") or "").strip()
         qty = max(1, int(item.get("quantity") or 1))
         product = _find_product(name)
+        override = price_overrides.get(name.lower()) or price_overrides.get(f"__idx_{idx}")
+        if override is not None:
+            unit_price = float(override.get("unit_price") or 0)
+            unit_cos = float(override.get("unit_cost_of_sales") or 0)
+        else:
+            unit_price = _product_price(product)
+            unit_cos = _product_cos(product)
         quote_items.append({
             "product_id": product["id"] if product else f"rfq-item-{uuid4().hex[:8]}",
             "product_name": name or "Item",
             "quantity": qty,
-            "unit_price": _product_price(product),
-            "unit_cost_of_sales": _product_cos(product),
+            "unit_price": unit_price,
+            "unit_cost_of_sales": unit_cos,
         })
 
     subtotal = round(sum(i["unit_price"] * i["quantity"] for i in quote_items), 2)
@@ -451,6 +469,18 @@ async def reject_rfq(*, user_id: str, workspace_id: str | None = None, rfq_id: s
     merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
     await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
     return rfq
+
+
+async def delete_rfq(*, user_id: str, workspace_id: str | None = None, rfq_id: str) -> None:
+    ws = await _load_workspace(user_id, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    ws_id, data = _ws_fields(ws)
+    financials = data.get("financials") or {}
+    rfq_requests = [r for r in (financials.get("rfq_requests") or []) if r.get("id") != rfq_id]
+    merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
+    now = datetime.now(timezone.utc).isoformat()
+    await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
 
 
 async def respond_to_quote(*, token: str, viewer_email: str, action: str) -> dict:

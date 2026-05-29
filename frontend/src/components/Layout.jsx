@@ -217,6 +217,9 @@ export default function Layout() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem("ea_theme") || "system");
   const profileRef = useRef(null);
+  const notifRef = useRef(null);
+  const [notifications, setNotifications] = useState([]);
+  const [notifOpen, setNotifOpen] = useState(false);
 
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
@@ -276,6 +279,16 @@ export default function Layout() {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [profileOpen]);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+    function handleClick(e) {
+      if (!notifRef.current || notifRef.current.contains(e.target)) return;
+      setNotifOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [notifOpen]);
 
   useEffect(() => {
     if (!enableHealthCheck) return;
@@ -361,6 +374,8 @@ export default function Layout() {
         setWorkspaceName(ws.name || null);
         setWorkspaceLogo(ws?.data?.workspace_profile?.logo_data_url || null);
         setWorkspaceLoadedAt(new Date().toISOString());
+        const rfqList = ws?.data?.financials?.rfq_requests;
+        if (Array.isArray(rfqList)) setNotifications(rfqList.filter((r) => r.status === "pending"));
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
         else setDecisionStatus(null);
@@ -647,6 +662,59 @@ export default function Layout() {
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
+              </div>
+
+              {/* Notification bell */}
+              <div className="relative shrink-0" ref={notifRef}>
+                <button
+                  type="button"
+                  onClick={() => setNotifOpen((v) => !v)}
+                  className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  aria-label="Notifications"
+                >
+                  <Icon name="bell" className="h-4 w-4" />
+                  {notifications.length > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white">
+                      {notifications.length > 9 ? "9+" : notifications.length}
+                    </span>
+                  )}
+                </button>
+                {notifOpen && (
+                  <div className="absolute right-0 top-11 z-30 w-72 rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+                      <span className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">Notifications</span>
+                      {notifications.length > 0 && (
+                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-600 dark:bg-rose-900/30 dark:text-rose-400">
+                          {notifications.length} pending
+                        </span>
+                      )}
+                    </div>
+                    <div className="max-h-80 overflow-auto">
+                      {notifications.length ? (
+                        notifications.map((rfq) => (
+                          <button
+                            key={rfq.id}
+                            type="button"
+                            className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+                            onClick={() => { setNotifOpen(false); navigate("/financials"); }}
+                          >
+                            <div className="flex w-full items-center justify-between gap-2">
+                              <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{rfq.customer_name}</span>
+                              <span className="shrink-0 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600 dark:bg-sky-900/30 dark:text-sky-400">RFQ</span>
+                            </div>
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400">{rfq.customer_email}</span>
+                            {rfq.items?.length > 0 && (
+                              <span className="text-[10px] text-slate-400">{rfq.items.map((i) => i.name).join(", ")}</span>
+                            )}
+                            <span className="text-[10px] text-slate-400">{rfq.created_at ? new Date(rfq.created_at).toLocaleDateString() : ""}</span>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-4 py-6 text-center text-[12px] text-slate-500 dark:text-slate-400">No new notifications</div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="relative flex items-center gap-2" ref={profileRef}>

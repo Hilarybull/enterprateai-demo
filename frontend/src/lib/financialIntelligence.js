@@ -264,8 +264,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     return !isPendingWithinTerms(item, vendorTerms);
   });
 
-  const invoiceRevenue = paidInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
-  const invoiceCostOfSales = paidInvoices.reduce((sum, item) => {
+  const totalInvoiceRevenue = paidInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
+  const totalInvoiceCostOfSales = paidInvoices.reduce((sum, item) => {
     if (item.cost_of_sales != null) return sum + toNumber(item.cost_of_sales);
     const productIds = getRecordProductIds(item);
     if (!productIds.length) {
@@ -275,7 +275,28 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     const perUnitCost = productIds.reduce((running, productId) => running + getProductCostOfSales(productMap.get(productId)), 0);
     return sum + perUnitCost * Math.max(1, toNumber(item.quantity || 1));
   }, 0);
-  const operationalExpenses = paidExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
+  const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
+
+  // Count distinct calendar months that actually have paid invoices/expenses.
+  // This prevents the "marking an invoice paid reduces revenue" bug that occurs when using
+  // a raw date-span divisor — adding an old invoice extends the span without adding months.
+  function distinctMonthCount(items) {
+    const months = new Set();
+    for (const item of items) {
+      const raw = item?.created_at || item?.updated_at || item?.issued_at;
+      if (!raw) continue;
+      const d = new Date(raw);
+      if (!Number.isFinite(d.getTime())) continue;
+      months.add(`${d.getFullYear()}-${d.getMonth()}`);
+    }
+    return Math.max(1, months.size);
+  }
+
+  const invoiceMonths = distinctMonthCount(paidInvoices);
+  const expenseMonths = distinctMonthCount(paidExpenses);
+  const invoiceRevenue = totalInvoiceRevenue > 0 ? Number((totalInvoiceRevenue / invoiceMonths).toFixed(2)) : 0;
+  const invoiceCostOfSales = totalInvoiceCostOfSales > 0 ? Number((totalInvoiceCostOfSales / invoiceMonths).toFixed(2)) : 0;
+  const operationalExpenses = totalOperationalExpenses > 0 ? Number((totalOperationalExpenses / expenseMonths).toFixed(2)) : 0;
   const contractRevenue = 0;
   const contractCostOfSales = 0;
   const contractPurchases = 0;

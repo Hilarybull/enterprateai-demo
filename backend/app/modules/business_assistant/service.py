@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
+from typing import Any
 
 from fastapi import HTTPException, status
 
@@ -9,6 +11,65 @@ from app.core.supabase import sb_select
 from app.modules.idea_validation.service import get_user_workspace
 from app.modules.business_assistant.schemas import BusinessAssistantChatRequest, BusinessAssistantChatResponse
 from app.shared.llm.openai_client import AutoLLMClient, NoopLLMClient
+
+
+def _distinct_month_count(items: list[dict]) -> int:
+    """Count distinct calendar months with activity — avoids revenue drops when old invoices are marked paid."""
+    months: set[str] = set()
+    for item in items:
+        for key in ("created_at", "updated_at", "issued_at"):
+            val = item.get(key)
+            if val:
+                try:
+                    dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+                    months.add(f"{dt.year}-{dt.month}")
+                    break
+                except Exception:
+                    pass
+    return max(1, len(months))
+
+
+def _compute_financial_baseline(workspace_data: dict) -> dict[str, Any]:
+    """Compute the same monthly run-rate figures the simulation frontend uses."""
+    financials = workspace_data.get("financials") or {}
+    invoices = [i for i in (financials.get("invoices") or []) if not i.get("archived")]
+    expenses = [e for e in (financials.get("expenses") or []) if not e.get("archived")]
+
+    paid_invoices = [i for i in invoices if str(i.get("status") or "").lower() == "paid"]
+    pending_invoices = [i for i in invoices if str(i.get("status") or "").lower() != "paid"]
+    paid_expenses = [e for e in expenses if str(e.get("status") or "").lower() == "paid"]
+
+    invoice_months = _distinct_month_count(paid_invoices)
+    expense_months = _distinct_month_count(paid_expenses)
+
+    total_invoice_revenue = sum(float(i.get("total_amount") or 0) for i in paid_invoices)
+    total_invoice_cos = sum(float(i.get("cost_of_sales") or 0) for i in paid_invoices)
+    total_expenses = sum(float(e.get("price") or 0) for e in paid_expenses)
+
+    monthly_revenue = round(total_invoice_revenue / invoice_months, 2) if total_invoice_revenue else 0.0
+    monthly_cos = round(total_invoice_cos / invoice_months, 2) if total_invoice_cos else 0.0
+    monthly_expenses = round(total_expenses / expense_months, 2) if total_expenses else 0.0
+    monthly_costs = round(monthly_cos + monthly_expenses, 2)
+    monthly_profit = round(monthly_revenue - monthly_costs, 2)
+
+    pending_total = sum(float(i.get("total_amount") or 0) for i in pending_invoices)
+
+    return {
+        "monthly_revenue": monthly_revenue,
+        "monthly_cost_of_sales": monthly_cos,
+        "monthly_expenses": monthly_expenses,
+        "monthly_total_costs": monthly_costs,
+        "monthly_profit": monthly_profit,
+        "accruals_outstanding": round(pending_total, 2),
+        "paid_invoice_count": len(paid_invoices),
+        "pending_invoice_count": len(pending_invoices),
+        "observed_months": invoice_months,
+        "note": (
+            "These figures are computed from paid invoices divided by the observed trading period "
+            f"({invoice_months} month(s)). They match the figures shown in the Simulation baseline table. "
+            "Always use these numbers when answering financial questions — do not re-sum raw invoices."
+        ),
+    }
 
 
 def _compact_json(value, limit: int = 18000) -> str:
@@ -118,9 +179,16 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
         role = "User" if message.role == "user" else "Assistant"
         conversation.append(f"{role}: {message.content.strip()}")
 
+    financial_baseline = _compute_financial_baseline(workspace_data)
+
     system = (
         "You are a business assistant for the user's company, not a product support bot. "
-        "Answer only from the business context supplied. This includes workspace profile, registration details, and simulation history when available. "
+        "Answer only from the business context supplied. "
+        "CRITICAL: When answering any question about revenue, costs, profit, or financial performance, "
+        "you MUST use the figures in COMPUTED FINANCIAL BASELINE — not raw invoice totals from workspace data "
+        "and not figures from old simulation runs. The computed baseline matches exactly what the Simulation "
+        "page shows. Old simulation runs may have stale baseline_metrics from a different point in time; "
+        "treat them only as scenario outcome history, not as the current financial state. "
         "Be practical, concise, and helpful. "
         "If the answer is not supported by the available business data, say that clearly and state what is missing. "
         "Do not claim knowledge about EnterprateAI beyond the supplied workspace data. "
@@ -128,9 +196,12 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
     )
     prompt = (
         f"Workspace name: {workspace.name}\n\n"
+        f"COMPUTED FINANCIAL BASELINE (authoritative — always use these figures for financial questions):\n"
+        f"{_compact_json(financial_baseline, limit=2000)}\n\n"
         f"Workspace data:\n{_compact_json(workspace_data)}\n\n"
         f"Registration context:\n{_compact_json(registration_context, limit=6000)}\n\n"
-        f"Recent simulation runs:\n{_compact_json(simulation_context, limit=12000)}\n\n"
+        f"Recent simulation runs (scenario outcomes only — do not use baseline_metrics for current state):\n"
+        f"{_compact_json(simulation_context, limit=12000)}\n\n"
         f"Recent blueprint documents:\n{_compact_json(document_context, limit=12000)}\n\n"
         f"Conversation:\n" + "\n".join(conversation)
     )

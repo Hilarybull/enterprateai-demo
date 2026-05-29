@@ -270,16 +270,27 @@ export default function SimulationPage() {
       }
     }
     loadWorkspaceData();
-    intervalId = window.setInterval(loadWorkspaceData, 30000);
+    intervalId = window.setInterval(loadWorkspaceData, 10000);
+
+    // Immediately refetch when user returns to this tab (e.g. after paying an invoice on Financials)
+    function onVisible() {
+      if (document.visibilityState === "visible") loadWorkspaceData();
+    }
+    function onFocus() {
+      loadWorkspaceData();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+
     return () => {
       alive = false;
       if (intervalId) window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
     };
   }, [workspaceId]);
 
   useEffect(() => {
-    setAutoProjectionDone(false);
-    setAutoSignalsDone(false);
     lastSnapshotHashRef.current = "";
     lastSignalsSnapshotHashRef.current = "";
   }, [workspaceId]);
@@ -416,20 +427,21 @@ export default function SimulationPage() {
   useEffect(() => {
     if (!canRun || tab !== "adaptive") return;
     if (loading) return;
-    if (snapshotHash === lastSnapshotHashRef.current && autoProjectionDone) return;
+    // Always re-run when the snapshot hash changes — data has genuinely changed
+    if (snapshotHash === lastSnapshotHashRef.current) return;
     lastSnapshotHashRef.current = snapshotHash;
     runDoNothing(6, false, true);
     setAutoProjectionDone(true);
-  }, [tab, canRun, autoProjectionDone, loading, snapshotHash]);
+  }, [tab, canRun, loading, snapshotHash]);
 
   useEffect(() => {
     if (!canRun || tab !== "adaptive") return;
     if (loading) return;
-    if (snapshotHash === lastSignalsSnapshotHashRef.current && autoSignalsDone) return;
+    if (snapshotHash === lastSignalsSnapshotHashRef.current) return;
     lastSignalsSnapshotHashRef.current = snapshotHash;
     loadSignals();
     setAutoSignalsDone(true);
-  }, [tab, canRun, autoSignalsDone, loading, snapshotHash]);
+  }, [tab, canRun, loading, snapshotHash]);
 
   async function saveDecision(status, recommendationId) {
     if (!activeRun?.scenario_run_id || !canRun) return;
@@ -934,32 +946,39 @@ export default function SimulationPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
-              <details className="rounded-xl border border-slate-200 bg-white">
-                <summary className="cursor-pointer select-none px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-50 rounded-xl list-none flex items-center justify-between">
-                  <span>Current baseline</span>
-                  <svg viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5 text-slate-400"><path fillRule="evenodd" d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z" clipRule="evenodd"/></svg>
-                </summary>
-                <div className="border-t border-slate-100 p-3">
+              <div className="rounded-xl border border-slate-200 bg-white">
+                <div className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 border-b border-slate-100">
+                  Current baseline
+                </div>
+                <div className="p-3">
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="rounded-lg bg-slate-50 px-2 py-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Revenue</div>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly revenue</div>
                       <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.revenue_monthly || 0, currency || "GBP")}</div>
                     </div>
                     <div className="rounded-lg bg-slate-50 px-2 py-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Costs</div>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly costs</div>
                       <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.costs_monthly || 0, currency || "GBP")}</div>
                     </div>
-                    <div className="rounded-lg bg-slate-50 px-2 py-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Cash start</div>
-                      <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.starting_cash || 0, currency || "GBP")}</div>
+                    <div className={`rounded-lg px-2 py-2 ${(stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0) >= 0 ? "bg-emerald-50" : "bg-rose-50"}`}>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly profit</div>
+                      <div className={`mt-1 font-semibold ${(stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                        {formatCurrency((stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0), currency || "GBP")}
+                      </div>
                     </div>
                     <div className="rounded-lg bg-slate-50 px-2 py-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Starting cash</div>
+                      <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.starting_cash || 0, currency || "GBP")}</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-2 py-2 col-span-2">
                       <div className="text-[10px] uppercase tracking-wide text-slate-500">Largest client</div>
-                      <div className="mt-1 font-semibold text-slate-900 break-words">{largestClient?.name || "Not identified"}</div>
+                      <div className="mt-1 font-semibold text-slate-900 break-words">
+                        {largestClient ? `${largestClient.name} (${largestClient.share}% of revenue)` : "Not identified"}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </details>
+              </div>
 
               <details className="rounded-xl border border-slate-200 bg-white">
                 <summary className="cursor-pointer select-none px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-50 rounded-xl list-none flex items-center justify-between">
@@ -1605,35 +1624,48 @@ function ScenarioOutput({
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="px-2 py-2 text-left">Month</th>
-                  <th className="px-2 py-2 text-left">Run-rate revenue</th>
-                  <th className="px-2 py-2 text-left">Accruals</th>
-                  <th className="px-2 py-2 text-left">Expenses</th>
-                  <th className="px-2 py-2 text-left">Cost of sales</th>
-                  <th className="px-2 py-2 text-left">Total costs</th>
-                  <th className="px-2 py-2 text-left">Profit</th>
-                  <th className="px-2 py-2 text-left">Projected cash balance</th>
-                  <th className="px-2 py-2 text-left">Stability</th>
-                  <th className="px-2 py-2 text-left">State</th>
+                  <th className="px-3 py-2 text-left font-semibold">Month</th>
+                  <th className="px-3 py-2 text-right font-semibold">Revenue</th>
+                  <th className="px-3 py-2 text-right font-semibold">Accruals</th>
+                  <th className="px-3 py-2 text-right font-semibold">Expenses</th>
+                  <th className="px-3 py-2 text-right font-semibold">Cost of sales</th>
+                  <th className="px-3 py-2 text-right font-semibold">Total costs</th>
+                  <th className="px-3 py-2 text-right font-semibold">Profit</th>
+                  <th className="px-3 py-2 text-right font-semibold">Cash balance</th>
+                  <th className="px-3 py-2 text-left font-semibold">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {timelineRows.map((row) => (
-                  <tr key={row.month_index} className="border-t">
-                    <td className="px-2 py-2">
-                      <div className="font-semibold text-slate-700">{formatMonthLabel(row.month_index)}</div>
-                    </td>
-                    <td className="px-2 py-2">{formatCurrency(row.revenue, currency)}</td>
-                    <td className="px-2 py-2">{formatCurrency(row.accruals, currency)}</td>
-                    <td className="px-2 py-2">{formatCurrency(row.expenses, currency)}</td>
-                    <td className="px-2 py-2">{formatCurrency(row.cost_of_sales, currency)}</td>
-                    <td className="px-2 py-2">{formatCurrency(row.costs, currency)}</td>
-                    <td className="px-2 py-2">{formatCurrency(row.profit, currency)}</td>
-                    <td className="px-2 py-2">{formatCurrency(row.cash_balance, currency)}</td>
-                    <td className="px-2 py-2">{formatNumber(row.stability_score)}</td>
-                    <td className="px-2 py-2">{row.state_label}</td>
-                  </tr>
-                ))}
+                {timelineRows.map((row) => {
+                  const profit = Number(row.profit || 0);
+                  const profitPositive = profit > 0;
+                  const profitNegative = profit < 0;
+                  return (
+                    <tr key={row.month_index} className="border-t border-slate-100 hover:bg-slate-50/50">
+                      <td className="px-3 py-2 font-semibold text-slate-700">{formatMonthLabel(row.month_index)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(row.revenue, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-500">{formatCurrency(row.accruals, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(row.expenses, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(row.cost_of_sales, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(row.costs, currency)}</td>
+                      <td className={`px-3 py-2 text-right font-semibold ${profitPositive ? "text-emerald-600" : profitNegative ? "text-rose-600" : "text-slate-700"}`}>
+                        {formatCurrency(profit, currency)}
+                      </td>
+                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(row.cash_balance, currency)}</td>
+                      <td className="px-3 py-2">
+                        {row.state_label ? (
+                          <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                            String(row.state_label).toLowerCase().includes("stable") ? "bg-emerald-50 text-emerald-700" :
+                            String(row.state_label).toLowerCase().includes("risk") || String(row.state_label).toLowerCase().includes("stress") ? "bg-rose-50 text-rose-700" :
+                            "bg-slate-100 text-slate-600"
+                          }`}>
+                            {row.state_label}
+                          </span>
+                        ) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1667,13 +1699,12 @@ function ScenarioOutput({
 
 function MetricCard({ title, metrics, currency, isDelta, info }) {
   const rows = [
-    ["Monthly run-rate revenue", metrics.monthly_revenue],
+    ["Monthly revenue", metrics.monthly_revenue],
     ["Monthly expenses", metrics.monthly_expenses],
     ["Cost of sales", metrics.monthly_cost_of_sales],
     ["Total costs", metrics.monthly_costs],
     ["Profit", metrics.net_profit],
-    ["Stability score", metrics.stability_score]
-  ];
+  ].filter(([, v]) => v != null);
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4">

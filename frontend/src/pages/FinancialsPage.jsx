@@ -8,6 +8,7 @@ import Input from "../components/Input";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import SegmentedTabs from "../components/SegmentedTabs";
+import ReportTable, { StatusBadge } from "../components/ReportTable";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import { FinancialIllustration, IllustrationCard } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
@@ -139,6 +140,7 @@ export default function FinancialsPage() {
   const [expenses, setExpenses] = useState([]);
   const [contracts, setContracts] = useState([]);
   const [rfqRequests, setRfqRequests] = useState([]);
+  const [rfqApproveModal, setRfqApproveModal] = useState(null); // { rfq, items: [{product_name,quantity,unit_price,unit_cost_of_sales}], validityDays }
   const [integrations, setIntegrations] = useState({
     financial: { quickbooks: "not_connected", sap: "not_connected", zoho_books: "not_connected" },
     crm: { zoho_crm: "not_connected", hubspot: "not_connected", salesforce: "not_connected" }
@@ -429,6 +431,27 @@ export default function FinancialsPage() {
   const expensePaidCount = useMemo(() => activeExpenses.filter((e) => e.status === "paid").length, [activeExpenses]);
   const contractPendingCount = useMemo(() => activeContracts.filter((c) => c.status === "pending").length, [activeContracts]);
   const contractSignedCount = useMemo(() => activeContracts.filter((c) => c.status === "signed").length, [activeContracts]);
+
+  const overviewKpis = useMemo(() => {
+    const paidInvs = activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid");
+    const unpaidInvs = activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid");
+    const unpaidExps = activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid");
+    const today = new Date();
+    const overdueInvCount = unpaidInvs.filter((i) => i.due_date && new Date(i.due_date) < today).length;
+    const totalPaidRev = paidInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
+    const pendingRec = unpaidInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
+    const pendingPay = unpaidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+    function dmc(items) {
+      const m = new Set();
+      items.forEach((i) => {
+        const d = new Date(i.created_at || i.updated_at || i.issued_at || "");
+        if (Number.isFinite(d.getTime())) m.add(`${d.getFullYear()}-${d.getMonth()}`);
+      });
+      return Math.max(1, m.size);
+    }
+    const monthlyRev = paidInvs.length ? totalPaidRev / dmc(paidInvs) : 0;
+    return { totalPaidRev, pendingRec, pendingPay, monthlyRev, overdueInvCount };
+  }, [activeInvoices, activeExpenses]);
 
   const hasArchiveWarning = useMemo(() => {
     const list = [...archivedInvoices, ...archivedQuotes, ...archivedExpenses, ...archivedContracts];
@@ -1428,10 +1451,23 @@ export default function FinancialsPage() {
     }
   }
 
-  async function approveRfq(rfqId) {
+  function openRfqApproveModal(rfq) {
+    const items = (rfq.items || []).map((item) => ({
+      product_name: item.name || "Item",
+      quantity: Math.max(1, Number(item.quantity) || 1),
+      unit_price: 0,
+      unit_cost_of_sales: 0,
+    }));
+    setRfqApproveModal({ rfq, items, validityDays: 30 });
+  }
+
+  async function approveRfq(rfqId, itemPrices, validityDays = 30) {
     setError(null);
     try {
-      const result = await apiRequest(`/marketplace/rfq/${rfqId}/approve`, "POST", { validity_days: 30 });
+      const result = await apiRequest(`/marketplace/rfq/${rfqId}/approve`, "POST", {
+        validity_days: validityDays,
+        item_prices: itemPrices || undefined,
+      });
       const { rfq, quote, workspace_id: wsId, company_name } = result;
       setRfqRequests((prev) => prev.map((r) => r.id === rfqId ? rfq : r));
       setQuotes((prev) => [quote, ...prev.filter((q) => q.id !== quote.id)]);
@@ -1470,11 +1506,21 @@ export default function FinancialsPage() {
     }
   }
 
+  async function deleteRfq(rfqId) {
+    setError(null);
+    try {
+      await apiRequest(`/marketplace/rfq/${rfqId}`, "DELETE");
+      setRfqRequests((prev) => prev.filter((r) => r.id !== rfqId));
+      await persist({ invoices, quotes, expenses, contracts });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete RFQ.");
+    }
+  }
+
   function buildRfqQuoteHtml(quote, customer, companyName) {
     const items = Array.isArray(quote.items) && quote.items.length ? quote.items : [];
     const subtotal = Number(quote.subtotal_amount || 0);
-    const cos = Number(quote.cost_of_sales || 0);
-    const grandTotal = Number(quote.total_amount || subtotal + cos);
+    const grandTotal = subtotal || Number(quote.total_amount || 0);
     const validUntil = quote.validity_days ? (() => { const d = new Date(); d.setDate(d.getDate() + quote.validity_days); return d.toLocaleDateString(); })() : "";
     const logoSrc = workspaceLogo && String(workspaceLogo).trim() ? workspaceLogo : null;
     return `<!doctype html><html><head><meta charset="utf-8"/>
@@ -1671,79 +1717,128 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
       </div>
 
       {activeTab === "overview" ? (
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-8">
-        <SectionCard
-          title="Operational snapshot"
-          subtitle="Instant visibility into financial activity."
-          className="h-full lg:col-span-5"
-          icon={
-            <CardIcon tone="bg-emerald-50 text-emerald-600">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M4 12h4l2 6 4-12 2 6h4" />
-              </svg>
-            </CardIcon>
-          }
-        >
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs text-slate-500">Pending invoices</div>
-              <div className="text-lg font-semibold text-slate-900">{invoicePendingCount}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs text-slate-500">Paid invoices</div>
-              <div className="text-lg font-semibold text-slate-900">{invoicePaidCount}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs text-slate-500">Pending vendor payments</div>
-              <div className="text-lg font-semibold text-slate-900">{expensePendingCount}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs text-slate-500">Paid vendor payments</div>
-              <div className="text-lg font-semibold text-slate-900">{expensePaidCount}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs text-slate-500">Pending contracts</div>
-              <div className="text-lg font-semibold text-slate-900">{contractPendingCount}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs text-slate-500">Signed contracts</div>
-              <div className="text-lg font-semibold text-slate-900">{contractSignedCount}</div>
-            </div>
-          </div>
-        </SectionCard>
+      <div className="mt-6 space-y-4">
 
-        <SectionCard
-          title="Ready to invoice"
-          subtitle="Your products, customers, and vendors are set."
-          className="h-full lg:col-span-3"
-          icon={
-            <CardIcon tone="bg-sky-50 text-sky-600">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M4 7h16v10H4z" />
-                <path d="M8 7V5h8v2" />
-              </svg>
-            </CardIcon>
-          }
-        >
-          <div className="text-sm text-slate-600">
-            You have {activeProducts.length} products, {activeCustomers.length} customers, and {activeVendors.length} vendors.
-          </div>
-          {requiresCatalogue ? (
-            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
-              Add at least one product, customer, and vendor in Catalogue to start creating invoices, expenses, and contracts.
+        {/* KPI tiles */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            { label: "Monthly run rate", value: formatMoney(overviewKpis.monthlyRev), sub: "from paid invoices", tone: "emerald" },
+            { label: "Pending receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${invoicePendingCount} unpaid invoice${invoicePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate" },
+            { label: "Pending payables", value: formatMoney(overviewKpis.pendingPay), sub: `${expensePendingCount} unpaid expense${expensePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingPay > 0 ? "rose" : "slate" },
+            { label: "Overdue invoices", value: overviewKpis.overdueInvCount, sub: overviewKpis.overdueInvCount > 0 ? "require immediate action" : "all within terms", tone: overviewKpis.overdueInvCount > 0 ? "rose" : "emerald" },
+          ].map((kpi) => (
+            <div key={kpi.label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</div>
+              <div className={`mt-1.5 text-2xl font-bold ${kpi.tone === "emerald" ? "text-emerald-600" : kpi.tone === "rose" ? "text-rose-600" : kpi.tone === "amber" ? "text-amber-600" : "text-slate-900"}`}>
+                {kpi.value}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">{kpi.sub}</div>
             </div>
-          ) : (
-            <div className="mt-3 text-xs text-slate-500">You’re ready to create invoices, expenses, and contracts.</div>
-          )}
-        </SectionCard>
+          ))}
+        </div>
 
-        <IllustrationCard
-          title="Financial workflow"
-          subtitle="Invoices, expenses, and contracts feeding your decision engine."
-          className="h-full lg:col-span-8"
-        >
-          <FinancialIllustration />
-        </IllustrationCard>
+        {/* Activity + Catalogue readiness */}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <SectionCard title="Invoice activity" subtitle="Status breakdown across all invoices." className="h-full">
+            <div className="mt-3 space-y-2">
+              {[
+                { label: "Paid", count: invoicePaidCount, color: "bg-emerald-500" },
+                { label: "Pending", count: invoicePendingCount, color: "bg-amber-400" },
+                { label: "Draft / Sent", count: activeInvoices.filter((i) => ["draft","sent"].includes(i.status || "")).length, color: "bg-sky-400" },
+                { label: "Quotes", count: activeQuotes.length, color: "bg-violet-400" },
+              ].map((row) => (
+                <div key={row.label} className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${row.color}`} />
+                    <span className="truncate text-sm text-slate-700">{row.label}</span>
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold text-slate-900">{row.count}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4">
+              <Button size="sm" onClick={() => setActiveTab("invoices")}>Go to invoices</Button>
+            </div>
+          </SectionCard>
+
+          <SectionCard title="Expenses & contracts" subtitle="Payables and active agreements." className="h-full">
+            <div className="mt-3 space-y-2">
+              {[
+                { label: "Paid expenses", count: expensePaidCount, color: "bg-slate-400" },
+                { label: "Pending expenses", count: expensePendingCount, color: "bg-rose-400" },
+                { label: "Pending contracts", count: contractPendingCount, color: "bg-amber-400" },
+                { label: "Signed contracts", count: contractSignedCount, color: "bg-emerald-500" },
+              ].map((row) => (
+                <div key={row.label} className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${row.color}`} />
+                    <span className="truncate text-sm text-slate-700">{row.label}</span>
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold text-slate-900">{row.count}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" onClick={() => setActiveTab("expenses")}>Expenses</Button>
+              <Button size="sm" variant="secondary" onClick={() => setActiveTab("contracts")}>Contracts</Button>
+            </div>
+          </SectionCard>
+
+          <SectionCard title="Catalogue readiness" subtitle="Products, customers, and vendors set up." className="h-full">
+            <div className="mt-3 space-y-3">
+              {[
+                { label: "Products", count: activeProducts.length, ok: activeProducts.length > 0 },
+                { label: "Customers", count: activeCustomers.length, ok: activeCustomers.length > 0 },
+                { label: "Vendors", count: activeVendors.length, ok: activeVendors.length > 0 },
+              ].map((row) => (
+                <div key={row.label} className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${row.ok ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>
+                      {row.ok ? "✓" : "—"}
+                    </span>
+                    <span className="text-sm text-slate-700">{row.label}</span>
+                  </div>
+                  <span className="text-sm font-semibold text-slate-900">{row.count}</span>
+                </div>
+              ))}
+            </div>
+            {requiresCatalogue && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+                Add at least one product, customer, and vendor to start invoicing.
+              </div>
+            )}
+            {rfqRequests.filter((r) => r.status === "pending").length > 0 && (
+              <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-700">
+                {rfqRequests.filter((r) => r.status === "pending").length} incoming RFQ request{rfqRequests.filter((r) => r.status === "pending").length !== 1 ? "s" : ""} pending approval.
+              </div>
+            )}
+          </SectionCard>
+        </div>
+
+        {/* Recent invoices */}
+        {activeInvoices.length > 0 && (
+          <SectionCard title="Recent invoices" subtitle="Last 5 invoices across all statuses.">
+            <div className="mt-3 divide-y divide-slate-100">
+              {[...activeInvoices]
+                .sort((a, b) => new Date(b.created_at || b.updated_at || 0) - new Date(a.created_at || a.updated_at || 0))
+                .slice(0, 5)
+                .map((inv) => (
+                  <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 first:pt-0 last:pb-0">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-slate-900">{inv.customer_name || "Customer"}</div>
+                      <div className="truncate text-xs text-slate-500">{Array.isArray(inv.product_names) && inv.product_names.length ? inv.product_names.join(", ") : inv.product_name || "Invoice"}</div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="text-sm font-semibold text-slate-900">{formatMoney(Number(inv.total_amount || 0))}</span>
+                      <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
+                        {inv.status || "draft"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </SectionCard>
+        )}
 
         {false && (
           <SectionCard
@@ -2301,7 +2396,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 
         <SectionCard
           title="Recent quotations"
-          subtitle="Drafts, sent quotes, and accepted proposals."
+          subtitle="Drafts, sent quotes, accepted proposals, and incoming requests."
           className="lg:col-span-3"
           icon={
             <CardIcon tone="bg-amber-50 text-amber-600">
@@ -2377,46 +2472,6 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               )}
             </div>
         </SectionCard>
-        <SectionCard
-          title="Archived quotations"
-          subtitle="Restore or delete archived quotations."
-          className="lg:col-span-5"
-          icon={
-            <CardIcon tone="bg-slate-100 text-slate-600">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M4 7h16" />
-                <path d="M6 7l1 12h10l1-12" />
-                <path d="M9 7V5h6v2" />
-              </svg>
-            </CardIcon>
-          }
-        >
-          <div className="mt-2 space-y-2 max-h-60 overflow-auto pr-1">
-            {archivedQuotes.length ? (
-              archivedQuotes.map((quote) => {
-                const customer = resolveCustomer(quote.customer_id, quote.customer_name);
-                const age = daysSince(quote.archived_at || quote.updated_at || quote.created_at);
-                const expiring = Math.max(0, ARCHIVE_EXPIRE_DAYS - age);
-                return (
-                  <div key={quote.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-900">{customer?.name || "Customer"} • {formatMoney(quote.total_amount)}</div>
-                      <div className="text-xs text-slate-500">Archived {age} days ago • Expires in {expiring} days</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button variant="secondary" onClick={() => restoreItem("quote", quote.id)}>Activate</Button>
-                      <Button variant="ghost" onClick={() => deleteItem("quote", quote.id)}>Delete</Button>
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-                No archived quotations.
-              </div>
-            )}
-          </div>
-        </SectionCard>
 
         {/* Incoming RFQ Requests */}
         <SectionCard
@@ -2465,10 +2520,11 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                         </span>
                         {rfq.status === "pending" && (
                           <div className="flex gap-1.5">
-                            <Button onClick={() => approveRfq(rfq.id)}>Approve & Send</Button>
+                            <Button onClick={() => openRfqApproveModal(rfq)}>Approve & Send</Button>
                             <Button variant="secondary" onClick={() => rejectRfq(rfq.id)}>Reject</Button>
                           </div>
                         )}
+                        <Button variant="ghost" className="text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => deleteRfq(rfq.id)}>Delete</Button>
                       </div>
                     </div>
                   </div>
@@ -2481,6 +2537,48 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             )}
           </div>
         </SectionCard>
+
+        <SectionCard
+          title="Archived quotations"
+          subtitle="Restore or delete archived quotations."
+          className="lg:col-span-5"
+          icon={
+            <CardIcon tone="bg-slate-100 text-slate-600">
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M4 7h16" />
+                <path d="M6 7l1 12h10l1-12" />
+                <path d="M9 7V5h6v2" />
+              </svg>
+            </CardIcon>
+          }
+        >
+          <div className="mt-2 space-y-2 max-h-60 overflow-auto pr-1">
+            {archivedQuotes.length ? (
+              archivedQuotes.map((quote) => {
+                const customer = resolveCustomer(quote.customer_id, quote.customer_name);
+                const age = daysSince(quote.archived_at || quote.updated_at || quote.created_at);
+                const expiring = Math.max(0, ARCHIVE_EXPIRE_DAYS - age);
+                return (
+                  <div key={quote.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-slate-900">{customer?.name || "Customer"} • {formatMoney(quote.total_amount)}</div>
+                      <div className="text-xs text-slate-500">Archived {age} days ago • Expires in {expiring} days</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="secondary" onClick={() => restoreItem("quote", quote.id)}>Activate</Button>
+                      <Button variant="ghost" onClick={() => deleteItem("quote", quote.id)}>Delete</Button>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
+                No archived quotations.
+              </div>
+            )}
+          </div>
+        </SectionCard>
+
         </div>
         ) : null}
 
@@ -2967,6 +3065,230 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
       </div>
       ) : null}
 
+      {activeTab === "overview" ? (() => {
+        const paidInvs = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "paid");
+        const paidExps = expenses.filter(e => String(e.status || "").toLowerCase() === "paid");
+        function _dmc(items) {
+          const s = new Set();
+          for (const item of items) {
+            const raw = item?.created_at || item?.updated_at || item?.issued_at;
+            if (!raw) continue;
+            const d = new Date(raw);
+            if (!Number.isFinite(d.getTime())) continue;
+            s.add(`${d.getFullYear()}-${d.getMonth()}`);
+          }
+          return Math.max(1, s.size);
+        }
+        const invMonths = _dmc(paidInvs);
+        const expMonths = _dmc(paidExps);
+        const totalPaidRev = paidInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
+        const totalPaidCos = paidInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
+        const totalPaidExp = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+        const monthlyRevenue = totalPaidRev / invMonths;
+        const monthlyCos = totalPaidCos / invMonths;
+        const monthlyExp = totalPaidExp / expMonths;
+        const grossMargin = monthlyRevenue > 0 ? (((monthlyRevenue - monthlyCos) / monthlyRevenue) * 100).toFixed(1) : null;
+        const pendingReceivablesTotal = activeInvoices.filter(i => String(i.status || "").toLowerCase() !== "paid").reduce((s, i) => s + Number(i.total_amount || 0), 0);
+        const pendingPayablesTotal = expenses.filter(e => String(e.status || "").toLowerCase() !== "paid").reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+
+        const invoiceRows = [...activeInvoices]
+          .sort((a, b) => new Date(b.created_at || b.updated_at || 0) - new Date(a.created_at || a.updated_at || 0))
+          .slice(0, 30)
+          .map(inv => ({
+            customer: inv.customer_name || "—",
+            items: Array.isArray(inv.product_names) && inv.product_names.length ? inv.product_names.join(", ") : inv.product_name || "—",
+            amount: formatMoney(Number(inv.total_amount || 0)),
+            due: inv.due_date ? new Date(inv.due_date).toLocaleDateString() : inv.issued_at ? new Date(inv.issued_at).toLocaleDateString() : "—",
+            status: <StatusBadge status={inv.status} />,
+          }));
+
+        const quoteRows = [...activeQuotes]
+          .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+          .slice(0, 20)
+          .map(q => ({
+            customer: q.customer_name || "—",
+            items: Array.isArray(q.product_names) && q.product_names.length ? q.product_names.join(", ") : q.product_name || "—",
+            amount: formatMoney(Number(q.total_amount || q.subtotal_amount || 0)),
+            validity: q.validity_days ? `${q.validity_days}d` : "—",
+            status: <StatusBadge status={q.status || "draft"} />,
+          }));
+
+        const expenseRows = [...expenses]
+          .sort((a, b) => new Date(b.created_at || b.updated_at || 0) - new Date(a.created_at || a.updated_at || 0))
+          .slice(0, 20)
+          .map(e => ({
+            vendor: e.vendor_name || e.counterparty_name || "—",
+            description: e.description || e.expense_type || "—",
+            amount: formatMoney(Number(e.price || e.total_amount || 0)),
+            due: e.due_date ? new Date(e.due_date).toLocaleDateString() : "—",
+            status: <StatusBadge status={e.status || "pending"} />,
+          }));
+
+        const contractRows = [...activeContracts]
+          .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+          .map(c => ({
+            counterparty: c.counterparty_name || "—",
+            type: c.contract_type || "—",
+            price: formatMoney(Number(c.price || 0)),
+            cos: formatMoney(Number(c.cost_of_sales || 0)),
+            terms: c.payment_terms || "—",
+            status: <StatusBadge status={c.status || "active"} />,
+          }));
+
+        return (
+          <div className="mt-6 space-y-4">
+            <div className="pt-2 text-sm font-semibold text-slate-700 dark:text-slate-300">Detailed report</div>
+
+            <SectionCard title="Invoices" subtitle="All active invoices — paid and pending.">
+              <div className="mt-2">
+                <ReportTable
+                  columns={[
+                    { key: "customer", label: "Customer", bold: true },
+                    { key: "items", label: "Items / Services" },
+                    { key: "amount", label: "Amount", right: true, bold: true },
+                    { key: "due", label: "Due / Issued", right: true },
+                    { key: "status", label: "Status", right: true },
+                  ]}
+                  rows={invoiceRows}
+                  emptyText="No invoices yet."
+                />
+              </div>
+            </SectionCard>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <SectionCard title="Quotation pipeline" subtitle="Active quotes sent or in draft.">
+                <div className="mt-2">
+                  <ReportTable
+                    columns={[
+                      { key: "customer", label: "Customer", bold: true },
+                      { key: "items", label: "Items" },
+                      { key: "amount", label: "Amount", right: true, bold: true },
+                      { key: "validity", label: "Valid", right: true },
+                      { key: "status", label: "Status", right: true },
+                    ]}
+                    rows={quoteRows}
+                    emptyText="No quotations yet."
+                  />
+                </div>
+              </SectionCard>
+
+              <SectionCard title="Expenses" subtitle={`Pending payables: ${formatMoney(pendingPayablesTotal)}`}>
+                <div className="mt-2">
+                  <ReportTable
+                    columns={[
+                      { key: "vendor", label: "Vendor", bold: true },
+                      { key: "description", label: "Description" },
+                      { key: "amount", label: "Amount", right: true, bold: true },
+                      { key: "due", label: "Due", right: true },
+                      { key: "status", label: "Status", right: true },
+                    ]}
+                    rows={expenseRows}
+                    emptyText="No expenses recorded."
+                  />
+                </div>
+              </SectionCard>
+            </div>
+
+            <SectionCard title="Contracts" subtitle="Active contracts and their value.">
+              <div className="mt-2">
+                <ReportTable
+                  columns={[
+                    { key: "counterparty", label: "Counterparty", bold: true },
+                    { key: "type", label: "Type" },
+                    { key: "price", label: "Price", right: true, bold: true },
+                    { key: "cos", label: "Cost of sales", right: true },
+                    { key: "terms", label: "Payment terms", right: true },
+                    { key: "status", label: "Status", right: true },
+                  ]}
+                  rows={contractRows}
+                  emptyText="No contracts yet."
+                />
+              </div>
+            </SectionCard>
+          </div>
+        );
+      })() : null}
+
+      {/* RFQ Approve + Price Edit Modal */}
+      {rfqApproveModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setRfqApproveModal(null); }}
+        >
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
+              <div>
+                <div className="text-base font-semibold text-slate-900 dark:text-slate-100">Set prices before approving</div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">{rfqApproveModal.rfq.customer_name} · {rfqApproveModal.rfq.customer_email}</div>
+              </div>
+              <button type="button" onClick={() => setRfqApproveModal(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              </button>
+            </div>
+
+            <div className="px-6 py-4 space-y-3">
+              <div className="grid grid-cols-[1fr_60px_100px_100px] gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 pb-1">
+                <span>Item</span><span className="text-center">Qty</span><span className="text-right">Unit price</span><span className="text-right">Total</span>
+              </div>
+              {rfqApproveModal.items.map((item, idx) => (
+                <div key={idx} className="grid grid-cols-[1fr_60px_100px_100px] items-center gap-2">
+                  <span className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{item.product_name}</span>
+                  <span className="text-center text-sm text-slate-600 dark:text-slate-300">{item.quantity}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm text-slate-900 outline-none focus:ring-1 focus:ring-brand-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    value={item.unit_price}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 0;
+                      setRfqApproveModal((prev) => ({
+                        ...prev,
+                        items: prev.items.map((it, i) => i === idx ? { ...it, unit_price: val } : it),
+                      }));
+                    }}
+                  />
+                  <span className="text-right text-sm text-slate-600 dark:text-slate-300">
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(item.unit_price * item.quantity)}
+                  </span>
+                </div>
+              ))}
+
+              <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
+                <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Grand total</span>
+                <span className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                    rfqApproveModal.items.reduce((sum, it) => sum + it.unit_price * it.quantity, 0)
+                  )}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3 pt-1">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-300 shrink-0">Validity (days)</label>
+                <input
+                  type="number"
+                  min="1"
+                  className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 outline-none focus:ring-1 focus:ring-brand-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  value={rfqApproveModal.validityDays}
+                  onChange={(e) => setRfqApproveModal((prev) => ({ ...prev, validityDays: Math.max(1, parseInt(e.target.value) || 30) }))}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-slate-800">
+              <Button variant="secondary" onClick={() => setRfqApproveModal(null)}>Cancel</Button>
+              <Button onClick={async () => {
+                const { rfq, items, validityDays } = rfqApproveModal;
+                setRfqApproveModal(null);
+                await approveRfq(rfq.id, items, validityDays);
+              }}>
+                Confirm & Send
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {previewInvoice ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
@@ -3168,14 +3490,6 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(item.subtotal_amount || (Number(item.unit_price || 0) * Number(item.quantity || 0)))}</div>
                   </div>
                 ))}
-                {Number(previewQuote.cost_of_sales) > 0 && (
-                  <div className="grid grid-cols-12 gap-2 border-t border-slate-100 px-3 py-3 text-sm text-slate-500">
-                    <div className="col-span-6 italic">Cost of sales</div>
-                    <div className="col-span-2 text-right">—</div>
-                    <div className="col-span-2 text-right">—</div>
-                    <div className="col-span-2 text-right font-semibold text-slate-700">{formatMoney(Number(previewQuote.cost_of_sales))}</div>
-                  </div>
-                )}
               </div>
 
               <div className="mt-4 flex justify-end border-t border-slate-200 pt-3">

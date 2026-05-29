@@ -18,6 +18,7 @@ from app.modules.marketplace.schemas import (
 )
 from app.modules.marketplace.service import (
     approve_rfq,
+    delete_rfq,
     delete_rating,
     get_listing,
     get_listing_status,
@@ -150,6 +151,7 @@ async def approve_rfq_endpoint(
         workspace_id=workspace_id,
         rfq_id=rfq_id,
         validity_days=payload.validity_days,
+        item_prices=payload.item_prices,
     )
 
 
@@ -161,3 +163,13 @@ async def reject_rfq_endpoint(
 ):
     """Owner: reject an incoming RFQ."""
     return await reject_rfq(user_id=user["id"], workspace_id=workspace_id, rfq_id=rfq_id)
+
+
+@router.delete("/rfq/{rfq_id}", status_code=204)
+async def delete_rfq_endpoint(
+    rfq_id: str,
+    workspace_id: str | None = Query(default=None),
+    user=Depends(get_current_user),
+):
+    """Owner: permanently delete an RFQ request."""
+    await delete_rfq(user_id=user["id"], workspace_id=workspace_id, rfq_id=rfq_id)

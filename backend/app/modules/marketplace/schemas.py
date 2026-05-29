@@ -109,3 +109,4 @@ class RFQListResponse(BaseModel):
 class RFQApproveRequest(BaseModel):
     validity_days: int = 30
     notes: str | None = None
+    item_prices: list[dict] | None = None

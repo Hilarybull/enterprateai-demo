@@ -349,23 +349,9 @@ async def upsert_user_workspace(
 
 
 def _augment_workspace_patch(data_patch: Dict[str, Any], *, existing: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    existing = existing or {}
-    patch = dict(data_patch or {})
-    iv = patch.get("idea_validation")
-    if isinstance(iv, dict):
-        derived = _derive_business_profile_from_idea_validation(iv)
-        if derived:
-            current_profile = {}
-            if isinstance(existing.get("business_profile"), dict):
-                current_profile.update(existing.get("business_profile") or {})
-            if isinstance(patch.get("business_profile"), dict):
-                current_profile.update(patch.get("business_profile") or {})
-            for k, v in derived.items():
-                if v and not current_profile.get(k):
-                    current_profile[k] = v
-            if current_profile:
-                patch["business_profile"] = current_profile
-    return patch
+    # Validation details must never overwrite workspace/business profile details.
+    # The workspace profile is set independently via the workspace creation/editing flow.
+    return dict(data_patch or {})
 
 
 def _derive_business_profile_from_idea_validation(iv: Dict[str, Any]) -> Dict[str, Any]:

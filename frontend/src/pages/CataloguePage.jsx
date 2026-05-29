@@ -6,6 +6,8 @@ import Input from "../components/Input";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import SegmentedTabs from "../components/SegmentedTabs";
+import ReportTable, { StatusBadge } from "../components/ReportTable";
+import { formatCurrency } from "../lib/format";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import { CatalogueIllustration, IllustrationCard } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
@@ -51,6 +53,8 @@ export default function CataloguePage() {
   const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [editingVendorId, setEditingVendorId] = useState(null);
   const [activeTab, setActiveTab] = useState(() => firstAccessibleCatalogueTab());
+  const [reportFinancials, setReportFinancials] = useState({ invoices: [], expenses: [] });
+  const currency = useWorkspaceStore((s) => s.currency);
 
   // Reset to overview if current tab is locked by feature permissions
   useEffect(() => {
@@ -280,6 +284,10 @@ export default function CataloguePage() {
         if (!alive || !ws) return;
         setWorkspaceId(ws.id || workspaceId);
         setWorkspaceName(ws.name || null);
+        setReportFinancials({
+          invoices: ws?.data?.financials?.invoices || [],
+          expenses: ws?.data?.financials?.expenses || [],
+        });
         const cat = ws?.data?.catalogue || {};
         const integ = ws?.data?.integrations || {};
         const nextProducts = Array.isArray(cat.products) ? cat.products : [];
@@ -629,86 +637,101 @@ export default function CataloguePage() {
       </div>
 
       {activeTab === "overview" ? (
-        <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <SectionCard
-            title="Products & services"
-            subtitle="Revenue-generating items in your catalogue."
-            icon={
-              <CardIcon>
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M6 3h12l3 5-3 5H6L3 8l3-5Z" />
-                  <path d="M6 13v8h12v-8" />
-                </svg>
-              </CardIcon>
-            }
-          >
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="text-xs text-slate-500">Active products</div>
-              <div className="text-2xl font-semibold text-slate-900">{activeProducts.length}</div>
-              <div className="mt-2 text-xs text-slate-500">Add products or services to price invoices and contracts.</div>
-              <div className="mt-3">
-                <Button variant="secondary" onClick={() => setActiveTab("products")}>
-                  Manage products
-                </Button>
-              </div>
-            </div>
-          </SectionCard>
-          <SectionCard
-            title="Customers"
-            subtitle="Who you bill and their terms."
-            icon={
-              <CardIcon tone="bg-sky-50 text-sky-600">
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M16 11a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" />
-                  <path d="M4 21a8 8 0 0 1 16 0" />
-                </svg>
-              </CardIcon>
-            }
-          >
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="text-xs text-slate-500">Active customers</div>
-              <div className="text-2xl font-semibold text-slate-900">{activeCustomers.length}</div>
-              <div className="mt-2 text-xs text-slate-500">Keep payment terms updated for accurate cashflow models.</div>
-              <div className="mt-3">
-                <Button variant="secondary" onClick={() => setActiveTab("customers")}>
-                  Manage customers
-                </Button>
-              </div>
-            </div>
-          </SectionCard>
-          <SectionCard
-            title="Vendors"
-            subtitle="Your suppliers and cost sources."
-            icon={
-              <CardIcon tone="bg-amber-50 text-amber-600">
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 7h13l5 5v5H3V7Z" />
-                  <path d="M16 7v5h5" />
-                  <circle cx="7" cy="17" r="1.5" />
-                  <circle cx="17" cy="17" r="1.5" />
-                </svg>
-              </CardIcon>
-            }
-          >
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="text-xs text-slate-500">Active vendors</div>
-              <div className="text-2xl font-semibold text-slate-900">{activeVendors.length}</div>
-              <div className="mt-2 text-xs text-slate-500">Track supplier pricing and payment terms in one place.</div>
-              <div className="mt-3">
-                <Button variant="secondary" onClick={() => setActiveTab("vendors")}>
-                  Manage vendors
-                </Button>
-              </div>
-            </div>
-          </SectionCard>
+        <div className="mt-6 space-y-4">
 
-          <IllustrationCard
-            title="Catalogue map"
-            subtitle="A quick visual of how products, customers, and vendors connect."
-            className="lg:col-span-3"
-          >
-            <CatalogueIllustration />
-          </IllustrationCard>
+          {/* Stat tiles */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {[
+              { label: "Active products", value: activeProducts.length, sub: archivedProducts.length ? `${archivedProducts.length} archived` : "All active", tone: "violet" },
+              { label: "Active customers", value: activeCustomers.length, sub: archivedCustomers.length ? `${archivedCustomers.length} archived` : "All active", tone: "sky" },
+              { label: "Active vendors", value: activeVendors.length, sub: archivedVendors.length ? `${archivedVendors.length} archived` : "All active", tone: "amber" },
+            ].map((kpi) => (
+              <div key={kpi.label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</div>
+                <div className={`mt-1.5 text-3xl font-bold ${kpi.tone === "violet" ? "text-violet-600" : kpi.tone === "sky" ? "text-sky-600" : "text-amber-600"}`}>{kpi.value}</div>
+                <div className="mt-1 text-[11px] text-slate-400">{kpi.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Three panels */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <SectionCard title="Products & services" subtitle="What you sell and how it's priced." className="h-full flex flex-col">
+              <div className="mt-3 flex-1 space-y-2">
+                {activeProducts.length ? (
+                  activeProducts.slice(0, 5).map((p) => (
+                    <div key={p.id} className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-800">{p.name}</div>
+                        <div className="truncate text-[11px] text-slate-500">{p.category || p.product_type || "—"}</div>
+                      </div>
+                      <span className="shrink-0 text-sm font-semibold text-slate-900">
+                        {p.base_price != null ? `£${Number(p.base_price).toFixed(2)}` : "—"}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No products yet.</div>
+                )}
+                {activeProducts.length > 5 && <div className="text-[11px] text-slate-400">+{activeProducts.length - 5} more</div>}
+              </div>
+              <div className="mt-4">
+                <Button size="sm" variant="secondary" onClick={() => setActiveTab("products")}>Manage products</Button>
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Customers" subtitle="Who you bill and their payment terms." className="h-full flex flex-col">
+              <div className="mt-3 flex-1 space-y-2">
+                {activeCustomers.length ? (
+                  activeCustomers.slice(0, 5).map((c) => (
+                    <div key={c.id} className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-800">{c.name}</div>
+                        <div className="truncate text-[11px] text-slate-500">{c.email || c.contact_email || "—"}</div>
+                      </div>
+                      {c.payment_terms && (
+                        <span className="shrink-0 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
+                          {c.payment_terms}d
+                        </span>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No customers yet.</div>
+                )}
+                {activeCustomers.length > 5 && <div className="text-[11px] text-slate-400">+{activeCustomers.length - 5} more</div>}
+              </div>
+              <div className="mt-4">
+                <Button size="sm" variant="secondary" onClick={() => setActiveTab("customers")}>Manage customers</Button>
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Vendors" subtitle="Your suppliers and their terms." className="h-full flex flex-col">
+              <div className="mt-3 flex-1 space-y-2">
+                {activeVendors.length ? (
+                  activeVendors.slice(0, 5).map((v) => (
+                    <div key={v.id} className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-800">{v.name}</div>
+                        <div className="truncate text-[11px] text-slate-500">{v.vendor_type || v.category || "—"}</div>
+                      </div>
+                      {v.payment_terms && (
+                        <span className="shrink-0 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                          {v.payment_terms}d
+                        </span>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No vendors yet.</div>
+                )}
+                {activeVendors.length > 5 && <div className="text-[11px] text-slate-400">+{activeVendors.length - 5} more</div>}
+              </div>
+              <div className="mt-4">
+                <Button size="sm" variant="secondary" onClick={() => setActiveTab("vendors")}>Manage vendors</Button>
+              </div>
+            </SectionCard>
+          </div>
 
           {false && (
             <SectionCard
@@ -1419,6 +1442,113 @@ export default function CataloguePage() {
         ) : null}
       </div>
       ) : null}
+
+      {activeTab === "overview" && (() => {
+        const cur = currency || "GBP";
+        const activeProducts = products.filter(p => !p.archived);
+        const activeCustomers = customers.filter(c => !c.archived);
+        const activeVendors = vendors.filter(v => !v.archived);
+
+        const paidInvoices = (reportFinancials.invoices || []).filter(i => String(i.status || "").toLowerCase() === "paid");
+        const paidExpenses = (reportFinancials.expenses || []).filter(e => String(e.status || "").toLowerCase() === "paid");
+
+        const customerRevMap = new Map();
+        paidInvoices.forEach(inv => {
+          const key = inv.customer_name || inv.customer_id || "unknown";
+          const prev = customerRevMap.get(key) || { name: key, revenue: 0, invoices: 0 };
+          customerRevMap.set(key, { ...prev, revenue: prev.revenue + Number(inv.total_amount || 0), invoices: prev.invoices + 1 });
+        });
+        const customerPendingMap = new Map();
+        (reportFinancials.invoices || []).filter(i => String(i.status || "").toLowerCase() !== "paid").forEach(inv => {
+          const key = inv.customer_name || inv.customer_id || "unknown";
+          customerPendingMap.set(key, (customerPendingMap.get(key) || 0) + Number(inv.total_amount || 0));
+        });
+        const vendorSpendMap = new Map();
+        paidExpenses.forEach(e => {
+          const key = e.vendor_name || e.counterparty_name || "unknown";
+          vendorSpendMap.set(key, (vendorSpendMap.get(key) || 0) + Number(e.price || 0));
+        });
+
+        const productRows = activeProducts.map(p => {
+          const sellPrice = Math.max(0, Number(p.base_price || 0) - Number(p.discount || 0));
+          const cos = Number(p.cost_of_sales || p.unit_cost || 0);
+          const margin = sellPrice > 0 ? (((sellPrice - cos) / sellPrice) * 100).toFixed(1) : null;
+          return { name: p.name || "—", category: p.category || p.product_type || "—", price: formatCurrency(sellPrice, cur), cos: formatCurrency(cos, cur), margin: margin != null ? `${margin}%` : "—" };
+        });
+
+        const customerRows = [...customerRevMap.entries()]
+          .sort((a, b) => b[1].revenue - a[1].revenue)
+          .map(([key, c]) => {
+            const cat = activeCustomers.find(x => x.name === key);
+            return { name: c.name, invoices: c.invoices, revenue: formatCurrency(c.revenue, cur), outstanding: formatCurrency(customerPendingMap.get(key) || 0, cur), terms: cat?.payment_terms ? `${cat.payment_terms}d` : "—" };
+          });
+        activeCustomers.forEach(c => {
+          if (!customerRows.some(r => r.name === c.name)) {
+            customerRows.push({ name: c.name || "—", invoices: 0, revenue: formatCurrency(0, cur), outstanding: formatCurrency(0, cur), terms: c.payment_terms ? `${c.payment_terms}d` : "—" });
+          }
+        });
+
+        const vendorRows = activeVendors.map(v => ({
+          name: v.name || "—", category: v.vendor_type || v.category || "—",
+          terms: v.payment_terms ? `${v.payment_terms}d` : "—",
+          spent: formatCurrency(vendorSpendMap.get(v.name) || 0, cur),
+        }));
+
+        return (
+          <div className="mt-6 space-y-4">
+            <div className="pt-2 text-sm font-semibold text-slate-700 dark:text-slate-300">Detailed report</div>
+
+            <SectionCard title="Products & services" subtitle="Pricing, cost of sales, and margin per item.">
+              <div className="mt-2">
+                <ReportTable
+                  columns={[
+                    { key: "name", label: "Name", bold: true },
+                    { key: "category", label: "Category" },
+                    { key: "price", label: "Sell price", right: true, bold: true },
+                    { key: "cos", label: "Cost of sales", right: true },
+                    { key: "margin", label: "Margin", right: true },
+                  ]}
+                  rows={productRows}
+                  emptyText="No products in catalogue yet."
+                />
+              </div>
+            </SectionCard>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <SectionCard title="Customers" subtitle="Revenue earned and outstanding per customer.">
+                <div className="mt-2">
+                  <ReportTable
+                    columns={[
+                      { key: "name", label: "Name", bold: true },
+                      { key: "invoices", label: "Invoices", right: true },
+                      { key: "revenue", label: "Revenue earned", right: true, bold: true },
+                      { key: "outstanding", label: "Outstanding", right: true },
+                      { key: "terms", label: "Terms", right: true },
+                    ]}
+                    rows={customerRows}
+                    emptyText="No customers yet."
+                  />
+                </div>
+              </SectionCard>
+
+              <SectionCard title="Vendors" subtitle="Supplier list and total spend from paid expenses.">
+                <div className="mt-2">
+                  <ReportTable
+                    columns={[
+                      { key: "name", label: "Name", bold: true },
+                      { key: "category", label: "Category" },
+                      { key: "terms", label: "Terms", right: true },
+                      { key: "spent", label: "Total spent", right: true, bold: true },
+                    ]}
+                    rows={vendorRows}
+                    emptyText="No vendors yet."
+                  />
+                </div>
+              </SectionCard>
+            </div>
+          </div>
+        );
+      })()}
 
       {loading ? (
         <div className="mt-4">
