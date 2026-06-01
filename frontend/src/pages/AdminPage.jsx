@@ -278,6 +278,7 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
   if (!detail) return null;
 
   return (
+    <>
     <div
       ref={backdropRef}
       className="fixed inset-0 z-40 flex justify-end bg-slate-900/30 backdrop-blur-sm"
@@ -425,6 +426,7 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
         onCancel={confirmDialog.onCancel}
       />
     ) : null}
+    </>
   );
 }
 
