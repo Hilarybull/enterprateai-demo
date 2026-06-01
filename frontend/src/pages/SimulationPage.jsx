@@ -15,6 +15,7 @@ import InfoTip from "../components/InfoTip";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 const FieldLabel = ({ children, info }) => (
   <div className="ea-label flex items-center gap-2">
@@ -161,6 +162,7 @@ export default function SimulationPage() {
 
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState(null);
   const [autoProjectionLoading, setAutoProjectionLoading] = useState(false);
   const [scenarioRunningId, setScenarioRunningId] = useState(null);
   const [error, setError] = useState(null);
@@ -463,20 +465,25 @@ export default function SimulationPage() {
     }
   }
 
-  async function clearHistory() {
+  function clearHistory() {
     if (!canRun) return;
-    const ok = window.confirm("Clear scenario history for this workspace?");
-    if (!ok) return;
-    setActionLoading(true);
-    setError(null);
-    try {
-      await apiRequest(`/v1/scenario-intelligence/history?business_id=${businessId}&tenant_id=${tenantId}`, "DELETE");
-      setHistory([]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to clear history.");
-    } finally {
-      setActionLoading(false);
-    }
+    setConfirmDialog({
+      message: "Clear all scenario history for this workspace? This cannot be undone.",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setActionLoading(true);
+        setError(null);
+        try {
+          await apiRequest(`/v1/scenario-intelligence/history?business_id=${businessId}&tenant_id=${tenantId}`, "DELETE");
+          setHistory([]);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Failed to clear history.");
+        } finally {
+          setActionLoading(false);
+        }
+      },
+      onCancel: () => setConfirmDialog(null),
+    });
   }
 
   const manualTemplate = templates.find((t) => t.scenario_template_id === manualTemplateId);
@@ -1692,6 +1699,15 @@ function ScenarioOutput({
           </Button>
           {decisionNotice ? <span className="text-xs text-slate-600">{decisionNotice}</span> : null}
         </div>
+      ) : null}
+      {confirmDialog ? (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          confirmLabel="Clear"
+          danger
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={confirmDialog.onCancel}
+        />
       ) : null}
     </div>
   );

@@ -14,6 +14,7 @@ import { BlueprintIllustration, IllustrationCard } from "../components/Illustrat
 import SegmentedTabs from "../components/SegmentedTabs";
 import { imageFileToDataUrl } from "../lib/files";
 import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 const DOCUMENTS = [
   {
@@ -355,6 +356,7 @@ export default function BlueprintPage() {
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [customClientName, setCustomClientName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState(null);
   const [savedNotice, setSavedNotice] = useState(null);
   const [shareNotice, setShareNotice] = useState(null);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
@@ -1753,11 +1755,13 @@ export default function BlueprintPage() {
     }
   }
 
-  async function deleteDocument(docId, typeHint) {
+  function deleteDocument(docId, typeHint) {
     if (!docId) return;
-    const ok = window.confirm("Delete this document? This cannot be undone.");
-    if (!ok) return;
-    setIsSaving(true);
+    setConfirmDialog({
+      message: "Delete this document? This cannot be undone.",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setIsSaving(true);
     setError(null);
     try {
       await apiRequest(`/blueprint/documents/${docId}`, "DELETE");
@@ -1806,11 +1810,14 @@ export default function BlueprintPage() {
       if (selectedDoc && docIdByType[selectedDoc] === docId) {
         closeModal();
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete document");
-    } finally {
-      setIsSaving(false);
-    }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to delete document");
+      } finally {
+        setIsSaving(false);
+      }
+      },
+      onCancel: () => setConfirmDialog(null),
+    });
   }
 
   function fmtDate(d) {
@@ -2632,6 +2639,15 @@ export default function BlueprintPage() {
             );
             return `mailto:${recipient}?subject=${subject}&body=${body}`;
           }}
+        />
+      ) : null}
+      {confirmDialog ? (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          confirmLabel="Delete"
+          danger
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={confirmDialog.onCancel}
         />
       ) : null}
     </div>

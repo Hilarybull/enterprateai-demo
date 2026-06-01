@@ -14,6 +14,7 @@ import InfoTip from "../components/InfoTip";
 import NumberInput, { parseIntSafe, parseNumber } from "../components/NumberInput";
 import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
 import { imageFileToDataUrl } from "../lib/files";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 function humanizeValidationError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
@@ -195,6 +196,8 @@ export default function ValidationWizardPage() {
   const [serviceSelection, setServiceSelection] = useState("");
   const [hasAppliedDrafts, setHasAppliedDrafts] = useState(false);
   const [contentTab, setContentTab] = useState("builder");
+  const [lastEvaluationId, setLastEvaluationId] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
   const [historyFilter, setHistoryFilter] = useState("all");
   const [historyRequestHandled, setHistoryRequestHandled] = useState(false);
   const [marketResearch, setMarketResearch] = useState(null);
@@ -1303,6 +1306,12 @@ export default function ValidationWizardPage() {
         });
       }
 
+      setShowBuilderMarketInsight(false);
+      setMarketResearch(null);
+      setMrError(null);
+      setStageOneResearchReady(false);
+      setCurrentBusinessStageIndex(0);
+      setCurrentServiceStageIndex(0);
       setContentTab("builder");
       setMode("fill");
     } catch (e) {
@@ -1310,34 +1319,72 @@ export default function ValidationWizardPage() {
     }
   }
 
-  async function deleteHistoryEntry(entryId) {
+  async function updateHistoryEntryStatus(entryId, status) {
     if (!activeWorkspaceId) return;
-    const ok = window.confirm("Delete this validation history item?");
-    if (!ok) return;
     setError(null);
     try {
       const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
-      const existing = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
-      const serviceExisting = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
-      const nextHistory = existing.filter((item) => item?.id !== entryId);
-      const nextServiceHistory = serviceExisting.filter((item) => item?.id !== entryId);
+      const data = ws?.data || {};
+      const vHistory = Array.isArray(data.validation_history) ? data.validation_history : [];
+      const sHistory = Array.isArray(data.service_validation_history) ? data.service_validation_history : [];
+      const now = new Date().toISOString();
+
+      const nextVHistory = vHistory.map((e) =>
+        e?.id === entryId ? { ...e, status, decided_at: now } : e
+      );
+      const nextSHistory = sHistory.map((e) =>
+        e?.id === entryId ? { ...e, decision_status: status, decided_at: now } : e
+      );
+
       await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
         data: {
-          validation_history: nextHistory,
-          service_validation_history: nextServiceHistory,
+          validation_history: nextVHistory,
+          service_validation_history: nextSHistory,
+          ...(status === "accepted" ? { active_validation_id: entryId } : {}),
         }
       });
-      setValidationHistory(
-        buildUnifiedValidationHistory({
-          validation_history: nextHistory,
-          service_validation_history: nextServiceHistory,
-        })
+
+      setValidationHistory((prev) =>
+        prev.map((e) => e.id === entryId ? { ...e, status } : e)
       );
-      setSavedServiceIdeas(nextServiceHistory);
-      setSavedNotice("Validation history deleted.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not delete validation history item.");
+      setError(e instanceof Error ? e.message : "Could not update validation status.");
     }
+  }
+
+  function deleteHistoryEntry(entryId) {
+    if (!activeWorkspaceId) return;
+    setConfirmDialog({
+      message: "Delete this validation history item? This cannot be undone.",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setError(null);
+        try {
+          const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+          const existing = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
+          const serviceExisting = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
+          const nextHistory = existing.filter((item) => item?.id !== entryId);
+          const nextServiceHistory = serviceExisting.filter((item) => item?.id !== entryId);
+          await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
+            data: {
+              validation_history: nextHistory,
+              service_validation_history: nextServiceHistory,
+            }
+          });
+          setValidationHistory(
+            buildUnifiedValidationHistory({
+              validation_history: nextHistory,
+              service_validation_history: nextServiceHistory,
+            })
+          );
+          setSavedServiceIdeas(nextServiceHistory);
+          setSavedNotice("Validation history deleted.");
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Could not delete validation history item.");
+        }
+      },
+      onCancel: () => setConfirmDialog(null),
+    });
   }
 
   function validateProfileDraft() {
@@ -1967,7 +2014,8 @@ export default function ValidationWizardPage() {
                 console.warn("Failed to persist service validation history:", e);
               }
             }
-            navigate("/results");
+            setLastEvaluationId(validationId);
+            setSavedNotice("Validation complete. Accept or reject below.");
           } catch (payloadErr) {
             const msg = humanizeValidationError(payloadErr);
             console.error("Service validation payload error:", payloadErr);
@@ -2010,13 +2058,19 @@ export default function ValidationWizardPage() {
                   active_validation_id: validationId,
                 }
               }, { timeoutMs: 120000 });
-              setValidationHistory([normaliseValidationHistoryEntry(nextEntry), ...nextHistoryBase.map(normaliseValidationHistoryEntry).filter(Boolean)].filter(Boolean));
+              setValidationHistory(
+                buildUnifiedValidationHistory({
+                  validation_history: [nextEntry, ...nextHistoryBase],
+                  service_validation_history: Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [],
+                })
+              );
               setEditingHistoryEntry(null);
             } catch (historyErr) {
               console.warn("Failed to persist validation history:", historyErr);
             }
           }
-          navigate("/results");
+          setLastEvaluationId(validationId);
+          setSavedNotice("Validation complete. Accept or reject below.");
         }
       } else {
         setValidation(null);
@@ -3025,9 +3079,6 @@ export default function ValidationWizardPage() {
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <Button variant="secondary" onClick={() => editHistoryEntry(entry)}>
-                          {entry.status === "accepted" || entry.status === "rejected" ? "Go to dashboard" : "Modify"}
-                        </Button>
                         <Button variant="ghost" onClick={() => deleteHistoryEntry(entry.id)}>
                           Delete
                         </Button>
@@ -4024,11 +4075,12 @@ export default function ValidationWizardPage() {
         !(showBuilderMarketInsight &&
           (isBusinessStageFlow || isServiceStageFlow)) ? (
         <div className="sticky bottom-0 z-20 mt-4 py-3">
-          <div className="flex items-center justify-center gap-3 pr-16 sm:pr-20">
-            <div>
+          <div className="flex w-full items-center gap-3 pr-16 sm:pr-20">
+            <div className="flex-1">
               {mode === "fill" && isBusinessStageFlow ? (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
+                  className="w-full"
                   disabled={!canEdit || currentBusinessStageIndex === 0}
                   onClick={goToPreviousBusinessStage}
                 >
@@ -4036,23 +4088,51 @@ export default function ValidationWizardPage() {
                 </Button>
               ) : mode === "fill" && isServiceStageFlow ? (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
+                  className="w-full"
                   disabled={!canEdit || currentServiceStageIndex === 0}
                   onClick={goToPreviousServiceStage}
                 >
                   Back
                 </Button>
               ) : mode === "fill" && !isCreateWorkspace ? (
-                <Button variant="ghost" disabled={!canEdit} onClick={() => setMode("select")}>Change sections</Button>
+                <Button variant="secondary" className="w-full" disabled={!canEdit} onClick={() => setMode("select")}>Change sections</Button>
               ) : null}
             </div>
-            <div className="flex items-center gap-2">
-              {mode === "select" ? (
-                <Button disabled={!canEdit || !selectedCount} onClick={startFilling}>Continue</Button>
+            <div className="flex-1">
+              {lastEvaluationId && mode === "fill" ? (
+                <div className="flex w-full gap-2">
+                  <Button
+                    className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 border-0"
+                    disabled={isLoading}
+                    onClick={async () => {
+                      await updateHistoryEntryStatus(lastEvaluationId, "accepted");
+                      setLastEvaluationId(null);
+                      setSavedNotice("Validation accepted.");
+                    }}
+                  >
+                    Accept
+                  </Button>
+                  <Button
+                    className="flex-1 border-rose-300 text-rose-600 hover:bg-rose-50"
+                    variant="secondary"
+                    disabled={isLoading}
+                    onClick={async () => {
+                      await updateHistoryEntryStatus(lastEvaluationId, "rejected");
+                      setLastEvaluationId(null);
+                      setSavedNotice("Validation rejected.");
+                    }}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              ) : mode === "select" ? (
+                <Button className="w-full" disabled={!canEdit || !selectedCount} onClick={startFilling}>Continue</Button>
               ) : (
-                <div className="flex items-center gap-2">
+                <div className="flex flex-1 items-center gap-2">
                   {mode === "fill" && isBusinessStageFlow && !isLastBusinessStage ? (
                     <Button
+                      className="w-full"
                       disabled={isLoading || isPrefilling}
                       onClick={goToNextBusinessStage}
                     >
@@ -4060,6 +4140,7 @@ export default function ValidationWizardPage() {
                     </Button>
                   ) : mode === "fill" && isServiceStageFlow && !isLastServiceStage ? (
                     <Button
+                      className="w-full"
                       disabled={isLoading || isPrefilling}
                       onClick={goToNextServiceStage}
                     >
@@ -4067,7 +4148,7 @@ export default function ValidationWizardPage() {
                     </Button>
                   ) : mode === "fill" ? (
                     <Button
-                      variant="secondary"
+                      className="w-full"
                       disabled={isLoading || isPrefilling || !canRun}
                       onClick={() =>
                         isCreateWorkspace
@@ -4087,7 +4168,7 @@ export default function ValidationWizardPage() {
                             : "Evaluate"}
                     </Button>
                   ) : (
-                    <Button disabled={isLoading || isPrefilling || !canRun} onClick={() => saveWorkspace(false)}>
+                    <Button className="w-full" disabled={isLoading || isPrefilling || !canRun} onClick={() => saveWorkspace(false)}>
                       {isLoading ? <Spinner size={16} /> : null}
                       {isLoading ? "Saving..." : "Save workspace"}
                     </Button>
@@ -4104,6 +4185,15 @@ export default function ValidationWizardPage() {
         </div>
         ) : null}
       </div>
+      {confirmDialog ? (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          confirmLabel="Delete"
+          danger
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={confirmDialog.onCancel}
+        />
+      ) : null}
     </div>
   );
 }

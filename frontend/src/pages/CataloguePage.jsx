@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import html2pdf from "html2pdf.js";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
 import Input from "../components/Input";
@@ -18,6 +19,8 @@ export default function CataloguePage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
+  const workspaceName = useWorkspaceStore((s) => s.workspaceName);
+  const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
   const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
@@ -54,6 +57,7 @@ export default function CataloguePage() {
   const [editingVendorId, setEditingVendorId] = useState(null);
   const [activeTab, setActiveTab] = useState(() => firstAccessibleCatalogueTab());
   const [reportFinancials, setReportFinancials] = useState({ invoices: [], expenses: [] });
+  const [pendingCatalogueReport, setPendingCatalogueReport] = useState(null);
   const currency = useWorkspaceStore((s) => s.currency);
 
   // Reset to overview if current tab is locked by feature permissions
@@ -166,6 +170,66 @@ export default function CataloguePage() {
     const num = parseInt(str, 10);
     if (str && Number.isFinite(num) && String(num) === str) return `${num} days`;
     return str || "Payment terms";
+  }
+
+  function buildCatalogueReportHtml({ productRows, customerRows, vendorRows, cur }) {
+    const col = (cells) => cells.map((c) => `<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;">${c ?? "—"}</td>`).join("");
+    const hdr = (cells) => cells.map((c) => `<th style="padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;border-bottom:2px solid #e2e8f0;text-align:left;">${c}</th>`).join("");
+    const table = (headers, rows) => `
+      <table style="width:100%;border-collapse:collapse;margin-top:8px;">
+        <thead><tr>${hdr(headers)}</tr></thead>
+        <tbody>${rows.map((r) => `<tr>${col(r)}</tr>`).join("")}${!rows.length ? `<tr><td colspan="${headers.length}" style="padding:10px;font-size:12px;color:#94a3b8;text-align:center;">No data.</td></tr>` : ""}</tbody>
+      </table>`;
+    const section = (title, sub, content) => `
+      <div style="margin-top:24px;">
+        <div style="font-size:14px;font-weight:600;color:#0f172a;">${title}</div>
+        ${sub ? `<div style="font-size:11px;color:#64748b;margin-top:2px;">${sub}</div>` : ""}
+        ${content}
+      </div>`;
+    const logoSrc = workspaceLogo && String(workspaceLogo).trim() ? workspaceLogo : null;
+    return `<!doctype html><html><head><meta charset="utf-8"/><title>Catalogue Report</title>
+<style>*{color:#0f172a!important;}body{font-family:Inter,Arial,sans-serif;background:#fff;padding:32px;font-size:13px;line-height:1.5;}</style>
+</head><body>
+<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;">
+  <div>
+    ${logoSrc ? `<img src="${logoSrc}" style="display:block;max-width:140px;max-height:56px;margin-bottom:10px;"/>` : ""}
+    <div style="font-size:20px;font-weight:700;">${workspaceName || "EnterprateAI"}</div>
+    <div style="font-size:12px;color:#64748b;">Catalogue Report</div>
+  </div>
+  <div style="text-align:right;font-size:11px;color:#64748b;">${new Date().toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})}</div>
+</div>
+${section("Products & Services","Pricing, cost of sales, and margin per item.",table(["Name","Category","Sell price","Cost of sales","Margin"],productRows.map((p)=>[p.name,p.category,p.price,p.cos,p.margin])))}
+${section("Customers","Revenue earned and outstanding per customer.",table(["Name","Invoices","Revenue earned","Outstanding","Payment terms"],customerRows.map((c)=>[c.name,c.invoices,c.revenue,c.outstanding,c.terms])))}
+${section("Vendors","Supplier list and total spend from paid expenses.",table(["Name","Category","Payment terms","Total spent"],vendorRows.map((v)=>[v.name,v.category,v.terms,v.spent])))}
+</body></html>`;
+  }
+
+  async function downloadCatalogueReport({ productRows, customerRows, vendorRows, cur }) {
+    try {
+      const html = buildCatalogueReportHtml({ productRows, customerRows, vendorRows, cur });
+      const container = document.createElement("div");
+      container.innerHTML = html;
+      container.style.width = "210mm";
+      container.style.padding = "12mm";
+      container.style.boxSizing = "border-box";
+      container.style.fontSize = "13px";
+      container.style.background = "#ffffff";
+      document.body.appendChild(container);
+      await html2pdf()
+        .set({
+          filename: `catalogue-report-${new Date().toISOString().slice(0, 10)}.pdf`,
+          margin: [10, 10, 10, 10],
+          pagebreak: { mode: ["css", "legacy", "avoid-all"] },
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: { scale: 3, useCORS: true, windowWidth: 794, windowHeight: 1123, backgroundColor: "#ffffff", letterRendering: true },
+          jsPDF: { unit: "pt", format: "a4", orientation: "portrait", compress: true }
+        })
+        .from(container)
+        .save();
+      document.body.removeChild(container);
+    } catch (e) {
+      setError("Unable to generate the PDF report. Please try again.");
+    }
   }
 
   async function handleProductImport(file) {
@@ -654,84 +718,6 @@ export default function CataloguePage() {
             ))}
           </div>
 
-          {/* Three panels */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <SectionCard title="Products & services" subtitle="What you sell and how it's priced." className="h-full flex flex-col">
-              <div className="mt-3 flex-1 space-y-2">
-                {activeProducts.length ? (
-                  activeProducts.slice(0, 5).map((p) => (
-                    <div key={p.id} className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-slate-800">{p.name}</div>
-                        <div className="truncate text-[11px] text-slate-500">{p.category || p.product_type || "—"}</div>
-                      </div>
-                      <span className="shrink-0 text-sm font-semibold text-slate-900">
-                        {p.base_price != null ? `£${Number(p.base_price).toFixed(2)}` : "—"}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No products yet.</div>
-                )}
-                {activeProducts.length > 5 && <div className="text-[11px] text-slate-400">+{activeProducts.length - 5} more</div>}
-              </div>
-              <div className="mt-4">
-                <Button size="sm" variant="secondary" onClick={() => setActiveTab("products")}>Manage products</Button>
-              </div>
-            </SectionCard>
-
-            <SectionCard title="Customers" subtitle="Who you bill and their payment terms." className="h-full flex flex-col">
-              <div className="mt-3 flex-1 space-y-2">
-                {activeCustomers.length ? (
-                  activeCustomers.slice(0, 5).map((c) => (
-                    <div key={c.id} className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-slate-800">{c.name}</div>
-                        <div className="truncate text-[11px] text-slate-500">{c.email || c.contact_email || "—"}</div>
-                      </div>
-                      {c.payment_terms && (
-                        <span className="shrink-0 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
-                          {c.payment_terms}d
-                        </span>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No customers yet.</div>
-                )}
-                {activeCustomers.length > 5 && <div className="text-[11px] text-slate-400">+{activeCustomers.length - 5} more</div>}
-              </div>
-              <div className="mt-4">
-                <Button size="sm" variant="secondary" onClick={() => setActiveTab("customers")}>Manage customers</Button>
-              </div>
-            </SectionCard>
-
-            <SectionCard title="Vendors" subtitle="Your suppliers and their terms." className="h-full flex flex-col">
-              <div className="mt-3 flex-1 space-y-2">
-                {activeVendors.length ? (
-                  activeVendors.slice(0, 5).map((v) => (
-                    <div key={v.id} className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-slate-800">{v.name}</div>
-                        <div className="truncate text-[11px] text-slate-500">{v.vendor_type || v.category || "—"}</div>
-                      </div>
-                      {v.payment_terms && (
-                        <span className="shrink-0 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                          {v.payment_terms}d
-                        </span>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No vendors yet.</div>
-                )}
-                {activeVendors.length > 5 && <div className="text-[11px] text-slate-400">+{activeVendors.length - 5} more</div>}
-              </div>
-              <div className="mt-4">
-                <Button size="sm" variant="secondary" onClick={() => setActiveTab("vendors")}>Manage vendors</Button>
-              </div>
-            </SectionCard>
-          </div>
 
           {false && (
             <SectionCard
@@ -1496,7 +1482,38 @@ export default function CataloguePage() {
 
         return (
           <div className="mt-6 space-y-4">
-            <div className="pt-2 text-sm font-semibold text-slate-700 dark:text-slate-300">Detailed report</div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              {pendingCatalogueReport ? (
+                <>
+                  <span className="text-xs text-emerald-600 font-medium">Report ready</span>
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const container = document.createElement("div");
+                        container.innerHTML = pendingCatalogueReport;
+                        container.style.cssText = "width:210mm;padding:12mm;box-sizing:border-box;font-size:13px;background:#fff;";
+                        document.body.appendChild(container);
+                        const { default: html2pdf } = await import("html2pdf.js");
+                        await html2pdf().set({ filename:`catalogue-report-${new Date().toISOString().slice(0,10)}.pdf`, margin:[10,10,10,10], pagebreak:{mode:["css","legacy","avoid-all"]}, image:{type:"jpeg",quality:0.98}, html2canvas:{scale:3,useCORS:true,windowWidth:794,windowHeight:1123,backgroundColor:"#ffffff",letterRendering:true}, jsPDF:{unit:"pt",format:"a4",orientation:"portrait",compress:true} }).from(container).save();
+                        document.body.removeChild(container);
+                      } catch { setError("Unable to generate the PDF report."); }
+                    }}
+                  >
+                    Download
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setPendingCatalogueReport(null)}>Clear</Button>
+                </>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setPendingCatalogueReport(buildCatalogueReportHtml({ productRows, customerRows, vendorRows, cur }))}
+                >
+                  Generate Report
+                </Button>
+              )}
+            </div>
 
             <SectionCard title="Products & services" subtitle="Pricing, cost of sales, and margin per item.">
               <div className="mt-2">

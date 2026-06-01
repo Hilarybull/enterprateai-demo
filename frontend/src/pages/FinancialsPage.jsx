@@ -19,7 +19,7 @@ import { getProductCostOfSales, getProductSalesPrice } from "../lib/financialInt
 
 const OTHER_PRODUCT_ID = "__other__";
 
-function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "Select products / services" }) {
+function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "Select products / services", disabled = false }) {
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -44,6 +44,21 @@ function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "
       ? selectedIds.filter((sid) => sid !== id)
       : [...selectedIds, id];
     onChange(next);
+  }
+
+  if (disabled) {
+    const selectedProducts = products.filter((p) => selectedIds.includes(p.id));
+    const hasOther = selectedIds.includes(OTHER_PRODUCT_ID);
+    const parts = selectedProducts.map((p) => p.name);
+    if (hasOther) parts.push("Other / Custom");
+    return (
+      <div className="ea-input flex w-full items-center justify-between bg-slate-50 text-slate-500 cursor-not-allowed select-none opacity-75">
+        <span className="truncate text-sm">{parts.length ? parts.join(", ") : placeholder}</span>
+        <svg className="ml-2 h-4 w-4 shrink-0 text-slate-300" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+        </svg>
+      </div>
+    );
   }
 
   return (
@@ -153,6 +168,7 @@ export default function FinancialsPage() {
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [editingContractId, setEditingContractId] = useState(null);
   const [activeTab, setActiveTab] = useState(() => firstAccessibleFinancialsTab());
+  const [pendingFinancialReport, setPendingFinancialReport] = useState(null);
 
   // Reset to overview if current tab is locked by feature permissions
   useEffect(() => {
@@ -806,17 +822,20 @@ export default function FinancialsPage() {
   </div>
   <table>
     <thead>
-      <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Subtotal</th></tr>
+      <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit Cost</th><th class="right">Subtotal</th></tr>
     </thead>
     <tbody>
-      ${items.map((item) => `
+      ${items.map((item) => {
+        const unitCost = Number(item?.unit_price || 0) + Number(item?.unit_cost_of_sales || 0);
+        const lineTotal = unitCost * Number(item?.quantity || 0);
+        return `
       <tr>
         <td>${item?.product_name || "Product / Service"}</td>
         <td class="right">${item?.quantity || 0}</td>
-        <td class="right">${formatMoney(item?.unit_price || 0)}</td>
-        <td class="right"><strong>${formatMoney(item?.subtotal_amount || ((Number(item?.unit_price || 0) * Number(item?.quantity || 0))))}</strong></td>
-      </tr>
-      `).join("")}
+        <td class="right">${formatMoney(unitCost)}</td>
+        <td class="right"><strong>${formatMoney(lineTotal)}</strong></td>
+      </tr>`;
+      }).join("")}
     </tbody>
   </table>
   <div class="card">
@@ -879,6 +898,48 @@ export default function FinancialsPage() {
     } catch (e) {
       setError("Unable to generate the PDF. Please refresh and try again.");
     }
+  }
+
+  function buildFinancialReportHtml({ kpis, invoiceList, quoteList, expenseList, contractList }) {
+    const col = (cells) => cells.map((c) => `<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;">${c ?? "—"}</td>`).join("");
+    const hdr = (cells) => cells.map((c) => `<th style="padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;border-bottom:2px solid #e2e8f0;text-align:left;">${c}</th>`).join("");
+    const table = (headers, rows) => `
+      <table style="width:100%;border-collapse:collapse;margin-top:8px;">
+        <thead><tr>${hdr(headers)}</tr></thead>
+        <tbody>${rows.map((r) => `<tr>${col(r)}</tr>`).join("")}${!rows.length ? `<tr><td colspan="${headers.length}" style="padding:10px;font-size:12px;color:#94a3b8;text-align:center;">No data.</td></tr>` : ""}</tbody>
+      </table>`;
+    const section = (title, sub, content) => `
+      <div style="margin-top:20px;">
+        <div style="font-size:14px;font-weight:600;color:#0f172a;">${title}</div>
+        ${sub ? `<div style="font-size:11px;color:#64748b;margin-top:2px;">${sub}</div>` : ""}
+        ${content}
+      </div>`;
+    const logoSrc = workspaceLogo && String(workspaceLogo).trim() ? workspaceLogo : null;
+    return `<!doctype html><html><head><meta charset="utf-8"/><title>Financial Report</title>
+<style>*{color:#0f172a!important;}body{font-family:Inter,Arial,sans-serif;background:#fff;padding:32px;font-size:13px;line-height:1.5;}</style>
+</head><body>
+<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;">
+  <div>
+    ${logoSrc ? `<img src="${logoSrc}" style="display:block;max-width:140px;max-height:56px;margin-bottom:10px;"/>` : ""}
+    <div style="font-size:20px;font-weight:700;">${workspaceName || "EnterprateAI"}</div>
+    <div style="font-size:12px;color:#64748b;">Financial Report</div>
+  </div>
+  <div style="text-align:right;font-size:11px;color:#64748b;">${new Date().toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})}</div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:8px;">
+  ${(kpis || []).map((k) => `<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#64748b;">${k.label}</div><div style="font-size:18px;font-weight:700;margin-top:4px;">${k.value}</div></div>`).join("")}
+</div>
+${section("Invoices","All active invoices — paid and pending.",table(["Customer","Items / Services","Amount","Due / Issued","Status"],invoiceList.map((i)=>[i.customer,i.items,i.amount,i.due,i.status])))}
+${section("Quotation pipeline","Active quotes sent or in draft.",table(["Customer","Items","Amount","Valid","Status"],quoteList.map((q)=>[q.customer,q.items,q.amount,q.validity,q.status])))}
+${section("Expenses","Vendor payables.",table(["Vendor","Description","Amount","Due","Status"],expenseList.map((e)=>[e.vendor,e.description,e.amount,e.due,e.status])))}
+${section("Contracts","Active contracts and their value.",table(["Counterparty","Type","Price","Cost of sales","Terms","Status"],contractList.map((c)=>[c.counterparty,c.type,c.price,c.cos,c.terms,c.status])))}
+</body></html>`;
+  }
+
+  function downloadFinancialReport({ kpis, invoiceList, quoteList, expenseList, contractList }) {
+    const html = buildFinancialReportHtml({ kpis, invoiceList, quoteList, expenseList, contractList });
+    const filename = `financial-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+    downloadPdfFile(html, filename);
   }
 
   function downloadInvoice(invoice, customer, product) {
@@ -1815,30 +1876,6 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           </SectionCard>
         </div>
 
-        {/* Recent invoices */}
-        {activeInvoices.length > 0 && (
-          <SectionCard title="Recent invoices" subtitle="Last 5 invoices across all statuses.">
-            <div className="mt-3 divide-y divide-slate-100">
-              {[...activeInvoices]
-                .sort((a, b) => new Date(b.created_at || b.updated_at || 0) - new Date(a.created_at || a.updated_at || 0))
-                .slice(0, 5)
-                .map((inv) => (
-                  <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 first:pt-0 last:pb-0">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-slate-900">{inv.customer_name || "Customer"}</div>
-                      <div className="truncate text-xs text-slate-500">{Array.isArray(inv.product_names) && inv.product_names.length ? inv.product_names.join(", ") : inv.product_name || "Invoice"}</div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-3">
-                      <span className="text-sm font-semibold text-slate-900">{formatMoney(Number(inv.total_amount || 0))}</span>
-                      <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
-                        {inv.status || "draft"}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </SectionCard>
-        )}
 
         {false && (
           <SectionCard
@@ -2035,7 +2072,13 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   products={activeProducts}
                   selectedIds={Array.isArray(invoiceForm.product_ids) ? invoiceForm.product_ids : []}
                   onChange={updateInvoiceSelectedProducts}
+                  disabled={Boolean(invoiceForm.contract_id)}
                 />
+                {invoiceForm.contract_id && (
+                  <div className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
+                    Items are locked by the selected contract. Remove the contract to change products.
+                  </div>
+                )}
               </div>
               {invoicePreviewItems.length ? (
                 <div className="space-y-3">
@@ -2048,6 +2091,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                           <Input
                             placeholder="Enter name"
                             value={item.product_name}
+                            disabled={Boolean(invoiceForm.contract_id)}
                             onChange={(e) => updateInvoiceItem(OTHER_PRODUCT_ID, "product_name", e.target.value)}
                           />
                         </div>
@@ -2061,6 +2105,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                             type="number"
                             min="1"
                             value={String(item.quantity ?? 1)}
+                            disabled={Boolean(invoiceForm.contract_id)}
                             onChange={(e) => updateInvoiceItem(item.product_id, "quantity", e.target.value)}
                           />
                         </div>
@@ -3135,9 +3180,44 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             status: <StatusBadge status={c.status || "active"} />,
           }));
 
+        const kpiTiles = [
+          { label: "Monthly run rate", value: formatMoney(monthlyRevenue) },
+          { label: "Gross margin", value: grossMargin != null ? `${grossMargin}%` : "—" },
+          { label: "Pending receivables", value: formatMoney(pendingReceivablesTotal) },
+          { label: "Pending payables", value: formatMoney(pendingPayablesTotal) },
+        ];
+
+        const invoiceListRaw = [...activeInvoices].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,30).map(inv=>({customer:inv.customer_name||"—",items:Array.isArray(inv.product_names)&&inv.product_names.length?inv.product_names.join(", "):inv.product_name||"—",amount:formatMoney(Number(inv.total_amount||0)),due:inv.due_date?new Date(inv.due_date).toLocaleDateString():inv.issued_at?new Date(inv.issued_at).toLocaleDateString():"—",status:String(inv.status||"pending")}));
+        const quoteListRaw = [...activeQuotes].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,20).map(q=>({customer:q.customer_name||"—",items:Array.isArray(q.product_names)&&q.product_names.length?q.product_names.join(", "):q.product_name||"—",amount:formatMoney(Number(q.total_amount||q.subtotal_amount||0)),validity:q.validity_days?`${q.validity_days}d`:"—",status:String(q.status||"draft")}));
+        const expenseListRaw = [...expenses].sort((a,b)=>new Date(b.created_at||b.updated_at||0)-new Date(a.created_at||a.updated_at||0)).slice(0,20).map(e=>({vendor:e.vendor_name||e.counterparty_name||"—",description:e.description||e.expense_type||e.item||"—",amount:formatMoney(Number(e.price||e.total_amount||0)),due:e.due_date?new Date(e.due_date).toLocaleDateString():"—",status:String(e.status||"pending")}));
+        const contractListRaw = [...activeContracts].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).map(c=>({counterparty:c.counterparty_name||"—",type:c.contract_type||"—",price:formatMoney(Number(c.price||0)),cos:formatMoney(Number(c.cost_of_sales||0)),terms:c.payment_terms||"—",status:String(c.status||"active")}));
+
+        const reportPayload = { kpis: kpiTiles, invoiceList: invoiceListRaw, quoteList: quoteListRaw, expenseList: expenseListRaw, contractList: contractListRaw };
+
         return (
           <div className="mt-6 space-y-4">
-            <div className="pt-2 text-sm font-semibold text-slate-700 dark:text-slate-300">Detailed report</div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              {pendingFinancialReport ? (
+                <>
+                  <span className="text-xs text-emerald-600 font-medium">Report ready</span>
+                  <Button
+                    size="sm"
+                    onClick={() => { downloadPdfFile(pendingFinancialReport, `financial-report-${new Date().toISOString().slice(0,10)}.pdf`); }}
+                  >
+                    Download
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setPendingFinancialReport(null)}>Clear</Button>
+                </>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setPendingFinancialReport(buildFinancialReportHtml(reportPayload))}
+                >
+                  Generate Report
+                </Button>
+              )}
+            </div>
 
             <SectionCard title="Invoices" subtitle="All active invoices — paid and pending.">
               <div className="mt-2">

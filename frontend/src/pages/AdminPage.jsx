@@ -4,6 +4,7 @@ import { useAuthStore } from "../store/auth";
 import { apiRequest } from "../api/client";
 import { MODULES, FEATURES } from "../lib/permissions";
 import logoUrl from "../enterprate-logo.png";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 const ADMIN_EMAIL = "tech.support@enterprateai.com";
 
@@ -218,6 +219,7 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
   const [snapshots, setSnapshots] = useState(null);
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
   const [nameSaving, setNameSaving] = useState(false);
@@ -238,17 +240,25 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
       .finally(() => setSnapshotsLoading(false));
   }, [detail?.id]);
 
-  async function handleRestore(snap) {
-    if (!window.confirm(`Restore to snapshot from ${snap.saved_at ? new Date(snap.saved_at).toLocaleString() : "unknown time"} ("${snap.ws_name}")?\n\nThe current state will be saved as a new snapshot first so you can undo.`)) return;
-    setRestoring(true);
-    try {
-      const res = await apiRequest(`/admin/workspaces/${detail.id}/restore`, "POST", { snapshot_id: snap.snapshot_id });
-      onRestore && onRestore(res);
-    } catch (e) {
-      alert(e.message || "Restore failed.");
-    } finally {
-      setRestoring(false);
-    }
+  function handleRestore(snap) {
+    const snapTime = snap.saved_at ? new Date(snap.saved_at).toLocaleString() : "unknown time";
+    setConfirmDialog({
+      message: `Restore to snapshot from ${snapTime} ("${snap.ws_name}")? The current state will be saved as a new snapshot first so you can undo.`,
+      confirmLabel: "Restore",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setRestoring(true);
+        try {
+          const res = await apiRequest(`/admin/workspaces/${detail.id}/restore`, "POST", { snapshot_id: snap.snapshot_id });
+          onRestore && onRestore(res);
+        } catch (e) {
+          alert(e.message || "Restore failed.");
+        } finally {
+          setRestoring(false);
+        }
+      },
+      onCancel: () => setConfirmDialog(null),
+    });
   }
 
   async function handleRenameSave() {
@@ -407,6 +417,14 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
         </div>
       </div>
     </div>
+    {confirmDialog ? (
+      <ConfirmDialog
+        message={confirmDialog.message}
+        confirmLabel={confirmDialog.confirmLabel || "Confirm"}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={confirmDialog.onCancel}
+      />
+    ) : null}
   );
 }
 
