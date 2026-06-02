@@ -58,6 +58,8 @@ export default function CataloguePage() {
   const [activeTab, setActiveTab] = useState(() => firstAccessibleCatalogueTab());
   const [reportFinancials, setReportFinancials] = useState({ invoices: [], expenses: [] });
   const [pendingCatalogueReport, setPendingCatalogueReport] = useState(null);
+  const [reportFilter, setReportFilter] = useState({ products: true, customers: true, vendors: true });
+  const [reportPreviewHtml, setReportPreviewHtml] = useState(null);
   const currency = useWorkspaceStore((s) => s.currency);
 
   // Reset to overview if current tab is locked by feature permissions
@@ -70,6 +72,54 @@ export default function CataloguePage() {
     };
     if (locked[activeTab]) setActiveTab(firstAccessibleCatalogueTab());
   }, [activeTab, canViewCatalogueOverview, isMemberMode, memberPermissionType, memberPermissions]); // eslint-disable-line
+
+  const reportRows = useMemo(() => {
+    const cur = currency || "GBP";
+    const activeProducts = products.filter(p => !p.archived);
+    const activeCustomers = customers.filter(c => !c.archived);
+    const activeVendors = vendors.filter(v => !v.archived);
+    const paidInvoices = (reportFinancials.invoices || []).filter(i => String(i.status || "").toLowerCase() === "paid");
+    const paidExpenses = (reportFinancials.expenses || []).filter(e => String(e.status || "").toLowerCase() === "paid");
+    const customerRevMap = new Map();
+    paidInvoices.forEach(inv => {
+      const key = inv.customer_name || inv.customer_id || "unknown";
+      const prev = customerRevMap.get(key) || { name: key, revenue: 0, invoices: 0 };
+      customerRevMap.set(key, { ...prev, revenue: prev.revenue + Number(inv.total_amount || 0), invoices: prev.invoices + 1 });
+    });
+    const customerPendingMap = new Map();
+    (reportFinancials.invoices || []).filter(i => String(i.status || "").toLowerCase() !== "paid").forEach(inv => {
+      const key = inv.customer_name || inv.customer_id || "unknown";
+      customerPendingMap.set(key, (customerPendingMap.get(key) || 0) + Number(inv.total_amount || 0));
+    });
+    const vendorSpendMap = new Map();
+    paidExpenses.forEach(e => {
+      const key = e.vendor_name || e.counterparty_name || "unknown";
+      vendorSpendMap.set(key, (vendorSpendMap.get(key) || 0) + Number(e.price || 0));
+    });
+    const productRows = activeProducts.map(p => {
+      const sellPrice = Math.max(0, Number(p.base_price || 0) - Number(p.discount || 0));
+      const cos = Number(p.cost_of_sales || p.unit_cost || 0);
+      const margin = sellPrice > 0 ? (((sellPrice - cos) / sellPrice) * 100).toFixed(1) : null;
+      return { name: p.name || "—", category: p.category || p.product_type || "—", price: formatCurrency(sellPrice, cur), cos: formatCurrency(cos, cur), margin: margin != null ? `${margin}%` : "—" };
+    });
+    const customerRows = [...customerRevMap.entries()]
+      .sort((a, b) => b[1].revenue - a[1].revenue)
+      .map(([key, c]) => {
+        const cat = activeCustomers.find(x => x.name === key);
+        return { name: c.name, invoices: c.invoices, revenue: formatCurrency(c.revenue, cur), outstanding: formatCurrency(customerPendingMap.get(key) || 0, cur), terms: cat?.payment_terms ? `${cat.payment_terms}d` : "—" };
+      });
+    activeCustomers.forEach(c => {
+      if (!customerRows.some(r => r.name === c.name)) {
+        customerRows.push({ name: c.name || "—", invoices: 0, revenue: formatCurrency(0, cur), outstanding: formatCurrency(0, cur), terms: c.payment_terms ? `${c.payment_terms}d` : "—" });
+      }
+    });
+    const vendorRows = activeVendors.map(v => ({
+      name: v.name || "—", category: v.vendor_type || v.category || "—",
+      terms: v.payment_terms ? `${v.payment_terms}d` : "—",
+      spent: formatCurrency(vendorSpendMap.get(v.name) || 0, cur),
+    }));
+    return { productRows, customerRows, vendorRows, cur };
+  }, [products, customers, vendors, reportFinancials, currency]);
 
   const [productForm, setProductForm] = useState({
     name: "",
@@ -198,9 +248,9 @@ export default function CataloguePage() {
   </div>
   <div style="text-align:right;font-size:11px;color:#64748b;">${new Date().toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})}</div>
 </div>
-${section("Products & Services","Pricing, cost of sales, and margin per item.",table(["Name","Category","Sell price","Cost of sales","Margin"],productRows.map((p)=>[p.name,p.category,p.price,p.cos,p.margin])))}
-${section("Customers","Revenue earned and outstanding per customer.",table(["Name","Invoices","Revenue earned","Outstanding","Payment terms"],customerRows.map((c)=>[c.name,c.invoices,c.revenue,c.outstanding,c.terms])))}
-${section("Vendors","Supplier list and total spend from paid expenses.",table(["Name","Category","Payment terms","Total spent"],vendorRows.map((v)=>[v.name,v.category,v.terms,v.spent])))}
+${productRows !== null ? section("Products & Services","Pricing, cost of sales, and margin per item.",table(["Name","Category","Sell price","Cost of sales","Margin"],productRows.map((p)=>[p.name,p.category,p.price,p.cos,p.margin]))) : ""}
+${customerRows !== null ? section("Customers","Revenue earned and outstanding per customer.",table(["Name","Invoices","Revenue earned","Outstanding","Payment terms"],customerRows.map((c)=>[c.name,c.invoices,c.revenue,c.outstanding,c.terms]))) : ""}
+${vendorRows !== null ? section("Vendors","Supplier list and total spend from paid expenses.",table(["Name","Category","Payment terms","Total spent"],vendorRows.map((v)=>[v.name,v.category,v.terms,v.spent]))) : ""}
 </body></html>`;
   }
 
@@ -696,6 +746,7 @@ ${section("Vendors","Supplier list and total spend from paid expenses.",table(["
             ...(canCatalogueFeature("manage_products") ? [{ value: "products", label: "Products" }] : []),
             ...(canCatalogueFeature("manage_customers") ? [{ value: "customers", label: "Customers" }] : []),
             ...(canCatalogueFeature("manage_vendors") ? [{ value: "vendors", label: "Vendors" }] : []),
+            { value: "report", label: "Report" },
           ]}
         />
       </div>
@@ -896,13 +947,12 @@ ${section("Vendors","Supplier list and total spend from paid expenses.",table(["
           </div>
           <div className="mt-5 border-t border-slate-200 pt-4">
             <div className="text-xs font-semibold text-slate-600">Import products (CSV)</div>
-            <input
-              className="mt-2 text-xs text-slate-600"
-              type="file"
-              accept=".csv"
-              onChange={(e) => handleProductImport(e.target.files?.[0])}
-            />
-            <div className="mt-1 text-xs text-slate-500">Headers: product_name, product_type, base_price, cost_of_sales, discount, freight_cost.</div>
+            <label className="mt-2 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50">
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Choose CSV file
+              <input type="file" accept=".csv" className="hidden" onChange={(e) => handleProductImport(e.target.files?.[0])} />
+            </label>
+            <div className="mt-1.5 text-[11px] text-slate-400">Headers: product_name, product_type, base_price, cost_of_sales, discount, freight_cost.</div>
           </div>
         </SectionCard>
 
@@ -924,9 +974,12 @@ ${section("Vendors","Supplier list and total spend from paid expenses.",table(["
                 activeProducts.map((p) => (
                   <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-900">{p.name}</div>
-                      <div className="text-xs text-slate-500">
-                        {p.type} • Base {p.base_price} • Cost of sales {p.cost_of_sales || 0} • Discount {p.discount || 0} • Freight {p.freight_cost || 0}
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-semibold text-slate-900">{p.name}</div>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${p.type === "product" ? "bg-sky-50 text-sky-700" : "bg-violet-50 text-violet-700"}`}>{p.type}</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        {formatCurrency(p.base_price, currency)} base · {formatCurrency(p.cost_of_sales || 0, currency)} CoS{p.discount ? ` · ${formatCurrency(p.discount, currency)} off` : ""}{p.freight_cost ? ` · ${formatCurrency(p.freight_cost, currency)} freight` : ""}
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1106,13 +1159,12 @@ ${section("Vendors","Supplier list and total spend from paid expenses.",table(["
           </div>
           <div className="mt-5 border-t border-slate-200 pt-4">
             <div className="text-xs font-semibold text-slate-600">Import customers (CSV)</div>
-            <input
-              className="mt-2 text-xs text-slate-600"
-              type="file"
-              accept=".csv"
-              onChange={(e) => handleCustomerImport(e.target.files?.[0])}
-            />
-            <div className="mt-1 text-xs text-slate-500">Headers: customer_name, address, payment_terms, industry.</div>
+            <label className="mt-2 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50">
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Choose CSV file
+              <input type="file" accept=".csv" className="hidden" onChange={(e) => handleCustomerImport(e.target.files?.[0])} />
+            </label>
+            <div className="mt-1.5 text-[11px] text-slate-400">Headers: customer_name, address, payment_terms, industry.</div>
           </div>
         </SectionCard>
 
@@ -1309,13 +1361,12 @@ ${section("Vendors","Supplier list and total spend from paid expenses.",table(["
           </div>
           <div className="mt-5 border-t border-slate-200 pt-4">
             <div className="text-xs font-semibold text-slate-600">Import vendors (CSV)</div>
-            <input
-              className="mt-2 text-xs text-slate-600"
-              type="file"
-              accept=".csv"
-              onChange={(e) => handleVendorImport(e.target.files?.[0])}
-            />
-            <div className="mt-1 text-xs text-slate-500">
+            <label className="mt-2 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50">
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Choose CSV file
+              <input type="file" accept=".csv" className="hidden" onChange={(e) => handleVendorImport(e.target.files?.[0])} />
+            </label>
+            <div className="mt-1.5 text-[11px] text-slate-400">
               Headers: vendor_name, address, payment_terms, industry, product_type, product_name, price.
             </div>
           </div>
@@ -1340,9 +1391,12 @@ ${section("Vendors","Supplier list and total spend from paid expenses.",table(["
                 activeVendors.map((v) => (
                   <div key={v.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-900">{v.name}</div>
-                      <div className="text-xs text-slate-500">
-                        {v.product_name} • {v.product_type} • {formatPaymentTerms(v.payment_terms)} • {v.price}
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-semibold text-slate-900">{v.name}</div>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${v.product_type === "product" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>{v.product_type}</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        {v.product_name} · {formatCurrency(v.price, currency)} · {formatPaymentTerms(v.payment_terms)}
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1429,92 +1483,8 @@ ${section("Vendors","Supplier list and total spend from paid expenses.",table(["
       </div>
       ) : null}
 
-      {activeTab === "overview" && (() => {
-        const cur = currency || "GBP";
-        const activeProducts = products.filter(p => !p.archived);
-        const activeCustomers = customers.filter(c => !c.archived);
-        const activeVendors = vendors.filter(v => !v.archived);
-
-        const paidInvoices = (reportFinancials.invoices || []).filter(i => String(i.status || "").toLowerCase() === "paid");
-        const paidExpenses = (reportFinancials.expenses || []).filter(e => String(e.status || "").toLowerCase() === "paid");
-
-        const customerRevMap = new Map();
-        paidInvoices.forEach(inv => {
-          const key = inv.customer_name || inv.customer_id || "unknown";
-          const prev = customerRevMap.get(key) || { name: key, revenue: 0, invoices: 0 };
-          customerRevMap.set(key, { ...prev, revenue: prev.revenue + Number(inv.total_amount || 0), invoices: prev.invoices + 1 });
-        });
-        const customerPendingMap = new Map();
-        (reportFinancials.invoices || []).filter(i => String(i.status || "").toLowerCase() !== "paid").forEach(inv => {
-          const key = inv.customer_name || inv.customer_id || "unknown";
-          customerPendingMap.set(key, (customerPendingMap.get(key) || 0) + Number(inv.total_amount || 0));
-        });
-        const vendorSpendMap = new Map();
-        paidExpenses.forEach(e => {
-          const key = e.vendor_name || e.counterparty_name || "unknown";
-          vendorSpendMap.set(key, (vendorSpendMap.get(key) || 0) + Number(e.price || 0));
-        });
-
-        const productRows = activeProducts.map(p => {
-          const sellPrice = Math.max(0, Number(p.base_price || 0) - Number(p.discount || 0));
-          const cos = Number(p.cost_of_sales || p.unit_cost || 0);
-          const margin = sellPrice > 0 ? (((sellPrice - cos) / sellPrice) * 100).toFixed(1) : null;
-          return { name: p.name || "—", category: p.category || p.product_type || "—", price: formatCurrency(sellPrice, cur), cos: formatCurrency(cos, cur), margin: margin != null ? `${margin}%` : "—" };
-        });
-
-        const customerRows = [...customerRevMap.entries()]
-          .sort((a, b) => b[1].revenue - a[1].revenue)
-          .map(([key, c]) => {
-            const cat = activeCustomers.find(x => x.name === key);
-            return { name: c.name, invoices: c.invoices, revenue: formatCurrency(c.revenue, cur), outstanding: formatCurrency(customerPendingMap.get(key) || 0, cur), terms: cat?.payment_terms ? `${cat.payment_terms}d` : "—" };
-          });
-        activeCustomers.forEach(c => {
-          if (!customerRows.some(r => r.name === c.name)) {
-            customerRows.push({ name: c.name || "—", invoices: 0, revenue: formatCurrency(0, cur), outstanding: formatCurrency(0, cur), terms: c.payment_terms ? `${c.payment_terms}d` : "—" });
-          }
-        });
-
-        const vendorRows = activeVendors.map(v => ({
-          name: v.name || "—", category: v.vendor_type || v.category || "—",
-          terms: v.payment_terms ? `${v.payment_terms}d` : "—",
-          spent: formatCurrency(vendorSpendMap.get(v.name) || 0, cur),
-        }));
-
-        return (
+      {activeTab === "overview" && (
           <div className="mt-6 space-y-4">
-            <div className="flex items-center justify-end gap-2 pt-2">
-              {pendingCatalogueReport ? (
-                <>
-                  <span className="text-xs text-emerald-600 font-medium">Report ready</span>
-                  <Button
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        const container = document.createElement("div");
-                        container.innerHTML = pendingCatalogueReport;
-                        container.style.cssText = "width:210mm;padding:12mm;box-sizing:border-box;font-size:13px;background:#fff;";
-                        document.body.appendChild(container);
-                        const { default: html2pdf } = await import("html2pdf.js");
-                        await html2pdf().set({ filename:`catalogue-report-${new Date().toISOString().slice(0,10)}.pdf`, margin:[10,10,10,10], pagebreak:{mode:["css","legacy","avoid-all"]}, image:{type:"jpeg",quality:0.98}, html2canvas:{scale:3,useCORS:true,windowWidth:794,windowHeight:1123,backgroundColor:"#ffffff",letterRendering:true}, jsPDF:{unit:"pt",format:"a4",orientation:"portrait",compress:true} }).from(container).save();
-                        document.body.removeChild(container);
-                      } catch { setError("Unable to generate the PDF report."); }
-                    }}
-                  >
-                    Download
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setPendingCatalogueReport(null)}>Clear</Button>
-                </>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setPendingCatalogueReport(buildCatalogueReportHtml({ productRows, customerRows, vendorRows, cur }))}
-                >
-                  Generate Report
-                </Button>
-              )}
-            </div>
-
             <SectionCard title="Products & services" subtitle="Pricing, cost of sales, and margin per item.">
               <div className="mt-2">
                 <ReportTable
@@ -1525,7 +1495,7 @@ ${section("Vendors","Supplier list and total spend from paid expenses.",table(["
                     { key: "cos", label: "Cost of sales", right: true },
                     { key: "margin", label: "Margin", right: true },
                   ]}
-                  rows={productRows}
+                  rows={reportRows.productRows}
                   emptyText="No products in catalogue yet."
                 />
               </div>
@@ -1542,7 +1512,7 @@ ${section("Vendors","Supplier list and total spend from paid expenses.",table(["
                       { key: "outstanding", label: "Outstanding", right: true },
                       { key: "terms", label: "Terms", right: true },
                     ]}
-                    rows={customerRows}
+                    rows={reportRows.customerRows}
                     emptyText="No customers yet."
                   />
                 </div>
@@ -1557,15 +1527,92 @@ ${section("Vendors","Supplier list and total spend from paid expenses.",table(["
                       { key: "terms", label: "Terms", right: true },
                       { key: "spent", label: "Total spent", right: true, bold: true },
                     ]}
-                    rows={vendorRows}
+                    rows={reportRows.vendorRows}
                     emptyText="No vendors yet."
                   />
                 </div>
               </SectionCard>
             </div>
           </div>
-        );
-      })()}
+      )}
+
+      {activeTab === "report" && (
+        <div className="mt-6 space-y-5">
+          {/* Filter controls */}
+          <SectionCard title="Generate Catalogue Report" subtitle="Select the sections to include, preview, then download as PDF.">
+            <div className="mt-3 flex flex-wrap gap-4">
+              {[
+                { key: "products", label: "Products & Services" },
+                { key: "customers", label: "Customers" },
+                { key: "vendors", label: "Vendors" },
+              ].map(({ key, label }) => (
+                <label key={key} className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={reportFilter[key]}
+                    onChange={(e) => {
+                      setReportFilter((prev) => ({ ...prev, [key]: e.target.checked }));
+                      setReportPreviewHtml(null);
+                    }}
+                    className="h-4 w-4 rounded accent-brand-600"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div className="mt-4 flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const { productRows, customerRows, vendorRows, cur } = reportRows;
+                  const filteredProductRows = reportFilter.products ? productRows : null;
+                  const filteredCustomerRows = reportFilter.customers ? customerRows : null;
+                  const filteredVendorRows = reportFilter.vendors ? vendorRows : null;
+                  setReportPreviewHtml(buildCatalogueReportHtml({ productRows: filteredProductRows, customerRows: filteredCustomerRows, vendorRows: filteredVendorRows, cur }));
+                  setPendingCatalogueReport(buildCatalogueReportHtml({ productRows: filteredProductRows, customerRows: filteredCustomerRows, vendorRows: filteredVendorRows, cur }));
+                }}
+              >
+                Generate &amp; Preview
+              </Button>
+              {pendingCatalogueReport && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={async () => {
+                      try {
+                        const container = document.createElement("div");
+                        container.innerHTML = pendingCatalogueReport;
+                        container.style.cssText = "width:210mm;padding:12mm;box-sizing:border-box;font-size:13px;background:#fff;";
+                        document.body.appendChild(container);
+                        await html2pdf().set({ filename: `catalogue-report-${new Date().toISOString().slice(0, 10)}.pdf`, margin: [10, 10, 10, 10], pagebreak: { mode: ["css", "legacy", "avoid-all"] }, image: { type: "jpeg", quality: 0.98 }, html2canvas: { scale: 3, useCORS: true, windowWidth: 794, backgroundColor: "#ffffff", letterRendering: true }, jsPDF: { unit: "pt", format: "a4", orientation: "portrait", compress: true } }).from(container).save();
+                        document.body.removeChild(container);
+                      } catch { setError("Unable to generate the PDF report."); }
+                    }}
+                  >
+                    Download PDF
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setPendingCatalogueReport(null); setReportPreviewHtml(null); }}>Clear</Button>
+                </>
+              )}
+            </div>
+          </SectionCard>
+
+          {/* Live preview */}
+          {reportPreviewHtml && (
+            <SectionCard title="Preview">
+              <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
+                <iframe
+                  srcDoc={reportPreviewHtml}
+                  title="Catalogue Report Preview"
+                  className="h-[600px] w-full bg-white"
+                  sandbox="allow-same-origin"
+                />
+              </div>
+            </SectionCard>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <div className="mt-4">

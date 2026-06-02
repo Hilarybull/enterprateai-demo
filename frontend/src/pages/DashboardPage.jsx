@@ -187,22 +187,34 @@ export default function DashboardPage() {
             <div className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Explore modules</div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               {[
-                { label: "Idea Validation", subtitle: "Evaluate your business concept.", href: "/validation", illustration: <ValidationIllustration /> },
-                { label: "Simulation", subtitle: "Model what-if scenarios.", href: "/simulation", illustration: <SimulationIllustration /> },
+                { label: "Idea Validation", subtitle: "Evaluate your business concept.", href: "/validation", illustration: <ValidationIllustration />, comingSoon: true },
+                { label: "Simulation", subtitle: "Model what-if scenarios.", href: "/simulation", illustration: <SimulationIllustration />, comingSoon: true },
                 { label: "Blueprints", subtitle: "Generate strategic documents.", href: "/blueprint", illustration: <BlueprintIllustration /> },
                 { label: "Catalogue", subtitle: "Manage products & customers.", href: "/catalogue", illustration: <CatalogueIllustration /> },
                 { label: "Financials", subtitle: "Invoicing & cash tracking.", href: "/financials", illustration: <FinancialIllustration /> },
               ].map((mod) => (
-                <button key={mod.href} type="button" onClick={() => navigate(mod.href)}
-                  className="group rounded-2xl border border-slate-200 bg-white text-left transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900/70 dark:hover:border-brand-700">
-                  <div className="overflow-hidden rounded-t-2xl bg-gradient-to-br from-brand-50 via-white to-indigo-50 dark:from-slate-800 dark:via-slate-900 dark:to-slate-800">
-                    {mod.illustration}
-                  </div>
-                  <div className="px-4 py-3">
-                    <div className="text-sm font-semibold text-slate-900 group-hover:text-brand-700 dark:text-slate-100 dark:group-hover:text-brand-400">{mod.label}</div>
-                    <div className="mt-0.5 text-xs text-slate-500">{mod.subtitle}</div>
-                  </div>
-                </button>
+                <div key={mod.href} className="relative">
+                  <button type="button" onClick={mod.comingSoon ? undefined : () => navigate(mod.href)}
+                    className={
+                      "group w-full rounded-2xl border border-slate-200 bg-white text-left transition dark:border-slate-800 dark:bg-slate-900/70 " +
+                      (mod.comingSoon
+                        ? "cursor-default opacity-60"
+                        : "hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md dark:hover:border-brand-700")
+                    }>
+                    <div className="overflow-hidden rounded-t-2xl bg-gradient-to-br from-brand-50 via-white to-indigo-50 dark:from-slate-800 dark:via-slate-900 dark:to-slate-800">
+                      {mod.illustration}
+                    </div>
+                    <div className="px-4 py-3">
+                      <div className="text-sm font-semibold text-slate-900 group-hover:text-brand-700 dark:text-slate-100 dark:group-hover:text-brand-400">{mod.label}</div>
+                      <div className="mt-0.5 text-xs text-slate-500">{mod.subtitle}</div>
+                    </div>
+                  </button>
+                  {mod.comingSoon && (
+                    <span className="absolute right-2 top-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+                      Soon
+                    </span>
+                  )}
+                </div>
               ))}
             </div>
           </div>

@@ -169,6 +169,8 @@ export default function FinancialsPage() {
   const [editingContractId, setEditingContractId] = useState(null);
   const [activeTab, setActiveTab] = useState(() => firstAccessibleFinancialsTab());
   const [pendingFinancialReport, setPendingFinancialReport] = useState(null);
+  const [reportFilter, setReportFilter] = useState({ kpis: true, invoices: true, quotes: true, expenses: true, contracts: true });
+  const [reportPreviewHtml, setReportPreviewHtml] = useState(null);
 
   // Reset to overview if current tab is locked by feature permissions
   useEffect(() => {
@@ -468,6 +470,41 @@ export default function FinancialsPage() {
     const monthlyRev = paidInvs.length ? totalPaidRev / dmc(paidInvs) : 0;
     return { totalPaidRev, pendingRec, pendingPay, monthlyRev, overdueInvCount };
   }, [activeInvoices, activeExpenses]);
+
+  const financialReportRows = useMemo(() => {
+    const paidInvs = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "paid");
+    const paidExps = expenses.filter(e => String(e.status || "").toLowerCase() === "paid");
+    function dmc(items) {
+      const s = new Set();
+      for (const item of items) {
+        const raw = item?.created_at || item?.updated_at || item?.issued_at;
+        if (!raw) continue;
+        const d = new Date(raw);
+        if (Number.isFinite(d.getTime())) s.add(`${d.getFullYear()}-${d.getMonth()}`);
+      }
+      return Math.max(1, s.size);
+    }
+    const totalPaidRev = paidInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
+    const totalPaidCos = paidInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
+    const totalPaidExp = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+    const monthlyRevenue = totalPaidRev / dmc(paidInvs);
+    const monthlyCos = totalPaidCos / dmc(paidInvs);
+    const monthlyExp = totalPaidExp / dmc(paidExps);
+    const grossMargin = monthlyRevenue > 0 ? (((monthlyRevenue - monthlyCos) / monthlyRevenue) * 100).toFixed(1) : null;
+    const pendingReceivablesTotal = activeInvoices.filter(i => String(i.status || "").toLowerCase() !== "paid").reduce((s, i) => s + Number(i.total_amount || 0), 0);
+    const pendingPayablesTotal = expenses.filter(e => String(e.status || "").toLowerCase() !== "paid").reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+    const kpiTiles = [
+      { label: "Monthly run rate", value: formatMoney(monthlyRevenue) },
+      { label: "Gross margin", value: grossMargin != null ? `${grossMargin}%` : "—" },
+      { label: "Pending receivables", value: formatMoney(pendingReceivablesTotal) },
+      { label: "Pending payables", value: formatMoney(pendingPayablesTotal) },
+    ];
+    const invoiceListRaw = [...activeInvoices].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,30).map(inv=>({customer:inv.customer_name||"—",items:Array.isArray(inv.product_names)&&inv.product_names.length?inv.product_names.join(", "):inv.product_name||"—",amount:formatMoney(Number(inv.total_amount||0)),due:inv.due_date?new Date(inv.due_date).toLocaleDateString():inv.issued_at?new Date(inv.issued_at).toLocaleDateString():"—",status:String(inv.status||"pending")}));
+    const quoteListRaw = [...activeQuotes].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,20).map(q=>({customer:q.customer_name||"—",items:Array.isArray(q.product_names)&&q.product_names.length?q.product_names.join(", "):q.product_name||"—",amount:formatMoney(Number(q.total_amount||q.subtotal_amount||0)),validity:q.validity_days?`${q.validity_days}d`:"—",status:String(q.status||"draft")}));
+    const expenseListRaw = [...expenses].sort((a,b)=>new Date(b.created_at||b.updated_at||0)-new Date(a.created_at||a.updated_at||0)).slice(0,20).map(e=>({vendor:e.vendor_name||e.counterparty_name||"—",description:e.description||e.expense_type||e.item||"—",amount:formatMoney(Number(e.price||e.total_amount||0)),due:e.due_date?new Date(e.due_date).toLocaleDateString():"—",status:String(e.status||"pending")}));
+    const contractListRaw = [...activeContracts].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).map(c=>({counterparty:c.counterparty_name||"—",type:c.contract_type||"—",price:formatMoney(Number(c.price||0)),cos:formatMoney(Number(c.cost_of_sales||0)),terms:c.payment_terms||"—",status:String(c.status||"active")}));
+    return { kpiTiles, invoiceListRaw, quoteListRaw, expenseListRaw, contractListRaw, monthlyExp };
+  }, [activeInvoices, activeQuotes, activeContracts, expenses]); // eslint-disable-line
 
   const hasArchiveWarning = useMemo(() => {
     const list = [...archivedInvoices, ...archivedQuotes, ...archivedExpenses, ...archivedContracts];
@@ -926,13 +963,11 @@ export default function FinancialsPage() {
   </div>
   <div style="text-align:right;font-size:11px;color:#64748b;">${new Date().toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})}</div>
 </div>
-<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:8px;">
-  ${(kpis || []).map((k) => `<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#64748b;">${k.label}</div><div style="font-size:18px;font-weight:700;margin-top:4px;">${k.value}</div></div>`).join("")}
-</div>
-${section("Invoices","All active invoices — paid and pending.",table(["Customer","Items / Services","Amount","Due / Issued","Status"],invoiceList.map((i)=>[i.customer,i.items,i.amount,i.due,i.status])))}
-${section("Quotation pipeline","Active quotes sent or in draft.",table(["Customer","Items","Amount","Valid","Status"],quoteList.map((q)=>[q.customer,q.items,q.amount,q.validity,q.status])))}
-${section("Expenses","Vendor payables.",table(["Vendor","Description","Amount","Due","Status"],expenseList.map((e)=>[e.vendor,e.description,e.amount,e.due,e.status])))}
-${section("Contracts","Active contracts and their value.",table(["Counterparty","Type","Price","Cost of sales","Terms","Status"],contractList.map((c)=>[c.counterparty,c.type,c.price,c.cos,c.terms,c.status])))}
+${kpis !== null ? `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:8px;">${kpis.map((k) => `<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#64748b;">${k.label}</div><div style="font-size:18px;font-weight:700;margin-top:4px;">${k.value}</div></div>`).join("")}</div>` : ""}
+${invoiceList !== null ? section("Invoices","All active invoices, paid and pending.",table(["Customer","Items / Services","Amount","Due / Issued","Status"],invoiceList.map((i)=>[i.customer,i.items,i.amount,i.due,i.status]))) : ""}
+${quoteList !== null ? section("Quotation pipeline","Active quotes sent or in draft.",table(["Customer","Items","Amount","Valid","Status"],quoteList.map((q)=>[q.customer,q.items,q.amount,q.validity,q.status]))) : ""}
+${expenseList !== null ? section("Expenses","Vendor payables.",table(["Vendor","Description","Amount","Due","Status"],expenseList.map((e)=>[e.vendor,e.description,e.amount,e.due,e.status]))) : ""}
+${contractList !== null ? section("Contracts","Active contracts and their value.",table(["Counterparty","Type","Price","Cost of sales","Terms","Status"],contractList.map((c)=>[c.counterparty,c.type,c.price,c.cos,c.terms,c.status]))) : ""}
 </body></html>`;
   }
 
@@ -1773,6 +1808,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             ...(canFinancialsFeature("quotations") ? [{ value: "quotes", label: "Quotations" }] : []),
             ...(canFinancialsFeature("expenses") ? [{ value: "expenses", label: "Expenses" }] : []),
             ...(canFinancialsFeature("contracts") ? [{ value: "contracts", label: "Contracts" }] : []),
+            { value: "report", label: "Report" },
           ]}
         />
       </div>
@@ -2207,12 +2243,17 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   const product = resolveProduct(inv.product_id, inv.product_name);
                   return (
                     <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900">
-                          {customer?.name || "Customer"} • {summariseProductNames(inv)}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-semibold text-slate-900">
+                            {customer?.name || "Customer"} · {summariseProductNames(inv)}
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "draft" || inv.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
+                            {inv.status || "pending"}
+                          </span>
                         </div>
-                        <div className="text-xs text-slate-500">
-                          Qty {inv.quantity} • Total {formatMoney(inv.total_amount)} • Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"} • Status {inv.status}
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          Qty {inv.quantity} · {formatMoney(inv.total_amount)} · Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"}
                         </div>
                       </div>
                       <ActionMenu
@@ -2459,12 +2500,17 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   const product = resolveProduct(quote.product_id, quote.product_name);
                   return (
                     <div key={quote.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900">
-                          {customer?.name || "Customer"} • {summariseProductNames(quote)}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-semibold text-slate-900">
+                            {customer?.name || "Customer"} · {summariseProductNames(quote)}
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${quote.status === "accepted" ? "bg-emerald-50 text-emerald-700" : quote.status === "rejected" ? "bg-rose-50 text-rose-700" : quote.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-slate-100 text-slate-600"}`}>
+                            {quote.status || "draft"}
+                          </span>
                         </div>
-                        <div className="text-xs text-slate-500">
-                          Qty {quote.quantity} • Total {formatMoney(quote.total_amount)} • Due {quote.due_date ? new Date(quote.due_date).toLocaleDateString() : "Not set"} • Status {quote.status || "draft"}
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          Qty {quote.quantity} · {formatMoney(quote.total_amount)} · Due {quote.due_date ? new Date(quote.due_date).toLocaleDateString() : "Not set"}
                         </div>
                       </div>
                       <ActionMenu
@@ -2727,12 +2773,17 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   const vendor = resolveVendor(exp.vendor_id, exp.vendor_name);
                   return (
                     <div key={exp.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900">
-                          {vendor?.name || "Vendor"} • {exp.item}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-semibold text-slate-900">
+                            {vendor?.name || "Vendor"} · {exp.item}
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${exp.status === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                            {exp.status || "pending"}
+                          </span>
                         </div>
-                        <div className="text-xs text-slate-500">
-                          {exp.cost_type} • {formatMoney(exp.price)} • Due {exp.due_date ? new Date(exp.due_date).toLocaleDateString() : "Not set"} • Status {exp.status}
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          {exp.cost_type} · {formatMoney(exp.price)} · Due {exp.due_date ? new Date(exp.due_date).toLocaleDateString() : "Not set"}
                         </div>
                       </div>
                       <ActionMenu
@@ -2984,12 +3035,17 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   return (
                     <div key={contract.id} className="rounded-xl border border-slate-200 bg-white p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold text-slate-900">
-                            {contract.contract_type === "sales" ? "Sales" : "Purchase"} • {party?.name || "Partner"}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <div className="truncate text-sm font-semibold text-slate-900">
+                              {contract.contract_type === "sales" ? "Sales" : "Purchase"} · {party?.name || "Partner"}
+                            </div>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${contract.status === "signed" || contract.status === "active" ? "bg-emerald-50 text-emerald-700" : contract.status === "expired" || contract.status === "cancelled" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
+                              {contract.status || "pending"}
+                            </span>
                           </div>
-                          <div className="text-xs text-slate-500">
-                            {summariseProductNames(contract)} • {formatMoney(contractTotal)} total • {contract.end_date ? `Ends ${new Date(contract.end_date).toLocaleDateString()}` : "No end date"} • Status {contract.status}
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            {summariseProductNames(contract)} · {formatMoney(contractTotal)} · {contract.end_date ? `Ends ${new Date(contract.end_date).toLocaleDateString()}` : "No end date"}
                           </div>
                         </div>
                       <ActionMenu
@@ -3187,38 +3243,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           { label: "Pending payables", value: formatMoney(pendingPayablesTotal) },
         ];
 
-        const invoiceListRaw = [...activeInvoices].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,30).map(inv=>({customer:inv.customer_name||"—",items:Array.isArray(inv.product_names)&&inv.product_names.length?inv.product_names.join(", "):inv.product_name||"—",amount:formatMoney(Number(inv.total_amount||0)),due:inv.due_date?new Date(inv.due_date).toLocaleDateString():inv.issued_at?new Date(inv.issued_at).toLocaleDateString():"—",status:String(inv.status||"pending")}));
-        const quoteListRaw = [...activeQuotes].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,20).map(q=>({customer:q.customer_name||"—",items:Array.isArray(q.product_names)&&q.product_names.length?q.product_names.join(", "):q.product_name||"—",amount:formatMoney(Number(q.total_amount||q.subtotal_amount||0)),validity:q.validity_days?`${q.validity_days}d`:"—",status:String(q.status||"draft")}));
-        const expenseListRaw = [...expenses].sort((a,b)=>new Date(b.created_at||b.updated_at||0)-new Date(a.created_at||a.updated_at||0)).slice(0,20).map(e=>({vendor:e.vendor_name||e.counterparty_name||"—",description:e.description||e.expense_type||e.item||"—",amount:formatMoney(Number(e.price||e.total_amount||0)),due:e.due_date?new Date(e.due_date).toLocaleDateString():"—",status:String(e.status||"pending")}));
-        const contractListRaw = [...activeContracts].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).map(c=>({counterparty:c.counterparty_name||"—",type:c.contract_type||"—",price:formatMoney(Number(c.price||0)),cos:formatMoney(Number(c.cost_of_sales||0)),terms:c.payment_terms||"—",status:String(c.status||"active")}));
-
-        const reportPayload = { kpis: kpiTiles, invoiceList: invoiceListRaw, quoteList: quoteListRaw, expenseList: expenseListRaw, contractList: contractListRaw };
-
         return (
           <div className="mt-6 space-y-4">
-            <div className="flex items-center justify-end gap-2 pt-2">
-              {pendingFinancialReport ? (
-                <>
-                  <span className="text-xs text-emerald-600 font-medium">Report ready</span>
-                  <Button
-                    size="sm"
-                    onClick={() => { downloadPdfFile(pendingFinancialReport, `financial-report-${new Date().toISOString().slice(0,10)}.pdf`); }}
-                  >
-                    Download
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setPendingFinancialReport(null)}>Clear</Button>
-                </>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setPendingFinancialReport(buildFinancialReportHtml(reportPayload))}
-                >
-                  Generate Report
-                </Button>
-              )}
-            </div>
-
             <SectionCard title="Invoices" subtitle="All active invoices — paid and pending.">
               <div className="mt-2">
                 <ReportTable
@@ -3288,6 +3314,80 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           </div>
         );
       })() : null}
+
+      {activeTab === "report" && (
+        <div className="mt-6 space-y-5">
+          <SectionCard title="Generate Financial Report" subtitle="Select the sections to include, preview, then download as PDF.">
+            <div className="mt-3 flex flex-wrap gap-4">
+              {[
+                { key: "kpis", label: "KPI Summary" },
+                { key: "invoices", label: "Invoices" },
+                { key: "quotes", label: "Quotations" },
+                { key: "expenses", label: "Expenses" },
+                { key: "contracts", label: "Contracts" },
+              ].map(({ key, label }) => (
+                <label key={key} className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={reportFilter[key]}
+                    onChange={(e) => {
+                      setReportFilter((prev) => ({ ...prev, [key]: e.target.checked }));
+                      setReportPreviewHtml(null);
+                    }}
+                    className="h-4 w-4 rounded accent-brand-600"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div className="mt-4 flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const { kpiTiles, invoiceListRaw, quoteListRaw, expenseListRaw, contractListRaw } = financialReportRows;
+                  const payload = {
+                    kpis: reportFilter.kpis ? kpiTiles : null,
+                    invoiceList: reportFilter.invoices ? invoiceListRaw : null,
+                    quoteList: reportFilter.quotes ? quoteListRaw : null,
+                    expenseList: reportFilter.expenses ? expenseListRaw : null,
+                    contractList: reportFilter.contracts ? contractListRaw : null,
+                  };
+                  const html = buildFinancialReportHtml(payload);
+                  setReportPreviewHtml(html);
+                  setPendingFinancialReport(html);
+                }}
+              >
+                Generate &amp; Preview
+              </Button>
+              {pendingFinancialReport && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => downloadPdfFile(pendingFinancialReport, `financial-report-${new Date().toISOString().slice(0, 10)}.pdf`)}
+                  >
+                    Download PDF
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setPendingFinancialReport(null); setReportPreviewHtml(null); }}>Clear</Button>
+                </>
+              )}
+            </div>
+          </SectionCard>
+
+          {reportPreviewHtml && (
+            <SectionCard title="Preview">
+              <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
+                <iframe
+                  srcDoc={reportPreviewHtml}
+                  title="Financial Report Preview"
+                  className="h-[600px] w-full bg-white"
+                  sandbox="allow-same-origin"
+                />
+              </div>
+            </SectionCard>
+          )}
+        </div>
+      )}
 
       {/* RFQ Approve + Price Edit Modal */}
       {rfqApproveModal && (

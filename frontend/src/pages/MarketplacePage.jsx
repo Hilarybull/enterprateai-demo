@@ -486,6 +486,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
   const [hoverStar, setHoverStar] = useState(0);
   const [pendingStar, setPendingStar] = useState(0);
   const [reviewText, setReviewText] = useState("");
+  const [ratingEmail, setRatingEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [ratingError, setRatingError] = useState(null);
   const [showReviewBox, setShowReviewBox] = useState(false);
@@ -511,10 +512,17 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
   async function submitRating() {
     if (!isLoggedIn) { onNeedAuth("rate"); return; }
     if (!pendingStar) return;
+    const emailTrimmed = ratingEmail.trim();
+    if (!emailTrimmed) { setRatingError("Please enter your email to verify this review."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) { setRatingError("Enter a valid email address."); return; }
     setSubmitting(true); setRatingError(null);
     try {
-      const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}`, "POST", { rating: pendingStar, review: reviewText.trim() || null });
-      setRatingData(res); setShowReviewBox(false);
+      const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}`, "POST", {
+        rating: pendingStar,
+        review: reviewText.trim() || null,
+        rater_email: emailTrimmed,
+      });
+      setRatingData(res); setShowReviewBox(false); setRatingEmail("");
     } catch (e) { setRatingError(e instanceof Error ? e.message : "Failed to submit rating."); }
     finally { setSubmitting(false); }
   }
@@ -730,6 +738,16 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
                       )}
                     </div>
                     <textarea placeholder="Write a short review (optional)…" value={reviewText} onChange={(e) => setReviewText(e.target.value)} rows={2} className="ea-input mb-3 resize-none" />
+                    <div className="mb-3">
+                      <input
+                        type="email"
+                        placeholder="Your email address"
+                        value={ratingEmail}
+                        onChange={(e) => setRatingEmail(e.target.value)}
+                        className="ea-input"
+                      />
+                      <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Your email is used to verify the authenticity of this review for credibility. We may add you to our mailing list. You can unsubscribe at any time.</p>
+                    </div>
                     {ratingError && <p className="mb-2 text-[12px] text-red-500">{ratingError}</p>}
                     <div className="flex gap-2">
                       {showReviewBox && (

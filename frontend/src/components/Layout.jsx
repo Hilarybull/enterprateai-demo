@@ -12,10 +12,10 @@ import { planHasModuleAccess, planLabel } from "../lib/plans";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid", moduleKey: "dashboard" },
-  { to: "/validation", label: "Idea Validation", subtitle: "Validate business ideas", icon: "bulb", moduleKey: "validation" },
+  // { to: "/validation", label: "Idea Validation", subtitle: "Validate business ideas", icon: "bulb", moduleKey: "validation", comingSoon: true },
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
-  { to: "/simulation", label: "Simulation", subtitle: "What-if scenarios", icon: "beaker", moduleKey: "simulation" },
+  // { to: "/simulation", label: "Simulation", subtitle: "What-if scenarios", icon: "beaker", moduleKey: "simulation", comingSoon: true },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
@@ -165,6 +165,20 @@ function Icon({ name, className = "h-4 w-4" }) {
 }
 
 function SidebarLink({ item, onClick, forceInactive, locked }) {
+  if (item.comingSoon) {
+    return (
+      <div className="mx-1 flex cursor-default select-none items-center gap-3 rounded-2xl px-3 py-2.5 opacity-50">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-400 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800">
+          <Icon name={item.icon} className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-semibold text-slate-500 dark:text-slate-500">{item.label}</div>
+          <div className="truncate text-[11px] text-slate-400 [@media(max-height:780px)]:hidden">{item.subtitle}</div>
+        </div>
+        <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">Soon</span>
+      </div>
+    );
+  }
   if (locked) {
     return (
       <div
@@ -218,8 +232,17 @@ export default function Layout() {
   const [theme, setTheme] = useState(() => localStorage.getItem("ea_theme") || "system");
   const profileRef = useRef(null);
   const notifRef = useRef(null);
+  const helpRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpName, setHelpName] = useState("");
+  const [helpEmail, setHelpEmail] = useState("");
+  const [helpMessage, setHelpMessage] = useState("");
+  const [helpSending, setHelpSending] = useState(false);
+  const [helpSent, setHelpSent] = useState(false);
+  const [helpError, setHelpError] = useState(null);
+  const [showInviteUpgrade, setShowInviteUpgrade] = useState(false);
 
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
@@ -289,6 +312,36 @@ export default function Layout() {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [notifOpen]);
+
+  useEffect(() => {
+    if (!helpOpen) return;
+    function handleClick(e) {
+      if (!helpRef.current || helpRef.current.contains(e.target)) return;
+      setHelpOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [helpOpen]);
+
+  async function submitHelpForm(e) {
+    e.preventDefault();
+    if (!helpMessage.trim()) return;
+    setHelpSending(true);
+    setHelpError(null);
+    try {
+      await apiRequest("/support/message", "POST", {
+        name: helpName.trim(),
+        email: helpEmail.trim(),
+        message: helpMessage.trim(),
+      });
+      setHelpSent(true);
+      setHelpName(""); setHelpEmail(""); setHelpMessage("");
+    } catch (err) {
+      setHelpError(err instanceof Error ? err.message : "Failed to send message. Please try again.");
+    } finally {
+      setHelpSending(false);
+    }
+  }
 
   useEffect(() => {
     if (!enableHealthCheck) return;
@@ -598,14 +651,41 @@ export default function Layout() {
                   ? "Needs review"
                   : "Setup in progress"}
             </div>
-            <button
-              type="button"
-              onClick={() => setInviteOpen(true)}
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-3 py-2 text-[12px] font-semibold text-white hover:bg-brand-700 transition"
-            >
-              <Icon name="user-plus" className="h-3.5 w-3.5" />
-              Invite member
-            </button>
+            {showInviteUpgrade ? (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/40 dark:bg-amber-900/20">
+                <p className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">Upgrade to invite members</p>
+                <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">Team invitations are available on paid plans.</p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate("/pricing")}
+                    className="flex-1 rounded-lg bg-amber-600 py-1.5 text-[11px] font-semibold text-white hover:bg-amber-700 transition"
+                  >
+                    Upgrade plan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowInviteUpgrade(false)}
+                    className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition dark:border-amber-700 dark:text-amber-400"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  const isFreePlan = !subscription?.plan_key || subscription.plan_key === "free_trial";
+                  if (isFreePlan) { setShowInviteUpgrade(true); return; }
+                  setInviteOpen(true);
+                }}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-3 py-2 text-[12px] font-semibold text-white hover:bg-brand-700 transition"
+              >
+                <Icon name="user-plus" className="h-3.5 w-3.5" />
+                Invite member
+              </button>
+            )}
           </>
         )}
       </div>
@@ -654,14 +734,26 @@ export default function Layout() {
               </div>
 
               <div className="flex min-w-0 flex-1 items-center gap-3">
-                <div className="min-w-0 flex-1">
+                <div className="w-full max-w-[220px] md:max-w-xs">
                   <input
                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none ring-brand-200 focus:ring dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-                    placeholder="Search modules, features..."
+                    placeholder="Search modules..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
+              </div>
+
+              {/* Help & Support */}
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => { window.location.href = "mailto:hilary.onyebukwa@enterprate.ai"; }}
+                  className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  aria-label="Help & Support"
+                >
+                  <Icon name="help" className="h-4 w-4" />
+                </button>
               </div>
 
               {/* Notification bell */}
@@ -723,13 +815,18 @@ export default function Layout() {
                   onClick={() => setProfileOpen((v) => !v)}
                   className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
                 >
-                  {userPicture ? (
+                  {workspaceLogo ? (
+                    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white">
+                      <img
+                        src={workspaceLogo}
+                        alt={workspaceDisplayName || "Workspace logo"}
+                        className="h-full w-full object-contain"
+                        onError={(e) => { e.currentTarget.style.display = "none"; e.currentTarget.parentElement.innerHTML = `<span class="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-white text-xs font-semibold">${profileInitials}</span>`; }}
+                      />
+                    </span>
+                  ) : userPicture ? (
                     <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white">
                       <img src={userPicture} alt={userName || email} className="h-full w-full object-cover" />
-                    </span>
-                  ) : workspaceLogo ? (
-                    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white">
-                      <img src={workspaceLogo} alt={workspaceDisplayName || "Workspace logo"} className="h-full w-full object-contain" />
                     </span>
                   ) : (
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-white">
@@ -787,16 +884,6 @@ export default function Layout() {
                         </button>
                       </>
                     )}
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
-                      onClick={() => {
-                        setProfileOpen(false);
-                        window.location.href = "mailto:support@enterprate.ai";
-                      }}
-                    >
-                      Help & support
-                    </button>
                     <div className="mt-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Appearance</div>
                     {[
                       { value: "system", label: "System" },
