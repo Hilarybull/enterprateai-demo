@@ -164,6 +164,45 @@ async def list_upgrade_clicks(user=Depends(require_admin)) -> list:
     )
 
 
+@router.get("/mailing-list")
+async def list_mailing_list(user=Depends(require_admin)) -> list:
+    try:
+        return await sb_select(
+            "mailing_list",
+            columns="id,email,source,subscribed_at",
+            order="subscribed_at",
+            desc=True,
+        )
+    except Exception:
+        return []
+
+
+@router.get("/module-interest")
+async def list_module_interest(user=Depends(require_admin)) -> list:
+    try:
+        return await sb_select(
+            "module_interest",
+            columns="id,email,feature,clicked_at",
+            order="clicked_at",
+            desc=True,
+        )
+    except Exception:
+        return []
+
+
+@router.get("/support-messages")
+async def list_support_messages(user=Depends(require_admin)) -> list:
+    try:
+        return await sb_select(
+            "support_messages",
+            columns="id,name,email,message,created_at",
+            order="created_at",
+            desc=True,
+        )
+    except Exception:
+        return []
+
+
 @router.get("/workspaces/{workspace_id}")
 async def get_workspace_detail(workspace_id: str, user=Depends(require_admin)) -> dict:
     ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)

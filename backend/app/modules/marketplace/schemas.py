@@ -66,6 +66,7 @@ class MarketplaceStatusResponse(BaseModel):
 class RatingSubmitRequest(BaseModel):
     rating: int
     review: str | None = None
+    rater_email: str
 
 
 class RatingResponse(BaseModel):

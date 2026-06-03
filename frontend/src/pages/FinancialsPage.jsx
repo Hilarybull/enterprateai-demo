@@ -168,6 +168,7 @@ export default function FinancialsPage() {
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [editingContractId, setEditingContractId] = useState(null);
   const [activeTab, setActiveTab] = useState(() => firstAccessibleFinancialsTab());
+  const [overviewDrill, setOverviewDrill] = useState(null); // { label, type, items }
   const [pendingFinancialReport, setPendingFinancialReport] = useState(null);
   const [reportFilter, setReportFilter] = useState({ kpis: true, invoices: true, quotes: true, expenses: true, contracts: true });
   const [reportPreviewHtml, setReportPreviewHtml] = useState(null);
@@ -1819,39 +1820,109 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
         {/* KPI tiles */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            { label: "Monthly run rate", value: formatMoney(overviewKpis.monthlyRev), sub: "from paid invoices", tone: "emerald" },
-            { label: "Pending receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${invoicePendingCount} unpaid invoice${invoicePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate" },
-            { label: "Pending payables", value: formatMoney(overviewKpis.pendingPay), sub: `${expensePendingCount} unpaid expense${expensePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingPay > 0 ? "rose" : "slate" },
-            { label: "Overdue invoices", value: overviewKpis.overdueInvCount, sub: overviewKpis.overdueInvCount > 0 ? "require immediate action" : "all within terms", tone: overviewKpis.overdueInvCount > 0 ? "rose" : "emerald" },
-          ].map((kpi) => (
-            <div key={kpi.label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</div>
-              <div className={`mt-1.5 text-2xl font-bold ${kpi.tone === "emerald" ? "text-emerald-600" : kpi.tone === "rose" ? "text-rose-600" : kpi.tone === "amber" ? "text-amber-600" : "text-slate-900"}`}>
-                {kpi.value}
-              </div>
-              <div className="mt-1 text-[11px] text-slate-500">{kpi.sub}</div>
-            </div>
-          ))}
+            { label: "Monthly run rate", value: formatMoney(overviewKpis.monthlyRev), sub: "from paid invoices", tone: "emerald", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
+            { label: "Pending receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${invoicePendingCount} unpaid invoice${invoicePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate", type: "invoices-unpaid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid") },
+            { label: "Pending payables", value: formatMoney(overviewKpis.pendingPay), sub: `${expensePendingCount} unpaid expense${expensePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingPay > 0 ? "rose" : "slate", type: "expenses-unpaid", items: activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid") },
+            { label: "Overdue invoices", value: overviewKpis.overdueInvCount, sub: overviewKpis.overdueInvCount > 0 ? "require immediate action" : "all within terms", tone: overviewKpis.overdueInvCount > 0 ? "rose" : "emerald", type: "invoices-overdue", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid" && i.due_date && new Date(i.due_date) < new Date()) },
+          ].map((kpi) => {
+            const isOpen = overviewDrill?.type === kpi.type;
+            return (
+              <button key={kpi.label} type="button"
+                onClick={() => setOverviewDrill(isOpen ? null : { label: kpi.label, type: kpi.type, items: kpi.items })}
+                className={`rounded-2xl border bg-white p-4 shadow-sm text-left w-full transition hover:shadow-md ${isOpen ? "border-brand-400 ring-1 ring-brand-200" : "border-slate-200 hover:border-slate-300"}`}
+              >
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</div>
+                <div className={`mt-1.5 text-2xl font-bold ${kpi.tone === "emerald" ? "text-emerald-600" : kpi.tone === "rose" ? "text-rose-600" : kpi.tone === "amber" ? "text-amber-600" : "text-slate-900"}`}>
+                  {kpi.value}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">{kpi.sub}</div>
+              </button>
+            );
+          })}
         </div>
+
+        {/* KPI drill-down panel */}
+        {overviewDrill ? (
+          <div className="rounded-2xl border border-brand-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-sm font-semibold text-slate-800">
+                {overviewDrill.label}
+                <span className="ml-1.5 text-slate-400 font-normal">({overviewDrill.items.length})</span>
+              </span>
+              <button type="button" onClick={() => setOverviewDrill(null)} className="text-slate-400 hover:text-slate-600">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+            {overviewDrill.items.length === 0 ? (
+              <p className="text-[13px] text-slate-400 italic">No records found.</p>
+            ) : (
+              <div className="divide-y divide-slate-100 max-h-64 overflow-auto">
+                {overviewDrill.items.map((item) => {
+                  const isExp = overviewDrill.type.startsWith("expenses");
+                  const isContract = overviewDrill.type.startsWith("contracts");
+                  const isQuote = overviewDrill.type.startsWith("quotes");
+                  const name = isExp
+                    ? (item.vendor_name || item.counterparty_name || item.description || "Expense")
+                    : isContract
+                      ? (item.counterparty_name || item.title || "Contract")
+                      : isQuote
+                        ? (item.customer_name || "Quote")
+                        : (item.customer_name || "Invoice");
+                  const detail = isExp
+                    ? (item.description || item.expense_type || "")
+                    : isContract
+                      ? (item.contract_type || "")
+                      : (item.product_names?.join(", ") || item.product_name || "");
+                  const date = item.due_date
+                    ? `Due ${new Date(item.due_date).toLocaleDateString()}`
+                    : item.issued_at
+                      ? new Date(item.issued_at).toLocaleDateString()
+                      : "";
+                  const amount = Number(item.total_amount || item.price || item.subtotal_amount || 0);
+                  return (
+                    <div key={item.id} className="flex items-center justify-between gap-4 py-2.5">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-800">{name}</div>
+                        <div className="text-[11px] text-slate-400">{[detail, date].filter(Boolean).join(" · ")}</div>
+                      </div>
+                      <div className="shrink-0 flex flex-col items-end gap-0.5">
+                        <span className="text-sm font-semibold text-slate-800">{formatMoney(amount)}</span>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${item.status === "paid" || item.status === "signed" ? "bg-emerald-50 text-emerald-700" : item.status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
+                          {item.status || "—"}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : null}
 
         {/* Activity + Catalogue readiness */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           <SectionCard title="Invoice activity" subtitle="Status breakdown across all invoices." className="h-full">
-            <div className="mt-3 space-y-2">
+            <div className="mt-3 space-y-1">
               {[
-                { label: "Paid", count: invoicePaidCount, color: "bg-emerald-500" },
-                { label: "Pending", count: invoicePendingCount, color: "bg-amber-400" },
-                { label: "Draft / Sent", count: activeInvoices.filter((i) => ["draft","sent"].includes(i.status || "")).length, color: "bg-sky-400" },
-                { label: "Quotes", count: activeQuotes.length, color: "bg-violet-400" },
-              ].map((row) => (
-                <div key={row.label} className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${row.color}`} />
-                    <span className="truncate text-sm text-slate-700">{row.label}</span>
-                  </div>
-                  <span className="shrink-0 text-sm font-semibold text-slate-900">{row.count}</span>
-                </div>
-              ))}
+                { label: "Paid", count: invoicePaidCount, color: "bg-emerald-500", type: "invoices-paid", items: activeInvoices.filter((i) => i.status === "paid") },
+                { label: "Pending", count: invoicePendingCount, color: "bg-amber-400", type: "invoices-pending", items: activeInvoices.filter((i) => i.status === "pending") },
+                { label: "Draft / Sent", count: activeInvoices.filter((i) => ["draft","sent"].includes(i.status || "")).length, color: "bg-sky-400", type: "invoices-draft", items: activeInvoices.filter((i) => ["draft","sent"].includes(i.status || "")) },
+                { label: "Quotes", count: activeQuotes.length, color: "bg-violet-400", type: "quotes-active", items: activeQuotes },
+              ].map((row) => {
+                const isOpen = overviewDrill?.type === row.type;
+                return (
+                  <button key={row.label} type="button"
+                    onClick={() => setOverviewDrill(isOpen ? null : { label: row.label, type: row.type, items: row.items })}
+                    className={`flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition ${isOpen ? "bg-brand-50 text-brand-700" : "hover:bg-slate-50"}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${row.color}`} />
+                      <span className="truncate text-sm text-slate-700">{row.label}</span>
+                    </div>
+                    <span className="shrink-0 text-sm font-semibold text-slate-900">{row.count}</span>
+                  </button>
+                );
+              })}
             </div>
             <div className="mt-4">
               <Button size="sm" onClick={() => setActiveTab("invoices")}>Go to invoices</Button>
@@ -1859,21 +1930,27 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           </SectionCard>
 
           <SectionCard title="Expenses & contracts" subtitle="Payables and active agreements." className="h-full">
-            <div className="mt-3 space-y-2">
+            <div className="mt-3 space-y-1">
               {[
-                { label: "Paid expenses", count: expensePaidCount, color: "bg-slate-400" },
-                { label: "Pending expenses", count: expensePendingCount, color: "bg-rose-400" },
-                { label: "Pending contracts", count: contractPendingCount, color: "bg-amber-400" },
-                { label: "Signed contracts", count: contractSignedCount, color: "bg-emerald-500" },
-              ].map((row) => (
-                <div key={row.label} className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${row.color}`} />
-                    <span className="truncate text-sm text-slate-700">{row.label}</span>
-                  </div>
-                  <span className="shrink-0 text-sm font-semibold text-slate-900">{row.count}</span>
-                </div>
-              ))}
+                { label: "Paid expenses", count: expensePaidCount, color: "bg-slate-400", type: "expenses-paid", items: activeExpenses.filter((e) => e.status === "paid") },
+                { label: "Pending expenses", count: expensePendingCount, color: "bg-rose-400", type: "expenses-pending", items: activeExpenses.filter((e) => e.status === "pending") },
+                { label: "Pending contracts", count: contractPendingCount, color: "bg-amber-400", type: "contracts-pending", items: activeContracts.filter((c) => c.status === "pending") },
+                { label: "Signed contracts", count: contractSignedCount, color: "bg-emerald-500", type: "contracts-signed", items: activeContracts.filter((c) => c.status === "signed") },
+              ].map((row) => {
+                const isOpen = overviewDrill?.type === row.type;
+                return (
+                  <button key={row.label} type="button"
+                    onClick={() => setOverviewDrill(isOpen ? null : { label: row.label, type: row.type, items: row.items })}
+                    className={`flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition ${isOpen ? "bg-brand-50 text-brand-700" : "hover:bg-slate-50"}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${row.color}`} />
+                      <span className="truncate text-sm text-slate-700">{row.label}</span>
+                    </div>
+                    <span className="shrink-0 text-sm font-semibold text-slate-900">{row.count}</span>
+                  </button>
+                );
+              })}
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button size="sm" variant="secondary" onClick={() => setActiveTab("expenses")}>Expenses</Button>
@@ -3163,6 +3240,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
         </SectionCard>
         </div>
         ) : null}
+
+
       </div>
       ) : null}
 
@@ -3548,23 +3627,21 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   product_name: previewProduct?.name || previewInvoice.product_name || "Product / Service",
                   quantity: previewInvoice.quantity,
                   unit_price: previewInvoice.unit_price,
+                  unit_cost_of_sales: previewInvoice.unit_cost_of_sales,
                   subtotal_amount: previewInvoice.subtotal_amount,
-                }]).map((item, index) => (
-                  <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
-                    <div className="col-span-6">{item.product_name || "Product / Service"}</div>
-                    <div className="col-span-2 text-right">{item.quantity}</div>
-                    <div className="col-span-2 text-right">{formatMoney(item.unit_price)}</div>
-                    <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(item.subtotal_amount || (Number(item.unit_price || 0) * Number(item.quantity || 0)))}</div>
-                  </div>
-                ))}
-                {Number(previewInvoice.cost_of_sales) > 0 && (
-                  <div className="grid grid-cols-12 gap-2 border-t border-slate-100 px-3 py-3 text-sm text-slate-500">
-                    <div className="col-span-6 italic">Cost of sales</div>
-                    <div className="col-span-2 text-right">—</div>
-                    <div className="col-span-2 text-right">—</div>
-                    <div className="col-span-2 text-right font-semibold text-slate-700">{formatMoney(Number(previewInvoice.cost_of_sales))}</div>
-                  </div>
-                )}
+                }]).map((item, index) => {
+                  const qty = Number(item.quantity || 0);
+                  const unitFull = Number(item.unit_price || 0) + Number(item.unit_cost_of_sales || 0);
+                  const subtotalFull = unitFull * qty;
+                  return (
+                    <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
+                      <div className="col-span-6">{item.product_name || "Product / Service"}</div>
+                      <div className="col-span-2 text-right">{qty}</div>
+                      <div className="col-span-2 text-right">{formatMoney(unitFull)}</div>
+                      <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(subtotalFull)}</div>
+                    </div>
+                  );
+                })}
               </div>
 
               <div className="mt-4 flex justify-end border-t border-slate-200 pt-3">

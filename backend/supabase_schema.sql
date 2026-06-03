@@ -269,3 +269,39 @@ create table if not exists marketplace_ratings (
 
 create index if not exists marketplace_ratings_workspace_idx on marketplace_ratings(workspace_id);
 create index if not exists marketplace_ratings_user_idx on marketplace_ratings(user_id);
+
+-- Mailing list (populated from marketplace reviews + other sources)
+create table if not exists mailing_list (
+  id text primary key,
+  email text not null unique,
+  source text,
+  subscribed_at timestamptz default now()
+);
+
+create index if not exists mailing_list_email_idx on mailing_list(email);
+
+-- Migration: add rater_email for guest reviews
+alter table marketplace_ratings add column if not exists rater_email text;
+alter table marketplace_ratings add constraint marketplace_ratings_ws_email_unique unique(workspace_id, rater_email);
+
+create table if not exists support_messages (
+  id text primary key,
+  name text,
+  email text,
+  message text not null,
+  created_at timestamptz default now()
+);
+
+create index if not exists support_messages_created_idx on support_messages(created_at desc);
+
+create table if not exists module_interest (
+  id text primary key,
+  email text not null,
+  feature text not null,
+  clicked_at timestamptz default now()
+);
+
+create index if not exists module_interest_feature_idx on module_interest(feature);
+create index if not exists module_interest_clicked_idx on module_interest(clicked_at desc);
+-- Migration: drop old unique constraint if it was previously created
+-- alter table module_interest drop constraint if exists module_interest_email_feature_key;

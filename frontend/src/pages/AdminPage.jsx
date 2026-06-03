@@ -1108,6 +1108,9 @@ const TABS = [
   { key: "members", label: "Members" },
   { key: "invitations", label: "Invitations" },
   { key: "upgrades", label: "Upgrade Clicks" },
+  { key: "module-interest", label: "Module Interest" },
+  { key: "mailing-list", label: "Mailing List" },
+  { key: "support", label: "Support Messages" },
 ];
 
 const INV_FILTERS = ["all", "pending", "accepted", "revoked"];
@@ -1173,6 +1176,48 @@ export default function AdminPage() {
   useEffect(() => {
     if (tab === "upgrades") loadUpgrades();
   }, [tab, loadUpgrades]);
+
+  const [moduleInterest, setModuleInterest] = useState(null);
+  const [moduleInterestLoaded, setModuleInterestLoaded] = useState(false);
+
+  const loadModuleInterest = useCallback(() => {
+    if (moduleInterestLoaded) return;
+    apiRequest("/admin/module-interest", "GET")
+      .then((data) => { setModuleInterest(data); setModuleInterestLoaded(true); })
+      .catch(() => { setModuleInterest([]); setModuleInterestLoaded(true); });
+  }, [moduleInterestLoaded]);
+
+  useEffect(() => {
+    if (tab === "module-interest") loadModuleInterest();
+  }, [tab, loadModuleInterest]);
+
+  const [supportMessages, setSupportMessages] = useState(null);
+  const [supportLoaded, setSupportLoaded] = useState(false);
+
+  const loadSupportMessages = useCallback(() => {
+    if (supportLoaded) return;
+    apiRequest("/admin/support-messages", "GET")
+      .then((data) => { setSupportMessages(data); setSupportLoaded(true); })
+      .catch(() => { setSupportMessages([]); setSupportLoaded(true); });
+  }, [supportLoaded]);
+
+  useEffect(() => {
+    if (tab === "support") loadSupportMessages();
+  }, [tab, loadSupportMessages]);
+
+  const [mailingList, setMailingList] = useState(null);
+  const [mailingListLoaded, setMailingListLoaded] = useState(false);
+
+  const loadMailingList = useCallback(() => {
+    if (mailingListLoaded) return;
+    apiRequest("/admin/mailing-list", "GET")
+      .then((data) => { setMailingList(data); setMailingListLoaded(true); })
+      .catch(() => { setMailingList([]); setMailingListLoaded(true); });
+  }, [mailingListLoaded]);
+
+  useEffect(() => {
+    if (tab === "mailing-list") loadMailingList();
+  }, [tab, loadMailingList]);
 
   // ── Toast helpers ─────────────────────────────────────────────────────────
 
@@ -1321,6 +1366,21 @@ export default function AdminPage() {
     (upgrades || []).filter((u) =>
       !q || u.email?.toLowerCase().includes(q) || u.feature?.toLowerCase().includes(q) || u.source?.toLowerCase().includes(q)
     ), [upgrades, q]);
+
+  const filteredModuleInterest = useMemo(() =>
+    (moduleInterest || []).filter((m) =>
+      !q || m.email?.toLowerCase().includes(q) || m.feature?.toLowerCase().includes(q)
+    ), [moduleInterest, q]);
+
+  const filteredSupport = useMemo(() =>
+    (supportMessages || []).filter((m) =>
+      !q || m.name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q) || m.message?.toLowerCase().includes(q)
+    ), [supportMessages, q]);
+
+  const filteredMailingList = useMemo(() =>
+    (mailingList || []).filter((m) =>
+      !q || m.email?.toLowerCase().includes(q) || m.source?.toLowerCase().includes(q)
+    ), [mailingList, q]);
 
   const tabCounts = {
     workspaces: stats?.total_workspaces ?? 0,
@@ -1971,6 +2031,146 @@ export default function AdminPage() {
                 ]}
                 rows={filteredUpgrades}
                 emptyText="No upgrade clicks recorded"
+              />
+            )}
+          </div>
+        )}
+
+        {tab === "module-interest" && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-800">
+                  Module interest <span className="ml-1 text-slate-400 font-normal">({filteredModuleInterest.length})</span>
+                </h2>
+                <p className="mt-0.5 text-[11px] text-slate-400">Users who clicked "Coming Soon" features — one row per email per feature.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {moduleInterestLoaded && (
+                  <button
+                    type="button"
+                    onClick={() => downloadCSV(moduleInterest || [], [
+                      { key: "email", label: "Email" },
+                      { key: "feature", label: "Feature" },
+                      { key: "clicked_at", label: "Last Clicked" },
+                    ], "module-interest.csv")}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                  >
+                    <DownloadIcon /> Export CSV
+                  </button>
+                )}
+                <SearchBar value={search} onChange={setSearch} placeholder="Search by email or feature…" />
+              </div>
+            </div>
+            {!moduleInterestLoaded ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
+              </div>
+            ) : (
+              <DataTable
+                columns={[
+                  { key: "email", label: "Email", render: (r) => <span className="font-medium text-slate-800">{r.email}</span> },
+                  { key: "feature", label: "Feature", render: (r) => (
+                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{r.feature}</span>
+                  )},
+                  { key: "clicked_at", label: "Last Clicked", render: (r) => <span className="text-xs">{formatDateTime(r.clicked_at)}</span> },
+                ]}
+                rows={filteredModuleInterest}
+                emptyText="No module interest clicks yet"
+              />
+            )}
+          </div>
+        )}
+
+        {tab === "mailing-list" && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-800">
+                  Mailing list <span className="ml-1 text-slate-400 font-normal">({filteredMailingList.length})</span>
+                </h2>
+                <p className="mt-0.5 text-[11px] text-slate-400">Emails collected from marketplace reviews and other sources.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {mailingListLoaded && (
+                  <button
+                    type="button"
+                    onClick={() => downloadCSV(mailingList || [], [
+                      { key: "email", label: "Email" },
+                      { key: "source", label: "Source" },
+                      { key: "subscribed_at", label: "Subscribed At" },
+                    ], "mailing-list.csv")}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                  >
+                    <DownloadIcon /> Export CSV
+                  </button>
+                )}
+                <SearchBar value={search} onChange={setSearch} placeholder="Search by email or source…" />
+              </div>
+            </div>
+            {!mailingListLoaded ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
+              </div>
+            ) : (
+              <DataTable
+                columns={[
+                  { key: "email", label: "Email", render: (r) => <span className="font-medium text-slate-800">{r.email}</span> },
+                  { key: "source", label: "Source", render: (r) => (
+                    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">{r.source || "—"}</span>
+                  )},
+                  { key: "subscribed_at", label: "Subscribed", render: (r) => <span className="text-xs">{formatDateTime(r.subscribed_at)}</span> },
+                ]}
+                rows={filteredMailingList}
+                emptyText="No subscribers yet"
+              />
+            )}
+          </div>
+        )}
+
+        {tab === "support" && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-800">
+                  Support messages <span className="ml-1 text-slate-400 font-normal">({filteredSupport.length})</span>
+                </h2>
+                <p className="mt-0.5 text-[11px] text-slate-400">Messages submitted via the Help & Support form.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {supportLoaded && (
+                  <button
+                    type="button"
+                    onClick={() => downloadCSV(supportMessages || [], [
+                      { key: "name", label: "Name" },
+                      { key: "email", label: "Email" },
+                      { key: "message", label: "Message" },
+                      { key: "created_at", label: "Submitted At" },
+                    ], "support-messages.csv")}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                  >
+                    <DownloadIcon /> Export CSV
+                  </button>
+                )}
+                <SearchBar value={search} onChange={setSearch} placeholder="Search by name, email or message…" />
+              </div>
+            </div>
+            {!supportLoaded ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
+              </div>
+            ) : (
+              <DataTable
+                columns={[
+                  { key: "name", label: "Name", render: (r) => <span className="font-medium text-slate-800">{r.name || "—"}</span> },
+                  { key: "email", label: "Email", render: (r) => <span className="text-xs text-slate-600">{r.email || "—"}</span> },
+                  { key: "message", label: "Message", render: (r) => (
+                    <span className="block max-w-xs truncate text-xs text-slate-700" title={r.message}>{r.message}</span>
+                  )},
+                  { key: "created_at", label: "Submitted", render: (r) => <span className="text-xs">{formatDateTime(r.created_at)}</span> },
+                ]}
+                rows={filteredSupport}
+                emptyText="No support messages yet"
               />
             )}
           </div>

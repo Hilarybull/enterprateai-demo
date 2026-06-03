@@ -473,7 +473,7 @@ function DetailRow({ icon, label, value }) {
 
 // ─── business profile modal ───────────────────────────────────────────────────
 
-function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, onNeedAuth, onRequestQuote }) {
+function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWorkspaceId, onNeedAuth, onRequestQuote }) {
   const grad = avatarGradient(listing.company_name);
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
   const isOwnListing = isLoggedIn && ownWorkspaceId === listing.workspace_id;
@@ -486,7 +486,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
   const [hoverStar, setHoverStar] = useState(0);
   const [pendingStar, setPendingStar] = useState(0);
   const [reviewText, setReviewText] = useState("");
-  const [ratingEmail, setRatingEmail] = useState("");
+  const [ratingEmail, setRatingEmail] = useState(userEmail || "");
   const [submitting, setSubmitting] = useState(false);
   const [ratingError, setRatingError] = useState(null);
   const [showReviewBox, setShowReviewBox] = useState(false);
@@ -510,7 +510,6 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
   }, [listing.workspace_id]);
 
   async function submitRating() {
-    if (!isLoggedIn) { onNeedAuth("rate"); return; }
     if (!pendingStar) return;
     const emailTrimmed = ratingEmail.trim();
     if (!emailTrimmed) { setRatingError("Please enter your email to verify this review."); return; }
@@ -691,24 +690,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
             {/* Rating input */}
             {isOwnListing ? (
               <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">You cannot rate your own business.</p>
-            ) : !isLoggedIn ? (
-              /* Guest: prompt to sign in */
-              <button onClick={() => onNeedAuth("rate")}
-                className="flex w-full items-center justify-between rounded-2xl border border-dashed border-brand-300 bg-brand-50/60 px-4 py-3 text-left transition hover:bg-brand-50 dark:border-brand-700 dark:bg-brand-900/20 dark:hover:bg-brand-900/30">
-                <div>
-                  <div className="text-[13px] font-semibold text-brand-700 dark:text-brand-300">Rate this business</div>
-                  <div className="text-[11px] text-brand-500 dark:text-brand-400">Sign in or create a free account to leave a review</div>
-                </div>
-                <div className="flex shrink-0 items-center gap-0.5 ml-3">
-                  {[1,2,3,4,5].map((i) => (
-                    <svg key={i} className="h-5 w-5" viewBox="0 0 24 24">
-                      <path fill="#e2e8f0" className="dark:fill-slate-700" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                    </svg>
-                  ))}
-                </div>
-              </button>
             ) : (
-              /* Logged-in user rating widget */
               <div>
                 {ratingData.user_rating && !showReviewBox ? (
                   <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
@@ -718,8 +700,10 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
                         <StarDisplay rating={ratingData.user_rating} count={null} />
                         {ratingData.user_review && <p className="mt-1.5 text-[12px] text-slate-500 dark:text-slate-400 italic">"{ratingData.user_review}"</p>}
                       </div>
-                      <button onClick={removeRating} disabled={submitting}
-                        className="text-[11px] font-medium text-red-500 hover:text-red-600 hover:underline disabled:opacity-50 transition">Remove</button>
+                      {isLoggedIn && (
+                        <button onClick={removeRating} disabled={submitting}
+                          className="text-[11px] font-medium text-red-500 hover:text-red-600 hover:underline disabled:opacity-50 transition">Remove</button>
+                      )}
                     </div>
                     <button onClick={() => { setPendingStar(ratingData.user_rating); setShowReviewBox(true); }}
                       className="mt-2 text-[11px] font-medium text-brand-600 hover:underline dark:text-brand-400">Edit rating</button>
@@ -746,7 +730,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, ownWorkspaceId, on
                         onChange={(e) => setRatingEmail(e.target.value)}
                         className="ea-input"
                       />
-                      <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Your email is used to verify the authenticity of this review for credibility. We may add you to our mailing list. You can unsubscribe at any time.</p>
+                      <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Required for review credibility. Not shown publicly.</p>
                     </div>
                     {ratingError && <p className="mb-2 text-[12px] text-red-500">{ratingError}</p>}
                     <div className="flex gap-2">
@@ -780,6 +764,7 @@ const BIZ_TYPES = ["sole_trader","partnership","limited_company","llp","non_prof
 export default function MarketplacePage() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
+  const userEmail = useAuthStore((s) => s.email);
   const isLoggedIn = Boolean(token);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
@@ -1100,6 +1085,7 @@ export default function MarketplacePage() {
           listing={selected}
           onClose={() => setSelected(null)}
           isLoggedIn={isLoggedIn}
+          userEmail={userEmail}
           ownWorkspaceId={myStatus?.workspace_id || workspaceId}
           onNeedAuth={(action) => { setSelected(null); setGateAction(action); }}
           onRequestQuote={(listing) => setRfqTarget(listing)}

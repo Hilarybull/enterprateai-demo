@@ -97,13 +97,14 @@ async def get_listing_ratings(
 async def rate_listing(
     workspace_id: str,
     payload: RatingSubmitRequest,
-    user=Depends(get_current_user),
+    user=Depends(get_optional_user),
 ):
     return await submit_rating(
         workspace_id=workspace_id,
-        user_id=user["id"],
+        user_id=user["id"] if user else None,
         rating=payload.rating,
         review=payload.review,
+        rater_email=payload.rater_email,
     )
 
 

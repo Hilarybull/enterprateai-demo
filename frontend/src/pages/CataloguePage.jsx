@@ -56,6 +56,7 @@ export default function CataloguePage() {
   const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [editingVendorId, setEditingVendorId] = useState(null);
   const [activeTab, setActiveTab] = useState(() => firstAccessibleCatalogueTab());
+  const [catalogueDrill, setCatalogueDrill] = useState(null); // { label, type, items }
   const [reportFinancials, setReportFinancials] = useState({ invoices: [], expenses: [] });
   const [pendingCatalogueReport, setPendingCatalogueReport] = useState(null);
   const [reportFilter, setReportFilter] = useState({ products: true, customers: true, vendors: true });
@@ -757,17 +758,62 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
           {/* Stat tiles */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {[
-              { label: "Active products", value: activeProducts.length, sub: archivedProducts.length ? `${archivedProducts.length} archived` : "All active", tone: "violet" },
-              { label: "Active customers", value: activeCustomers.length, sub: archivedCustomers.length ? `${archivedCustomers.length} archived` : "All active", tone: "sky" },
-              { label: "Active vendors", value: activeVendors.length, sub: archivedVendors.length ? `${archivedVendors.length} archived` : "All active", tone: "amber" },
-            ].map((kpi) => (
-              <div key={kpi.label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</div>
-                <div className={`mt-1.5 text-3xl font-bold ${kpi.tone === "violet" ? "text-violet-600" : kpi.tone === "sky" ? "text-sky-600" : "text-amber-600"}`}>{kpi.value}</div>
-                <div className="mt-1 text-[11px] text-slate-400">{kpi.sub}</div>
-              </div>
-            ))}
+              { label: "Active products", type: "products", items: activeProducts, sub: archivedProducts.length ? `${archivedProducts.length} archived` : "All active", tone: "violet" },
+              { label: "Active customers", type: "customers", items: activeCustomers, sub: archivedCustomers.length ? `${archivedCustomers.length} archived` : "All active", tone: "sky" },
+              { label: "Active vendors", type: "vendors", items: activeVendors, sub: archivedVendors.length ? `${archivedVendors.length} archived` : "All active", tone: "amber" },
+            ].map((kpi) => {
+              const isOpen = catalogueDrill?.type === kpi.type;
+              return (
+                <button
+                  key={kpi.label}
+                  type="button"
+                  onClick={() => setCatalogueDrill(isOpen ? null : { label: kpi.label, type: kpi.type, items: kpi.items })}
+                  className={`rounded-2xl border bg-white p-4 shadow-sm text-left w-full transition hover:shadow-md ${isOpen ? "border-brand-400 ring-1 ring-brand-200" : "border-slate-200 hover:border-slate-300"}`}
+                >
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</div>
+                  <div className={`mt-1.5 text-3xl font-bold ${kpi.tone === "violet" ? "text-violet-600" : kpi.tone === "sky" ? "text-sky-600" : "text-amber-600"}`}>{kpi.items.length}</div>
+                  <div className="mt-1 text-[11px] text-slate-400">{kpi.sub}</div>
+                </button>
+              );
+            })}
           </div>
+
+          {/* Drill-down panel */}
+          {catalogueDrill && (
+            <div className="rounded-2xl border border-brand-200 bg-white p-4 shadow-sm" ref={(el) => el?.scrollIntoView({ behavior: "smooth", block: "nearest" })}>
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-semibold text-slate-800">{catalogueDrill.label}</span>
+                <button type="button" onClick={() => setCatalogueDrill(null)} className="text-slate-400 hover:text-slate-600">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                </button>
+              </div>
+              {catalogueDrill.items.length === 0 ? (
+                <p className="text-[13px] text-slate-400 italic">No {catalogueDrill.type} yet.</p>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {catalogueDrill.items.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between gap-4 py-2.5">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-800">{item.name || item.company_name || "—"}</div>
+                        {catalogueDrill.type === "products" && (
+                          <div className="text-[11px] text-slate-400">{item.category || "No category"} · Sell: {formatCurrency(Number(item.base_price || 0), currency)}</div>
+                        )}
+                        {catalogueDrill.type === "customers" && (
+                          <div className="text-[11px] text-slate-400">{item.email || item.contact_email || "No email"}{item.payment_terms ? ` · ${item.payment_terms}d terms` : ""}</div>
+                        )}
+                        {catalogueDrill.type === "vendors" && (
+                          <div className="text-[11px] text-slate-400">{item.email || item.contact_email || "No email"}</div>
+                        )}
+                      </div>
+                      {catalogueDrill.type === "products" && (
+                        <span className="shrink-0 text-sm font-semibold text-slate-700">{formatCurrency(Number(item.base_price || 0), currency)}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
 
           {false && (

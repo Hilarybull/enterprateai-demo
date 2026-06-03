@@ -745,15 +745,77 @@ export default function Layout() {
               </div>
 
               {/* Help & Support */}
-              <div className="relative shrink-0">
+              <div className="relative shrink-0" ref={helpRef}>
                 <button
                   type="button"
-                  onClick={() => { window.location.href = "mailto:hilary.onyebukwa@enterprate.ai"; }}
+                  onClick={() => { setHelpOpen((v) => !v); setHelpSent(false); setHelpError(null); }}
                   className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                   aria-label="Help & Support"
                 >
                   <Icon name="help" className="h-4 w-4" />
                 </button>
+                {helpOpen && (
+                  <div className="absolute right-0 top-11 z-30 w-80 rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+                      <span className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">Help & Support</span>
+                      <button type="button" onClick={() => setHelpOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                      </button>
+                    </div>
+                    {helpSent ? (
+                      <div className="px-4 py-8 text-center">
+                        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-900/20">
+                          <svg className="h-5 w-5 text-emerald-600 dark:text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5" /></svg>
+                        </div>
+                        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Message sent!</p>
+                        <p className="mt-1 text-[12px] text-slate-500 dark:text-slate-400">We'll get back to you as soon as possible.</p>
+                        <button type="button" onClick={() => { setHelpSent(false); setHelpOpen(false); }} className="mt-4 rounded-xl bg-brand-600 px-4 py-1.5 text-[12px] font-semibold text-white hover:bg-brand-700">Close</button>
+                      </div>
+                    ) : (
+                      <form onSubmit={submitHelpForm} className="px-4 py-4 space-y-3">
+                        <div>
+                          <label className="mb-1 block text-[11px] font-semibold text-slate-600 dark:text-slate-400">Your name</label>
+                          <input
+                            type="text"
+                            value={helpName}
+                            onChange={(e) => setHelpName(e.target.value)}
+                            placeholder="Jane Doe"
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-800 placeholder-slate-400 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-[11px] font-semibold text-slate-600 dark:text-slate-400">Email address</label>
+                          <input
+                            type="email"
+                            value={helpEmail}
+                            onChange={(e) => setHelpEmail(e.target.value)}
+                            placeholder="jane@example.com"
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-800 placeholder-slate-400 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-[11px] font-semibold text-slate-600 dark:text-slate-400">Message <span className="text-rose-500">*</span></label>
+                          <textarea
+                            value={helpMessage}
+                            onChange={(e) => setHelpMessage(e.target.value)}
+                            placeholder="Describe your issue or question..."
+                            rows={4}
+                            required
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-800 placeholder-slate-400 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500 resize-none"
+                          />
+                        </div>
+                        {helpError && <p className="text-[11px] text-rose-600 dark:text-rose-400">{helpError}</p>}
+                        <button
+                          type="submit"
+                          disabled={helpSending || !helpMessage.trim()}
+                          className="w-full rounded-xl bg-brand-600 py-2 text-[12px] font-semibold text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {helpSending ? "Sending…" : "Send message"}
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Notification bell */}

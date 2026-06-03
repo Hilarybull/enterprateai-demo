@@ -214,12 +214,12 @@ async def get_listing(*, workspace_id: str) -> dict:
     return item
 
 
-async def get_ratings(*, workspace_id: str, user_id: str | None = None) -> dict:
+async def get_ratings(*, workspace_id: str, user_id: str | None = None, rater_email: str | None = None) -> dict:
     try:
         ratings = await sb_select(
             "marketplace_ratings",
             filters=[("workspace_id", "eq", workspace_id)],
-            columns="rating,review,user_id",
+            columns="rating,review,user_id,rater_email",
         )
     except Exception:
         return {"workspace_id": workspace_id, "avg_rating": None, "rating_count": 0, "user_rating": None, "user_review": None}
@@ -227,11 +227,14 @@ async def get_ratings(*, workspace_id: str, user_id: str | None = None) -> dict:
     avg = round(sum(values) / len(values), 1) if values else None
     user_rating = None
     user_review = None
-    if user_id:
-        own = next((r for r in (ratings or []) if r["user_id"] == user_id), None)
-        if own:
-            user_rating = own["rating"]
-            user_review = own.get("review")
+    own = None
+    if rater_email:
+        own = next((r for r in (ratings or []) if r.get("rater_email", "").lower() == rater_email.lower()), None)
+    elif user_id:
+        own = next((r for r in (ratings or []) if r.get("user_id") == user_id), None)
+    if own:
+        user_rating = own["rating"]
+        user_review = own.get("review")
     return {
         "workspace_id": workspace_id,
         "avg_rating": avg,
@@ -241,14 +244,18 @@ async def get_ratings(*, workspace_id: str, user_id: str | None = None) -> dict:
     }
 
 
-async def submit_rating(*, workspace_id: str, user_id: str, rating: int, review: str | None) -> dict:
+async def submit_rating(*, workspace_id: str, user_id: str | None, rating: int, review: str | None, rater_email: str) -> dict:
     if not 1 <= rating <= 5:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rating must be between 1 and 5")
+    email = rater_email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A valid email address is required.")
 
     ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
     if not ws:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
-    if ws.get("user_id") == user_id:
+    # Prevent owner from rating their own business (by user_id or matching email)
+    if user_id and ws.get("user_id") == user_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot rate your own business")
 
     now = datetime.now(timezone.utc).isoformat()
@@ -258,15 +265,32 @@ async def submit_rating(*, workspace_id: str, user_id: str, rating: int, review:
             payload={
                 "workspace_id": workspace_id,
                 "user_id": user_id,
+                "rater_email": email,
                 "rating": rating,
                 "review": review,
                 "updated_at": now,
             },
-            on_conflict="workspace_id,user_id",
+            on_conflict="workspace_id,rater_email",
         )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Ratings table not available. Run the migration first.") from e
-    return await get_ratings(workspace_id=workspace_id, user_id=user_id)
+
+    # Save reviewer to mailing list (silently — never block the rating)
+    try:
+        await sb_upsert(
+            "mailing_list",
+            payload={
+                "id": str(uuid4()),
+                "email": email,
+                "source": "marketplace_review",
+                "subscribed_at": now,
+            },
+            on_conflict="email",
+        )
+    except Exception:
+        pass
+
+    return await get_ratings(workspace_id=workspace_id, rater_email=email)
 
 
 async def delete_rating(*, workspace_id: str, user_id: str) -> dict:

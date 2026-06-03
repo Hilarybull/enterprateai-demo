@@ -120,10 +120,8 @@ async def sb_upsert(
 ) -> Any:
     def _run():
         client = get_supabase_client()
-        q = client.table(table).upsert(payload)
-        if on_conflict:
-            q = q.on_conflict(on_conflict)
-        res = q.execute()
+        kwargs = {"on_conflict": on_conflict} if on_conflict else {}
+        res = client.table(table).upsert(payload, **kwargs).execute()
         return res.data
 
     return await anyio.to_thread.run_sync(_run)

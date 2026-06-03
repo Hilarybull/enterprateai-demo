@@ -10,6 +10,7 @@ import Spinner from "../components/Spinner";
 import { ValidationIllustration, SimulationIllustration, BlueprintIllustration, CatalogueIllustration, FinancialIllustration } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
+import { useAuthStore } from "../store/auth";
 import { formatCurrency, formatNumber } from "../lib/format";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
@@ -20,8 +21,18 @@ export default function DashboardPage() {
   const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
   const currency = useWorkspaceStore((s) => s.currency);
 
+  const email = useAuthStore((s) => s.email);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [comingSoonFeature, setComingSoonFeature] = useState(null);
+
+  function openComingSoon(feature) {
+    setComingSoonFeature(feature);
+    if (email) {
+      apiRequest("/support/module-interest", "POST", { email, feature }).catch(() => {});
+    }
+  }
   const [snapshot, setSnapshot] = useState({
     invoices: [],
     expenses: [],
@@ -96,8 +107,8 @@ export default function DashboardPage() {
         }
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => navigate("/validation")}>Run Idea Validation</Button>
-            <Button onClick={() => navigate("/simulation")}>Run Simulation</Button>
+            <Button variant="secondary" onClick={() => openComingSoon("Idea Validation")}>Run Idea Validation</Button>
+            <Button onClick={() => openComingSoon("Simulation")}>Run Simulation</Button>
           </div>
         }
       />
@@ -194,11 +205,11 @@ export default function DashboardPage() {
                 { label: "Financials", subtitle: "Invoicing & cash tracking.", href: "/financials", illustration: <FinancialIllustration /> },
               ].map((mod) => (
                 <div key={mod.href} className="relative">
-                  <button type="button" onClick={mod.comingSoon ? undefined : () => navigate(mod.href)}
+                  <button type="button" onClick={mod.comingSoon ? () => openComingSoon(mod.label) : () => navigate(mod.href)}
                     className={
                       "group w-full rounded-2xl border border-slate-200 bg-white text-left transition dark:border-slate-800 dark:bg-slate-900/70 " +
                       (mod.comingSoon
-                        ? "cursor-default opacity-60"
+                        ? "cursor-pointer opacity-70 hover:-translate-y-0.5 hover:border-amber-200 hover:shadow-md"
                         : "hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md dark:hover:border-brand-700")
                     }>
                     <div className="overflow-hidden rounded-t-2xl bg-gradient-to-br from-brand-50 via-white to-indigo-50 dark:from-slate-800 dark:via-slate-900 dark:to-slate-800">
@@ -219,6 +230,36 @@ export default function DashboardPage() {
             </div>
           </div>
         </>
+      )}
+
+      {comingSoonFeature && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setComingSoonFeature(null); }}
+        >
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="px-6 pt-6 pb-2 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-900/20">
+                <svg className="h-6 w-6 text-brand-600 dark:text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2Z" />
+                </svg>
+              </div>
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{comingSoonFeature} — Coming Soon</h2>
+              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+                This feature is currently under development. Stay tuned for updates!
+              </p>
+            </div>
+            <div className="flex justify-center border-t border-slate-100 px-6 py-4 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setComingSoonFeature(null)}
+                className="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
