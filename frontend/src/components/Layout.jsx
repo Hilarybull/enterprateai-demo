@@ -575,8 +575,7 @@ export default function Layout() {
         </div>
       )}
 
-      <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-y-auto pr-0.5">
-      <nav className="space-y-1 pr-1">
+      <nav className="mt-4 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
         {filteredNav.map((item) => (
           <SidebarLink
             key={item.to}
@@ -588,7 +587,7 @@ export default function Layout() {
         ))}
       </nav>
 
-      <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900/70 dark:ring-slate-800">
+      <div className="mt-3 shrink-0 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900/70 dark:ring-slate-800">
         <div className="flex items-center justify-between">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
             {isMemberMode ? "Shared workspace" : "Workspace"}
@@ -690,7 +689,6 @@ export default function Layout() {
           </>
         )}
       </div>
-      </div>{/* end scroll wrapper */}
     </aside>
   );
 
