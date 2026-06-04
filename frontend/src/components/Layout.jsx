@@ -575,7 +575,8 @@ export default function Layout() {
         </div>
       )}
 
-      <nav className="ea-scroll mt-4 flex-1 space-y-1 overflow-auto pr-1">
+      <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-y-auto pr-0.5">
+      <nav className="space-y-1 pr-1">
         {filteredNav.map((item) => (
           <SidebarLink
             key={item.to}
@@ -689,8 +690,7 @@ export default function Layout() {
           </>
         )}
       </div>
-
-      <div className="mt-auto h-2" />
+      </div>{/* end scroll wrapper */}
     </aside>
   );
 
