@@ -404,28 +404,27 @@ export default function SharedBlueprintPage() {
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fbff_0%,#f8fafc_45%,#f8fafc_100%)]">
       <div className="fixed left-0 right-0 top-0 z-50 border-b border-slate-200/80 bg-white/90 backdrop-blur">
-        <div className="grid w-full grid-cols-[auto,1fr,auto] items-center gap-3 px-3 py-3 sm:px-6">
-          <div className="flex min-w-0 items-center justify-self-start">
-            <div className="flex h-10 items-center sm:h-12">
-              <img
-                src={enterprateLogo}
-                alt="EnterprateAI"
-                className="block h-8 w-auto max-w-[140px] object-contain sm:h-10 sm:max-w-[220px]"
-              />
-            </div>
+        <div className="flex w-full items-center gap-2 px-3 py-3 sm:gap-3 sm:px-6">
+          <div className="shrink-0">
+            <img
+              src={enterprateLogo}
+              alt="EnterprateAI"
+              className="block h-6 w-auto max-w-[72px] object-contain sm:h-8 sm:max-w-[160px]"
+            />
           </div>
 
-          <div className="min-w-0 justify-self-center px-2">
-            <div className="truncate text-center text-sm font-semibold text-slate-900 sm:text-[15px]">{title}</div>
+          <div className="min-w-0 flex-1 px-1">
+            <div className="truncate text-center text-xs font-semibold text-slate-900 sm:text-sm">{title}</div>
           </div>
 
-          <div className="justify-self-end">
+          <div className="shrink-0">
             <Button
               variant="secondary"
               disabled={loading || downloading || !bodyHtml.trim()}
               onClick={downloadPdf}
             >
-              {downloading ? "Preparing..." : "Download PDF"}
+              <span className="hidden sm:inline">{downloading ? "Preparing..." : "Download PDF"}</span>
+              <span className="sm:hidden">{downloading ? "..." : "PDF"}</span>
             </Button>
           </div>
         </div>
