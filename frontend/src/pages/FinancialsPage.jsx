@@ -752,15 +752,17 @@ export default function FinancialsPage() {
           unit_price: invoice?.unit_price || 0,
           subtotal_amount: subtotal,
         }];
+    const invoiceDisplayId = invoice?.invoice_id || (invoice?.id ? `INV-${invoice.id.substring(0, 8).toUpperCase()}` : "");
     return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8"/>
-    <title>Invoice ${invoice?.invoice_id || invoice?.id || ""}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Invoice ${invoiceDisplayId}</title>
   <style>
     *{color:#0f172a !important;}
     body{font-family:Inter, Arial, sans-serif; background:#ffffff; padding:32px; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;}
-    .header{display:flex; justify-content:space-between; align-items:flex-start;}
+    .header{display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;}
     .brand-block{text-align:left;}
     .brand-block img{display:block; max-width:180px; max-height:72px; width:auto; height:auto; object-fit:contain; object-position:left center; margin:0 0 14px 0;}
     .brand-block h2{margin:0 0 4px;}
@@ -770,6 +772,11 @@ export default function FinancialsPage() {
     th,td{border-bottom:1px solid #e2e8f0; padding:10px; text-align:left; font-size:13px;}
     th{text-transform:uppercase; letter-spacing:.05em; font-size:11px; color:#64748b;}
     .right{text-align:right;}
+    @media(max-width:600px){
+      body{padding:16px;}
+      th,td{padding:8px 6px; font-size:11px;}
+      .right{text-align:left;}
+    }
   </style>
 </head>
 <body>
@@ -777,7 +784,7 @@ export default function FinancialsPage() {
     ${renderDocBranding("Invoice")}
       <div class="right">
         <div class="muted">Invoice ID</div>
-        <div>${invoice?.invoice_id || invoice?.id || ""}</div>
+        <div>${invoiceDisplayId}</div>
         ${renderShareStatus(invoice?.status)}
     </div>
   </div>
@@ -822,15 +829,17 @@ export default function FinancialsPage() {
           unit_price: quote?.unit_price || 0,
           subtotal_amount: subtotal,
         }];
+    const quoteDisplayId = quote?.quotation_id || (quote?.id ? `QUO-${quote.id.substring(0, 8).toUpperCase()}` : "");
     return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8"/>
-    <title>Quotation ${quote?.quotation_id || quote?.id || ""}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Quotation ${quoteDisplayId}</title>
   <style>
     *{color:#0f172a !important;}
     body{font-family:Inter, Arial, sans-serif; background:#ffffff; padding:32px; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;}
-    .header{display:flex; justify-content:space-between; align-items:flex-start;}
+    .header{display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;}
     .brand-block{text-align:left;}
     .brand-block img{display:block; max-width:180px; max-height:72px; width:auto; height:auto; object-fit:contain; object-position:left center; margin:0 0 14px 0;}
     .brand-block h2{margin:0 0 4px;}
@@ -840,6 +849,11 @@ export default function FinancialsPage() {
     th,td{border-bottom:1px solid #e2e8f0; padding:10px; text-align:left; font-size:13px;}
     th{text-transform:uppercase; letter-spacing:.05em; font-size:11px; color:#64748b;}
     .right{text-align:right;}
+    @media(max-width:600px){
+      body{padding:16px;}
+      th,td{padding:8px 6px; font-size:11px;}
+      .right{text-align:left;}
+    }
   </style>
 </head>
 <body>
@@ -847,7 +861,7 @@ export default function FinancialsPage() {
     ${renderDocBranding("Sales quotation")}
       <div class="right">
         <div class="muted">Quotation ID</div>
-        <div>${quote?.quotation_id || quote?.id || ""}</div>
+        <div>${quoteDisplayId}</div>
         ${renderShareStatus(quote?.status)}
     </div>
   </div>
@@ -953,10 +967,12 @@ export default function FinancialsPage() {
         ${content}
       </div>`;
     const logoSrc = workspaceLogo && String(workspaceLogo).trim() ? workspaceLogo : null;
-    return `<!doctype html><html><head><meta charset="utf-8"/><title>Financial Report</title>
-<style>*{color:#0f172a!important;}body{font-family:Inter,Arial,sans-serif;background:#fff;padding:32px;font-size:13px;line-height:1.5;}</style>
+    return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Financial Report</title>
+<style>*{color:#0f172a!important;}body{font-family:Inter,Arial,sans-serif;background:#fff;padding:32px;font-size:13px;line-height:1.5;}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:8px;}
+@media(max-width:600px){body{padding:16px;}.kpi-grid{grid-template-columns:repeat(2,1fr);}table{font-size:11px;}th,td{padding:6px 8px;}}</style>
 </head><body>
-<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;">
+<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:24px;">
   <div>
     ${logoSrc ? `<img src="${logoSrc}" style="display:block;max-width:140px;max-height:56px;margin-bottom:10px;"/>` : ""}
     <div style="font-size:20px;font-weight:700;">${workspaceName || "EnterprateAI"}</div>
@@ -964,7 +980,7 @@ export default function FinancialsPage() {
   </div>
   <div style="text-align:right;font-size:11px;color:#64748b;">${new Date().toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})}</div>
 </div>
-${kpis !== null ? `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:8px;">${kpis.map((k) => `<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#64748b;">${k.label}</div><div style="font-size:18px;font-weight:700;margin-top:4px;">${k.value}</div></div>`).join("")}</div>` : ""}
+${kpis !== null ? `<div class="kpi-grid">${kpis.map((k) => `<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#64748b;">${k.label}</div><div style="font-size:18px;font-weight:700;margin-top:4px;">${k.value}</div></div>`).join("")}</div>` : ""}
 ${invoiceList !== null ? section("Invoices","All active invoices, paid and pending.",table(["Customer","Items / Services","Amount","Due / Issued","Status"],invoiceList.map((i)=>[i.customer,i.items,i.amount,i.due,i.status]))) : ""}
 ${quoteList !== null ? section("Quotation pipeline","Active quotes sent or in draft.",table(["Customer","Items","Amount","Valid","Status"],quoteList.map((q)=>[q.customer,q.items,q.amount,q.validity,q.status]))) : ""}
 ${expenseList !== null ? section("Expenses","Vendor payables.",table(["Vendor","Description","Amount","Due","Status"],expenseList.map((e)=>[e.vendor,e.description,e.amount,e.due,e.status]))) : ""}
@@ -1012,7 +1028,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
           expires_in_days: shareConfig.expires_in_days || 7,
           document_id: existingDocumentId,
           type: isInvoice ? `invoice_template:${record.id}` : `sales_quotation:${record.id}`,
-          title: `${titlePrefix} — ${record?.invoice_id || record?.quotation_id || record?.id || workspaceName || "Document"}`,
+          title: `${titlePrefix} — ${record?.invoice_id || (isInvoice ? `INV-${record?.id?.substring(0,8).toUpperCase()}` : record?.quotation_id || `QUO-${record?.id?.substring(0,8).toUpperCase()}`) || workspaceName || "Document"}`,
           company_name: workspaceName || "EnterprateAI",
           workspace_id: workspaceId || null,
           document_markdown: markdown,
@@ -1620,10 +1636,11 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     const grandTotal = subtotal || Number(quote.total_amount || 0);
     const validUntil = quote.validity_days ? (() => { const d = new Date(); d.setDate(d.getDate() + quote.validity_days); return d.toLocaleDateString(); })() : "";
     const logoSrc = workspaceLogo && String(workspaceLogo).trim() ? workspaceLogo : null;
-    return `<!doctype html><html><head><meta charset="utf-8"/>
-<title>Quotation ${quote.quotation_id || quote.id}</title>
+    const rfqDisplayId = quote.quotation_id || (quote.id ? `QUO-${quote.id.substring(0, 8).toUpperCase()}` : "");
+    return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Quotation ${rfqDisplayId}</title>
 <style>*{color:#0f172a !important;}body{font-family:Inter,Arial,sans-serif;background:#fff;padding:32px;font-size:14px;line-height:1.5;}
-.header{display:flex;justify-content:space-between;align-items:flex-start;}
+.header{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;}
 .brand-block img{display:block;max-width:160px;max-height:60px;margin:0 0 12px;}
 .brand-block h2{margin:0 0 4px;}
 .muted{color:#1f2937;font-size:12px;}
@@ -1632,10 +1649,11 @@ table{width:100%;border-collapse:collapse;margin-top:16px;}
 th,td{border-bottom:1px solid #e2e8f0;padding:10px;text-align:left;font-size:13px;}
 th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 .right{text-align:right;}
-.actions{margin-top:28px;display:flex;gap:12px;}
+.actions{margin-top:28px;display:flex;gap:12px;flex-wrap:wrap;}
 .btn{display:inline-block;padding:12px 28px;border-radius:8px;font-weight:600;font-size:14px;text-decoration:none;cursor:pointer;}
 .btn-accept{background:#16a34a;color:#fff !important;}
 .btn-reject{background:#f1f5f9;color:#374151 !important;border:1px solid #e2e8f0;}
+@media(max-width:600px){body{padding:16px;}th,td{padding:8px 6px;font-size:11px;}.right{text-align:left;}.btn{padding:10px 20px;font-size:13px;}}
 </style></head><body>
 <div class="header">
   <div class="brand-block">
@@ -1645,7 +1663,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
   </div>
   <div class="right">
     <div class="muted">Quotation ID</div>
-    <div>${quote.quotation_id || quote.id}</div>
+    <div>${rfqDisplayId}</div>
     ${quote.issued_at ? `<div class="muted" style="margin-top:4px;">Date: ${new Date(quote.issued_at).toLocaleDateString()}</div>` : ""}
     ${validUntil ? `<div class="muted">Valid until: ${validUntil}</div>` : ""}
   </div>
