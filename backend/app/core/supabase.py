@@ -10,19 +10,35 @@ from app.core.config import get_settings
 _client: Client | None = None
 
 
-def get_supabase_client() -> Client:
+def _make_client() -> Client:
+    settings = get_settings()
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        raise RuntimeError("Supabase URL / service role key not configured")
+    try:
+        options = ClientOptions(http2=False)
+    except TypeError:
+        options = ClientOptions()
+    return create_client(settings.supabase_url, settings.supabase_service_role_key, options=options)
+
+
+def get_supabase_client(reset: bool = False) -> Client:
     global _client
-    if _client is None:
-        settings = get_settings()
-        if not settings.supabase_url or not settings.supabase_service_role_key:
-            raise RuntimeError("Supabase URL / service role key not configured")
-        try:
-            options = ClientOptions(http2=False)
-        except TypeError:
-            # Older/newer supabase-py releases expose different ClientOptions signatures.
-            options = ClientOptions()
-        _client = create_client(settings.supabase_url, settings.supabase_service_role_key, options=options)
+    if _client is None or reset:
+        _client = _make_client()
     return _client
+
+
+def _run_with_retry(fn):
+    """Execute fn() and retry once with a fresh client on connection errors."""
+    global _client
+    try:
+        return fn()
+    except Exception as exc:
+        exc_chain = str(type(exc).__name__) + str(type(getattr(exc, "__cause__", None)).__name__)
+        if "RemoteProtocolError" in exc_chain or "ConnectionError" in exc_chain or "ConnectError" in exc_chain:
+            _client = None
+            return fn()
+        raise
 
 
 async def sb_select(
@@ -54,7 +70,7 @@ async def sb_select(
         res = q.execute()
         return res.data
 
-    data = await anyio.to_thread.run_sync(_run)
+    data = await anyio.to_thread.run_sync(lambda: _run_with_retry(_run))
     if single:
         return data[0] if data else None
     return data
@@ -66,7 +82,7 @@ async def sb_insert(table: str, payload: dict[str, Any] | list[dict[str, Any]]) 
         res = client.table(table).insert(payload).execute()
         return res.data
 
-    return await anyio.to_thread.run_sync(_run)
+    return await anyio.to_thread.run_sync(lambda: _run_with_retry(_run))
 
 
 async def sb_update(
@@ -88,7 +104,7 @@ async def sb_update(
         res = q.execute()
         return res.data
 
-    return await anyio.to_thread.run_sync(_run)
+    return await anyio.to_thread.run_sync(lambda: _run_with_retry(_run))
 
 
 async def sb_delete(
@@ -109,7 +125,7 @@ async def sb_delete(
         res = q.execute()
         return res.data
 
-    return await anyio.to_thread.run_sync(_run)
+    return await anyio.to_thread.run_sync(lambda: _run_with_retry(_run))
 
 
 async def sb_upsert(
@@ -124,4 +140,4 @@ async def sb_upsert(
         res = client.table(table).upsert(payload, **kwargs).execute()
         return res.data
 
-    return await anyio.to_thread.run_sync(_run)
+    return await anyio.to_thread.run_sync(lambda: _run_with_retry(_run))
