@@ -6,7 +6,13 @@ Drop the following PDFs (or their extracted `.txt` versions) into this folder so
 - `ENTERPRATEAI CORE BUSINESS ONTOLOGY (1).pdf`
 - `Business Plan Outline Template.pdf`
 
-To extract PDF text into this folder:
+If your blueprint PDFs are stored in the repo `docs/` folder, you can extract them automatically with no explicit paths:
+
+```bash
+python backend/tools/extract_blueprint_pdfs.py
+```
+
+To extract PDF text into this folder manually:
 
 ```bash
 python backend/tools/extract_blueprint_pdfs.py "C:\path\to\Module 2 Architectural Workflow (1).pdf" "C:\path\to\ENTERPRATEAI CORE BUSINESS ONTOLOGY (1).pdf" "C:\path\to\Business Plan Outline Template.pdf"

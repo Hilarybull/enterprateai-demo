@@ -133,12 +133,16 @@ export default function CataloguePage() {
   const [customerForm, setCustomerForm] = useState({
     name: "",
     address: "",
+    email: "",
+    phone_number: "",
     payment_terms: "14",
     industry: ""
   });
   const [vendorForm, setVendorForm] = useState({
     name: "",
     address: "",
+    email: "",
+    phone_number: "",
     payment_terms: "14",
     industry: "",
     product_type: "product",
@@ -338,6 +342,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
         id: crypto.randomUUID(),
         name: String(name).trim(),
         address: String(row.address || "").trim(),
+        email: String(row.email || row.contact_email || "").trim(),
+        phone_number: String(row.phone || row.phone_number || "").trim(),
         payment_terms: coercePaymentTerms(row.payment_terms),
         industry: String(row.industry || "").trim(),
         archived: false,
@@ -371,6 +377,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
         id: crypto.randomUUID(),
         name: String(name).trim(),
         address: String(row.address || "").trim(),
+        email: String(row.email || row.contact_email || "").trim(),
+        phone_number: String(row.phone || row.phone_number || "").trim(),
         payment_terms: coercePaymentTerms(row.payment_terms),
         industry: String(row.industry || "").trim(),
         product_type: String(row.product_type || "product").trim() === "service" ? "service" : "product",
@@ -482,13 +490,15 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     setEditingProductId(null);
   }
   function resetCustomerForm() {
-    setCustomerForm({ name: "", address: "", payment_terms: "14", industry: "" });
+    setCustomerForm({ name: "", address: "", email: "", phone_number: "", payment_terms: "14", industry: "" });
     setEditingCustomerId(null);
   }
   function resetVendorForm() {
     setVendorForm({
       name: "",
       address: "",
+      email: "",
+      phone_number: "",
       payment_terms: "14",
       industry: "",
       product_type: "product",
@@ -538,6 +548,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       id: editingCustomerId || crypto.randomUUID(),
       name: customerForm.name.trim(),
       address: customerForm.address.trim(),
+      email: customerForm.email.trim(),
+      phone_number: customerForm.phone_number.trim(),
       payment_terms: coercePaymentTerms(customerForm.payment_terms),
       industry: customerForm.industry.trim(),
       archived: false,
@@ -565,6 +577,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       id: editingVendorId || crypto.randomUUID(),
       name: vendorForm.name.trim(),
       address: vendorForm.address.trim(),
+      email: vendorForm.email.trim(),
+      phone_number: vendorForm.phone_number.trim(),
       payment_terms: coercePaymentTerms(vendorForm.payment_terms),
       industry: vendorForm.industry.trim(),
       product_type: vendorForm.product_type,
@@ -1133,6 +1147,14 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <div className="ea-label">Address</div>
               <Input value={customerForm.address} onChange={(e) => setCustomerForm((c) => ({ ...c, address: e.target.value }))} />
             </div>
+            <div>
+              <div className="ea-label">Email</div>
+              <Input value={customerForm.email} onChange={(e) => setCustomerForm((c) => ({ ...c, email: e.target.value }))} />
+            </div>
+            <div>
+              <div className="ea-label">Phone</div>
+              <Input value={customerForm.phone_number} onChange={(e) => setCustomerForm((c) => ({ ...c, phone_number: e.target.value }))} />
+            </div>
               <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
                 <div>
                   <div className="ea-label">Payment terms</div>
@@ -1210,7 +1232,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               Choose CSV file
               <input type="file" accept=".csv" className="hidden" onChange={(e) => handleCustomerImport(e.target.files?.[0])} />
             </label>
-            <div className="mt-1.5 text-[11px] text-slate-400">Headers: customer_name, address, payment_terms, industry.</div>
+            <div className="mt-1.5 text-[11px] text-slate-400">Headers: customer_name, address, email, phone_number, payment_terms, industry.</div>
           </div>
         </SectionCard>
 
@@ -1236,6 +1258,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                       <div className="text-sm font-semibold text-slate-900">{c.name}</div>
                       <div className="text-xs text-slate-500">
                         {c.industry || "Industry"} • {formatPaymentTerms(c.payment_terms)} • {c.address || "Address on file"}
+                        {c.email ? ` • ${c.email}` : ""}
+                        {c.phone_number ? ` • ${c.phone_number}` : ""}
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1246,6 +1270,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                           setCustomerForm({
                             name: c.name,
                             address: c.address || "",
+                            email: c.email || "",
+                            phone_number: c.phone_number || "",
                             payment_terms: String(c.payment_terms || "14"),
                             industry: c.industry || ""
                           });
@@ -1341,6 +1367,14 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <div className="ea-label">Address</div>
               <Input value={vendorForm.address} onChange={(e) => setVendorForm((v) => ({ ...v, address: e.target.value }))} />
             </div>
+            <div>
+              <div className="ea-label">Email</div>
+              <Input value={vendorForm.email} onChange={(e) => setVendorForm((v) => ({ ...v, email: e.target.value }))} />
+            </div>
+            <div>
+              <div className="ea-label">Phone</div>
+              <Input value={vendorForm.phone_number} onChange={(e) => setVendorForm((v) => ({ ...v, phone_number: e.target.value }))} />
+            </div>
               <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
                 <div>
                   <div className="ea-label">Payment terms</div>
@@ -1413,7 +1447,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <input type="file" accept=".csv" className="hidden" onChange={(e) => handleVendorImport(e.target.files?.[0])} />
             </label>
             <div className="mt-1.5 text-[11px] text-slate-400">
-              Headers: vendor_name, address, payment_terms, industry, product_type, product_name, price.
+              Headers: vendor_name, address, email, phone_number, payment_terms, industry, product_type, product_name, price.
             </div>
           </div>
         </SectionCard>
@@ -1442,7 +1476,9 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${v.product_type === "product" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>{v.product_type}</span>
                       </div>
                       <div className="mt-0.5 text-xs text-slate-500">
-                        {v.product_name} · {formatCurrency(v.price, currency)} · {formatPaymentTerms(v.payment_terms)}
+                                {v.product_name} · {formatCurrency(v.price, currency)} · {formatPaymentTerms(v.payment_terms)}
+                                {v.email ? ` • ${v.email}` : ""}
+                                {v.phone_number ? ` • ${v.phone_number}` : ""}
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1453,6 +1489,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                           setVendorForm({
                             name: v.name,
                             address: v.address || "",
+                            email: v.email || "",
+                            phone_number: v.phone_number || "",
                             payment_terms: String(v.payment_terms || "14"),
                             industry: v.industry || "",
                             product_type: v.product_type || "product",

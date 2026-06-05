@@ -25,13 +25,23 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Extract text from blueprint PDFs into backend/app/shared/data/blueprint/ for implementation.",
     )
-    parser.add_argument("pdf", nargs="+", help="Path(s) to PDF files to extract")
+    parser.add_argument("pdf", nargs="*", help="Path(s) to PDF files to extract. If omitted, scans the repo docs/ folder for PDFs.")
     parser.add_argument(
         "--out",
         default="backend/app/shared/data/blueprint",
         help="Output folder (default: backend/app/shared/data/blueprint)",
     )
     args = parser.parse_args()
+
+    pdf_paths = [Path(p).expanduser().resolve() for p in args.pdf]
+    if not pdf_paths:
+        repo_root = Path(__file__).resolve().parents[2]
+        docs_dir = repo_root / "docs"
+        if not docs_dir.exists() or not docs_dir.is_dir():
+            raise SystemExit("No PDF paths provided and docs/ folder not found.")
+        pdf_paths = sorted(docs_dir.glob("*.pdf"))
+        if not pdf_paths:
+            raise SystemExit("No PDF files found in docs/. Provide explicit PDF paths.")
 
     out_dir = Path(args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)

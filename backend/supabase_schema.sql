@@ -289,10 +289,14 @@ create table if not exists support_messages (
   name text,
   email text,
   message text not null,
+  type text not null default 'support',
   created_at timestamptz default now()
 );
 
 create index if not exists support_messages_created_idx on support_messages(created_at desc);
+
+-- Migration: add type column to existing deployments
+alter table support_messages add column if not exists type text not null default 'support';
 
 create table if not exists module_interest (
   id text primary key,

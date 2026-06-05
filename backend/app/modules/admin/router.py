@@ -195,7 +195,7 @@ async def list_support_messages(user=Depends(require_admin)) -> list:
     try:
         return await sb_select(
             "support_messages",
-            columns="id,name,email,message,created_at",
+            columns="id,name,email,message,type,created_at",
             order="created_at",
             desc=True,
         )

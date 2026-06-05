@@ -15,6 +15,7 @@ class SupportMessageIn(BaseModel):
     name: str = ""
     email: str = ""
     message: str
+    type: str = "support"
 
 
 class ModuleInterestIn(BaseModel):
@@ -26,11 +27,13 @@ class ModuleInterestIn(BaseModel):
 async def submit_support_message(body: SupportMessageIn) -> dict:
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="Message is required.")
+    msg_type = body.type.strip().lower() if body.type.strip().lower() in ("feedback", "support") else "support"
     await sb_insert("support_messages", {
         "id": str(uuid4()),
         "name": body.name.strip(),
         "email": body.email.strip(),
         "message": body.message.strip(),
+        "type": msg_type,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     return {"ok": True}

@@ -1374,7 +1374,7 @@ export default function AdminPage() {
 
   const filteredSupport = useMemo(() =>
     (supportMessages || []).filter((m) =>
-      !q || m.name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q) || m.message?.toLowerCase().includes(q)
+      !q || m.name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q) || m.message?.toLowerCase().includes(q) || m.type?.toLowerCase().includes(q)
     ), [supportMessages, q]);
 
   const filteredMailingList = useMemo(() =>
@@ -2133,20 +2133,21 @@ export default function AdminPage() {
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-slate-800">
-                  Support messages <span className="ml-1 text-slate-400 font-normal">({filteredSupport.length})</span>
+                  Support &amp; Feedback <span className="ml-1 text-slate-400 font-normal">({filteredSupport.length})</span>
                 </h2>
-                <p className="mt-0.5 text-[11px] text-slate-400">Messages submitted via the Help & Support form.</p>
+                <p className="mt-0.5 text-[11px] text-slate-400">Messages submitted via the Feedback and Help &amp; Support forms.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {supportLoaded && (
                   <button
                     type="button"
                     onClick={() => downloadCSV(supportMessages || [], [
+                      { key: "type", label: "Type" },
                       { key: "name", label: "Name" },
                       { key: "email", label: "Email" },
                       { key: "message", label: "Message" },
                       { key: "created_at", label: "Submitted At" },
-                    ], "support-messages.csv")}
+                    ], "support-feedback-messages.csv")}
                     className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
                   >
                     <DownloadIcon /> Export CSV
@@ -2162,6 +2163,16 @@ export default function AdminPage() {
             ) : (
               <DataTable
                 columns={[
+                  { key: "type", label: "Type", render: (r) => (
+                    <span className={
+                      "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide " +
+                      (r.type === "feedback"
+                        ? "bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400"
+                        : "bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400")
+                    }>
+                      {r.type === "feedback" ? "Feedback" : "Support"}
+                    </span>
+                  )},
                   { key: "name", label: "Name", render: (r) => <span className="font-medium text-slate-800">{r.name || "—"}</span> },
                   { key: "email", label: "Email", render: (r) => <span className="text-xs text-slate-600">{r.email || "—"}</span> },
                   { key: "message", label: "Message", render: (r) => (
@@ -2170,7 +2181,7 @@ export default function AdminPage() {
                   { key: "created_at", label: "Submitted", render: (r) => <span className="text-xs">{formatDateTime(r.created_at)}</span> },
                 ]}
                 rows={filteredSupport}
-                emptyText="No support messages yet"
+                emptyText="No support or feedback messages yet"
               />
             )}
           </div>

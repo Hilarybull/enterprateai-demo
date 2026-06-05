@@ -12,10 +12,10 @@ import { planHasModuleAccess, planLabel } from "../lib/plans";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid", moduleKey: "dashboard" },
-  // { to: "/validation", label: "Idea Validation", subtitle: "Validate business ideas", icon: "bulb", moduleKey: "validation", comingSoon: true },
+  { to: "/validation", label: "Idea Validation", subtitle: "Validate business ideas", icon: "bulb", moduleKey: "validation" },
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
-  // { to: "/simulation", label: "Simulation", subtitle: "What-if scenarios", icon: "beaker", moduleKey: "simulation", comingSoon: true },
+  { to: "/simulation", label: "Simulation", subtitle: "What-if scenarios", icon: "beaker", moduleKey: "simulation" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
@@ -112,6 +112,14 @@ function Icon({ name, className = "h-4 w-4" }) {
       <svg {...base}>
         <path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Z" />
         <path d="M19.4 15a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.5-2-3.5-2.4 1a7.7 7.7 0 0 0-1.7-1L15 3h-6l-.3 2.5a7.7 7.7 0 0 0-1.7 1l-2.4-1-2 3.5 2 1.5a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.5 2 3.5 2.4-1a7.7 7.7 0 0 0 1.7 1L9 21h6l.3-2.5a7.7 7.7 0 0 0 1.7-1l2.4 1 2-3.5-2-1.5Z" />
+      </svg>
+    );
+  if (name === "feedback")
+    return (
+      <svg {...base}>
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        <path d="M8 10h8" />
+        <path d="M8 14h5" />
       </svg>
     );
   if (name === "help")
@@ -233,15 +241,23 @@ export default function Layout() {
   const profileRef = useRef(null);
   const notifRef = useRef(null);
   const helpRef = useRef(null);
+  const feedbackRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [helpName, setHelpName] = useState("");
   const [helpEmail, setHelpEmail] = useState("");
   const [helpMessage, setHelpMessage] = useState("");
   const [helpSending, setHelpSending] = useState(false);
   const [helpSent, setHelpSent] = useState(false);
   const [helpError, setHelpError] = useState(null);
+  const [feedbackName, setFeedbackName] = useState("");
+  const [feedbackEmail, setFeedbackEmail] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackSending, setFeedbackSending] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState(false);
+  const [feedbackError, setFeedbackError] = useState(null);
   const [showInviteUpgrade, setShowInviteUpgrade] = useState(false);
 
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
@@ -314,14 +330,15 @@ export default function Layout() {
   }, [notifOpen]);
 
   useEffect(() => {
-    if (!helpOpen) return;
+    if (!helpOpen && !feedbackOpen) return;
     function handleClick(e) {
-      if (!helpRef.current || helpRef.current.contains(e.target)) return;
+      if ((helpRef.current && helpRef.current.contains(e.target)) || (feedbackRef.current && feedbackRef.current.contains(e.target))) return;
       setHelpOpen(false);
+      setFeedbackOpen(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [helpOpen]);
+  }, [helpOpen, feedbackOpen]);
 
   async function submitHelpForm(e) {
     e.preventDefault();
@@ -333,6 +350,7 @@ export default function Layout() {
         name: helpName.trim(),
         email: helpEmail.trim(),
         message: helpMessage.trim(),
+        type: "support",
       });
       setHelpSent(true);
       setHelpName(""); setHelpEmail(""); setHelpMessage("");
@@ -340,6 +358,27 @@ export default function Layout() {
       setHelpError(err instanceof Error ? err.message : "Failed to send message. Please try again.");
     } finally {
       setHelpSending(false);
+    }
+  }
+
+  async function submitFeedbackForm(e) {
+    e.preventDefault();
+    if (!feedbackMessage.trim()) return;
+    setFeedbackSending(true);
+    setFeedbackError(null);
+    try {
+      await apiRequest("/support/message", "POST", {
+        name: feedbackName.trim(),
+        email: feedbackEmail.trim(),
+        message: feedbackMessage.trim(),
+        type: "feedback",
+      });
+      setFeedbackSent(true);
+      setFeedbackName(""); setFeedbackEmail(""); setFeedbackMessage("");
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : "Failed to send feedback. Please try again.");
+    } finally {
+      setFeedbackSending(false);
     }
   }
 
@@ -742,18 +781,104 @@ export default function Layout() {
                 </div>
               </div>
 
+              {/* Feedback */}
+              <div className="relative shrink-0" ref={feedbackRef}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFeedbackOpen((v) => !v);
+                    setHelpOpen(false);
+                    setFeedbackSent(false);
+                    setFeedbackError(null);
+                  }}
+                  className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  aria-label="Send feedback"
+                >
+                  <Icon name="feedback" className="h-4 w-4" />
+                </button>
+                {feedbackOpen && (
+                  <div className="absolute right-0 top-11 z-30 w-80 max-w-[calc(100vw-1rem)] rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+                      <span className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">Feedback</span>
+                      <button type="button" onClick={() => setFeedbackOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                      </button>
+                    </div>
+                    {feedbackSent ? (
+                      <div className="px-4 py-8 text-center">
+                        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-900/20">
+                          <svg className="h-5 w-5 text-emerald-600 dark:text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5" /></svg>
+                        </div>
+                        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Thanks for your feedback!</p>
+                        <p className="mt-1 text-[12px] text-slate-500 dark:text-slate-400">We appreciate your input and will review it shortly.</p>
+                        <button type="button" onClick={() => { setFeedbackSent(false); setFeedbackOpen(false); }} className="mt-4 rounded-xl bg-brand-600 px-4 py-1.5 text-[12px] font-semibold text-white hover:bg-brand-700">Close</button>
+                      </div>
+                    ) : (
+                      <form onSubmit={submitFeedbackForm} className="px-4 py-4 space-y-3">
+                        <div>
+                          <label className="mb-1 block text-[11px] font-semibold text-slate-600 dark:text-slate-400">Your name</label>
+                          <input
+                            type="text"
+                            value={feedbackName}
+                            onChange={(e) => setFeedbackName(e.target.value)}
+                            placeholder="Jane Doe"
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-800 placeholder-slate-400 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-[11px] font-semibold text-slate-600 dark:text-slate-400">Email address</label>
+                          <input
+                            type="email"
+                            value={feedbackEmail}
+                            onChange={(e) => setFeedbackEmail(e.target.value)}
+                            placeholder="jane@example.com"
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-800 placeholder-slate-400 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-[11px] font-semibold text-slate-600 dark:text-slate-400">Message <span className="text-rose-500">*</span></label>
+                          <textarea
+                            value={feedbackMessage}
+                            onChange={(e) => setFeedbackMessage(e.target.value)}
+                            placeholder="Share feedback, ideas, or things we can improve..."
+                            rows={4}
+                            required
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-800 placeholder-slate-400 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500 resize-none"
+                          />
+                        </div>
+                        {feedbackError && <p className="text-[11px] text-rose-600 dark:text-rose-400">{feedbackError}</p>}
+                        <button
+                          type="submit"
+                          disabled={feedbackSending || !feedbackMessage.trim()}
+                          className="w-full rounded-xl bg-brand-600 py-2 text-[12px] font-semibold text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {feedbackSending ? "Sending…" : "Send feedback"}
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Help & Support */}
               <div className="relative shrink-0" ref={helpRef}>
                 <button
                   type="button"
-                  onClick={() => { setHelpOpen((v) => !v); setHelpSent(false); setHelpError(null); }}
+                  onClick={() => {
+                    setHelpOpen((v) => !v);
+                    setFeedbackOpen(false);
+                    setHelpSent(false);
+                    setHelpError(null);
+                    setFeedbackSent(false);
+                    setFeedbackError(null);
+                  }}
                   className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                   aria-label="Help & Support"
                 >
                   <Icon name="help" className="h-4 w-4" />
                 </button>
                 {helpOpen && (
-                  <div className="absolute right-0 top-11 z-30 w-80 rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                  <div className="absolute right-0 top-11 z-30 w-80 max-w-[calc(100vw-1rem)] rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
                     <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
                       <span className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">Help & Support</span>
                       <button type="button" onClick={() => setHelpOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
