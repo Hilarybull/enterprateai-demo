@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from html import escape
 
 import httpx
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 SENDGRID_MAIL_SEND_URL = "https://api.sendgrid.com/v3/mail/send"
@@ -71,12 +74,16 @@ async def send_email_via_sendgrid(
             {"type": "text/plain", "value": text_content},
             {"type": "text/html", "value": html_content},
         ],
+        "mail_settings": {
+            "bypass_spam_management": {"enable": False},
+        },
         "tracking_settings": {
-            "click_tracking": {"enable": False},
-            "open_tracking": {"enable": False},
+            "click_tracking": {"enable": True, "enable_text": False},
+            "open_tracking": {"enable": True},
         },
     }
 
+    logger.info("Sending email via SendGrid to=%s subject=%r from=%s", to_email, subject, from_email)
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(
@@ -88,9 +95,11 @@ async def send_email_via_sendgrid(
                 json=payload,
             )
     except httpx.HTTPError as exc:
+        logger.error("SendGrid request failed: %s", exc)
         return EmailDeliveryResult(sent=False, error=f"SendGrid request failed: {exc}")
 
     if response.status_code == 202:
+        logger.info("SendGrid accepted email to=%s", to_email)
         return EmailDeliveryResult(sent=True)
 
     error_message = response.text
@@ -103,6 +112,7 @@ async def send_email_via_sendgrid(
     except Exception:
         pass
 
+    logger.error("SendGrid rejected email (%s): %s", response.status_code, error_message)
     return EmailDeliveryResult(
         sent=False,
         error=f"SendGrid rejected the email ({response.status_code}): {error_message}",
