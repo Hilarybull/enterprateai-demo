@@ -71,12 +71,17 @@ async def send_email_via_sendgrid(
             {"type": "text/plain", "value": text_content},
             {"type": "text/html", "value": html_content},
         ],
+        "headers": {
+            "List-Unsubscribe": f"<mailto:{from_email}?subject=unsubscribe>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            "X-Mailer": settings.app_name,
+        },
         "mail_settings": {
             "bypass_spam_management": {"enable": False},
         },
         "tracking_settings": {
-            "click_tracking": {"enable": True, "enable_text": False},
-            "open_tracking": {"enable": True},
+            "click_tracking": {"enable": False},
+            "open_tracking": {"enable": False},
         },
     }
 
