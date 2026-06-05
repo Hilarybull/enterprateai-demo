@@ -2028,6 +2028,16 @@ export default function AdminPage() {
                   )},
                   { key: "source", label: "Source", render: (r) => <span className="text-xs text-slate-500">{r.source || "—"}</span> },
                   { key: "clicked_at", label: "When", render: (r) => <span className="text-xs">{formatDateTime(r.clicked_at)}</span> },
+                  { key: "actions", label: "", tdClass: "w-12", render: (r) => (
+                    <ActionBtn variant="danger" title="Delete record" onClick={() => askConfirm({
+                      title: "Delete upgrade click?",
+                      description: `Remove this record for "${r.email || "unknown"}" clicking "${r.feature || "—"}".`,
+                      label: "Delete",
+                      successMsg: "Record deleted.",
+                      action: () => apiRequest(`/admin/upgrade-clicks/${r.id}`, "DELETE"),
+                      afterAction: () => setUpgrades((prev) => (prev || []).filter((x) => x.id !== r.id)),
+                    })} />
+                  )},
                 ]}
                 rows={filteredUpgrades}
                 emptyText="No upgrade clicks recorded"
@@ -2074,6 +2084,16 @@ export default function AdminPage() {
                     <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{r.feature}</span>
                   )},
                   { key: "clicked_at", label: "Last Clicked", render: (r) => <span className="text-xs">{formatDateTime(r.clicked_at)}</span> },
+                  { key: "actions", label: "", tdClass: "w-12", render: (r) => (
+                    <ActionBtn variant="danger" title="Delete record" onClick={() => askConfirm({
+                      title: "Delete module interest record?",
+                      description: `Remove the interest record for "${r.email}" on "${r.feature}".`,
+                      label: "Delete",
+                      successMsg: "Record deleted.",
+                      action: () => apiRequest(`/admin/module-interest/${r.id}`, "DELETE"),
+                      afterAction: () => setModuleInterest((prev) => (prev || []).filter((x) => x.id !== r.id)),
+                    })} />
+                  )},
                 ]}
                 rows={filteredModuleInterest}
                 emptyText="No module interest clicks yet"
@@ -2120,6 +2140,16 @@ export default function AdminPage() {
                     <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">{r.source || "—"}</span>
                   )},
                   { key: "subscribed_at", label: "Subscribed", render: (r) => <span className="text-xs">{formatDateTime(r.subscribed_at)}</span> },
+                  { key: "actions", label: "", tdClass: "w-12", render: (r) => (
+                    <ActionBtn variant="danger" title="Remove from mailing list" onClick={() => askConfirm({
+                      title: "Remove from mailing list?",
+                      description: `Remove "${r.email}" from the mailing list. This cannot be undone.`,
+                      label: "Remove",
+                      successMsg: `"${r.email}" removed from mailing list.`,
+                      action: () => apiRequest(`/admin/mailing-list/${r.id}`, "DELETE"),
+                      afterAction: () => setMailingList((prev) => (prev || []).filter((x) => x.id !== r.id)),
+                    })} />
+                  )},
                 ]}
                 rows={filteredMailingList}
                 emptyText="No subscribers yet"
@@ -2179,6 +2209,16 @@ export default function AdminPage() {
                     <span className="block max-w-xs truncate text-xs text-slate-700" title={r.message}>{r.message}</span>
                   )},
                   { key: "created_at", label: "Submitted", render: (r) => <span className="text-xs">{formatDateTime(r.created_at)}</span> },
+                  { key: "actions", label: "", tdClass: "w-12", render: (r) => (
+                    <ActionBtn variant="danger" title="Delete message" onClick={() => askConfirm({
+                      title: "Delete message?",
+                      description: `Permanently delete this ${r.type || "support"} message from "${r.name || r.email || "unknown"}".`,
+                      label: "Delete",
+                      successMsg: "Message deleted.",
+                      action: () => apiRequest(`/admin/support-messages/${r.id}`, "DELETE"),
+                      afterAction: () => setSupportMessages((prev) => (prev || []).filter((x) => x.id !== r.id)),
+                    })} />
+                  )},
                 ]}
                 rows={filteredSupport}
                 emptyText="No support or feedback messages yet"

@@ -573,6 +573,26 @@ async def remove_workspace_member(member_id: str, user=Depends(require_admin)) -
     await sb_delete("workspace_members", filters=[("id", "eq", member_id)])
 
 
+@router.delete("/upgrade-clicks/{record_id}", status_code=204)
+async def delete_upgrade_click(record_id: str, user=Depends(require_admin)) -> None:
+    await sb_delete("upgrade_clicks", filters=[("id", "eq", record_id)])
+
+
+@router.delete("/module-interest/{record_id}", status_code=204)
+async def delete_module_interest(record_id: str, user=Depends(require_admin)) -> None:
+    await sb_delete("module_interest", filters=[("id", "eq", record_id)])
+
+
+@router.delete("/mailing-list/{record_id}", status_code=204)
+async def delete_mailing_list_entry(record_id: str, user=Depends(require_admin)) -> None:
+    await sb_delete("mailing_list", filters=[("id", "eq", record_id)])
+
+
+@router.delete("/support-messages/{record_id}", status_code=204)
+async def delete_support_message(record_id: str, user=Depends(require_admin)) -> None:
+    await sb_delete("support_messages", filters=[("id", "eq", record_id)])
+
+
 @router.patch("/invitations/{invitation_id}/revoke")
 async def revoke_workspace_invitation(invitation_id: str, user=Depends(require_admin)) -> dict:
     result = await sb_update(
