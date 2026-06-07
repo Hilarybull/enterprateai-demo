@@ -10,10 +10,10 @@ const PAIN_ITEMS = [
 ];
 
 const STEPS = [
-  { n: "1", title: "Connect your business data", body: "Securely link your revenue, costs, headcount, and cashflow data. Works with Xero, QuickBooks, spreadsheets, or manual input. No technical setup required." },
-  { n: "2", title: "EnterprateAI builds your live business model", body: "The system automatically maps relationships between every revenue stream, cost centre, and operational element, creating a dynamic model unique to your business." },
-  { n: "3", title: "Run decision simulations", body: "Choose a scenario: hire a team member, raise prices by 15%, cut marketing spend. See the full ripple effect across your business over 6, 12, and 24 months." },
-  { n: "4", title: "Act with certainty, not guesswork", body: "Get a clear recommendation: go, wait, or adapt. With the exact numbers behind each conclusion so you commit with confidence." },
+  { n: "1", title: "Validate your business idea", body: "Start with Idea Validation. EnterprateAI analyses your idea against real market data, gives you a viability score, competitive landscape, and a clear go or no-go verdict before you commit time or money." },
+  { n: "2", title: "Build your live business model", body: "Once your idea is validated, EnterprateAI maps your revenue streams, cost centres, and operational elements into a live model unique to your business. Your foundation for every decision." },
+  { n: "3", title: "Simulate decisions on your validated model", body: "Run scenarios on your real business model: hire a team member, raise prices, cut costs. See the exact financial ripple effect across 6, 12, and 24 months before acting." },
+  { n: "4", title: "Act with certainty, not guesswork", body: "Get a clear recommendation: go, wait, or adapt. Every conclusion is backed by numbers from your own validated business model so you commit with full confidence." },
 ];
 
 const EXAMPLES = [
@@ -382,23 +382,23 @@ export default function LandingPage() {
           <div className="mb-12 text-center">
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">The Platform</span>
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">One Platform. Every Tool Your Business Needs.</h2>
-            <p className="mt-3 text-slate-500">From validating your idea to running live decision simulations — everything in one place.</p>
+            <p className="mt-3 text-slate-500">From validating your idea to running live decision simulations, everything in one place.</p>
           </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {[
               {
                 icon: "💡",
                 name: "Idea Validation",
-                tag: "Available now",
-                tagColor: "bg-emerald-100 text-emerald-700",
-                desc: "Test your business idea before you invest a penny. Get a market viability score, competitive landscape analysis, target customer profile, and a clear go or no-go recommendation — based on real data.",
+                tag: "Coming soon",
+                tagColor: "bg-amber-100 text-amber-700",
+                desc: "Test your business idea before you invest a penny. Get a market viability score, competitive landscape analysis, target customer profile, and a clear go or no-go recommendation based on real data.",
               },
               {
                 icon: "⚡",
                 name: "Decision Simulation",
-                tag: "Available now",
-                tagColor: "bg-emerald-100 text-emerald-700",
-                desc: "Simulate any major business decision — hiring, pricing, cutting costs — and see the exact impact on cash, revenue, and risk across 6, 12, and 24 months before you commit.",
+                tag: "Coming soon",
+                tagColor: "bg-amber-100 text-amber-700",
+                desc: "Simulate any major business decision: hiring, pricing, cutting costs. See the exact impact on cash, revenue, and risk across 6, 12, and 24 months before you commit.",
               },
               {
                 icon: "📋",
@@ -412,7 +412,7 @@ export default function LandingPage() {
                 name: "Financials",
                 tag: "Available now",
                 tagColor: "bg-emerald-100 text-emerald-700",
-                desc: "Track invoices, expenses, contracts, and quotations. Get real-time financial intelligence including cashflow forecasting, revenue trends, and profit margin analysis — all in one dashboard.",
+                desc: "Track invoices, expenses, contracts, and quotations. Get real-time financial intelligence including cashflow forecasting, revenue trends, and profit margin analysis, all in one dashboard.",
               },
               {
                 icon: "📦",
