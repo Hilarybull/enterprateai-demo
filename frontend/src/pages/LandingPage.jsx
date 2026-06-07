@@ -10,9 +10,9 @@ const PAIN_ITEMS = [
 ];
 
 const STEPS = [
-  { n: "1", title: "Connect your business data", body: "Securely link your revenue, costs, headcount, and cashflow data. Works with Xero, QuickBooks, spreadsheets, or manual input — no technical setup required." },
-  { n: "2", title: "EnterprateAI builds your live business model", body: "The system automatically maps relationships between every revenue stream, cost centre, and operational element — creating a dynamic model unique to your business." },
-  { n: "3", title: "Run decision simulations", body: "Choose a scenario — hire a team member, raise prices by 15%, cut marketing spend — and see the full ripple effect across your business over 6, 12, and 24 months." },
+  { n: "1", title: "Connect your business data", body: "Securely link your revenue, costs, headcount, and cashflow data. Works with Xero, QuickBooks, spreadsheets, or manual input. No technical setup required." },
+  { n: "2", title: "EnterprateAI builds your live business model", body: "The system automatically maps relationships between every revenue stream, cost centre, and operational element, creating a dynamic model unique to your business." },
+  { n: "3", title: "Run decision simulations", body: "Choose a scenario: hire a team member, raise prices by 15%, cut marketing spend. See the full ripple effect across your business over 6, 12, and 24 months." },
   { n: "4", title: "Act with certainty, not guesswork", body: "Get a clear recommendation: go, wait, or adapt. With the exact numbers behind each conclusion so you commit with confidence." },
 ];
 
@@ -37,7 +37,7 @@ const EXAMPLES = [
       { type: "pos", text: "Remains profitable with up to 8% churn" },
       { type: "pos", text: "Break even improves by 1.5 months" },
     ],
-    rec: "Increase pricing by 15% — within safe threshold. Revenue remains positive even under moderate churn. Implement with a 30 day notice period.",
+    rec: "Increase pricing by 15%. Revenue remains positive even under moderate churn. Implement with a 30 day notice period.",
   },
   {
     tag: "✂️ Cost Reduction",
@@ -48,7 +48,7 @@ const EXAMPLES = [
       { type: "neg", text: "Revenue dip: −£6,400 by Month 5" },
       { type: "warn", text: "Net effect negative beyond Month 4" },
     ],
-    rec: "Do not cut marketing budget. Short-term saving creates a revenue hole in Month 4–6. Instead, reallocate £800/mo from offline to digital for better ROI.",
+    rec: "Do not cut marketing budget. Short term saving creates a revenue hole in Month 4 to 6. Instead, reallocate £800/mo from offline to digital for better ROI.",
   },
 ];
 
@@ -259,7 +259,7 @@ export default function LandingPage() {
               </h1>
 
               <p className="mt-5 text-lg leading-relaxed text-slate-600">
-                EnterprateAI builds a live model of your business and simulates every major decision —
+                EnterprateAI builds a live model of your business and simulates every major decision,
                 showing you the exact impact on cash, revenue, and risk over 6, 12, and 24 months.{" "}
                 <strong className="text-slate-800">Act with certainty. Stop guessing.</strong>
               </p>
@@ -299,13 +299,13 @@ export default function LandingPage() {
                   <span className="h-3 w-3 rounded-full bg-rose-400" />
                   <span className="h-3 w-3 rounded-full bg-amber-400" />
                   <span className="h-3 w-3 rounded-full bg-emerald-400" />
-                  <span className="ml-3 text-xs font-medium text-slate-500">Decision Simulation — Hiring Analysis</span>
+                  <span className="ml-3 text-xs font-medium text-slate-500">Decision Simulation: Hiring Analysis</span>
                 </div>
                 <div className="space-y-3 p-5">
                   {[
                     { label: "Revenue Impact", value: "+£8,400/mo", tag: "↑ 18% by Month 6", tagColor: "text-emerald-600", bg: "bg-emerald-50" },
                     { label: "Cash Runway", value: "8 → 5 months", tag: "↓ Consider contractor first", tagColor: "text-amber-600", bg: "bg-amber-50" },
-                    { label: "Break-even shift", value: "+2 months", tag: "→ Safe threshold: hire in Month 3", tagColor: "text-brand-600", bg: "bg-brand-50" },
+                    { label: "Break even shift", value: "+2 months", tag: "→ Safe threshold: hire in Month 3", tagColor: "text-brand-600", bg: "bg-brand-50" },
                   ].map((m) => (
                     <div key={m.label} className={`rounded-xl p-3 ${m.bg}`}>
                       <div className="flex items-start justify-between gap-2">
@@ -382,7 +382,7 @@ export default function LandingPage() {
           <div className="mb-12 text-center">
             <span className="rounded-full bg-brand-500/20 px-3 py-1 text-xs font-semibold text-brand-300">Why EnterprateAI</span>
             <h2 className="mt-3 text-2xl font-extrabold sm:text-3xl">Your Business, Modelled as a Living System</h2>
-            <p className="mt-3 text-slate-400">Spreadsheets show snapshots. Accountants show history. EnterprateAI shows <strong className="text-white">what happens next.</strong></p>
+            <p className="mt-3 text-slate-400">Spreadsheets show snapshots. Accountants show history. EnterprateAI shows you <strong className="text-white">what happens next.</strong></p>
           </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {[
