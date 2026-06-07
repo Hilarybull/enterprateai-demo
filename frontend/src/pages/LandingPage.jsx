@@ -160,12 +160,12 @@ export default function LandingPage() {
   }, [exitDismissed, exitShown]);
 
   return (
-    <div className="min-h-screen bg-white font-sans text-slate-800 antialiased">
+    <div className="min-h-screen overflow-x-hidden bg-white font-sans text-slate-800 antialiased">
 
       {/* ── Exit intent popup ── */}
       {exitShown && !exitDismissed && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-sm">
-          <div className="relative w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-5 sm:p-8 shadow-2xl">
             <button
               type="button"
               onClick={() => { setExitDismissed(true); setExitShown(false); }}
@@ -241,7 +241,7 @@ export default function LandingPage() {
         <div className="pointer-events-none absolute -right-32 -top-32 h-[500px] w-[500px] rounded-full bg-brand-100/40 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-20 -left-20 h-[400px] w-[400px] rounded-full bg-accent-100/30 blur-3xl" />
         <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="grid gap-12 lg:grid-cols-2 lg:gap-16 lg:items-center">
+          <div className="grid gap-10 lg:grid-cols-2 lg:gap-16 lg:items-center">
             <div>
               <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700">
                 <span className="relative flex h-2 w-2">
@@ -273,13 +273,13 @@ export default function LandingPage() {
                 <button
                   type="button"
                   onClick={() => navigate("/login")}
-                  className="rounded-xl bg-brand-600 px-7 py-3.5 text-base font-semibold text-white shadow-lg shadow-brand-200 transition hover:bg-brand-700 active:scale-95"
+                  className="w-full rounded-xl bg-brand-600 px-7 py-3.5 text-base font-semibold text-white shadow-lg shadow-brand-200 transition hover:bg-brand-700 active:scale-95 sm:w-auto"
                 >
                   Start My Free 14-Day Trial →
                 </button>
                 <a
                   href="#how-it-works"
-                  className="flex items-center justify-center rounded-xl border border-slate-200 px-7 py-3.5 text-base font-semibold text-slate-700 transition hover:border-brand-200 hover:text-brand-700"
+                  className="flex w-full items-center justify-center rounded-xl border border-slate-200 px-7 py-3.5 text-base font-semibold text-slate-700 transition hover:border-brand-200 hover:text-brand-700 sm:w-auto"
                 >
                   See How It Works
                 </a>
@@ -292,8 +292,8 @@ export default function LandingPage() {
               </div>
             </div>
 
-            {/* Preview card */}
-            <div className="relative">
+            {/* Preview card — hidden on mobile to keep hero tight */}
+            <div className="relative hidden lg:block">
               <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-200/60">
                 <div className="flex items-center gap-1.5 border-b border-slate-100 bg-slate-50 px-4 py-3">
                   <span className="h-3 w-3 rounded-full bg-rose-400" />
@@ -330,7 +330,7 @@ export default function LandingPage() {
                   </div>
                 </div>
               </div>
-              <div className="absolute -bottom-3 -right-3 rounded-xl border border-emerald-200 bg-white px-3 py-2 shadow-lg text-xs font-semibold text-emerald-700">
+              <div className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-white px-3 py-2 shadow-sm text-xs font-semibold text-emerald-700">
                 ✓ Decision made with confidence
               </div>
             </div>
@@ -470,8 +470,8 @@ export default function LandingPage() {
           </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { emoji: "🔗", title: "Built as a System", body: "Models your business as interconnected components. Every decision ripples across revenue, costs, and cashflow — exactly like the real world." },
-              { emoji: "⚡", title: "Simulate Before You Spend", body: "Test any decision — hire, raise prices, cut costs — and see the complete financial outcome before committing a single pound." },
+              { emoji: "🔗", title: "Built as a System", body: "Models your business as interconnected components. Every decision ripples across revenue, costs, and cashflow exactly like the real world." },
+              { emoji: "⚡", title: "Simulate Before You Spend", body: "Test any decision: hire, raise prices, cut costs. See the complete financial outcome before committing a single pound." },
               { emoji: "📊", title: "See Ripple Effects", body: "Visualise how one decision cascades across your business at 6, 12, and 24 months with clear go / wait / adapt guidance." },
               { emoji: "🛡️", title: "Detect Risk Early", body: "Identifies structural vulnerabilities in your cashflow and operations weeks before they become real problems." },
             ].map((c) => (
@@ -539,7 +539,7 @@ export default function LandingPage() {
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Real Decision Outputs</h2>
             <p className="mt-3 text-slate-500">This is exactly what EnterprateAI produces for your business decisions.</p>
           </div>
-          <div className="grid gap-5 md:grid-cols-3">
+          <div className="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
             {EXAMPLES.map((ex) => (
               <div key={ex.tag} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <div className="border-b border-slate-100 bg-slate-50/80 px-5 py-4">
@@ -573,7 +573,7 @@ export default function LandingPage() {
       ══════════════════════════════════════════ */}
       <section className="bg-gradient-to-r from-brand-600 to-brand-700 py-14 text-white">
         <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
-          <h2 className="text-2xl font-extrabold sm:text-3xl">Ready to Simulate Your First Decision — Free?</h2>
+          <h2 className="text-2xl font-extrabold sm:text-3xl">Ready to Simulate Your First Decision, Free?</h2>
           <p className="mt-3 text-brand-100">14-day free trial. No credit card required. Set up in under 15 minutes.</p>
           <button
             type="button"
@@ -595,7 +595,7 @@ export default function LandingPage() {
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">What Users Say</span>
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Business Owners Who Stopped Guessing</h2>
           </div>
-          <div className="grid gap-6 md:grid-cols-3">
+          <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-3">
             {TESTIMONIALS.map((t, i) => (
               <div key={i} className={`rounded-2xl border p-6 ${i === 0 ? "border-brand-200 bg-brand-50" : "border-slate-100 bg-white"}`}>
                 <div className="mb-3 flex text-amber-400 text-sm">★★★★★</div>
@@ -629,7 +629,7 @@ export default function LandingPage() {
               </button>
             </div>
           </div>
-          <div className="grid gap-5 md:grid-cols-3">
+          <div className="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
             {PLANS.map((plan) => (
               <div key={plan.name} className={`relative overflow-hidden rounded-2xl border bg-white p-6 ${plan.highlight ? "border-brand-400 ring-2 ring-brand-200 shadow-xl shadow-brand-100" : "border-slate-200"}`}>
                 {plan.badge && (
@@ -673,7 +673,7 @@ export default function LandingPage() {
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">FAQ</span>
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Common Questions</h2>
           </div>
-          <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white px-6">
+          <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white px-4 sm:px-6">
             {FAQS.map((f) => <FAQItem key={f.q} q={f.q} a={f.a} />)}
           </div>
         </div>
