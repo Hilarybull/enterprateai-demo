@@ -13,7 +13,7 @@ const STEPS = [
   { n: "1", title: "Connect your business data", body: "Securely link your revenue, costs, headcount, and cashflow data. Works with Xero, QuickBooks, spreadsheets, or manual input — no technical setup required." },
   { n: "2", title: "EnterprateAI builds your live business model", body: "The system automatically maps relationships between every revenue stream, cost centre, and operational element — creating a dynamic model unique to your business." },
   { n: "3", title: "Run decision simulations", body: "Choose a scenario — hire a team member, raise prices by 15%, cut marketing spend — and see the full ripple effect across your business over 6, 12, and 24 months." },
-  { n: "4", title: "Act with certainty, not guesswork", body: "Get a clear, data-driven recommendation: go, wait, or adapt. With the exact numbers behind each conclusion so you commit with confidence." },
+  { n: "4", title: "Act with certainty, not guesswork", body: "Get a clear recommendation: go, wait, or adapt. With the exact numbers behind each conclusion so you commit with confidence." },
 ];
 
 const EXAMPLES = [
@@ -22,11 +22,11 @@ const EXAMPLES = [
     title: "Should you hire a new team member?",
     impacts: [
       { type: "neg", text: "Cash runway reduces: 8 → 5 months" },
-      { type: "neg", text: "Break-even shifts by +2 months" },
-      { type: "warn", text: "Risk increases under low-revenue scenarios" },
+      { type: "neg", text: "Break even shifts by +2 months" },
+      { type: "warn", text: "Risk increases under low revenue scenarios" },
       { type: "neg", text: "Monthly burn rate increases by £3,500" },
     ],
-    rec: "Delay hiring by 2 months or use a contractor to preserve cashflow stability. Safe to hire full-time from Month 3.",
+    rec: "Delay hiring by 2 months or use a contractor to preserve cashflow stability. Safe to hire from Month 3.",
   },
   {
     tag: "💰 Pricing Decision",
@@ -35,9 +35,9 @@ const EXAMPLES = [
       { type: "pos", text: "Revenue increases by +12%" },
       { type: "pos", text: "Profit margin improves by +18%" },
       { type: "pos", text: "Remains profitable with up to 8% churn" },
-      { type: "pos", text: "Break-even improves by 1.5 months" },
+      { type: "pos", text: "Break even improves by 1.5 months" },
     ],
-    rec: "Increase pricing by 15% — within safe threshold. Revenue remains positive even under moderate churn. Implement with a 30-day notice period.",
+    rec: "Increase pricing by 15% — within safe threshold. Revenue remains positive even under moderate churn. Implement with a 30 day notice period.",
   },
   {
     tag: "✂️ Cost Reduction",
@@ -81,7 +81,7 @@ const PLANS = [
     name: "Starter",
     monthly: 24,
     annual: 20,
-    desc: "Perfect for solo founders and early-stage businesses.",
+    desc: "Perfect for solo founders and early stage businesses.",
     features: ["1 workspace", "Up to 5 decision simulations/month", "Business blueprint generator", "Basic cashflow forecasting", "Email support"],
     highlight: false,
   },
@@ -106,9 +106,9 @@ const PLANS = [
 
 const FAQS = [
   { q: "Is my business data secure?", a: "Yes. All data is encrypted in transit (TLS 1.3) and at rest (AES-256). We are ICO Registered, GDPR compliant, and never share or sell your data. You can delete your data at any time." },
-  { q: "Do I need to connect my accounts?", a: "No. You can enter your data manually, upload a spreadsheet, or optionally connect Xero or QuickBooks for automatic updates. Manual entry works perfectly for most early-stage businesses." },
+  { q: "Do I need to connect my accounts?", a: "No. You can enter your data manually, upload a spreadsheet, or optionally connect Xero or QuickBooks for automatic updates. Manual entry works perfectly for most early stage businesses." },
   { q: "How is this different from my accountant's spreadsheet?", a: "Your accountant shows you what already happened. EnterprateAI models your business as a live system and simulates what will happen next — across all your interconnected costs, revenues, and decisions — before you commit." },
-  { q: "What if my business is very small or early-stage?", a: "EnterprateAI is specifically designed for UK SMEs, including early-stage businesses with as few as 2–3 months of trading data. The simpler your business, the faster the setup." },
+  { q: "What if my business is very small or early-stage?", a: "EnterprateAI is specifically designed for UK SMEs, including early stage businesses with as few as 2–3 months of trading data. The simpler your business, the faster the setup." },
   { q: "What happens after my 14-day free trial?", a: "At the end of your trial you choose a plan. There is no automatic charge — you will be asked explicitly to select a plan and enter payment details. You can also continue on a free read-only tier indefinitely." },
   { q: "Is EnterprateAI GDPR compliant?", a: "Yes, fully. We are ICO Registered (UK data protection authority), process all data within UK/EU jurisdictions, and provide a full Data Processing Agreement (DPA) on request for business customers." },
   { q: "How quickly can I run my first simulation?", a: "Most users run their first decision simulation within 15 minutes of signing up. Our onboarding flow guides you through connecting your data and building your first business model step by step." },
@@ -248,7 +248,7 @@ export default function LandingPage() {
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-75" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-500" />
                 </span>
-                UK-Built AI · SEIS Approved · GDPR Compliant
+                UK Built · SEIS Approved · GDPR Compliant
               </div>
 
               <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-4xl xl:text-5xl">
@@ -344,7 +344,7 @@ export default function LandingPage() {
       <section className="border-y border-slate-100 bg-slate-50/60 py-4">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-xs font-medium text-slate-500">
-            {["🇬🇧 UK-Built Platform", "🏅 SEIS Approved", "🛡️ ICO Registered", "🔒 GDPR Compliant", "⚖️ Registered in England & Wales", "🏢 Built for UK SMEs"].map((t) => (
+            {["🇬🇧 UK Built", "🏅 SEIS Approved", "🛡️ ICO Registered", "🔒 GDPR Compliant", "⚖️ Registered in England & Wales", "🏢 Built for UK SMEs"].map((t) => (
               <span key={t}>{t}</span>
             ))}
           </div>
