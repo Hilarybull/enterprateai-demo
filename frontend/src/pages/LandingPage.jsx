@@ -193,7 +193,7 @@ export default function LandingPage() {
             <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" />
           </a>
           <ul className="hidden items-center gap-6 md:flex">
-            {[["#how-it-works", "How It Works"], ["#examples", "See It Work"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
+            {[["#modules", "Features"], ["#how-it-works", "How It Works"], ["#examples", "See It Work"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
               <li key={href}>
                 <a href={href} className="text-sm font-medium text-slate-600 transition hover:text-brand-600">{label}</a>
               </li>
@@ -223,7 +223,7 @@ export default function LandingPage() {
         {mobileMenuOpen && (
           <div className="border-t border-slate-100 bg-white px-4 pb-4 md:hidden">
             <ul className="mt-3 flex flex-col gap-3">
-              {[["#how-it-works", "How It Works"], ["#examples", "See It Work"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
+              {[["#modules", "Features"], ["#how-it-works", "How It Works"], ["#examples", "See It Work"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
                 <li key={href}>
                   <a href={href} onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">{label}</a>
                 </li>
@@ -370,6 +370,90 @@ export default function LandingPage() {
           </div>
           <div className="mt-10 text-center">
             <p className="text-lg font-semibold text-slate-800">There is now a better way. ↓</p>
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════
+          MODULES
+      ══════════════════════════════════════════ */}
+      <section id="modules" className="bg-slate-50 py-16 sm:py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="mb-12 text-center">
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">The Platform</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">One Platform. Every Tool Your Business Needs.</h2>
+            <p className="mt-3 text-slate-500">From validating your idea to running live decision simulations — everything in one place.</p>
+          </div>
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              {
+                icon: "💡",
+                name: "Idea Validation",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
+                desc: "Test your business idea before you invest a penny. Get a market viability score, competitive landscape analysis, target customer profile, and a clear go or no-go recommendation — based on real data.",
+              },
+              {
+                icon: "⚡",
+                name: "Decision Simulation",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
+                desc: "Simulate any major business decision — hiring, pricing, cutting costs — and see the exact impact on cash, revenue, and risk across 6, 12, and 24 months before you commit.",
+              },
+              {
+                icon: "📋",
+                name: "Business Blueprints",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
+                desc: "Generate professional business plans, pitch decks, executive summaries, and strategy documents in minutes. Tailored to your business data and ready to share with investors or partners.",
+              },
+              {
+                icon: "💷",
+                name: "Financials",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
+                desc: "Track invoices, expenses, contracts, and quotations. Get real-time financial intelligence including cashflow forecasting, revenue trends, and profit margin analysis — all in one dashboard.",
+              },
+              {
+                icon: "📦",
+                name: "Catalogue",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
+                desc: "Manage your full product and service catalogue, customer database, and vendor relationships. Keep everything organised and linked to your financial and operational data.",
+              },
+              {
+                icon: "⚖️",
+                name: "Business Registration",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
+                desc: "Navigate UK company registration, legal structure decisions, and compliance requirements with guided step-by-step support. Know exactly what you need to do and when.",
+              },
+              {
+                icon: "🏪",
+                name: "Marketplace",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
+                desc: "Discover and connect with other UK businesses. Find suppliers, partners, and customers within the EnterprateAI ecosystem to grow your network and opportunities.",
+              },
+            ].map((m) => (
+              <div key={m.name} className="rounded-2xl border border-slate-200 bg-white p-6 transition hover:border-brand-200 hover:shadow-md">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-3xl">{m.icon}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${m.tagColor}`}>{m.tag}</span>
+                </div>
+                <h3 className="mt-3 font-bold text-slate-900">{m.name}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-slate-500">{m.desc}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-10 text-center">
+            <button
+              type="button"
+              onClick={() => navigate("/login")}
+              className="rounded-xl bg-brand-600 px-7 py-3 text-sm font-semibold text-white shadow transition hover:bg-brand-700"
+            >
+              Access All Modules Free for 14 Days →
+            </button>
           </div>
         </div>
       </section>
