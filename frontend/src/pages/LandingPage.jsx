@@ -1,104 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import logoUrl from "../enterprate-logo.png";
-
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
-const PHASE1_TOTAL = 50;
-const PHASE1_SEED = 23;
-
-async function postWaitlist(email, source) {
-  const res = await fetch(`${API}/support/waitlist`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, source }),
-  });
-  if (!res.ok) {
-    const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || "Something went wrong. Please try again.");
-  }
-  return res.json();
-}
-
-function EmailForm({ id, source, btnLabel = "Get Free Early Access →", compact = false, onSuccess }) {
-  const [email, setEmail] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [done, setDone] = useState(false);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-    try {
-      await postWaitlist(email.trim(), source);
-      setDone(true);
-      onSuccess?.();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  if (done) {
-    return (
-      <div className="flex flex-col items-center gap-2 rounded-2xl bg-emerald-50 border border-emerald-200 px-6 py-5 text-center">
-        <span className="text-3xl">🎉</span>
-        <p className="font-semibold text-emerald-800">You're in! Check your inbox.</p>
-        <p className="text-sm text-emerald-600">We'll personally reach out within 48 hours with your access details.</p>
-      </div>
-    );
-  }
-
-  return (
-    <form id={id} onSubmit={handleSubmit} className="w-full">
-      <div className={`flex ${compact ? "flex-col sm:flex-row" : "flex-col sm:flex-row"} gap-3`}>
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Enter your work email address"
-          required
-          autoComplete="email"
-          className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition"
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="shrink-0 rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-200 transition hover:bg-brand-700 active:scale-95 disabled:opacity-60 whitespace-nowrap"
-        >
-          {loading ? "Joining…" : btnLabel}
-        </button>
-      </div>
-      {error && <p className="mt-2 text-xs text-rose-500">{error}</p>}
-      <p className="mt-2 flex flex-wrap gap-3 text-xs text-slate-400">
-        <span>✅ 14-day free trial</span>
-        <span>✅ No credit card required</span>
-        <span>✅ Cancel anytime</span>
-      </p>
-    </form>
-  );
-}
-
-function ScarcityBar({ count }) {
-  const taken = PHASE1_SEED + count;
-  const left = Math.max(0, PHASE1_TOTAL - taken);
-  const pct = Math.min(100, Math.round((taken / PHASE1_TOTAL) * 100));
-  return (
-    <div className="mt-5 w-full max-w-md">
-      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-brand-500 to-accent-500 transition-all duration-700"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <p className="mt-1.5 text-xs text-slate-500">
-        <strong className="text-slate-700">{left}</strong> of {PHASE1_TOTAL} Phase-1 spots remaining —{" "}
-        <span className="font-medium text-rose-500">closes when full</span>
-      </p>
-    </div>
-  );
-}
 
 const PAIN_ITEMS = [
   { icon: "😰", text: '"I want to hire but I genuinely don\'t know if I can afford it six months from now."' },
@@ -181,7 +83,6 @@ const PLANS = [
     annual: 20,
     desc: "Perfect for solo founders and early-stage businesses.",
     features: ["1 workspace", "Up to 5 decision simulations/month", "Business blueprint generator", "Basic cashflow forecasting", "Email support"],
-    cta: "Start Free Trial",
     highlight: false,
   },
   {
@@ -190,7 +91,6 @@ const PLANS = [
     annual: 40,
     desc: "For growing businesses making multiple decisions monthly.",
     features: ["3 workspaces", "Unlimited simulations", "Full scenario intelligence", "Team collaboration (up to 5)", "Advanced risk detection", "Priority support"],
-    cta: "Start Free Trial",
     highlight: true,
     badge: "Most Popular",
   },
@@ -200,7 +100,6 @@ const PLANS = [
     annual: 83,
     desc: "For established businesses with complex decision needs.",
     features: ["Unlimited workspaces", "Unlimited simulations", "Multi-entity modelling", "Unlimited team members", "API access", "Dedicated onboarding"],
-    cta: "Start Free Trial",
     highlight: false,
   },
 ];
@@ -209,7 +108,7 @@ const FAQS = [
   { q: "Is my business data secure?", a: "Yes. All data is encrypted in transit (TLS 1.3) and at rest (AES-256). We are ICO Registered, GDPR compliant, and never share or sell your data. You can delete your data at any time." },
   { q: "Do I need to connect my accounts?", a: "No. You can enter your data manually, upload a spreadsheet, or optionally connect Xero or QuickBooks for automatic updates. Manual entry works perfectly for most early-stage businesses." },
   { q: "How is this different from my accountant's spreadsheet?", a: "Your accountant shows you what already happened. EnterprateAI models your business as a live system and simulates what will happen next — across all your interconnected costs, revenues, and decisions — before you commit." },
-  { q: "What if my business is very small or early-stage?", a: "EnterprateAI is specifically designed for UK SMEs, including early-stage businesses with as few as 2-3 months of trading data. The simpler your business, the faster the setup." },
+  { q: "What if my business is very small or early-stage?", a: "EnterprateAI is specifically designed for UK SMEs, including early-stage businesses with as few as 2–3 months of trading data. The simpler your business, the faster the setup." },
   { q: "What happens after my 14-day free trial?", a: "At the end of your trial you choose a plan. There is no automatic charge — you will be asked explicitly to select a plan and enter payment details. You can also continue on a free read-only tier indefinitely." },
   { q: "Is EnterprateAI GDPR compliant?", a: "Yes, fully. We are ICO Registered (UK data protection authority), process all data within UK/EU jurisdictions, and provide a full Data Processing Agreement (DPA) on request for business customers." },
   { q: "How quickly can I run my first simulation?", a: "Most users run their first decision simulation within 15 minutes of signing up. Our onboarding flow guides you through connecting your data and building your first business model step by step." },
@@ -226,7 +125,7 @@ function FAQItem({ q, a }) {
         className="flex w-full items-start justify-between gap-4 py-4 text-left"
       >
         <span className="text-sm font-semibold text-slate-800">{q}</span>
-        <span className={`mt-0.5 shrink-0 text-brand-500 transition-transform ${open ? "rotate-45" : ""}`}>✕</span>
+        <span className={`mt-0.5 shrink-0 text-brand-500 transition-transform duration-200 ${open ? "rotate-45" : ""}`}>✕</span>
       </button>
       {open && <p className="pb-4 text-sm leading-relaxed text-slate-500">{a}</p>}
     </div>
@@ -234,20 +133,17 @@ function FAQItem({ q, a }) {
 }
 
 export default function LandingPage() {
-  const [waitlistCount, setWaitlistCount] = useState(0);
   const [annualBilling, setAnnualBilling] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [bannerDismissed, setBannerDismissed] = useState(false);
   const [exitShown, setExitShown] = useState(false);
   const [exitDismissed, setExitDismissed] = useState(false);
-  const [exitDone, setExitDone] = useState(false);
   const exitTimerRef = useRef(null);
+  const navigate = useNavigate();
 
+  // Unlock scroll — body has overflow-hidden globally for the app shell
   useEffect(() => {
-    fetch(`${API}/support/waitlist-count`)
-      .then((r) => r.json())
-      .then((d) => setWaitlistCount(d.count || 0))
-      .catch(() => {});
+    document.body.style.overflow = "auto";
+    return () => { document.body.style.overflow = ""; };
   }, []);
 
   useEffect(() => {
@@ -263,47 +159,30 @@ export default function LandingPage() {
     };
   }, [exitDismissed, exitShown]);
 
-  const totalOnWaitlist = PHASE1_SEED + waitlistCount;
-  const spotsLeft = Math.max(0, PHASE1_TOTAL - totalOnWaitlist);
-
   return (
     <div className="min-h-screen bg-white font-sans text-slate-800 antialiased">
 
       {/* ── Exit intent popup ── */}
       {exitShown && !exitDismissed && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl">
             <button
               type="button"
               onClick={() => { setExitDismissed(true); setExitShown(false); }}
               className="absolute right-4 top-4 text-slate-400 hover:text-slate-600"
             >✕</button>
-            <p className="text-xs font-semibold uppercase tracking-widest text-brand-600">Wait — before you go</p>
-            <h3 className="mt-2 text-xl font-bold text-slate-900">Test one decision for free. Right now.</h3>
-            <p className="mt-2 text-sm text-slate-500">No credit card. No commitment. See exactly what your next big decision will do to your business in minutes.</p>
-            <div className="mt-5">
-              {exitDone ? (
-                <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-center">
-                  <p className="font-semibold text-emerald-700">🎉 You're in! Check your inbox.</p>
-                </div>
-              ) : (
-                <EmailForm id="exitForm" source="exit-intent" btnLabel="Secure My Spot →" onSuccess={() => setExitDone(true)} />
-              )}
-            </div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-brand-600">Before you go</p>
+            <h3 className="mt-2 text-xl font-bold text-slate-900">Try it free for 14 days.</h3>
+            <p className="mt-2 text-sm text-slate-500">No credit card. No commitment. Run your first decision simulation and see exactly what it will do to your business.</p>
+            <button
+              type="button"
+              onClick={() => navigate("/login")}
+              className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition"
+            >
+              Start My Free Trial →
+            </button>
+            <p className="mt-3 text-center text-xs text-slate-400">14 days free · No card required · Cancel anytime</p>
           </div>
-        </div>
-      )}
-
-      {/* ── Urgency banner ── */}
-      {!bannerDismissed && (
-        <div className="relative bg-gradient-to-r from-brand-600 to-accent-600 px-4 py-2.5 text-center text-xs font-medium text-white">
-          🔥 Phase-1 Early Access: Only <strong>{spotsLeft}</strong> founding-member spots remaining.
-          <button
-            type="button"
-            onClick={() => setBannerDismissed(true)}
-            className="absolute right-4 top-1/2 -translate-y-1/2 opacity-70 hover:opacity-100"
-            aria-label="Dismiss"
-          >✕</button>
         </div>
       )}
 
@@ -322,9 +201,13 @@ export default function LandingPage() {
           </ul>
           <div className="flex items-center gap-2">
             <Link to="/login" className="hidden text-sm font-medium text-slate-600 hover:text-slate-900 sm:block">Sign in</Link>
-            <a href="#hero-form" className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">
-              Get Early Access
-            </a>
+            <button
+              type="button"
+              onClick={() => navigate("/login")}
+              className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700"
+            >
+              Start Free Trial
+            </button>
             <button
               type="button"
               onClick={() => setMobileMenuOpen((v) => !v)}
@@ -382,26 +265,30 @@ export default function LandingPage() {
               </p>
 
               <p className="mt-3 text-sm font-medium text-slate-500">
-                📊 Most tools show what <em>already happened.</em>{" "}
+                Most tools show what <em>already happened.</em>{" "}
                 EnterprateAI shows what <em>will happen next.</em>
               </p>
 
-              <div id="hero-form" className="mt-7 max-w-md">
-                <EmailForm id="heroForm" source="hero" onSuccess={() => setWaitlistCount((n) => n + 1)} />
-                <ScarcityBar count={waitlistCount} />
+              <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => navigate("/login")}
+                  className="rounded-xl bg-brand-600 px-7 py-3.5 text-base font-semibold text-white shadow-lg shadow-brand-200 transition hover:bg-brand-700 active:scale-95"
+                >
+                  Start My Free 14-Day Trial →
+                </button>
+                <a
+                  href="#how-it-works"
+                  className="flex items-center justify-center rounded-xl border border-slate-200 px-7 py-3.5 text-base font-semibold text-slate-700 transition hover:border-brand-200 hover:text-brand-700"
+                >
+                  See How It Works
+                </a>
               </div>
 
-              <div className="mt-6 flex items-center gap-3">
-                <div className="flex -space-x-2">
-                  {["bg-brand-500", "bg-accent-500", "bg-emerald-500", "bg-amber-500", "bg-sky-500"].map((c, i) => (
-                    <div key={i} className={`flex h-8 w-8 items-center justify-center rounded-full border-2 border-white text-xs font-bold text-white ${c}`}>
-                      {["S", "M", "R", "J", "A"][i]}
-                    </div>
-                  ))}
-                </div>
-                <p className="text-xs text-slate-500">
-                  <strong className="text-slate-700">{totalOnWaitlist}+</strong> UK business owners already on the waitlist
-                </p>
+              <div className="mt-5 flex flex-wrap gap-4 text-sm text-slate-500">
+                <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> 14-day free trial</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> No credit card required</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> Set up in under 15 minutes</span>
               </div>
             </div>
 
@@ -429,10 +316,9 @@ export default function LandingPage() {
                     </div>
                   ))}
                   <div className="rounded-xl border border-brand-100 bg-brand-50 p-3">
-                    <p className="text-xs font-semibold text-brand-700">⚡ AI Recommendation</p>
+                    <p className="text-xs font-semibold text-brand-700">AI Recommendation</p>
                     <p className="mt-1 text-xs text-slate-600">Delay full-time hire by 2 months or use contractor to preserve cashflow. Safe to hire from Month 3 under all revenue scenarios.</p>
                   </div>
-                  {/* Mini chart */}
                   <svg viewBox="0 0 280 60" className="w-full" aria-hidden="true">
                     <polyline points="0,55 47,45 93,32 140,22 187,14 233,9 280,5" fill="none" stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                     <polyline points="0,55 47,53 93,50 140,48 187,46 233,44 280,42" fill="none" stroke="#f43f8f" strokeWidth="2" strokeDasharray="4,3" strokeLinecap="round" strokeLinejoin="round" opacity="0.5" />
@@ -515,13 +401,13 @@ export default function LandingPage() {
 
           <div className="mt-10 grid gap-4 sm:grid-cols-2">
             <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-6">
-              <h4 className="mb-4 font-semibold text-rose-300">❌ Without EnterprateAI</h4>
+              <h4 className="mb-4 font-semibold text-rose-300">Before EnterprateAI</h4>
               <ul className="space-y-2 text-sm text-slate-300">
                 {["Making decisions on gut feel and last month's numbers", "Finding out the impact after it's too late to change course", "Guessing at cashflow and hoping for the best", "Reacting to problems after they've already cost you money"].map((t) => <li key={t}>· {t}</li>)}
               </ul>
             </div>
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-6">
-              <h4 className="mb-4 font-semibold text-emerald-300">✅ With EnterprateAI</h4>
+              <h4 className="mb-4 font-semibold text-emerald-300">With EnterprateAI</h4>
               <ul className="space-y-2 text-sm text-slate-300">
                 {["Simulate any decision and see the exact financial outcome first", "Know the impact on cash, revenue, and risk before committing", "Precise cashflow forecasting based on your live business model", "Spot vulnerabilities weeks early and act before they escalate"].map((t) => <li key={t}>· {t}</li>)}
               </ul>
@@ -544,7 +430,7 @@ export default function LandingPage() {
             <div className="absolute left-5 top-5 bottom-5 w-0.5 bg-slate-100" aria-hidden="true" />
             <div className="space-y-8">
               {STEPS.map((s) => (
-                <div key={s.n} className="flex gap-5 pl-0">
+                <div key={s.n} className="flex gap-5">
                   <div className="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white shadow-md shadow-brand-200">
                     {s.n}
                   </div>
@@ -566,7 +452,7 @@ export default function LandingPage() {
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-12 text-center">
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">See It In Action</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Real Decision Outputs — Before You Even Sign Up</h2>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Real Decision Outputs</h2>
             <p className="mt-3 text-slate-500">This is exactly what EnterprateAI produces for your business decisions.</p>
           </div>
           <div className="grid gap-5 md:grid-cols-3">
@@ -587,7 +473,7 @@ export default function LandingPage() {
                     ))}
                   </ul>
                   <div className="rounded-xl border border-brand-100 bg-brand-50 p-3">
-                    <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-brand-600">⚡ AI Recommendation</p>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-brand-600">Recommendation</p>
                     <p className="text-xs leading-relaxed text-slate-600">{ex.rec}</p>
                   </div>
                 </div>
@@ -604,11 +490,15 @@ export default function LandingPage() {
       <section className="bg-gradient-to-r from-brand-600 to-brand-700 py-14 text-white">
         <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
           <h2 className="text-2xl font-extrabold sm:text-3xl">Ready to Simulate Your First Decision — Free?</h2>
-          <p className="mt-3 text-brand-100">Join <strong>{totalOnWaitlist}+</strong> UK business owners already on the waitlist. 14-day free trial. No card required.</p>
-          <div className="mt-7 mx-auto max-w-md">
-            <EmailForm id="midForm" source="mid-page" btnLabel="Secure My Spot →" onSuccess={() => setWaitlistCount((n) => n + 1)} />
-          </div>
-          <p className="mt-3 text-xs text-brand-200">🔒 No spam · No commitment · {spotsLeft} founding spots remaining</p>
+          <p className="mt-3 text-brand-100">14-day free trial. No credit card required. Set up in under 15 minutes.</p>
+          <button
+            type="button"
+            onClick={() => navigate("/login")}
+            className="mt-7 rounded-xl bg-white px-8 py-3.5 text-sm font-bold text-brand-700 shadow transition hover:bg-brand-50 active:scale-95"
+          >
+            Start My Free Trial →
+          </button>
+          <p className="mt-3 text-xs text-brand-200">No spam · No commitment · Cancel anytime</p>
         </div>
       </section>
 
@@ -618,7 +508,7 @@ export default function LandingPage() {
       <section id="testimonials" className="py-16 sm:py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-12 text-center">
-            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Early Access Users</span>
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">What Users Say</span>
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Business Owners Who Stopped Guessing</h2>
           </div>
           <div className="grid gap-6 md:grid-cols-3">
@@ -647,7 +537,7 @@ export default function LandingPage() {
           <div className="mb-10 text-center">
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Pricing</span>
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Simple, Transparent Pricing</h2>
-            <p className="mt-3 text-slate-500">All plans include a 14-day free trial. No credit card required to start.</p>
+            <p className="mt-3 text-slate-500">Every plan includes a 14-day free trial. No credit card required to start.</p>
             <div className="mt-5 inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
               <button type="button" onClick={() => setAnnualBilling(false)} className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${!annualBilling ? "bg-brand-600 text-white" : "text-slate-500 hover:text-slate-700"}`}>Monthly</button>
               <button type="button" onClick={() => setAnnualBilling(true)} className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${annualBilling ? "bg-brand-600 text-white" : "text-slate-500 hover:text-slate-700"}`}>
@@ -676,13 +566,17 @@ export default function LandingPage() {
                     </li>
                   ))}
                 </ul>
-                <a href="#hero-form" className={`mt-6 block rounded-xl px-4 py-3 text-center text-sm font-semibold transition ${plan.highlight ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"}`}>
-                  {plan.cta}
-                </a>
+                <button
+                  type="button"
+                  onClick={() => navigate("/login")}
+                  className={`mt-6 w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.highlight ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"}`}
+                >
+                  Start Free Trial
+                </button>
               </div>
             ))}
           </div>
-          <p className="mt-6 text-center text-xs text-slate-400">All prices exclude VAT. Early-access members lock in founding-member pricing permanently.</p>
+          <p className="mt-6 text-center text-xs text-slate-400">All prices exclude VAT. Cancel anytime — no lock-in contracts, no cancellation fees.</p>
         </div>
       </section>
 
@@ -707,15 +601,19 @@ export default function LandingPage() {
       <section className="bg-gradient-to-br from-slate-900 to-brand-900 py-16 text-white sm:py-20">
         <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
           <h2 className="text-2xl font-extrabold sm:text-3xl">Stop Guessing. Start Knowing.</h2>
-          <p className="mt-4 text-slate-300">Join <strong className="text-white">{totalOnWaitlist}+</strong> UK business owners who are taking back control of their decisions. <strong>{spotsLeft}</strong> founding spots remaining.</p>
-          <div className="mt-8 mx-auto max-w-md">
-            <EmailForm id="bottomForm" source="bottom-cta" btnLabel="Get My Free Early Access →" onSuccess={() => setWaitlistCount((n) => n + 1)} />
-          </div>
+          <p className="mt-4 text-slate-300">Try EnterprateAI free for 14 days. No credit card. No commitment. Run your first simulation in minutes.</p>
+          <button
+            type="button"
+            onClick={() => navigate("/login")}
+            className="mt-8 rounded-xl bg-brand-500 px-10 py-4 text-base font-bold text-white shadow-xl shadow-brand-900/50 transition hover:bg-brand-400 active:scale-95"
+          >
+            Start My Free 14-Day Trial →
+          </button>
           <div className="mt-6 flex flex-wrap justify-center gap-4 text-xs text-slate-400">
-            <span>✅ 14-day free trial</span>
-            <span>✅ No credit card required</span>
-            <span>✅ Cancel anytime</span>
-            <span>✅ GDPR compliant</span>
+            <span>✓ 14-day free trial</span>
+            <span>✓ No credit card required</span>
+            <span>✓ Cancel anytime</span>
+            <span>✓ GDPR compliant</span>
           </div>
         </div>
       </section>
@@ -726,9 +624,7 @@ export default function LandingPage() {
       <footer className="border-t border-slate-100 bg-white py-10">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="flex flex-col items-center justify-between gap-6 sm:flex-row">
-            <div className="flex items-center gap-2">
-              <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto" />
-            </div>
+            <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto" />
             <div className="flex flex-wrap justify-center gap-5 text-xs text-slate-400">
               <Link to="/login" className="hover:text-slate-600">Sign In</Link>
               <a href="mailto:support@enterprate.ai" className="hover:text-slate-600">support@enterprate.ai</a>
@@ -736,7 +632,7 @@ export default function LandingPage() {
             </div>
           </div>
           <p className="mt-6 text-center text-[11px] text-slate-300">
-            © {new Date().getFullYear()} Enterprate Limited. All rights reserved. EnterprateAI is a trading name of Enterprate Limited.
+            © {new Date().getFullYear()} Enterprate Limited. All rights reserved.
             ICO Registered · GDPR Compliant · SEIS Approved
           </p>
         </div>
