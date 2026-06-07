@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { useAuthStore } from "./store/auth";
 import { useWorkspaceStore } from "./store/workspace";
 import Layout from "./components/Layout";
+import LandingPage from "./pages/LandingPage";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ValidationWizardPage from "./pages/ValidationWizardPage";
@@ -32,6 +33,14 @@ function Protected({ children }) {
   return <>{children}</>;
 }
 
+function PublicRoot() {
+  const token = useAuthStore((s) => s.token);
+  const hydrated = useAuthStore((s) => s.hydrated);
+  if (!hydrated) return null;
+  if (token) return <Navigate to="/dashboard" replace />;
+  return <LandingPage />;
+}
+
 export default function App() {
   const hydrate = useAuthStore((s) => s.hydrate);
   const authHydrated = useAuthStore((s) => s.hydrated);
@@ -47,6 +56,7 @@ export default function App() {
 
   return (
     <Routes>
+      <Route path="/" element={<PublicRoot />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -62,7 +72,6 @@ export default function App() {
           </Protected>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="validation" element={<ValidationWizardPage />} />
         <Route path="results" element={<ResultsPage />} />
