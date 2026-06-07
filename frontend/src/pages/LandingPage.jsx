@@ -403,13 +403,13 @@ export default function LandingPage() {
             <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-6">
               <h4 className="mb-4 font-semibold text-rose-300">Before EnterprateAI</h4>
               <ul className="space-y-2 text-sm text-slate-300">
-                {["Making decisions on gut feel and last month's numbers", "Finding out the impact after it's too late to change course", "Guessing at cashflow and hoping for the best", "Reacting to problems after they've already cost you money"].map((t) => <li key={t}>· {t}</li>)}
+                {["Making decisions on gut feel and last month's numbers", "Finding out the impact after it's too late to change course", "Guessing at cashflow and hoping for the best", "Reacting to problems after they've already cost you money"].map((t) => <li key={t} className="flex items-start gap-2"><span className="shrink-0 mt-0.5 text-rose-400">✕</span>{t}</li>)}
               </ul>
             </div>
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-6">
               <h4 className="mb-4 font-semibold text-emerald-300">With EnterprateAI</h4>
               <ul className="space-y-2 text-sm text-slate-300">
-                {["Simulate any decision and see the exact financial outcome first", "Know the impact on cash, revenue, and risk before committing", "Precise cashflow forecasting based on your live business model", "Spot vulnerabilities weeks early and act before they escalate"].map((t) => <li key={t}>· {t}</li>)}
+                {["Simulate any decision and see the exact financial outcome first", "Know the impact on cash, revenue, and risk before committing", "Precise cashflow forecasting based on your live business model", "Spot vulnerabilities weeks early and act before they escalate"].map((t) => <li key={t} className="flex items-start gap-2"><span className="shrink-0 mt-0.5 text-emerald-400">✓</span>{t}</li>)}
               </ul>
             </div>
           </div>
