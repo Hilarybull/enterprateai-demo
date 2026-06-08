@@ -57,7 +57,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<PublicRoot />} />
-      <Route path="/landing" element={<LandingPage />} />
+      <Route path="/home" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
