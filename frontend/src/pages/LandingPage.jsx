@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import logoUrl from "../enterprate-logo.png";
 
@@ -135,6 +135,9 @@ function FAQItem({ q, a }) {
 export default function LandingPage() {
   const [annualBilling, setAnnualBilling] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [exitShown, setExitShown] = useState(false);
+  const [exitDismissed, setExitDismissed] = useState(false);
+  const exitTimerRef = useRef(null);
   const navigate = useNavigate();
 
   // Unlock scroll — body has overflow-hidden globally for the app shell
@@ -143,8 +146,45 @@ export default function LandingPage() {
     return () => { document.body.style.overflow = ""; };
   }, []);
 
+  useEffect(() => {
+    function onMouseLeave(e) {
+      if (e.clientY <= 10 && !exitDismissed && !exitShown) {
+        exitTimerRef.current = setTimeout(() => setExitShown(true), 400);
+      }
+    }
+    document.addEventListener("mouseleave", onMouseLeave);
+    return () => {
+      document.removeEventListener("mouseleave", onMouseLeave);
+      clearTimeout(exitTimerRef.current);
+    };
+  }, [exitDismissed, exitShown]);
+
   return (
     <div className="min-h-screen overflow-x-hidden bg-white font-sans text-slate-800 antialiased">
+
+      {/* ── Exit intent popup ── */}
+      {exitShown && !exitDismissed && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-sm">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-5 sm:p-8 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => { setExitDismissed(true); setExitShown(false); }}
+              className="absolute right-4 top-4 text-slate-400 hover:text-slate-600"
+            >✕</button>
+            <p className="text-xs font-semibold uppercase tracking-widest text-brand-600">Before you go</p>
+            <h3 className="mt-2 text-xl font-bold text-slate-900">Try it free for 14 days.</h3>
+            <p className="mt-2 text-sm text-slate-500">No credit card. No commitment. Run your first decision simulation and see exactly what it will do to your business.</p>
+            <button
+              type="button"
+              onClick={() => navigate("/login")}
+              className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition"
+            >
+              Start My Free Trial →
+            </button>
+            <p className="mt-3 text-center text-xs text-slate-400">14 days free · No card required · Cancel anytime</p>
+          </div>
+        </div>
+      )}
 
       {/* ── Sticky navbar ── */}
       <nav className="sticky top-0 z-50 border-b border-slate-100 bg-white/95 backdrop-blur">
