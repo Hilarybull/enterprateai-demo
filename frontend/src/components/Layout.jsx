@@ -12,10 +12,10 @@ import { planHasModuleAccess, planLabel } from "../lib/plans";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid", moduleKey: "dashboard" },
-  // { to: "/validation", label: "Idea Validation", subtitle: "Validate business ideas", icon: "bulb", moduleKey: "validation", comingSoon: true },
+  { to: "/validation", label: "Idea Validation", subtitle: "Validate business ideas", icon: "bulb", moduleKey: "validation" },
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
-  // { to: "/simulation", label: "Simulation", subtitle: "What-if scenarios", icon: "beaker", moduleKey: "simulation", comingSoon: true },
+  { to: "/simulation", label: "Simulation", subtitle: "What-if scenarios", icon: "beaker", moduleKey: "simulation" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
@@ -166,6 +166,16 @@ function Icon({ name, className = "h-4 w-4" }) {
       <svg {...base}>
         <rect x="3" y="11" width="18" height="11" rx="2" />
         <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </svg>
+    );
+  if (name === "report")
+    return (
+      <svg {...base}>
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <path d="M14 2v6h6" />
+        <path d="M16 13H8" />
+        <path d="M16 17H8" />
+        <path d="M10 9H8" />
       </svg>
     );
 
@@ -567,6 +577,7 @@ export default function Layout() {
     if (path.startsWith("/catalogue")) return "catalogue";
     if (path.startsWith("/financials")) return "financials";
     if (path.startsWith("/registration")) return "registration";
+    if (path.startsWith("/reports")) return "reports";
     return null;
   }, [location.pathname]);
 
@@ -588,7 +599,9 @@ export default function Layout() {
       <div className="mx-1 flex items-start justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto object-contain sm:h-8" />
+            <a href="/" className="cursor-pointer">
+              <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto object-contain sm:h-8" />
+            </a>
           </div>
         </div>
         <button className="md:hidden rounded-xl p-2 text-slate-600 hover:bg-slate-100" onClick={() => setMobileOpen(false)}>
@@ -791,10 +804,9 @@ export default function Layout() {
                     setFeedbackSent(false);
                     setFeedbackError(null);
                   }}
-                  className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-                  aria-label="Send feedback"
+                  className="relative flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-[12px] font-medium text-slate-600 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
-                  <Icon name="feedback" className="h-4 w-4" />
+                  Feedback
                 </button>
                 {feedbackOpen && (
                   <div className="absolute right-0 top-11 z-30 w-80 max-w-[calc(100vw-1rem)] rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
