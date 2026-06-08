@@ -34,10 +34,6 @@ function Protected({ children }) {
 }
 
 function PublicRoot() {
-  const token = useAuthStore((s) => s.token);
-  const hydrated = useAuthStore((s) => s.hydrated);
-  if (!hydrated) return null;
-  if (token) return <Navigate to="/dashboard" replace />;
   return <LandingPage />;
 }
 
@@ -57,7 +53,6 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<PublicRoot />} />
-      <Route path="/home" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
