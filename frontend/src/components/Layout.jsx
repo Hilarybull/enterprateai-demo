@@ -599,7 +599,7 @@ export default function Layout() {
       <div className="mx-1 flex items-start justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <a href="/" className="cursor-pointer">
+            <a href="/landing" className="cursor-pointer">
               <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto object-contain sm:h-8" />
             </a>
           </div>
