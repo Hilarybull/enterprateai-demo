@@ -56,21 +56,21 @@ const TESTIMONIALS = [
   {
     quote: "I was about to hire a second developer. EnterprateAI ran the simulation and showed me my cash runway would drop to 4 months under two realistic revenue scenarios. I hired a contractor instead. Six months later, that decision saved my business.",
     name: "Sarah K.",
-    role: "Founder, Brightpath Digital — London",
+    role: "Founder, Brightpath Digital, London",
     init: "S",
     color: "bg-brand-500",
   },
   {
-    quote: "We were debating a price increase for months. EnterprateAI modelled three scenarios in minutes — showed us we could raise by 18% and still retain 94% of customers. We raised prices within a week. Best decision we made this year.",
+    quote: "We were debating a price increase for months. EnterprateAI modelled three scenarios in minutes and showed us we could raise by 18% and still retain 94% of customers. We raised prices within a week. Best decision we made this year.",
     name: "Marcus O.",
-    role: "Director, Osei Consulting — Birmingham",
+    role: "Director, Osei Consulting, Birmingham",
     init: "M",
     color: "bg-accent-500",
   },
   {
     quote: "As a solo founder I was making £40k decisions based on spreadsheets and gut feel. EnterprateAI gave me the confidence of a CFO without the cost of one. I now run every major decision through it before acting.",
     name: "Rachel T.",
-    role: "Founder, Trent Creative Studio — Manchester",
+    role: "Founder, Trent Creative Studio, Manchester",
     init: "R",
     color: "bg-emerald-500",
   },
@@ -107,9 +107,9 @@ const PLANS = [
 const FAQS = [
   { q: "Is my business data secure?", a: "Yes. All data is encrypted in transit (TLS 1.3) and at rest (AES-256). We are ICO Registered, GDPR compliant, and never share or sell your data. You can delete your data at any time." },
   { q: "Do I need to connect my accounts?", a: "No. You can enter your data manually, upload a spreadsheet, or optionally connect Xero or QuickBooks for automatic updates. Manual entry works perfectly for most early stage businesses." },
-  { q: "How is this different from my accountant's spreadsheet?", a: "Your accountant shows you what already happened. EnterprateAI models your business as a live system and simulates what will happen next — across all your interconnected costs, revenues, and decisions — before you commit." },
+  { q: "How is this different from my accountant's spreadsheet?", a: "Your accountant shows you what already happened. EnterprateAI models your business as a live system and simulates what will happen next, across all your interconnected costs, revenues, and decisions, before you commit." },
   { q: "What if my business is very small or early-stage?", a: "EnterprateAI is specifically designed for UK SMEs, including early stage businesses with as few as 2–3 months of trading data. The simpler your business, the faster the setup." },
-  { q: "What happens after my 14-day free trial?", a: "At the end of your trial you choose a plan. There is no automatic charge — you will be asked explicitly to select a plan and enter payment details. You can also continue on a free read-only tier indefinitely." },
+  { q: "What happens after my 14-day free trial?", a: "At the end of your trial you choose a plan. There is no automatic charge. You will be asked explicitly to select a plan and enter payment details. You can also continue on a free read-only tier indefinitely." },
   { q: "Is EnterprateAI GDPR compliant?", a: "Yes, fully. We are ICO Registered (UK data protection authority), process all data within UK/EU jurisdictions, and provide a full Data Processing Agreement (DPA) on request for business customers." },
   { q: "How quickly can I run my first simulation?", a: "Most users run their first decision simulation within 15 minutes of signing up. Our onboarding flow guides you through connecting your data and building your first business model step by step." },
   { q: "Can I cancel anytime?", a: "Yes. No lock-in contracts, no cancellation fees. Cancel from your account settings in 30 seconds. Your data remains accessible for 30 days after cancellation." },
@@ -252,7 +252,7 @@ export default function LandingPage() {
               </div>
 
               <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-4xl xl:text-5xl">
-                Know Exactly What Hiring, Raising Prices, or Cutting Costs Will Do —{" "}
+                Know Exactly What Hiring, Raising Prices, or Cutting Costs Will Do -{" "}
                 <span className="bg-gradient-to-r from-brand-600 to-accent-500 bg-clip-text text-transparent">
                   Before You Do It
                 </span>
@@ -660,7 +660,7 @@ export default function LandingPage() {
               </div>
             ))}
           </div>
-          <p className="mt-6 text-center text-xs text-slate-400">All prices exclude VAT. Cancel anytime — no lock-in contracts, no cancellation fees.</p>
+          <p className="mt-6 text-center text-xs text-slate-400">All prices exclude VAT. Cancel anytime. No lock-in contracts, no cancellation fees.</p>
         </div>
       </section>
 

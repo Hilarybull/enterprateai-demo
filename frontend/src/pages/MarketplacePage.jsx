@@ -910,10 +910,10 @@ export default function MarketplacePage() {
       <div className="bg-gradient-to-br from-brand-600 via-brand-700 to-accent-700 px-4 py-12 text-center sm:py-16">
         <div className="mx-auto max-w-2xl">
           <h1 className="text-3xl font-extrabold text-white sm:text-4xl">
-            Discover Validated Businesses
+            Discover Businesses. Promote Yours. Get Seen.
           </h1>
           <p className="mt-3 text-base text-white/70">
-            Every business here has been built, validated, and verified through the EnterprateAI platform.
+            A marketplace built to help businesses get discovered, manage automated RFQ workflows, and generate business plans or proposals in one click.
           </p>
           {/* Hero search */}
           <div className="relative mt-6">
