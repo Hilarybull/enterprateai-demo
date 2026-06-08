@@ -908,10 +908,10 @@ export default function MarketplacePage() {
 
       {/* Hero */}
       <div className="bg-gradient-to-br from-brand-600 via-brand-700 to-accent-700 px-4 py-12 text-center sm:py-16">
+        <h1 className="text-2xl font-extrabold text-white sm:text-3xl lg:whitespace-nowrap lg:text-3xl xl:text-4xl">
+          Discover Businesses. Promote Yours. Get Seen.
+        </h1>
         <div className="mx-auto max-w-2xl">
-          <h1 className="text-3xl font-extrabold text-white sm:text-4xl">
-            Discover Businesses. Promote Yours. Get Seen.
-          </h1>
           <p className="mt-3 text-base text-white/70">
             A marketplace built to help businesses get discovered, manage automated RFQ workflows, and generate business plans or proposals in one click.
           </p>
