@@ -9,7 +9,7 @@ import {
   useStripe,
   useElements,
 } from "@stripe/react-stripe-js";
-import { PLANS, BILLING, formatPrice, planLabel } from "../lib/plans";
+import { PLANS, BILLING, formatPrice, planLabel, normalisePlanKey } from "../lib/plans";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import logoUrl from "../enterprate-logo.png";
@@ -743,13 +743,13 @@ function PaymentModal({ plan, billing, onClose }) {
 function PlanCard({ plan, billing, onAction, currentPlanKey }) {
   const isPopular = !!plan.badge;
   const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
-  const isFree = plan.key === "free_trial";
+  const isFree = plan.monthlyPrice === 0;
   const isCurrent = plan.key === currentPlanKey;
 
   return (
     <div
       className={
-        "relative flex flex-col rounded-2xl border bg-white p-6 shadow-sm transition dark:bg-slate-900 " +
+        "relative flex flex-col rounded-2xl border bg-white p-5 shadow-sm transition dark:bg-slate-900 " +
         (isPopular
           ? "border-brand-400 shadow-lg ring-2 ring-brand-200 dark:border-brand-500 dark:ring-brand-800"
           : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700")
@@ -842,10 +842,10 @@ export default function PricingPage() {
   const [billing, setBilling] = useState(BILLING.monthly);
   const [activeModal, setActiveModal] = useState(null);
 
-  const currentPlanKey = subscription?.plan_key ?? "free_trial";
+  const currentPlanKey = normalisePlanKey(subscription?.plan_key ?? "explorer");
 
   function handleAction(plan) {
-    if (plan.key === "free_trial") {
+    if (plan.monthlyPrice === 0) {
       navigate(token ? "/dashboard" : "/login");
       return;
     }
@@ -860,7 +860,7 @@ export default function PricingPage() {
     <div className="ea-scroll flex h-screen flex-col overflow-y-auto bg-slate-50 dark:bg-slate-950">
       {/* Nav */}
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
           <button
             type="button"
             onClick={() => navigate(token ? "/dashboard" : "/")}
@@ -889,7 +889,7 @@ export default function PricingPage() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl px-4 py-14 sm:px-6">
+      <main className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6">
         <div className="text-center">
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100 sm:text-4xl">
             Simple, transparent pricing
@@ -925,7 +925,7 @@ export default function PricingPage() {
                         : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400")
                     }
                   >
-                    Save up to £188
+                    Save up to £498
                   </span>
                 )}
               </button>
@@ -933,7 +933,7 @@ export default function PricingPage() {
           </div>
         </div>
 
-        <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 mx-auto max-w-2xl sm:max-w-none">
           {PLANS.map((plan) => (
             <PlanCard
               key={plan.key}
@@ -968,42 +968,32 @@ export default function PricingPage() {
               {
                 title: "Idea Validation",
                 desc: "Submit a product or service idea and get an AI-driven viability assessment covering market fit, revenue potential, and a clear accept or reject outcome to guide your next step.",
-                plans: ["Insight Starter", "Decision Engine", "Strategic Intelligence"],
+                plans: ["Explorer", "Starter Insight"],
               },
               {
                 title: "Business Blueprints",
                 desc: "Turn your validated idea into professional documents: business plans, investor-ready proposals, and sales letters, all generated from your actual business profile.",
-                plans: ["Insight Starter", "Decision Engine", "Strategic Intelligence"],
+                plans: ["Explorer", "Starter Insight"],
               },
               {
                 title: "Catalogue",
                 desc: "Manage your products and services in one place. Organise offerings by category, maintain a customer list, track vendors, and keep your business inventory structured and accessible.",
-                plans: ["Insight Starter", "Decision Engine", "Strategic Intelligence"],
+                plans: ["Explorer", "Starter Insight"],
               },
               {
                 title: "Financials",
                 desc: "Handle the numbers side of your business: create invoices, raise quotations, log expenses, manage contracts, and export financial reports for review or filing.",
-                plans: ["Insight Starter", "Decision Engine", "Strategic Intelligence"],
+                plans: ["Explorer", "Starter Insight"],
               },
               {
                 title: "Scenario Simulation",
                 desc: "Run what-if analyses to see how your business holds up under different conditions. Adjust revenue, costs, and growth assumptions to stress-test decisions before committing.",
-                plans: ["Free Trial", "Decision Engine", "Strategic Intelligence"],
+                plans: ["Starter Insight"],
               },
               {
-                title: "Risk Detection",
+                title: "Fragility Index",
                 desc: "As you run simulations, the system flags variables that put your business model under stress, surfacing risk signals early so you can course-correct before they become real problems.",
-                plans: ["Free Trial", "Decision Engine", "Strategic Intelligence"],
-              },
-              {
-                title: "Multi-user Access",
-                desc: "Invite team members or collaborators to your workspace. Assign access at the module or feature level so the right people see exactly what they need.",
-                plans: ["Strategic Intelligence"],
-              },
-              {
-                title: "Priority Support",
-                desc: "Get prioritised responses from the EnterprateAI team, with dedicated onboarding help and direct access for any platform queries or account needs.",
-                plans: ["Strategic Intelligence"],
+                plans: ["Starter Insight"],
               },
             ].map((item) => (
               <div key={item.title} className="space-y-1.5">
