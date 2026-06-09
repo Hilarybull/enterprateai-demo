@@ -12,14 +12,14 @@ import { planHasModuleAccess, planLabel } from "../lib/plans";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid", moduleKey: "dashboard" },
-  { to: "/validation", label: "Idea Validation", subtitle: "Validate business ideas", icon: "bulb", moduleKey: "validation" },
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
-  { to: "/simulation", label: "Simulation", subtitle: "What-if scenarios", icon: "beaker", moduleKey: "simulation" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
 ];
+#{ to: "/validation", label: "Idea Validation", subtitle: "Validate business ideas", icon: "bulb", moduleKey: "validation" }
+#{ to: "/simulation", label: "Simulation", subtitle: "What-if scenarios", icon: "beaker", moduleKey: "simulation" },
 
 function initialsFromEmail(email) {
   const e = String(email || "").trim();
