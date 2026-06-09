@@ -78,29 +78,46 @@ const TESTIMONIALS = [
 
 const PLANS = [
   {
-    name: "Starter",
-    monthly: 24,
-    annual: 20,
-    desc: "Perfect for solo founders and early stage businesses.",
-    features: ["1 workspace", "Up to 5 decision simulations/month", "Business blueprint generator", "Basic cashflow forecasting", "Email support"],
+    name: "Explorer",
+    monthly: 0,
+    annual: 0,
+    annualSaving: 0,
+    free: true,
+    desc: "Test the platform. No card needed.",
+    features: [
+      "1 idea validation/month",
+      "Business Registration Guide",
+      "1 business plan (read-only)",
+      "10 sales letters/month",
+      "25 products · 25 customers · 10 vendors",
+      "5 invoices & 5 quotations/month",
+      "1 marketplace listing",
+      "Basic PDF reports",
+    ],
     highlight: false,
   },
   {
-    name: "Growth",
-    monthly: 49,
-    annual: 40,
-    desc: "For growing businesses making multiple decisions monthly.",
-    features: ["3 workspaces", "Unlimited simulations", "Full scenario intelligence", "Team collaboration (up to 5)", "Advanced risk detection", "Priority support"],
+    name: "Starter Insight",
+    monthly: 19,
+    annual: 15.83,
+    annualTotal: 190,
+    annualSaving: 38,
+    free: false,
+    desc: "Solo founders & new service businesses.",
+    features: [
+      "5 idea validations/month",
+      "5 business plans/month",
+      "5 proposals · 30 sales letters/month",
+      "250 products · 500 customers · 250 vendors",
+      "50 invoices · 50 quotations/month",
+      "2 scenario simulations",
+      "Basic Fragility Index",
+      "Adaptive Scenario Intelligence",
+      "1 marketplace listing",
+      "1 user",
+    ],
     highlight: true,
-    badge: "Most Popular",
-  },
-  {
-    name: "Scale",
-    monthly: 99,
-    annual: 83,
-    desc: "For established businesses with complex decision needs.",
-    features: ["Unlimited workspaces", "Unlimited simulations", "Multi-entity modelling", "Unlimited team members", "API access", "Dedicated onboarding"],
-    highlight: false,
+    badge: "Best Value",
   },
 ];
 
@@ -135,8 +152,8 @@ function FAQItem({ q, a }) {
 export default function LandingPage() {
   const [annualBilling, setAnnualBilling] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [exitShown, setExitShown] = useState(false);
-  const [exitDismissed, setExitDismissed] = useState(false);
+  const [showMarketplacePopup, setShowMarketplacePopup] = useState(false);
+  const [marketplaceDismissed, setMarketplaceDismissed] = useState(false);
   const exitTimerRef = useRef(null);
   const navigate = useNavigate();
 
@@ -148,8 +165,11 @@ export default function LandingPage() {
 
   useEffect(() => {
     function onMouseLeave(e) {
-      if (e.clientY <= 10 && !exitDismissed && !exitShown) {
-        exitTimerRef.current = setTimeout(() => setExitShown(true), 400);
+      if (e.clientY > 10) return;
+      clearTimeout(exitTimerRef.current);
+      const hasToken = !!localStorage.getItem("ea_token");
+      if (!hasToken && !marketplaceDismissed && !showMarketplacePopup) {
+        exitTimerRef.current = setTimeout(() => setShowMarketplacePopup(true), 400);
       }
     }
     document.addEventListener("mouseleave", onMouseLeave);
@@ -157,31 +177,48 @@ export default function LandingPage() {
       document.removeEventListener("mouseleave", onMouseLeave);
       clearTimeout(exitTimerRef.current);
     };
-  }, [exitDismissed, exitShown]);
+  }, [marketplaceDismissed, showMarketplacePopup]);
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-white font-sans text-slate-800 antialiased">
 
-      {/* ── Exit intent popup ── */}
-      {exitShown && !exitDismissed && (
+      {/* ── Marketplace signup popup ── */}
+      {showMarketplacePopup && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-sm">
-          <div className="relative w-full max-w-md rounded-2xl bg-white p-5 sm:p-8 shadow-2xl">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 sm:p-8 shadow-2xl">
             <button
               type="button"
-              onClick={() => { setExitDismissed(true); setExitShown(false); }}
+              onClick={() => { setShowMarketplacePopup(false); setMarketplaceDismissed(true); }}
               className="absolute right-4 top-4 text-slate-400 hover:text-slate-600"
             >✕</button>
-            <p className="text-xs font-semibold uppercase tracking-widest text-brand-600">Before you go</p>
-            <h3 className="mt-2 text-xl font-bold text-slate-900">Try it free for 14 days.</h3>
-            <p className="mt-2 text-sm text-slate-500">No credit card. No commitment. Run your first decision simulation and see exactly what it will do to your business.</p>
+            <div className="mb-1 flex items-center gap-2">
+              <span className="text-2xl">🏪</span>
+              <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Marketplace</span>
+            </div>
+            <h3 className="mt-2 text-xl font-bold text-slate-900">Connect with UK businesses</h3>
+            <p className="mt-2 text-sm text-slate-500">
+              List your products or services, discover suppliers, and grow your network within the EnterprateAI ecosystem. Create a free account to get started.
+            </p>
+            <ul className="mt-4 space-y-2 text-sm text-slate-600">
+              {["List your first product or service free", "Discover verified UK suppliers and partners", "Receive enquiries directly to your inbox"].map((f) => (
+                <li key={f} className="flex items-center gap-2"><span className="text-emerald-500 font-bold">✓</span>{f}</li>
+              ))}
+            </ul>
             <button
               type="button"
               onClick={() => navigate("/login")}
               className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition"
             >
-              Start My Free Trial →
+              Create Free Account →
             </button>
-            <p className="mt-3 text-center text-xs text-slate-400">14 days free · No card required · Cancel anytime</p>
+            <button
+              type="button"
+              onClick={() => navigate("/login")}
+              className="mt-2 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
+            >
+              Sign in to existing account
+            </button>
+            <p className="mt-3 text-center text-xs text-slate-400">Free forever · No credit card · Cancel anytime</p>
           </div>
         </div>
       )}
@@ -434,6 +471,7 @@ export default function LandingPage() {
                 tag: "Available now",
                 tagColor: "bg-emerald-100 text-emerald-700",
                 desc: "Discover and connect with other UK businesses. Find suppliers, partners, and customers within the EnterprateAI ecosystem to grow your network and opportunities.",
+                isMarketplace: true,
               },
             ].map((m) => (
               <div key={m.name} className="rounded-2xl border border-slate-200 bg-white p-6 transition hover:border-brand-200 hover:shadow-md">
@@ -629,7 +667,7 @@ export default function LandingPage() {
               </button>
             </div>
           </div>
-          <div className="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
+          <div className="mx-auto grid max-w-3xl gap-5 sm:grid-cols-2">
             {PLANS.map((plan) => (
               <div key={plan.name} className={`relative overflow-hidden rounded-2xl border bg-white p-6 ${plan.highlight ? "border-brand-400 ring-2 ring-brand-200 shadow-xl shadow-brand-100" : "border-slate-200"}`}>
                 {plan.badge && (
@@ -637,10 +675,24 @@ export default function LandingPage() {
                 )}
                 <h3 className="font-bold text-slate-900">{plan.name}</h3>
                 <div className="mt-2 flex items-end gap-1">
-                  <span className="text-3xl font-extrabold text-slate-900">£{annualBilling ? plan.annual : plan.monthly}</span>
-                  <span className="mb-1 text-sm text-slate-400">/mo</span>
+                  {plan.free ? (
+                    <span className="text-3xl font-extrabold text-slate-900">£0</span>
+                  ) : (
+                    <>
+                      <span className="text-3xl font-extrabold text-slate-900">
+                        £{annualBilling ? plan.annual : plan.monthly}
+                      </span>
+                      <span className="mb-1 text-sm text-slate-400">/mo</span>
+                    </>
+                  )}
                 </div>
-                {annualBilling && <p className="text-xs text-emerald-600">Billed annually (save £{(plan.monthly - plan.annual) * 12}/yr)</p>}
+                {plan.free ? (
+                  <p className="text-xs font-medium text-emerald-600">14-day trial · No credit card required</p>
+                ) : annualBilling ? (
+                  <p className="text-xs text-emerald-600">Billed annually (save £{plan.annualSaving}/yr)</p>
+                ) : (
+                  <p className="text-xs text-slate-400">Billed monthly</p>
+                )}
                 <p className="mt-2 text-xs text-slate-500">{plan.desc}</p>
                 <ul className="mt-5 space-y-2.5">
                   {plan.features.map((f) => (
@@ -655,7 +707,7 @@ export default function LandingPage() {
                   onClick={() => navigate("/login")}
                   className={`mt-6 w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.highlight ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"}`}
                 >
-                  Start Free Trial
+                  {plan.free ? "Start Free" : "Subscribe"}
                 </button>
               </div>
             ))}
