@@ -16,6 +16,8 @@ import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
 import ConfirmDialog from "../components/ConfirmDialog";
+import ReportDownloadPanel from "../components/ReportDownloadPanel";
+import { assembleOutput } from "../lib/contracts/index";
 
 const FieldLabel = ({ children, info }) => (
   <div className="ea-label flex items-center gap-2">
@@ -496,7 +498,7 @@ export default function SimulationPage() {
     }
     setManualTemplateId(templateId);
     if (template.scenario_type === "client_loss") {
-      const clientLabel = largestClient?.name || "Highest Client";
+      const clientLabel = largestClient?.name || "Largest Client";
       setManualName(`Loss of ${clientLabel}`);
     } else {
       setManualName(titleOverride || template.title);
@@ -612,7 +614,7 @@ export default function SimulationPage() {
     const params = buildDefaultParams(manualTemplate, stateSnapshot, largestClient);
     setManualParams(params);
     if (manualTemplate.scenario_type === "client_loss") {
-      const clientLabel = largestClient?.name || "Highest Client";
+      const clientLabel = largestClient?.name || "Largest Client";
       setManualName(`Loss of ${clientLabel}`);
     } else {
       setManualName(manualTemplate.title);
@@ -629,6 +631,13 @@ export default function SimulationPage() {
       return { ...prev, client_loss_pct: largestClient.share };
     });
   }, [manualTemplate, largestClient?.share]);
+
+  // Keep name in sync when largestClient resolves after the template is already set
+  useEffect(() => {
+    if (manualTemplate?.scenario_type !== "client_loss") return;
+    if (!largestClient?.name) return;
+    setManualName(`Loss of ${largestClient.name}`);
+  }, [largestClient?.name, manualTemplate?.scenario_type]);
 
   function toggleManualSelection(key, id) {
     setManualParams((prev) => {
@@ -666,7 +675,6 @@ export default function SimulationPage() {
     );
   }
 
-  // Simulation view temporarily disabled; keep code below for reactivation.
   return (
     <div>
       <PageHeader
@@ -865,7 +873,7 @@ export default function SimulationPage() {
                 <>
                   {manualTemplate.required_inputs.map((key) => (
                     <div key={key}>
-                      <FieldLabel info={fieldHelp(key)}>{prettyLabel(key)}</FieldLabel>
+                      <FieldLabel info={fieldHelp(key)}>{prettyLabel(key, manualTemplate?.scenario_type)}</FieldLabel>
                       <NumberInput
                         value={String(manualParams[key] ?? "")}
                         onChange={(v) => setManualParams((p) => ({ ...p, [key]: parseNumber(v, 0) }))}
@@ -1026,13 +1034,36 @@ export default function SimulationPage() {
               maxTimelineRows={6}
               showRisks={canSimFeature("risk_detection")}
               showRecommendations={canSimFeature("recommendations")}
+              reportOutput={activeRun ? assembleOutput({
+                workspaceId,
+                currency: currency || "GBP",
+                inputs,
+                ideaValidation: acceptedIdeaValidation,
+                financialInsights,
+                riskSignals,
+                recommendations,
+                scenarioRun: activeRun,
+                scenarioTimeline: timeline,
+                multiEngineOutput: activeRun?.multi_engine ?? null,
+              }) : null}
             />
           </SectionCard>
         </div>
       ) : null}
+      {confirmDialog ? (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          confirmLabel="Clear"
+          danger
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={confirmDialog.onCancel}
+        />
+      ) : null}
 </div>
   );
 }
+
+// Confirm dialog is shown from the SimulationPage scope (where confirmDialog state exists)
 
 function buildDefaultParams(template, stateSnapshot, largestClient) {
   if (!template) return {};
@@ -1041,6 +1072,7 @@ function buildDefaultParams(template, stateSnapshot, largestClient) {
     effective_month: 1,
     revenue_drop_pct: 10,
     cost_increase_pct: 10,
+    cost_reduction_pct: 10,
     employee_count: 1,
     employee_monthly_cost: 1500,
     contractor_monthly_cost: 1200,
@@ -1061,8 +1093,22 @@ function buildDefaultParams(template, stateSnapshot, largestClient) {
   return params;
 }
 
-function prettyLabel(key) {
-  return String(key || "")
+function prettyLabel(key, scenarioType) {
+  const overrides = {
+    client_loss_pct: "Revenue at risk (%)",
+    price_change_pct: "Price change (%)",
+    revenue_drop_pct: "Revenue drop (%)",
+    cost_increase_pct: "Cost increase (%)",
+    cost_reduction_pct: "Cost reduction (%)",
+    revenue_uplift_pct: "Revenue uplift (%)",
+    cost_uplift_pct: "Cost uplift (%)",
+    employee_count: scenarioType === "delay_hiring" ? "Employees to cancel" : "Employees to add",
+    employee_monthly_cost: "Monthly cost per employee",
+    contractor_monthly_cost: "Monthly contractor cost",
+    delay_months: "Delay (months)",
+    effective_month: "Effective from month",
+  };
+  return overrides[key] || String(key || "")
     .replaceAll("_", " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -1077,12 +1123,18 @@ function scenarioOutputNote(templateId, largestClient) {
       return "This shows whether a price increase on selected products or services improves revenue and profit without changing your current cost base straight away.";
     case "tmpl_hire_staff":
       return "This shows how adding staff increases monthly costs first, so you can see whether your current revenue can absorb the extra payroll.";
+    case "tmpl_contractor_addition":
+      return "This shows how adding a contractor increases monthly costs without a permanent commitment, so you can see whether the capacity gain justifies the cost.";
     case "tmpl_cost_increase":
       return "This shows what happens if delivery or operating costs rise, and whether your margin and projected cash balance can still hold up.";
     case "tmpl_revenue_drop":
       return "This shows what happens if sales slow down across the business, including the knock-on effect on profit and projected cash balance.";
     case "tmpl_payment_delay":
       return "This shows what happens when selected pending customer payments land later than expected, so profit may still look fine while cash comes in more slowly.";
+    case "tmpl_reduce_fixed_cost":
+      return "This shows what happens when you cut overhead or fixed costs, so you can see how much margin and cash headroom the reduction creates.";
+    case "tmpl_delay_hiring":
+      return "This shows how deferring or cancelling a planned hire removes that payroll cost, so you can see the direct effect on expenses, profit, and cash runway.";
     case "tmpl_service_launch":
       return "This shows whether a new service could lift revenue enough to justify the extra delivery and operating costs.";
     default:
@@ -1113,6 +1165,12 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
         `New employees: ${Math.max(1, Number(manualParams?.employee_count ?? 1))}.`,
         `Monthly payroll added: ${Number(manualParams?.employee_monthly_cost ?? 0).toFixed(2)} per employee.`,
       ];
+    case "tmpl_contractor_addition":
+      return [
+        `Contractors added: ${Math.max(1, Number(manualParams?.employee_count ?? 1))}.`,
+        `Monthly contractor cost: ${Number(manualParams?.contractor_monthly_cost ?? 0).toFixed(2)} per contractor.`,
+        "Cost applies from month 1 with no ramp — contractor arrangements are typically immediate.",
+      ];
     case "tmpl_cost_increase":
       return [
         `Cost increase: ${Number(manualParams?.cost_increase_pct ?? 0).toFixed(2)}%.`,
@@ -1128,6 +1186,17 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
         `Payment delay: ${Math.max(0, Number(manualParams?.delay_months ?? 0))} month${Number(manualParams?.delay_months ?? 0) === 1 ? "" : "s"}.`,
         `Selected pending items: ${Array.isArray(manualParams?.selected_pending_ids) && manualParams.selected_pending_ids.length ? manualParams.selected_pending_ids.length : "all pending receivables"}.`,
         "Profit can stay unchanged while projected cash balance moves more slowly.",
+      ];
+    case "tmpl_reduce_fixed_cost":
+      return [
+        `Cost reduction applied: ${Number(manualParams?.cost_reduction_pct ?? 0).toFixed(2)}%.`,
+        "Overhead and fixed expenses fall over the first 2 months as savings are realised.",
+      ];
+    case "tmpl_delay_hiring":
+      return [
+        `Hires cancelled/deferred: ${Math.max(1, Number(manualParams?.employee_count ?? 1))}.`,
+        `Monthly payroll saved: ${Number(manualParams?.employee_monthly_cost ?? 0).toFixed(2)} per employee.`,
+        "Revenue stays on the current baseline — this run shows the cost saving only.",
       ];
     case "tmpl_service_launch":
       return [
@@ -1258,6 +1327,18 @@ function buildScenarioExecutionBreakdown(
     ];
   }
 
+  if (scenarioType === "contractor_addition") {
+    const contractorCount = Math.max(1, Number(params?.employee_count ?? 1));
+    const contractorCost = Number(params?.contractor_monthly_cost ?? 0);
+    const totalCost = contractorCount * contractorCost;
+    return [
+      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
+      `Contractors added: ${contractorCount} x ${formatCurrency(contractorCost, currency)} = ${formatCurrency(totalCost, currency)} per month.`,
+      `Month 1 expenses: ${formatCurrency(firstRow?.expenses ?? baselineExpenses + totalCost, currency)}.`,
+      "Revenue stays on the current baseline — this run shows the direct cost of adding contractor capacity."
+    ];
+  }
+
   if (scenarioType === "hire_staff") {
     const employeeCount = Math.max(1, Number(params?.employee_count ?? 1));
     const employeeCost = Number(params?.employee_monthly_cost ?? 0);
@@ -1282,6 +1363,28 @@ function buildScenarioExecutionBreakdown(
     ];
   }
 
+  if (scenarioType === "reduce_fixed_cost") {
+    const reductionPct = Number(params?.cost_reduction_pct ?? 0);
+    return [
+      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
+      `Cost reduction applied: ${formatPercentValue(reductionPct)} over the 2-month ramp.`,
+      `Month 1 expenses: ${formatCurrency(firstRow?.expenses ?? baselineExpenses, currency)}.`,
+      "Expenses fall gradually as the saving takes effect, improving both profit and projected cash balance."
+    ];
+  }
+
+  if (scenarioType === "delay_hiring") {
+    const employeeCount = Math.max(1, Number(params?.employee_count ?? 1));
+    const employeeCost = Number(params?.employee_monthly_cost ?? 0);
+    const saving = employeeCount * employeeCost;
+    return [
+      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
+      `Planned hire cancelled: ${employeeCount} x ${formatCurrency(employeeCost, currency)} = ${formatCurrency(saving, currency)} per month.`,
+      `Month 1 expenses with saving: ${formatCurrency(firstRow?.expenses ?? Math.max(0, baselineExpenses - saving), currency)}.`,
+      "Revenue stays on the current baseline — this run shows the direct effect of removing the payroll commitment."
+    ];
+  }
+
   if (scenarioType === "service_launch") {
     const revenueUplift = Number(params?.revenue_uplift_pct ?? 0);
     const costUplift = Number(params?.cost_uplift_pct ?? 0);
@@ -1301,8 +1404,9 @@ function fieldHelp(key) {
     price_change_pct: "Percent change in price.",
     revenue_drop_pct: "Percent drop in revenue.",
     cost_increase_pct: "Percent increase in monthly costs.",
-    employee_count: "Number of employees to add.",
-    employee_monthly_cost: "Monthly cost per employee.",
+    cost_reduction_pct: "Percent reduction in fixed/overhead costs.",
+    employee_count: "Number of planned hires to cancel or defer.",
+    employee_monthly_cost: "Monthly cost of each cancelled hire.",
     contractor_monthly_cost: "Monthly cost per contractor.",
     delay_months: "Months of delayed payments.",
     revenue_uplift_pct: "Percent revenue uplift for new service.",
@@ -1345,8 +1449,7 @@ function MultiSelectChecklist({ label, info, items, selectedIds, onToggle, empty
   );
 }
 
-function buildScenarioMeaning(activeRun, timeline) {
-  const scenario = activeRun?.scenario_metrics || {};
+function buildScenarioMeaning(activeRun, timeline, currency) {
   const delta = activeRun?.deltas || {};
   const scenarioType = String(activeRun?.scenario_type || "").toLowerCase();
   const lastRow = Array.isArray(timeline) && timeline.length ? timeline[timeline.length - 1] : null;
@@ -1355,26 +1458,27 @@ function buildScenarioMeaning(activeRun, timeline) {
   const costsDelta = Number(delta?.monthly_costs || 0);
   const scenarioCash = Number(lastRow?.cash_balance || 0);
   const firstRow = Array.isArray(timeline) && timeline.length ? timeline[0] : null;
+  const cur = currency || "GBP";
 
   const revenueText =
     revenueDelta > 0
-      ? `monthly run-rate revenue is up by ${Math.abs(revenueDelta).toFixed(2)}`
+      ? `monthly run-rate revenue is up by ${formatCurrency(Math.abs(revenueDelta), cur)}`
       : revenueDelta < 0
-        ? `monthly run-rate revenue is down by ${Math.abs(revenueDelta).toFixed(2)}`
+        ? `monthly run-rate revenue is down by ${formatCurrency(Math.abs(revenueDelta), cur)}`
         : "monthly run-rate revenue is broadly unchanged";
 
   const profitText =
     profitDelta > 0
-      ? `profit improves by ${Math.abs(profitDelta).toFixed(2)}`
+      ? `profit improves by ${formatCurrency(Math.abs(profitDelta), cur)}`
       : profitDelta < 0
-        ? `profit falls by ${Math.abs(profitDelta).toFixed(2)}`
+        ? `profit falls by ${formatCurrency(Math.abs(profitDelta), cur)}`
         : "profit is broadly unchanged";
 
   const costsText =
     costsDelta > 0
-      ? `total costs rise by ${Math.abs(costsDelta).toFixed(2)}`
+      ? `total costs rise by ${formatCurrency(Math.abs(costsDelta), cur)}`
       : costsDelta < 0
-        ? `total costs fall by ${Math.abs(costsDelta).toFixed(2)}`
+        ? `total costs fall by ${formatCurrency(Math.abs(costsDelta), cur)}`
         : "total costs stay broadly flat";
 
   let scenarioRule = "The scenario changes your baseline monthly figures and then projects them across the timeline.";
@@ -1390,17 +1494,23 @@ function buildScenarioMeaning(activeRun, timeline) {
     scenarioRule = "This run keeps the revenue assumption but delays when the cash is collected, so profit and projected cash balance can move differently.";
   } else if (scenarioType === "hire_staff") {
     scenarioRule = "This run adds staff cost into monthly expenses, so the output shows whether the current revenue base can absorb the extra payroll.";
+  } else if (scenarioType === "contractor_addition") {
+    scenarioRule = "This run adds contractor cost into monthly expenses from day one, so the output shows whether the capacity gain is financially justified.";
   } else if (scenarioType === "service_launch") {
     scenarioRule = "This run lifts revenue and costs together over a short ramp, so you can compare whether the added income outweighs the added delivery cost.";
+  } else if (scenarioType === "reduce_fixed_cost") {
+    scenarioRule = "This run reduces overhead and fixed costs, so the table shows how the saving flows through to margin and cash over time.";
+  } else if (scenarioType === "delay_hiring") {
+    scenarioRule = "This run removes the cost of a planned hire from monthly expenses, so the output shows the direct effect on profit and cash runway.";
   }
 
   const cashLine = lastRow
     ? scenarioCash > 0
-      ? `Projected cash balance ends at ${scenarioCash.toFixed(2)} because the model adds cash only when revenue is collected and subtracts cash when costs are actually paid.`
+      ? `Projected cash balance ends at ${formatCurrency(scenarioCash, cur)} because the model adds cash only when revenue is collected and subtracts cash when costs are actually paid.`
       : "Projected cash balance stays tight through the projection."
     : "Projected cash balance is based on when revenue is collected and costs are paid, not just on profit.";
   const firstMonthLine = firstRow
-    ? `In the first projected month, revenue is ${Number(firstRow.revenue || 0).toFixed(2)}, total costs are ${Number(firstRow.costs || 0).toFixed(2)}, and profit is ${Number(firstRow.profit || 0).toFixed(2)}.`
+    ? `In the first projected month, revenue is ${formatCurrency(Number(firstRow.revenue || 0), cur)}, total costs are ${formatCurrency(Number(firstRow.costs || 0), cur)}, and profit is ${formatCurrency(Number(firstRow.profit || 0), cur)}.`
     : "";
 
   return `${scenarioRule} Compared with your baseline, ${revenueText}, ${costsText}, and ${profitText}. ${firstMonthLine} ${cashLine}`;
@@ -1417,6 +1527,7 @@ function ScenarioOutput({
   maxTimelineRows,
   showRisks = true,
   showRecommendations = true,
+  reportOutput = null,
 }) {
   if (!activeRun) {
     return (
@@ -1434,7 +1545,7 @@ function ScenarioOutput({
   const deltas = activeRun.deltas || {};
   const runRisks = Array.isArray(activeRun.risk_signals) ? activeRun.risk_signals : [];
   const runRecs = Array.isArray(activeRun.recommendations) ? activeRun.recommendations : [];
-  const scenarioMeaning = buildScenarioMeaning(activeRun, timeline);
+  const scenarioMeaning = buildScenarioMeaning(activeRun, timeline, currency);
 
   const timelineRows = maxTimelineRows ? timeline.slice(0, maxTimelineRows) : timeline;
   const isTrimmed = maxTimelineRows && timeline.length > maxTimelineRows;
@@ -1509,25 +1620,47 @@ function ScenarioOutput({
         detail: value != null ? `${value} payable item(s) are overdue.` : "Payables are overdue."
       };
     }
+    if (code === "RECEIVABLES_APPROACHING_DUE") {
+      return {
+        title: "Receivables approaching due date",
+        detail: value != null ? `${value} receivable item(s) are close to payment-term expiry.` : "Some receivables are nearing their due date."
+      };
+    }
+    if (code === "PAYABLES_APPROACHING_DUE") {
+      return {
+        title: "Payables approaching due date",
+        detail: value != null ? `${value} payable item(s) are close to term expiry.` : "Some payables are nearing their due date."
+      };
+    }
     return {
-      title: "Risk signal",
-      detail: `${risk?.risk_type || "Risk"} detected.`
+      title: risk?.title || "Risk signal",
+      detail: risk?.detail || `${risk?.risk_type || "Risk"} detected.`
     };
   }
 
   return (
     <div className="space-y-3">
+      {reportOutput ? (
+        <ReportDownloadPanel
+          output={reportOutput}
+          currency={currency}
+          reportTypes={["scenario_report"]}
+          compact
+        />
+      ) : null}
+
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Scenario</div>
         <div className="mt-1 text-lg font-semibold text-slate-900">{activeRun.scenario_name}</div>
         {activeRun.state_result ? (
-          <div className="mt-1 text-xs text-slate-500">State result: {activeRun.state_result}</div>
-        ) : null}
-        {(activeRun?.baseline_snapshot?.accrued_revenue_total || activeRun?.baseline_snapshot?.accrued_cost_of_sales_total) ? (
-          <div className="mt-2 text-xs text-slate-500">
-            Current accrued revenue: {formatCurrency(activeRun?.baseline_snapshot?.accrued_revenue_total || 0, currency)}
-            {" • "}
-            Current accrued cost of sales: {formatCurrency(activeRun?.baseline_snapshot?.accrued_cost_of_sales_total || 0, currency)}
+          <div className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${
+            activeRun.state_result === "improved" ? "bg-emerald-100 text-emerald-700" :
+            activeRun.state_result === "worse" ? "bg-rose-100 text-rose-700" :
+            "bg-slate-100 text-slate-600"
+          }`}>
+            {activeRun.state_result === "improved" ? "Improves stability" :
+             activeRun.state_result === "worse" ? "Reduces stability" :
+             "Neutral impact"}
           </div>
         ) : null}
       </div>
@@ -1573,7 +1706,6 @@ function ScenarioOutput({
                     >
                       <div className="text-sm font-semibold text-slate-900">{rec.title || "Recommendation"}</div>
                       {rec.description ? <div className="mt-1 text-xs text-slate-600">{rec.description}</div> : null}
-                      {rec.action_type ? <div className="mt-1 text-[11px] text-slate-500">{rec.action_type}</div> : null}
                       {rec.scenario_template_id ? (
                         <div className="mt-2">
                           <Button
@@ -1631,15 +1763,15 @@ function ScenarioOutput({
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="px-3 py-2 text-left font-semibold">Month</th>
-                  <th className="px-3 py-2 text-right font-semibold">Revenue</th>
-                  <th className="px-3 py-2 text-right font-semibold">Accruals</th>
-                  <th className="px-3 py-2 text-right font-semibold">Expenses</th>
-                  <th className="px-3 py-2 text-right font-semibold">Cost of sales</th>
-                  <th className="px-3 py-2 text-right font-semibold">Total costs</th>
-                  <th className="px-3 py-2 text-right font-semibold">Profit</th>
-                  <th className="px-3 py-2 text-right font-semibold">Cash balance</th>
-                  <th className="px-3 py-2 text-left font-semibold">Status</th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Month</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Revenue</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Accruals</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Expenses</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Cost of sales</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Total costs</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Profit</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Cash balance</th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -1649,16 +1781,16 @@ function ScenarioOutput({
                   const profitNegative = profit < 0;
                   return (
                     <tr key={row.month_index} className="border-t border-slate-100 hover:bg-slate-50/50">
-                      <td className="px-3 py-2 font-semibold text-slate-700">{formatMonthLabel(row.month_index)}</td>
-                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(row.revenue, currency)}</td>
-                      <td className="px-3 py-2 text-right text-slate-500">{formatCurrency(row.accruals, currency)}</td>
-                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(row.expenses, currency)}</td>
-                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(row.cost_of_sales, currency)}</td>
-                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(row.costs, currency)}</td>
-                      <td className={`px-3 py-2 text-right font-semibold ${profitPositive ? "text-emerald-600" : profitNegative ? "text-rose-600" : "text-slate-700"}`}>
+                      <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{formatMonthLabel(row.month_index)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.revenue, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row.accruals, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.expenses, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.cost_of_sales, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.costs, currency)}</td>
+                      <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${profitPositive ? "text-emerald-600" : profitNegative ? "text-rose-600" : "text-slate-700"}`}>
                         {formatCurrency(profit, currency)}
                       </td>
-                      <td className="px-3 py-2 text-right text-slate-700">{formatCurrency(row.cash_balance, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.cash_balance, currency)}</td>
                       <td className="px-3 py-2">
                         {row.state_label ? (
                           <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
@@ -1700,15 +1832,8 @@ function ScenarioOutput({
           {decisionNotice ? <span className="text-xs text-slate-600">{decisionNotice}</span> : null}
         </div>
       ) : null}
-      {confirmDialog ? (
-        <ConfirmDialog
-          message={confirmDialog.message}
-          confirmLabel="Clear"
-          danger
-          onConfirm={confirmDialog.onConfirm}
-          onCancel={confirmDialog.onCancel}
-        />
-      ) : null}
+
+      {/* confirmDialog is rendered in the parent SimulationPage (to keep state in scope) */}
     </div>
   );
 }
@@ -1722,6 +1847,14 @@ function MetricCard({ title, metrics, currency, isDelta, info }) {
     ["Profit", metrics.net_profit],
   ].filter(([, v]) => v != null);
 
+  function renderValue(label, value) {
+    if (label.includes("score")) return formatNumber(value);
+    if (!isDelta) return formatCurrency(value, currency);
+    if (typeof value !== "number") return "—";
+    const sign = value > 0 ? "+" : "";
+    return `${sign}${formatCurrency(value, currency)}`;
+  }
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -1732,12 +1865,8 @@ function MetricCard({ title, metrics, currency, isDelta, info }) {
         {rows.map(([label, value]) => (
           <div key={label} className="flex items-center justify-between gap-3">
             <div className="text-slate-600">{label}</div>
-            <div className="font-semibold text-slate-900">
-              {label.includes("score")
-                ? formatNumber(value)
-                : isDelta
-                  ? formatDelta(value)
-                  : formatCurrency(value, currency)}
+            <div className={`font-semibold ${isDelta && typeof value === "number" && value > 0 ? "text-emerald-700" : isDelta && typeof value === "number" && value < 0 ? "text-rose-700" : "text-slate-900"}`}>
+              {renderValue(label, value)}
             </div>
           </div>
         ))}
@@ -1746,14 +1875,6 @@ function MetricCard({ title, metrics, currency, isDelta, info }) {
   );
 }
 
-function formatDelta(value) {
-  if (value == null) return "—";
-  if (typeof value === "number") {
-    const sign = value > 0 ? "+" : "";
-    return `${sign}${value.toFixed(2)}`;
-  }
-  return "—";
-}
 
 function isProjection(run) {
   if (!run) return false;

@@ -13,6 +13,8 @@ import { formatCurrency, formatNumber, formatPercent } from "../lib/format";
 import { buildActionPlan, dedupeText } from "../lib/insights";
 import { pctWidth, shortExplanation, toneForScore } from "../lib/score";
 import WorkspacePrompt from "../components/WorkspacePrompt";
+import ReportDownloadPanel from "../components/ReportDownloadPanel";
+import { assembleOutput } from "../lib/contracts/index";
 
 function decisionBadge(status) {
   if (status === "accepted") return { text: "ACCEPTED", tone: "success" };
@@ -445,6 +447,7 @@ export default function ResultsPage() {
                 <div className="text-sm text-slate-600">No risk flags.</div>
               )}
             </SectionCard>
+
           </aside>
         </div>
 
@@ -577,6 +580,17 @@ export default function ResultsPage() {
 
       {error ? <InlineAlert kind="error" message={error} /> : null}
       {decisionNotice ? <InlineAlert message={decisionNotice} /> : null}
+
+      <ReportDownloadPanel
+        output={assembleOutput({
+          workspaceId,
+          currency: currency || "GBP",
+          ideaValidation,
+        })}
+        currency={currency || "GBP"}
+        reportTypes={["business_health_report", "investor_summary", "fragility_report", "stability_report"]}
+        compact
+      />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <div className="space-y-4 lg:col-span-8">
@@ -725,10 +739,12 @@ export default function ResultsPage() {
                       <div className="rounded-2xl border border-dashed border-slate-300 bg-gradient-to-br from-brand-50 via-white to-accent-50 p-4">
                         <div className="flex items-center justify-between">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trend preview</div>
-                          <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">Coming soon</span>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">Market signals</span>
                         </div>
                         <div className="mt-3 rounded-xl bg-white/70 p-3 text-sm text-slate-600 ring-1 ring-slate-200">
-                          No trend data yet. Connect your market data source to display search interest over time.
+                          {keywordsToTrack.length
+                            ? "Keyword trend insights will appear here when demand data is connected."
+                            : "Add business name and industry details to generate keywords and prepare the trend preview."}
                         </div>
                       </div>
                     </div>
@@ -936,6 +952,7 @@ export default function ResultsPage() {
             )}
             </SectionCard>
           ) : null}
+
         </aside>
       </div>
     </div>

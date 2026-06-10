@@ -738,6 +738,91 @@ function PaymentModal({ plan, billing, onClose }) {
   );
 }
 
+// ── Add-on card ───────────────────────────────────────────────────────────────
+
+function AddonCard({ addon, mode, token }) {
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleBuy() {
+    if (!token) {
+      navigate(`/login?return=/pricing`);
+      return;
+    }
+    setError("");
+    setLoading(true);
+    try {
+      const res = await apiRequest("/plans/addons/checkout", "POST", { addon_key: addon.key });
+      if (res?.checkout_url) {
+        window.location.href = res.checkout_url;
+      } else {
+        setError("Could not start checkout. Please try again.");
+      }
+    } catch (e) {
+      const msg = (e instanceof Error ? e.message : String(e)).replace(/^HTTP \d+:\s*/, "");
+      setError(
+        msg.includes("503") || msg.includes("not yet available")
+          ? "This add-on is coming soon — contact us to arrange manually."
+          : msg || "Something went wrong."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">
+          {addon.label}
+        </span>
+        <span
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+            mode === "subscription"
+              ? "bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-400"
+              : "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+          }`}
+        >
+          {mode === "subscription" ? "Monthly" : "One-time"}
+        </span>
+      </div>
+      <p className="mb-3 flex-1 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
+        {addon.desc}
+      </p>
+      <div className="mb-3 text-xl font-extrabold tracking-tight text-slate-900 dark:text-slate-50">
+        {addon.price}
+      </div>
+      {error && (
+        <p className="mb-2 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700 dark:bg-rose-900/20 dark:text-rose-400">
+          {error}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={handleBuy}
+        disabled={loading}
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-brand-400 py-2 text-[13px] font-semibold text-brand-700 transition hover:bg-brand-600 hover:text-white disabled:opacity-60 dark:border-brand-500 dark:text-brand-400 dark:hover:bg-brand-600 dark:hover:text-white"
+      >
+        {loading ? (
+          <>
+            <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+            </svg>
+            Redirecting…
+          </>
+        ) : token ? (
+          "Buy Now"
+        ) : (
+          "Sign in to purchase"
+        )}
+      </button>
+    </div>
+  );
+}
+
+
 // ── Plan card ─────────────────────────────────────────────────────────────────
 
 function PlanCard({ plan, billing, onAction, currentPlanKey }) {
@@ -1015,6 +1100,55 @@ export default function PricingPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* ── Marketplace Add-ons ── */}
+        <div className="mt-12 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              Add-ons
+            </span>
+          </div>
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+            Marketplace Add-ons
+          </h2>
+          <p className="mt-1 text-[13px] text-slate-500 dark:text-slate-400">
+            Boost your marketplace presence or top up RFQ credits at any time — compatible with any plan.
+          </p>
+
+          <div className="mt-6 space-y-6">
+            {/* Featured Listing Boosts */}
+            <div>
+              <h3 className="mb-3 text-[12px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                Featured Listing Boosts
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-3">
+                {[
+                  { key: "addon_featured_1",  label: "Extra Featured Listing",   price: "£15/mo", desc: "1 additional featured slot, billed monthly." },
+                  { key: "addon_featured_5",  label: "5 Listing Boosts",         price: "£49/mo", desc: "5 featured boosts per month, billed monthly." },
+                  { key: "addon_featured_20", label: "20 Listing Boosts",        price: "£149/mo", desc: "20 featured boosts per month, billed monthly." },
+                ].map((addon) => (
+                  <AddonCard key={addon.key} addon={addon} mode="subscription" token={token} />
+                ))}
+              </div>
+            </div>
+
+            {/* RFQ Credit Packs */}
+            <div>
+              <h3 className="mb-3 text-[12px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                RFQ Response Credit Packs
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-3">
+                {[
+                  { key: "addon_rfq_20",  label: "20 RFQ Credits",  price: "£10",  desc: "Respond to 20 buyer RFQ requests. One-time purchase." },
+                  { key: "addon_rfq_50",  label: "50 RFQ Credits",  price: "£20",  desc: "Respond to 50 buyer RFQ requests. Best value." },
+                  { key: "addon_rfq_100", label: "100 RFQ Credits", price: "£35",  desc: "Respond to 100 buyer requests. Maximum pack." },
+                ].map((addon) => (
+                  <AddonCard key={addon.key} addon={addon} mode="payment" token={token} />
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 

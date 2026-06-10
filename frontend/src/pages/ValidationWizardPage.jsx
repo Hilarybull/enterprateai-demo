@@ -15,6 +15,7 @@ import NumberInput, { parseIntSafe, parseNumber } from "../components/NumberInpu
 import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
 import { imageFileToDataUrl } from "../lib/files";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { generateValidationInsightPdf } from "../lib/reports/index";
 
 function humanizeValidationError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
@@ -199,10 +200,18 @@ export default function ValidationWizardPage() {
   const [lastEvaluationId, setLastEvaluationId] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [historyFilter, setHistoryFilter] = useState("all");
+  const [historyTypeFilter, setHistoryTypeFilter] = useState("all");
+  const [historySearch, setHistorySearch] = useState("");
+  const [bulkSelected, setBulkSelected] = useState(new Set());
   const [historyRequestHandled, setHistoryRequestHandled] = useState(false);
-  const [marketResearch, setMarketResearch] = useState(null);
+  const [businessMarketResearch, setBusinessMarketResearch] = useState(null);
+  const [businessResearchHash, setBusinessResearchHash] = useState(null);
+  const [serviceMarketResearch, setServiceMarketResearch] = useState(null);
+  const [serviceResearchHash, setServiceResearchHash] = useState(null);
+  const [mrResearchTab, setMrResearchTab] = useState("business");
   const [mrLoading, setMrLoading] = useState(false);
   const [mrError, setMrError] = useState(null);
+  const [insightPdfLoading, setInsightPdfLoading] = useState(false);
   const [stageOneResearchReady, setStageOneResearchReady] = useState(false);
   const [showBuilderMarketInsight, setShowBuilderMarketInsight] = useState(false);
   const [lastResearchHash, setLastResearchHash] = useState(null);
@@ -307,7 +316,8 @@ export default function ValidationWizardPage() {
     number_of_paying_customers: "",
     competitor_price_low: "",
     competitor_price_high: "",
-    differentiation_level: "medium"
+    differentiation_level: "medium",
+    country: ""
   }));
   const [serviceCurrency, setServiceCurrency] = useState("GBP");
   const [profile, setProfile] = useState(() => ({
@@ -384,12 +394,20 @@ export default function ValidationWizardPage() {
     [validationHistory]
   );
   const filteredValidationHistory = useMemo(() => {
-    if (historyFilter === "all") return validationHistory;
-    return validationHistory.filter((entry) => entry.status === historyFilter);
-  }, [historyFilter, validationHistory]);
+    const q = historySearch.trim().toLowerCase();
+    return validationHistory.filter((entry) => {
+      if (historyFilter !== "all" && entry.status !== historyFilter) return false;
+      if (historyTypeFilter === "business" && entry.type !== "business_validation") return false;
+      if (historyTypeFilter === "service" && entry.type !== "service_validation") return false;
+      if (q && !String(entry.title || "").toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [historyFilter, historyTypeFilter, historySearch, validationHistory]);
   const activeWorkspaceId = editingWorkspaceId || storedWorkspaceId;
 
   const isProductPath = form.pathway === "product_service_idea";
+  const marketResearch = isProductPath ? serviceMarketResearch : businessMarketResearch;
+  const tabMarketResearch = mrResearchTab === "service" ? serviceMarketResearch : businessMarketResearch;
   const formBlocks = useMemo(() => {
     if (isCreateWorkspace) {
       return [
@@ -722,7 +740,8 @@ export default function ValidationWizardPage() {
           number_of_paying_customers: draft.number_of_paying_customers ?? "",
           competitor_price_low: draft.competitor_price_low ?? "",
           competitor_price_high: draft.competitor_price_high ?? "",
-          differentiation_level: draft.differentiation_level ?? "medium"
+          differentiation_level: draft.differentiation_level ?? "medium",
+          country: draft.country ?? ""
         };
         setServiceForm((prev) => ({ ...prev, ...safeServiceDraft }));
       } else {
@@ -925,7 +944,11 @@ export default function ValidationWizardPage() {
             setServiceForm((prev) => ({ ...prev, ...serviceDraft }));
           }
           if (ws?.data?.market_research && typeof ws.data.market_research === "object") {
-            setMarketResearch(ws.data.market_research);
+            setBusinessMarketResearch(ws.data.market_research);
+            setStageOneResearchReady(true);
+          }
+          if (ws?.data?.service_market_research && typeof ws.data.service_market_research === "object") {
+            setServiceMarketResearch(ws.data.service_market_research);
             setStageOneResearchReady(true);
           }
           setWorkspaceId(wsId);
@@ -963,7 +986,11 @@ export default function ValidationWizardPage() {
         }
         // Restore previously generated insights
         if (ws?.data?.market_research && typeof ws.data.market_research === "object") {
-          setMarketResearch(ws.data.market_research);
+          setBusinessMarketResearch(ws.data.market_research);
+          setStageOneResearchReady(true);
+        }
+        if (ws?.data?.service_market_research && typeof ws.data.service_market_research === "object") {
+          setServiceMarketResearch(ws.data.service_market_research);
           setStageOneResearchReady(true);
         }
         const serviceDraft = ws?.data?.draft_service_idea || ws?.data?.service_idea_validation;
@@ -1017,7 +1044,10 @@ export default function ValidationWizardPage() {
 
   function selectPathway(value) {
     setStageOneResearchReady(false);
-    setMarketResearch(null);
+    setBusinessMarketResearch(null);
+    setBusinessResearchHash(null);
+    setServiceMarketResearch(null);
+    setServiceResearchHash(null);
     setMrError(null);
     setShowBuilderMarketInsight(false);
     setCurrentBusinessStageIndex(0);
@@ -1030,7 +1060,6 @@ export default function ValidationWizardPage() {
 
   function update(path, value) {
     setStageOneResearchReady(false);
-    setMarketResearch(null);
     setMrError(null);
     setShowBuilderMarketInsight(false);
     setError(null);
@@ -1046,7 +1075,6 @@ export default function ValidationWizardPage() {
 
   function updateService(path, value) {
     setStageOneResearchReady(false);
-    setMarketResearch(null);
     setMrError(null);
     setShowBuilderMarketInsight(false);
     setError(null);
@@ -1200,56 +1228,6 @@ export default function ValidationWizardPage() {
 
   async function editHistoryEntry(entry) {
     if (!activeWorkspaceId) return;
-    if (entry?.status === "accepted" || entry?.status === "rejected") {
-      setError(null);
-      try {
-        const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
-        const data = ws?.data || {};
-        setWorkspaceId(activeWorkspaceId);
-        setWorkspaceNameStore(ws?.name || null);
-        setWorkspaceName(ws?.name || "");
-        setWorkspaceNameTouched(true);
-        setCurrency(data?.currency || serviceCurrency || "GBP");
-
-        if (entry.type === "service_validation") {
-          const serviceHistory = Array.isArray(data.service_validation_history) ? data.service_validation_history : [];
-          const serviceEntry = serviceHistory.find((item) => item?.id === entry.id) || entry;
-          const payload = serviceEntry?.payload || data.draft_service_idea || null;
-          if (payload && typeof payload === "object") {
-            setDraftServiceIdea(payload);
-          }
-          setValidation(serviceEntry?.result || entry.result || null);
-          setServiceDecisionStatus(entry.status);
-          setDecisionStatus(null);
-          await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
-            data: {
-              active_service_validation_id: entry.id,
-              ...(payload && typeof payload === "object" ? { draft_service_idea: payload } : {})
-            }
-          });
-        } else {
-          const payload = entry.payload || data.draft_idea_validation || data.idea_validation || null;
-          if (payload && typeof payload === "object") {
-            setDraftIdeaValidation(payload);
-            setInputs(payload);
-          }
-          setIdeaValidation(entry.result || data.idea_validation || null);
-          setDecisionStatus(entry.status);
-          setServiceDecisionStatus(null);
-          await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
-            data: {
-              active_validation_id: entry.id,
-              ...(payload && typeof payload === "object" ? { draft_idea_validation: payload } : {})
-            }
-          });
-        }
-
-        navigate("/results");
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not open this validation dashboard.");
-      }
-      return;
-    }
     setError(null);
     try {
       const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
@@ -1258,6 +1236,8 @@ export default function ValidationWizardPage() {
       setWorkspaceNameStore(ws?.name || null);
       setWorkspaceName(ws?.name || "");
       setWorkspaceNameTouched(true);
+
+      const isViewing = entry.status === "accepted" || entry.status === "rejected";
 
       if (entry.type === "service_validation") {
         const serviceHistory = Array.isArray(data.service_validation_history) ? data.service_validation_history : [];
@@ -1272,15 +1252,26 @@ export default function ValidationWizardPage() {
         setServiceCurrency(serviceEntry?.currency || data.currency || serviceCurrency || "GBP");
         setDraftServiceIdea(payload);
         setValidation(serviceEntry?.result || entry.result || null);
+        setServiceDecisionStatus(entry.status || null);
+        setDecisionStatus(null);
         setEditingHistoryEntry({
           id: entry.id,
           type: "service_validation",
           created_at: serviceEntry?.created_at || entry.created_at || new Date().toISOString(),
         });
+        if (isViewing) {
+          // Load the stored insight so the panel can show it immediately
+          const mr = serviceEntry?.market_research || data.service_market_research || null;
+          if (mr && typeof mr === "object") {
+            setServiceMarketResearch(mr);
+            setStageOneResearchReady(true);
+          }
+        }
         await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
           data: {
             active_service_validation_id: entry.id,
             draft_service_idea: payload,
+            ...(isViewing ? {} : { service_market_research: null }),
           }
         });
       } else {
@@ -1293,27 +1284,47 @@ export default function ValidationWizardPage() {
         setForm(hydrated);
         setDraftIdeaValidation(payload);
         setValidation(entry.result || null);
+        setDecisionStatus(entry.status || null);
+        setServiceDecisionStatus(null);
         setEditingHistoryEntry({
           id: entry.id,
           type: "business_validation",
           created_at: entry.created_at || new Date().toISOString(),
         });
+        if (isViewing) {
+          const mr = entry.market_research || data.market_research || null;
+          if (mr && typeof mr === "object") {
+            setBusinessMarketResearch(mr);
+            setStageOneResearchReady(true);
+          }
+        }
         await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
           data: {
             active_validation_id: entry.id,
             draft_idea_validation: payload,
+            ...(isViewing ? {} : { market_research: null }),
           }
         });
       }
 
-      setShowBuilderMarketInsight(false);
-      setMarketResearch(null);
       setMrError(null);
-      setStageOneResearchReady(false);
       setCurrentBusinessStageIndex(0);
       setCurrentServiceStageIndex(0);
       setContentTab("builder");
       setMode("fill");
+
+      if (isViewing) {
+        // Open the insights panel directly for View mode
+        setShowBuilderMarketInsight(true);
+      } else {
+        // Resume mode — start clean
+        setShowBuilderMarketInsight(false);
+        setBusinessMarketResearch(null);
+        setBusinessResearchHash(null);
+        setServiceMarketResearch(null);
+        setServiceResearchHash(null);
+        setStageOneResearchReady(false);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load this validation history item.");
     }
@@ -1387,6 +1398,34 @@ export default function ValidationWizardPage() {
     });
   }
 
+  function bulkDeleteEntries(ids) {
+    if (!activeWorkspaceId || !ids.size) return;
+    setConfirmDialog({
+      message: `Delete ${ids.size} selected validation${ids.size > 1 ? "s" : ""}? This cannot be undone.`,
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setError(null);
+        try {
+          const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+          const existing = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
+          const serviceExisting = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
+          const nextHistory = existing.filter((item) => !ids.has(item?.id));
+          const nextServiceHistory = serviceExisting.filter((item) => !ids.has(item?.id));
+          await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
+            data: { validation_history: nextHistory, service_validation_history: nextServiceHistory },
+          });
+          setValidationHistory(buildUnifiedValidationHistory({ validation_history: nextHistory, service_validation_history: nextServiceHistory }));
+          setSavedServiceIdeas(nextServiceHistory);
+          setBulkSelected(new Set());
+          setSavedNotice(`${ids.size} validation${ids.size > 1 ? "s" : ""} deleted.`);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Could not delete selected items.");
+        }
+      },
+      onCancel: () => setConfirmDialog(null),
+    });
+  }
+
   function validateProfileDraft() {
     if (!enabledForms.workspace_profile) return null;
     if (!String(profile.company_name || "").trim()) return "Company name is required in the workspace profile.";
@@ -1452,7 +1491,6 @@ export default function ValidationWizardPage() {
     const nextValue = String(value || "").trim().toLowerCase();
     setError(null);
     setStageOneResearchReady(false);
-    setMarketResearch(null);
     setMrError(null);
     setForm((prev) => {
       const next = structuredClone(prev);
@@ -1470,7 +1508,6 @@ export default function ValidationWizardPage() {
   function updateCustomFrequency(value) {
     setError(null);
     setStageOneResearchReady(false);
-    setMarketResearch(null);
     setMrError(null);
     setForm((prev) => {
       const next = structuredClone(prev);
@@ -1535,9 +1572,26 @@ export default function ValidationWizardPage() {
   }
 
   function buildServiceIdeaPayloadForResearch() {
+    const DEMAND_EVIDENCE_LABELS = {
+      assumption_only: "assumption only — no validated evidence yet",
+      market_research: "secondary market research conducted",
+      enquiries: "initial interest or enquiries received",
+      LOIs: "letters of intent or signed commitments",
+      paid_pilot: "paying customers or paid pilot completed",
+    };
+    const DIFFERENTIATION_LABELS = {
+      low: "low — similar to existing alternatives",
+      medium: "medium — some differentiation from competitors",
+      high: "high — clearly differentiated from alternatives",
+    };
+    const raw = structuredClone(serviceForm);
     return {
-      ...structuredClone(serviceForm),
+      ...raw,
       currency: serviceCurrency || "GBP",
+      demand_evidence_type:
+        DEMAND_EVIDENCE_LABELS[raw.demand_evidence_type] || raw.demand_evidence_type || "",
+      differentiation_level:
+        DIFFERENTIATION_LABELS[raw.differentiation_level] || raw.differentiation_level || "",
     };
   }
 
@@ -1797,9 +1851,6 @@ export default function ValidationWizardPage() {
       payload.capacity.capacity_units_per_person_per_month = parseNumber(payload.capacity.capacity_units_per_person_per_month, 0);
       payload.cash.starting_cash = parseNumber(payload.cash.starting_cash, 0);
       payload.cash.upfront_costs = parseNumber(payload.cash.upfront_costs, 0);
-      const fixedMonthly = payload.costs.fixed_costs_monthly + payload.costs.founder_draw_monthly + payload.costs.contractor_costs_monthly;
-      const startingCash = Math.max(0, payload.cash.starting_cash - payload.cash.upfront_costs);
-      setInputs({ price_per_unit: payload.offer.price_per_unit, units_per_month: payload.demand.expected_units_per_month, fixed_costs_monthly: fixedMonthly, variable_cost_per_unit: payload.costs.variable_cost_per_unit, starting_cash: startingCash });
       setCurrency(payload.context.currency || "GBP");
       const nextCatalogue = existingCatalogue || { products: [], customers: [], vendors: [] };
       // Only write idea_validation to the live field when the user explicitly accepts.
@@ -1931,7 +1982,8 @@ export default function ValidationWizardPage() {
               number_of_paying_customers: parseIntSafe(serviceForm?.number_of_paying_customers, 0),
               competitor_price_low: parseNumber(serviceForm?.competitor_price_low, 0),
               competitor_price_high: parseNumber(serviceForm?.competitor_price_high, 0),
-              differentiation_level: String(serviceForm?.differentiation_level || "").trim().toLowerCase()
+              differentiation_level: String(serviceForm?.differentiation_level || "").trim().toLowerCase(),
+              country: String(serviceForm?.country || "").trim() || null
             };
             const result = await apiRequest(
               "/service-ideas/validate",
@@ -1942,9 +1994,10 @@ export default function ValidationWizardPage() {
             setValidation(result);
             setServiceDecisionStatus(null);
 
+          let validationId = null;
           if (wsId) {
               const isEditingServiceHistory = editingHistoryEntry?.type === "service_validation";
-              const validationId = isEditingServiceHistory ? editingHistoryEntry.id : crypto.randomUUID();
+              validationId = isEditingServiceHistory ? editingHistoryEntry.id : crypto.randomUUID();
               const createdAt = isEditingServiceHistory
                 ? editingHistoryEntry.created_at || new Date().toISOString()
                 : new Date().toISOString();
@@ -2016,6 +2069,7 @@ export default function ValidationWizardPage() {
             }
             setLastEvaluationId(validationId);
             setSavedNotice("Validation complete. Accept or reject below.");
+            if (marketResearch) setShowBuilderMarketInsight(true);
           } catch (payloadErr) {
             const msg = humanizeValidationError(payloadErr);
             console.error("Service validation payload error:", payloadErr);
@@ -2031,9 +2085,10 @@ export default function ValidationWizardPage() {
             { timeoutMs: 120000 }
           );
           setValidation(result);
+          let validationId = null;
           if (wsId) {
             const isEditingBusinessHistory = editingHistoryEntry?.type === "business_validation";
-            const validationId = isEditingBusinessHistory ? editingHistoryEntry.id : crypto.randomUUID();
+            validationId = isEditingBusinessHistory ? editingHistoryEntry.id : crypto.randomUUID();
             const createdAt = isEditingBusinessHistory
               ? editingHistoryEntry.created_at || new Date().toISOString()
               : new Date().toISOString();
@@ -2071,6 +2126,7 @@ export default function ValidationWizardPage() {
           }
           setLastEvaluationId(validationId);
           setSavedNotice("Validation complete. Accept or reject below.");
+          if (marketResearch) setShowBuilderMarketInsight(true);
         }
       } else {
         setValidation(null);
@@ -2105,14 +2161,15 @@ export default function ValidationWizardPage() {
       setContentTab("builder");
     }
 
-    // Skip API call if form data hasn't changed and we already have insights
-    if (!forceRefresh && marketResearch && useCurrentForm) {
-      const payload = researchSource === "service" ? buildServiceIdeaPayloadForResearch() : buildBusinessIdeaPayloadForResearch();
-      const currentHash = JSON.stringify(payload);
-      if (currentHash === lastResearchHash) {
-        if (markStageOneReady) setStageOneResearchReady(true);
-        return;
-      }
+    const payload = researchSource === "service" ? buildServiceIdeaPayloadForResearch() : buildBusinessIdeaPayloadForResearch();
+    const currentHash = JSON.stringify(payload);
+    const storedHash = researchSource === "service" ? serviceResearchHash : businessResearchHash;
+    const cachedResearch = researchSource === "service" ? serviceMarketResearch : businessMarketResearch;
+
+    // Return cached insights if form hasn't changed since last generation
+    if (!forceRefresh && cachedResearch && storedHash === currentHash) {
+      if (markStageOneReady) setStageOneResearchReady(true);
+      return;
     }
 
     setMrLoading(true);
@@ -2120,19 +2177,22 @@ export default function ValidationWizardPage() {
     setError(null);
     try {
       const wsId = editingWorkspaceId || storedWorkspaceId;
-      const payload = researchSource === "service" ? buildServiceIdeaPayloadForResearch() : buildBusinessIdeaPayloadForResearch();
-      const body = useCurrentForm
-        ? { idea_validation: payload }
-        : wsId
-          ? { workspace_id: wsId }
-          : { idea_validation: payload };
-      if (useCurrentForm) setLastResearchHash(JSON.stringify(payload));
+      const body = wsId
+        ? { workspace_id: wsId, idea_validation: payload }
+        : { idea_validation: payload };
       const result = await apiRequest("/validation/market-research", "POST", body, { timeoutMs: 120000 });
-      setMarketResearch(result);
+      if (researchSource === "service") {
+        setServiceMarketResearch(result);
+        setServiceResearchHash(currentHash);
+      } else {
+        setBusinessMarketResearch(result);
+        setBusinessResearchHash(currentHash);
+      }
       if (markStageOneReady) setStageOneResearchReady(true);
       // Persist insights to workspace so they survive page refreshes
       try {
-        await apiRequest("/validation/me", "PATCH", { data: { market_research: result } });
+        const dataKey = researchSource === "service" ? "service_market_research" : "market_research";
+        await apiRequest("/validation/me", "PATCH", { data: { [dataKey]: result } });
       } catch {
         // non-critical — insights are already in state
       }
@@ -2226,6 +2286,33 @@ export default function ValidationWizardPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={insightPdfLoading || !marketResearch}
+                  onClick={async () => {
+                    setInsightPdfLoading(true);
+                    try {
+                      await generateValidationInsightPdf({
+                        data: marketResearch,
+                        title: `${isBusinessStageFlow ? currentBusinessStageMeta?.label || "Stage" : isServiceStageFlow ? currentServiceStageMeta?.label || "Stage" : "Insight"} Report`,
+                        businessName: workspaceName || form?.context?.business_name || serviceForm?.service_name || "Business",
+                        type: isServiceStageFlow ? "service" : "business",
+                      });
+                    } catch {
+                      // silent — pdf errors are not critical
+                    } finally {
+                      setInsightPdfLoading(false);
+                    }
+                  }}
+                >
+                  {insightPdfLoading ? <Spinner size={14} /> : (
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                  )}
+                  {insightPdfLoading ? "Generating..." : "Download report"}
+                </Button>
                 <Button
                   size="sm"
                   variant="secondary"
@@ -2663,7 +2750,7 @@ export default function ValidationWizardPage() {
                   <div className="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50 to-accent-50 p-5 dark:border-slate-700 dark:from-slate-900 dark:to-slate-800">
                     <div className="mb-1 text-sm font-semibold text-slate-900 dark:text-slate-100">What would you like to do next?</div>
                     <div className="mb-4 text-xs text-slate-500 dark:text-slate-400">Choose how to proceed based on these insights.</div>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="grid grid-cols-2 gap-3">
                       <button
                         type="button"
                         onClick={() => {
@@ -2689,15 +2776,15 @@ export default function ValidationWizardPage() {
                           setError(null);
                           setStageOneResearchReady(false);
                           setShowBuilderMarketInsight(false);
-                          saveWorkspace(true);
+                          saveWorkspace(false);
                         }}
                         className="flex flex-col items-start gap-1.5 rounded-xl border border-rose-100 bg-white px-4 py-3 text-left shadow-sm transition hover:border-rose-200 hover:shadow-md dark:border-slate-700 dark:bg-slate-800"
                       >
                         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-500 dark:bg-rose-900/20">
                           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
                         </span>
-                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">Reject idea</span>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400">Mark this idea as rejected</span>
+                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">Reject insight</span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">Save and mark this insight as rejected</span>
                       </button>
                       )}
 
@@ -2739,8 +2826,8 @@ export default function ValidationWizardPage() {
                         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20">
                           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5"/></svg>
                         </span>
-                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">Accept & evaluate</span>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400">Save and run the financial evaluation</span>
+                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">Accept</span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">Save this validation and make it active across modules</span>
                       </button>
                       )}
                     </div>
@@ -2755,6 +2842,53 @@ export default function ValidationWizardPage() {
               title="Market research"
               subtitle="Full research report accumulated from your validation inputs."
             >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {(businessMarketResearch || serviceMarketResearch) ? (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setMrResearchTab("business")}
+                      className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${mrResearchTab === "business" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                    >
+                      Business idea
+                    </button>
+                    <button
+                      onClick={() => setMrResearchTab("service")}
+                      className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${mrResearchTab === "service" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                    >
+                      Service / product
+                    </button>
+                  </div>
+                ) : <div />}
+                {tabMarketResearch ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={insightPdfLoading}
+                    onClick={async () => {
+                      setInsightPdfLoading(true);
+                      try {
+                        await generateValidationInsightPdf({
+                          data: tabMarketResearch,
+                          title: `${mrResearchTab === "service" ? "Service / Product" : "Business Idea"} Market Research Report`,
+                          businessName: workspaceName || form?.context?.business_name || serviceForm?.service_name || "Business",
+                          type: mrResearchTab,
+                        });
+                      } catch {
+                        // silent
+                      } finally {
+                        setInsightPdfLoading(false);
+                      }
+                    }}
+                  >
+                    {insightPdfLoading ? <Spinner size={14} /> : (
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                      </svg>
+                    )}
+                    {insightPdfLoading ? "Generating..." : "Download report"}
+                  </Button>
+                ) : null}
+              </div>
               {mrError ? <InlineAlert kind="error" message={mrError} /> : null}
             </SectionCard>
 
@@ -2765,34 +2899,34 @@ export default function ValidationWizardPage() {
                   Updating the accumulated market research... This may take up to 30 seconds.
                 </div>
               </SectionCard>
-            ) : marketResearch ? (
+            ) : tabMarketResearch ? (
               <>
-                {marketResearch.idea_validation_result || marketResearch.executive_summary ? (
+                {tabMarketResearch.idea_validation_result || tabMarketResearch.executive_summary ? (
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-                    {marketResearch.executive_summary ? (
+                    {tabMarketResearch.executive_summary ? (
                       <SectionCard title="Executive Summary" subtitle="Plain-English verdict on whether this idea is worth pursuing.">
-                        <div className="text-sm leading-6 text-slate-700">{marketResearch.executive_summary}</div>
+                        <div className="text-sm leading-6 text-slate-700">{tabMarketResearch.executive_summary}</div>
                       </SectionCard>
                     ) : null}
 
-                    {marketResearch.idea_validation_result ? (
+                    {tabMarketResearch.idea_validation_result ? (
                       <SectionCard title="Idea Validation Result" subtitle="The latest combined recommendation from the research gathered so far.">
                         <div className="space-y-3 text-sm">
                           <div className="grid grid-cols-2 gap-2">
                             <div className="rounded-xl bg-slate-50 p-3">
                               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Overall Score</div>
-                              <div className="mt-1 text-base font-semibold text-slate-900">{marketResearch.idea_validation_result.overall_score || "Fair"}</div>
+                              <div className="mt-1 text-base font-semibold text-slate-900">{tabMarketResearch.idea_validation_result.overall_score || "Fair"}</div>
                             </div>
                             <div className="rounded-xl bg-slate-50 p-3">
                               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended Action</div>
-                              <div className="mt-1 text-base font-semibold text-slate-900">{marketResearch.idea_validation_result.recommended_action || "Research more"}</div>
+                              <div className="mt-1 text-base font-semibold text-slate-900">{tabMarketResearch.idea_validation_result.recommended_action || "Research more"}</div>
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-2 text-xs">
-                            {marketResearch.idea_validation_result.market_demand ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Market demand: {marketResearch.idea_validation_result.market_demand}</span> : null}
-                            {marketResearch.idea_validation_result.competition_level ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Competition: {marketResearch.idea_validation_result.competition_level}</span> : null}
-                            {marketResearch.idea_validation_result.pricing_opportunity ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Pricing: {marketResearch.idea_validation_result.pricing_opportunity}</span> : null}
-                            {marketResearch.idea_validation_result.execution_risk ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Execution risk: {marketResearch.idea_validation_result.execution_risk}</span> : null}
+                            {tabMarketResearch.idea_validation_result.market_demand ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Market demand: {tabMarketResearch.idea_validation_result.market_demand}</span> : null}
+                            {tabMarketResearch.idea_validation_result.competition_level ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Competition: {tabMarketResearch.idea_validation_result.competition_level}</span> : null}
+                            {tabMarketResearch.idea_validation_result.pricing_opportunity ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Pricing: {tabMarketResearch.idea_validation_result.pricing_opportunity}</span> : null}
+                            {tabMarketResearch.idea_validation_result.execution_risk ? <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">Execution risk: {tabMarketResearch.idea_validation_result.execution_risk}</span> : null}
                           </div>
                         </div>
                       </SectionCard>
@@ -2800,8 +2934,8 @@ export default function ValidationWizardPage() {
                   </div>
                 ) : null}
 
-                {marketResearch.viability_score ? (() => {
-                  const vs = marketResearch.viability_score;
+                {tabMarketResearch.viability_score ? (() => {
+                  const vs = tabMarketResearch.viability_score;
                   const scoreColors = {
                     "Very Strong": "bg-emerald-50 border-emerald-200 text-emerald-900",
                     "Strong": "bg-green-50 border-green-200 text-green-900",
@@ -2833,23 +2967,23 @@ export default function ValidationWizardPage() {
                   );
                 })() : null}
 
-                {marketResearch.market_opportunity ? (
+                {tabMarketResearch.market_opportunity ? (
                   <SectionCard title="Market Opportunity">
-                    <div className="mb-3 text-sm text-slate-700">{marketResearch.market_opportunity.summary}</div>
+                    <div className="mb-3 text-sm text-slate-700">{tabMarketResearch.market_opportunity.summary}</div>
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                       <div className="rounded-xl bg-slate-50 p-3">
                         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Size</div>
-                        <div className="mt-1 text-sm font-semibold text-slate-900">{marketResearch.market_opportunity.market_size || "-"}</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">{tabMarketResearch.market_opportunity.market_size || "-"}</div>
                       </div>
                       <div className="rounded-xl bg-slate-50 p-3">
                         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Growth Rate</div>
-                        <div className="mt-1 text-sm font-semibold text-slate-900">{marketResearch.market_opportunity.growth_rate || "-"}</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">{tabMarketResearch.market_opportunity.growth_rate || "-"}</div>
                       </div>
-                      {Array.isArray(marketResearch.market_opportunity.key_trends) && marketResearch.market_opportunity.key_trends.length ? (
+                      {Array.isArray(tabMarketResearch.market_opportunity.key_trends) && tabMarketResearch.market_opportunity.key_trends.length ? (
                         <div className="rounded-xl bg-slate-50 p-3">
                           <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Key Trends</div>
                           <ul className="list-disc list-inside space-y-0.5 text-xs text-slate-700">
-                            {marketResearch.market_opportunity.key_trends.map((t, i) => <li key={i}>{t}</li>)}
+                            {tabMarketResearch.market_opportunity.key_trends.map((t, i) => <li key={i}>{t}</li>)}
                           </ul>
                         </div>
                       ) : null}
@@ -2858,33 +2992,33 @@ export default function ValidationWizardPage() {
                 ) : null}
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {marketResearch.target_customer ? (
+                  {tabMarketResearch.target_customer ? (
                     <SectionCard title="Target Customer">
                       <div className="space-y-2 text-sm">
-                        {marketResearch.target_customer.profile ? <div><span className="font-semibold text-slate-700">Profile: </span>{marketResearch.target_customer.profile}</div> : null}
-                        {Array.isArray(marketResearch.target_customer.pain_points) && marketResearch.target_customer.pain_points.length ? (
+                        {tabMarketResearch.target_customer.profile ? <div><span className="font-semibold text-slate-700">Profile: </span>{tabMarketResearch.target_customer.profile}</div> : null}
+                        {Array.isArray(tabMarketResearch.target_customer.pain_points) && tabMarketResearch.target_customer.pain_points.length ? (
                           <div>
                             <div className="font-semibold text-slate-700 mb-1">Pain Points</div>
                             <ul className="list-disc list-inside space-y-0.5 text-slate-600">
-                              {marketResearch.target_customer.pain_points.map((p, i) => <li key={i}>{p}</li>)}
+                              {tabMarketResearch.target_customer.pain_points.map((p, i) => <li key={i}>{p}</li>)}
                             </ul>
                           </div>
                         ) : null}
-                        {marketResearch.target_customer.buying_behaviour ? <div><span className="font-semibold text-slate-700">Buying behaviour: </span>{marketResearch.target_customer.buying_behaviour}</div> : null}
-                        {marketResearch.target_customer.urgency ? <div><span className="font-semibold text-slate-700">Urgency: </span>{marketResearch.target_customer.urgency}</div> : null}
-                        {marketResearch.target_customer.willingness_to_pay ? <div><span className="font-semibold text-slate-700">Willingness to pay: </span>{marketResearch.target_customer.willingness_to_pay}</div> : null}
+                        {tabMarketResearch.target_customer.buying_behaviour ? <div><span className="font-semibold text-slate-700">Buying behaviour: </span>{tabMarketResearch.target_customer.buying_behaviour}</div> : null}
+                        {tabMarketResearch.target_customer.urgency ? <div><span className="font-semibold text-slate-700">Urgency: </span>{tabMarketResearch.target_customer.urgency}</div> : null}
+                        {tabMarketResearch.target_customer.willingness_to_pay ? <div><span className="font-semibold text-slate-700">Willingness to pay: </span>{tabMarketResearch.target_customer.willingness_to_pay}</div> : null}
                       </div>
                     </SectionCard>
                   ) : null}
 
-                  {marketResearch.problem_validation ? (
+                  {tabMarketResearch.problem_validation ? (
                     <SectionCard title="Problem Validation">
                       <div className="space-y-2 text-sm">
-                        {marketResearch.problem_validation.frequency_assessment ? <div className="text-slate-600">{marketResearch.problem_validation.frequency_assessment}</div> : null}
-                        {marketResearch.problem_validation.severity ? <div><span className="font-semibold text-slate-700">Severity: </span>{marketResearch.problem_validation.severity}</div> : null}
-                        {Array.isArray(marketResearch.problem_validation.evidence) && marketResearch.problem_validation.evidence.length ? (
+                        {tabMarketResearch.problem_validation.frequency_assessment ? <div className="text-slate-600">{tabMarketResearch.problem_validation.frequency_assessment}</div> : null}
+                        {tabMarketResearch.problem_validation.severity ? <div><span className="font-semibold text-slate-700">Severity: </span>{tabMarketResearch.problem_validation.severity}</div> : null}
+                        {Array.isArray(tabMarketResearch.problem_validation.evidence) && tabMarketResearch.problem_validation.evidence.length ? (
                           <ul className="list-disc list-inside space-y-0.5 text-slate-600">
-                            {marketResearch.problem_validation.evidence.map((e, i) => <li key={i}>{e}</li>)}
+                            {tabMarketResearch.problem_validation.evidence.map((e, i) => <li key={i}>{e}</li>)}
                           </ul>
                         ) : null}
                       </div>
@@ -2892,20 +3026,20 @@ export default function ValidationWizardPage() {
                   ) : null}
                 </div>
 
-                {marketResearch.demand_signals ? (
+                {tabMarketResearch.demand_signals ? (
                   <SectionCard title="Demand Signals">
-                    {Array.isArray(marketResearch.demand_signals.signals) && marketResearch.demand_signals.signals.length ? (
+                    {Array.isArray(tabMarketResearch.demand_signals.signals) && tabMarketResearch.demand_signals.signals.length ? (
                       <ul className="list-disc list-inside space-y-1 text-sm text-slate-600">
-                        {marketResearch.demand_signals.signals.map((s, i) => <li key={i}>{s}</li>)}
+                        {tabMarketResearch.demand_signals.signals.map((s, i) => <li key={i}>{s}</li>)}
                       </ul>
                     ) : null}
-                    {marketResearch.demand_signals.online_discussion ? (
-                      <div className="mt-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">{marketResearch.demand_signals.online_discussion}</div>
+                    {tabMarketResearch.demand_signals.online_discussion ? (
+                      <div className="mt-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">{tabMarketResearch.demand_signals.online_discussion}</div>
                     ) : null}
                   </SectionCard>
                 ) : null}
 
-                {Array.isArray(marketResearch.competitor_matrix) && marketResearch.competitor_matrix.length ? (
+                {Array.isArray(tabMarketResearch.competitor_matrix) && tabMarketResearch.competitor_matrix.length ? (
                   <SectionCard title="Competitor Matrix">
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -2919,7 +3053,7 @@ export default function ValidationWizardPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {marketResearch.competitor_matrix.map((comp, i) => (
+                          {tabMarketResearch.competitor_matrix.map((comp, i) => (
                             <tr key={i}>
                               <td className="py-2 pr-4 font-medium text-slate-900 align-top">{comp.name}</td>
                               <td className="py-2 pr-4 text-slate-600 align-top">{comp.positioning || "-"}</td>
@@ -2935,23 +3069,23 @@ export default function ValidationWizardPage() {
                 ) : null}
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {marketResearch.pricing_strategy ? (
+                  {tabMarketResearch.pricing_strategy ? (
                     <SectionCard title="Pricing Strategy">
                       <div className="space-y-2 text-sm">
-                        {marketResearch.pricing_strategy.recommended_model ? <div><span className="font-semibold text-slate-700">Recommended model: </span>{marketResearch.pricing_strategy.recommended_model}</div> : null}
-                        {marketResearch.pricing_strategy.rationale ? <div className="text-slate-600">{marketResearch.pricing_strategy.rationale}</div> : null}
-                        {marketResearch.pricing_strategy.launch_offer ? <div className="rounded-xl bg-brand-50 p-3 text-brand-900 text-xs font-medium">Launch offer: {marketResearch.pricing_strategy.launch_offer}</div> : null}
+                        {tabMarketResearch.pricing_strategy.recommended_model ? <div><span className="font-semibold text-slate-700">Recommended model: </span>{tabMarketResearch.pricing_strategy.recommended_model}</div> : null}
+                        {tabMarketResearch.pricing_strategy.rationale ? <div className="text-slate-600">{tabMarketResearch.pricing_strategy.rationale}</div> : null}
+                        {tabMarketResearch.pricing_strategy.launch_offer ? <div className="rounded-xl bg-brand-50 p-3 text-brand-900 text-xs font-medium">Launch offer: {tabMarketResearch.pricing_strategy.launch_offer}</div> : null}
                       </div>
                     </SectionCard>
                   ) : null}
 
-                  {marketResearch.recommended_price_range ? (
+                  {tabMarketResearch.recommended_price_range ? (
                     <SectionCard title="Recommended Price Range">
                       <div className="grid grid-cols-3 gap-2 text-center">
                         {[["low", "Entry"], ["mid", "Mid"], ["premium", "Premium"]].map(([key, label]) => (
                           <div key={key} className="rounded-xl bg-slate-50 p-3">
                             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</div>
-                            <div className="mt-1 text-sm font-bold text-slate-900">{marketResearch.recommended_price_range[key] ?? "-"}</div>
+                            <div className="mt-1 text-sm font-bold text-slate-900">{tabMarketResearch.recommended_price_range[key] ?? "-"}</div>
                           </div>
                         ))}
                       </div>
@@ -2960,32 +3094,32 @@ export default function ValidationWizardPage() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {marketResearch.positioning ? (
+                  {tabMarketResearch.positioning ? (
                     <SectionCard title="Positioning Recommendation">
                       <div className="space-y-2 text-sm">
-                        {marketResearch.positioning.headline_message ? <div className="rounded-xl bg-brand-50 p-3 text-sm font-semibold text-brand-900">&ldquo;{marketResearch.positioning.headline_message}&rdquo;</div> : null}
-                        {marketResearch.positioning.value_proposition ? <div><span className="font-semibold text-slate-700">Value prop: </span>{marketResearch.positioning.value_proposition}</div> : null}
-                        {marketResearch.positioning.differentiation ? <div><span className="font-semibold text-slate-700">Differentiation: </span>{marketResearch.positioning.differentiation}</div> : null}
+                        {tabMarketResearch.positioning.headline_message ? <div className="rounded-xl bg-brand-50 p-3 text-sm font-semibold text-brand-900">&ldquo;{tabMarketResearch.positioning.headline_message}&rdquo;</div> : null}
+                        {tabMarketResearch.positioning.value_proposition ? <div><span className="font-semibold text-slate-700">Value prop: </span>{tabMarketResearch.positioning.value_proposition}</div> : null}
+                        {tabMarketResearch.positioning.differentiation ? <div><span className="font-semibold text-slate-700">Differentiation: </span>{tabMarketResearch.positioning.differentiation}</div> : null}
                       </div>
                     </SectionCard>
                   ) : null}
 
-                  {marketResearch.go_to_market ? (
+                  {tabMarketResearch.go_to_market ? (
                     <SectionCard title="Go-To-Market Recommendation">
                       <div className="space-y-2 text-sm">
-                        {Array.isArray(marketResearch.go_to_market.primary_channels) && marketResearch.go_to_market.primary_channels.length ? (
-                          <div><span className="font-semibold text-slate-700">Primary channels: </span>{marketResearch.go_to_market.primary_channels.join(", ")}</div>
+                        {Array.isArray(tabMarketResearch.go_to_market.primary_channels) && tabMarketResearch.go_to_market.primary_channels.length ? (
+                          <div><span className="font-semibold text-slate-700">Primary channels: </span>{tabMarketResearch.go_to_market.primary_channels.join(", ")}</div>
                         ) : null}
-                        {marketResearch.go_to_market.timeline ? <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-700">{marketResearch.go_to_market.timeline}</div> : null}
+                        {tabMarketResearch.go_to_market.timeline ? <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-700">{tabMarketResearch.go_to_market.timeline}</div> : null}
                       </div>
                     </SectionCard>
                   ) : null}
                 </div>
 
-                {Array.isArray(marketResearch.risks) && marketResearch.risks.length ? (
+                {Array.isArray(tabMarketResearch.risks) && tabMarketResearch.risks.length ? (
                   <SectionCard title="Risks &amp; Barriers">
                     <div className="space-y-2">
-                      {marketResearch.risks.map((r, i) => (
+                      {tabMarketResearch.risks.map((r, i) => (
                         <div key={i} className="rounded-xl border border-slate-100 bg-white p-3 text-sm">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-semibold text-slate-900">{r.risk}</span>
@@ -2998,10 +3132,10 @@ export default function ValidationWizardPage() {
                   </SectionCard>
                 ) : null}
 
-                {Array.isArray(marketResearch.next_actions) && marketResearch.next_actions.length ? (
+                {Array.isArray(tabMarketResearch.next_actions) && tabMarketResearch.next_actions.length ? (
                   <SectionCard title="Next Best Actions">
                     <div className="space-y-3">
-                      {marketResearch.next_actions.map((action, i) => (
+                      {tabMarketResearch.next_actions.map((action, i) => (
                         <div key={i} className="flex gap-3">
                           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">
                             {action.step ?? i + 1}
@@ -3019,7 +3153,9 @@ export default function ValidationWizardPage() {
             ) : (
               <SectionCard title="No Research Yet">
                 <div className="text-sm text-slate-600">
-                  Complete a stage in the builder to start accumulating market research here.
+                  {mrResearchTab === "service"
+                    ? "Complete a stage in the product/service builder to generate research here."
+                    : "Complete a stage in the business idea builder to generate research here."}
                 </div>
               </SectionCard>
             )}
@@ -3030,6 +3166,7 @@ export default function ValidationWizardPage() {
             subtitle="Track previous validations and their current status."
           >
             <div className="space-y-4">
+              {/* Stat filter cards */}
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 {[
                   { key: "all", label: "All" },
@@ -3040,7 +3177,7 @@ export default function ValidationWizardPage() {
                   <button
                     key={item.key}
                     type="button"
-                    onClick={() => setHistoryFilter(item.key)}
+                    onClick={() => { setHistoryFilter(item.key); setBulkSelected(new Set()); }}
                     className={
                       "rounded-2xl border p-4 text-left transition " +
                       (historyFilter === item.key
@@ -3054,6 +3191,74 @@ export default function ValidationWizardPage() {
                 ))}
               </div>
 
+              {/* Search + type filter */}
+              <div className="flex flex-wrap gap-2">
+                <input
+                  type="text"
+                  placeholder="Search by name..."
+                  value={historySearch}
+                  onChange={(e) => { setHistorySearch(e.target.value); setBulkSelected(new Set()); }}
+                  className="flex-1 min-w-[160px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                />
+                <select
+                  value={historyTypeFilter}
+                  onChange={(e) => { setHistoryTypeFilter(e.target.value); setBulkSelected(new Set()); }}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                >
+                  <option value="all">All types</option>
+                  <option value="business">Business</option>
+                  <option value="service">Service</option>
+                </select>
+              </div>
+
+              {/* Bulk action bar */}
+              {bulkSelected.size > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={bulkSelected.size === filteredValidationHistory.length && filteredValidationHistory.length > 0}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setBulkSelected(new Set(filteredValidationHistory.map((h) => h.id)));
+                        } else {
+                          setBulkSelected(new Set());
+                        }
+                      }}
+                      className="h-4 w-4 rounded border-slate-300 accent-brand-600"
+                    />
+                    <span className="text-sm font-semibold text-brand-800">
+                      {bulkSelected.size} selected
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => setBulkSelected(new Set())}>
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="border-rose-300 text-rose-600 hover:bg-rose-50"
+                      onClick={() => bulkDeleteEntries(bulkSelected)}
+                    >
+                      Delete selected
+                    </Button>
+                  </div>
+                </div>
+              ) : filteredValidationHistory.length > 0 ? (
+                <div className="flex items-center gap-2 px-1">
+                  <input
+                    type="checkbox"
+                    checked={false}
+                    onChange={(e) => {
+                      if (e.target.checked) setBulkSelected(new Set(filteredValidationHistory.map((h) => h.id)));
+                    }}
+                    className="h-4 w-4 rounded border-slate-300 accent-brand-600"
+                  />
+                  <span className="text-xs text-slate-400">Select all</span>
+                </div>
+              ) : null}
+
+              {/* Entry list */}
               {filteredValidationHistory.length ? (
                 filteredValidationHistory.map((entry) => {
                   const badgeClass =
@@ -3062,23 +3267,45 @@ export default function ValidationWizardPage() {
                       : entry.status === "rejected"
                         ? "bg-rose-50 text-rose-700 ring-rose-200"
                         : "bg-amber-50 text-amber-700 ring-amber-200";
+                  const isChecked = bulkSelected.has(entry.id);
                   return (
-                    <div key={entry.id} className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="text-sm font-semibold text-slate-900">{entry.title}</div>
-                          <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ring-1 ${badgeClass}`}>
-                            {String(entry.status || "pending").toUpperCase()}
-                          </span>
-                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">
-                            {entry.type === "service_validation" ? "Service" : "Business"}
-                          </span>
+                    <div
+                      key={entry.id}
+                      onClick={() => editHistoryEntry(entry)}
+                      className={`flex w-full cursor-pointer flex-wrap items-start justify-between gap-3 rounded-2xl border bg-white p-4 shadow-sm text-left transition hover:border-brand-300 hover:shadow-md ${isChecked ? "border-brand-300 bg-brand-50/40" : "border-slate-200"}`}
+                    >
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <div onClick={(e) => e.stopPropagation()} className="mt-0.5 shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              const next = new Set(bulkSelected);
+                              if (e.target.checked) next.add(entry.id); else next.delete(entry.id);
+                              setBulkSelected(next);
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 accent-brand-600"
+                          />
                         </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {new Date(entry.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-semibold text-slate-900">{entry.title}</div>
+                            <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ring-1 ${badgeClass}`}>
+                              {String(entry.status || "pending").toUpperCase()}
+                            </span>
+                            <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">
+                              {entry.type === "service_validation" ? "Service" : "Business"}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {new Date(entry.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                          </div>
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                        <Button size="sm" variant="secondary" onClick={() => editHistoryEntry(entry)}>
+                          {entry.status === "accepted" || entry.status === "rejected" ? "View" : "Resume"}
+                        </Button>
                         <Button variant="ghost" onClick={() => deleteHistoryEntry(entry.id)}>
                           Delete
                         </Button>
@@ -3089,7 +3316,7 @@ export default function ValidationWizardPage() {
               ) : (
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5 text-sm text-slate-500">
                   {validationHistory.length
-                    ? "No items match this filter yet."
+                    ? "No items match this filter."
                     : "No validation history yet. Run a validation and it will appear here."}
                 </div>
               )}
@@ -3627,8 +3854,8 @@ export default function ValidationWizardPage() {
                   {enabledForms.service_basics && (!isServiceStageFlow || currentServiceStageKey === "service_basics") ? (
                     <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
                       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Service basics</summary>
-                      <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        <div className="md:col-span-2 xl:col-span-3">
+                      <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="md:col-span-2 xl:col-span-4">
                           <FieldLabel info="Name of the service idea you want to validate.">Service name *</FieldLabel>
                           {combinedServiceOptions.length ? (
                             <div className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
@@ -3684,7 +3911,7 @@ export default function ValidationWizardPage() {
                             <Input value={serviceForm.service_name} onChange={(e) => updateService("service_name", e.target.value)} />
                           )}
                         </div>
-                        <div className="md:col-span-2 xl:col-span-3">
+                        <div className="md:col-span-2 xl:col-span-4">
                           <FieldLabel info="Short description of what the service delivers.">Service description *</FieldLabel>
                           <textarea
                             className="min-h-20 ea-input"
@@ -3709,6 +3936,14 @@ export default function ValidationWizardPage() {
                           <select value={serviceForm.target_market_scope} onChange={(e) => updateService("target_market_scope", e.target.value)} className="ea-input">
                             {TARGET_MARKET_SCOPE_OPTIONS.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                           </select>
+                        </div>
+                        <div>
+                          <FieldLabel info="Country where the service will be offered. Used to tailor market insights.">Country</FieldLabel>
+                          <Input
+                            value={serviceForm.country}
+                            onChange={(e) => updateService("country", e.target.value)}
+                            placeholder="e.g. United Kingdom"
+                          />
                         </div>
                       </div>
                     </details>
@@ -4073,16 +4308,17 @@ export default function ValidationWizardPage() {
 
         {contentTab === "builder" &&
         !(showBuilderMarketInsight &&
-          (isBusinessStageFlow || isServiceStageFlow)) ? (
+          (isBusinessStageFlow || isServiceStageFlow) &&
+          !lastEvaluationId) ? (
         <div className="sticky bottom-0 z-20 mt-4 py-3">
-          <div className="flex w-full items-center gap-3 pr-16 sm:pr-20">
-            <div className="flex-1">
+          <div className="flex w-full items-center gap-3">
+            <div className={mode === "select" ? "hidden" : "flex-1"}>
               {mode === "fill" && isBusinessStageFlow ? (
                 <Button
                   variant="secondary"
                   className="w-full"
-                  disabled={!canEdit || currentBusinessStageIndex === 0}
-                  onClick={goToPreviousBusinessStage}
+                  disabled={!canEdit}
+                  onClick={currentBusinessStageIndex === 0 ? () => setMode("select") : goToPreviousBusinessStage}
                 >
                   Back
                 </Button>
@@ -4090,16 +4326,16 @@ export default function ValidationWizardPage() {
                 <Button
                   variant="secondary"
                   className="w-full"
-                  disabled={!canEdit || currentServiceStageIndex === 0}
-                  onClick={goToPreviousServiceStage}
+                  disabled={!canEdit}
+                  onClick={currentServiceStageIndex === 0 ? () => setMode("select") : goToPreviousServiceStage}
                 >
                   Back
                 </Button>
               ) : mode === "fill" && !isCreateWorkspace ? (
-                <Button variant="secondary" className="w-full" disabled={!canEdit} onClick={() => setMode("select")}>Change sections</Button>
+                <Button variant="secondary" className="w-full" disabled={!canEdit} onClick={() => setMode("select")}>Back</Button>
               ) : null}
             </div>
-            <div className="flex-1">
+            <div className={mode === "select" ? "w-full" : "flex-1"}>
               {lastEvaluationId && mode === "fill" ? (
                 <div className="flex w-full gap-2">
                   <Button
@@ -4127,7 +4363,7 @@ export default function ValidationWizardPage() {
                   </Button>
                 </div>
               ) : mode === "select" ? (
-                <Button className="w-full" disabled={!canEdit || !selectedCount} onClick={startFilling}>Continue</Button>
+                <Button disabled={!canEdit || !selectedCount} onClick={startFilling} className="w-full">Continue</Button>
               ) : (
                 <div className="flex flex-1 items-center gap-2">
                   {mode === "fill" && isBusinessStageFlow && !isLastBusinessStage ? (
@@ -4165,7 +4401,7 @@ export default function ValidationWizardPage() {
                           ? (storedWorkspaceId || editingWorkspaceId ? "Save workspace" : "Create workspace")
                           : fromOtherModule && !storedWorkspaceId && !editingWorkspaceId
                             ? "Create workspace"
-                            : "Evaluate"}
+                            : "Get insights"}
                     </Button>
                   ) : (
                     <Button className="w-full" disabled={isLoading || isPrefilling || !canRun} onClick={() => saveWorkspace(false)}>

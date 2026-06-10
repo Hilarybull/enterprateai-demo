@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -51,6 +51,7 @@ class ServiceIdeaValidateRequest(BaseModel):
     competitor_price_low: float = Field(ge=0, default=0)
     competitor_price_high: float = Field(ge=0, default=0)
     differentiation_level: DifferentiationLevel
+    country: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_competitor_prices(self):

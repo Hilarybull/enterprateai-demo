@@ -139,11 +139,17 @@ export function assembleOutput(data = {}) {
     recommendations = [],
     scenarioRun,
     scenarioTimeline = [],
+    multiEngineOutput = null,  // optional: output from run_full_engine_suite
   } = data;
 
   const snap = financialInsights?.stateSnapshot || {};
   const viability = ideaValidation?.result || ideaValidation || null;
-  const viabilityScore = viability?.overall_score ?? viability?.score ?? null;
+  const viabilityScore =
+    multiEngineOutput?.viability?.score ??
+    multiEngineOutput?.viability?.viability_score ??
+    viability?.overall_score ??
+    viability?.score ??
+    null;
 
   // Derive stability from financial insights
   const revenue = Number(snap.revenue_monthly || inputs?.revenue_monthly || 0);
@@ -151,9 +157,28 @@ export function assembleOutput(data = {}) {
   const profit = revenue - costs;
   const startingCash = Number(snap.starting_cash || inputs?.starting_cash || 0);
   const runwayMonths = costs > revenue && costs > 0 ? startingCash / Math.abs(profit) : null;
-  const stabilityScore = deriveStabilityScore(snap);
-  const survivalScore = deriveSurvivalScore({ revenue, costs, startingCash, runwayMonths });
-  const bi = deriveBusinessIntelligenceScore({ viabilityScore, stabilityScore, survivalScore });
+
+  // Prefer engine scores when multi-engine output is available
+  const stabilityScore =
+    multiEngineOutput?.stability?.scores?.stability_score ??
+    multiEngineOutput?.master?.engine_summary?.stability?.score ??
+    deriveStabilityScore(snap);
+  const survivalScore =
+    multiEngineOutput?.survival?.scores?.survival_score ??
+    multiEngineOutput?.master?.engine_summary?.survival?.score ??
+    deriveSurvivalScore({ revenue, costs, startingCash, runwayMonths });
+  const growthScore =
+    multiEngineOutput?.growth?.scores?.growth_score ??
+    multiEngineOutput?.master?.engine_summary?.growth?.score ??
+    null;
+  const fragilityIndex =
+    multiEngineOutput?.fragility?.scores?.fragility_index ??
+    multiEngineOutput?.master?.fragility_index ??
+    deriveFragilityIndex(snap);
+
+  const bi =
+    multiEngineOutput?.master?.bi_score ??
+    deriveBusinessIntelligenceScore({ viabilityScore, stabilityScore, survivalScore, growthScore });
 
   // Risk signals → standard risk flags
   const topRisks = riskSignals.map((r) => signalToRiskFlag(r));
@@ -178,25 +203,71 @@ export function assembleOutput(data = {}) {
   // Confidence
   const hasRevenue = revenue > 0;
   const hasValidation = Boolean(viabilityScore);
-  const confidenceLevel = hasRevenue && hasValidation ? "MEDIUM" : hasRevenue ? "LOW" : "LOW";
+  const hasMultiEngine = Boolean(multiEngineOutput);
+  const confidenceLevel = hasMultiEngine ? "MEDIUM" : hasRevenue && hasValidation ? "MEDIUM" : hasRevenue ? "LOW" : "LOW";
   const confidenceNotes = [];
   if (!hasRevenue) confidenceNotes.push("No revenue data recorded. Scores are estimates only.");
   if (!hasValidation) confidenceNotes.push("No idea validation completed.");
   if (runwayMonths !== null && runwayMonths < 3)
     confidenceNotes.push("Runway is critically short. Scores may shift rapidly.");
 
-  const primary = classifyPrimary(bi, survivalScore);
-  const structural = classifyStructural({ viabilityScore, stabilityScore, survivalScore, snap });
+  // Classifications — prefer master aggregator output when available
+  const masterOutput = multiEngineOutput?.master || null;
+  const structuralFromEngine = masterOutput?.structural_classification?.label || null;
+  const fragilityClassFromEngine = multiEngineOutput?.fragility?.classification || null;
+  const primary = classifyPrimary(bi, survivalScore, fragilityIndex);
+  const structural = structuralFromEngine || classifyStructural({ viabilityScore, stabilityScore, survivalScore, growthScore, fragilityIndex });
+  const fragilityClass = fragilityClassFromEngine || classifyFragility(snap);
+
+  // Fragility block — populated from engine output when available
+  const fragilityDimensions = multiEngineOutput?.fragility?.dimensions || null;
+  const fragilityBlock = fragilityDimensions ? {
+    index: fragilityIndex ?? 0,
+    classification: fragilityClass,
+    dimensions: {
+      cashFragility: fragilityDimensions.cash ?? null,
+      revenueFragility: fragilityDimensions.revenue ?? null,
+      customerFragility: fragilityDimensions.customer ?? null,
+      operationalFragility: fragilityDimensions.operational ?? null,
+      capacityFragility: fragilityDimensions.capacity ?? null,
+      marketFragility: fragilityDimensions.market ?? null,
+    },
+    topFragilityFactors: multiEngineOutput?.fragility?.risk_flags?.slice(0, 3).map((f) => ({
+      factorCode: f.code || f.flag || "UNKNOWN",
+      dimension: "operational",
+      severity: f.severity || "MEDIUM",
+      explanation: f.description || f.message || "",
+      mitigationAction: f.recommendation || "",
+    })) || [],
+    propagationRisks: [],
+  } : null;
+
+  // Full engine results block
+  const engineResults = buildEngineResults({
+    viabilityScore, stabilityScore, survivalScore, growthScore,
+    revenue, costs, profit, startingCash, runwayMonths,
+    currency, confidenceLevel, confidenceNotes,
+    viability, topRisks, topRecs,
+    multiEngineOutput,
+  });
+
+  // Trace — full orchestration sequence when multi-engine output is available
+  const orchestrationSequence = hasMultiEngine
+    ? ["viability", "survival", "stability", "growth", "fragility", "master"]
+    : ["stability", ...(viabilityScore != null ? ["viability"] : [])];
+  const engineVersions = hasMultiEngine
+    ? { viability: "1.0.0", survival: "1.0.0", stability: "1.0.0", growth: "1.0.0", fragility: "1.0.0", master: "1.0.0" }
+    : { stability: "1.0.0", viability: "1.0.0" };
 
   return emptyOutput({
     meta: {
       outputId: makeId(),
       businessId: workspaceId || "",
       generatedAt: new Date().toISOString(),
-      outputType: "assessment",
+      outputType: scenarioRun ? "simulation" : "assessment",
       rulesetVersion: "v1.0",
       engineVersion: "v1.0",
-      source: "manual",
+      source: scenarioRun ? "simulation" : "manual",
     },
     business: {
       businessName: businessName || null,
@@ -210,55 +281,25 @@ export function assembleOutput(data = {}) {
       topRisks,
       topRecs,
       snap,
+      masterOutput,
     }),
     scores: {
       viabilityScore,
       survivalScore,
       stabilityScore,
-      growthScore: null,
+      growthScore,
       businessIntelligenceScore: bi,
-      fragilityIndex: snap.top_client_share_pct != null ? Math.min(100, snap.top_client_share_pct + 20) : null,
+      fragilityIndex,
       scoreTrend: null,
     },
     classifications: {
       primary,
       structural,
-      fragility: classifyFragility(snap),
-      label: primary ? primary.replace(/_/g, " ") : "—",
+      fragility: fragilityClass,
+      label: structural ? structural.replace(/_/g, " ") : "—",
     },
-    engineResults: {
-      stability: {
-        engine: "stability",
-        score: stabilityScore,
-        classification: stabilityScore >= 70 ? "STABLE" : stabilityScore >= 55 ? "TIGHT" : "AT_RISK",
-        headline: stabilityScore >= 70 ? "Business is stable." : stabilityScore >= 55 ? "Some stability concerns." : "Stability risk detected.",
-        keyMetrics: [
-          { name: "Monthly revenue", value: revenue, unit: currency },
-          { name: "Monthly costs", value: costs, unit: currency },
-          { name: "Monthly profit", value: profit, unit: currency },
-          { name: "Starting cash", value: startingCash, unit: currency },
-          ...(runwayMonths !== null ? [{ name: "Cash runway", value: Math.round(runwayMonths * 10) / 10, unit: "months" }] : []),
-        ],
-        riskFlags: topRisks,
-        recommendations: topRecs,
-        confidence: { level: confidenceLevel, note: confidenceNotes[0] || "" },
-      },
-      ...(viabilityScore != null
-        ? {
-            viability: {
-              engine: "viability",
-              score: viabilityScore,
-              classification: viabilityScore >= 70 ? "VIABLE" : viabilityScore >= 45 ? "MARGINAL" : "WEAK",
-              headline: viability?.headline || `Viability score: ${viabilityScore}/100.`,
-              summary: viability?.summary || "",
-              keyMetrics: [],
-              riskFlags: [],
-              recommendations: [],
-              confidence: { level: confidenceLevel, note: "" },
-            },
-          }
-        : {}),
-    },
+    engineResults,
+    fragility: fragilityBlock,
     risks: {
       totalRisks: topRisks.length,
       criticalRisks,
@@ -276,16 +317,20 @@ export function assembleOutput(data = {}) {
       overallLevel: confidenceLevel,
       overallScore: confidenceLevel === "HIGH" ? 80 : confidenceLevel === "MEDIUM" ? 60 : 35,
       engineConfidence: {
-        stability: confidenceLevel,
         viability: hasValidation ? "MEDIUM" : "LOW",
+        survival: hasMultiEngine ? "MEDIUM" : "LOW",
+        stability: confidenceLevel,
+        growth: hasMultiEngine ? "MEDIUM" : "LOW",
+        fragility: hasMultiEngine ? "MEDIUM" : "LOW",
       },
       dataQualityNotes: confidenceNotes,
     },
     trace: {
-      orchestrationSequence: ["stability", ...(viabilityScore != null ? ["viability"] : [])],
-      engineVersions: { stability: "1.0.0", viability: "1.0.0" },
+      orchestrationSequence,
+      engineVersions,
       rulesetVersion: "v1.0",
-      generatedBy: "orchestrator",
+      generatedBy: scenarioRun ? "scenario_engine" : "orchestrator",
+      ...(scenarioRun ? { simulationRunId: scenarioRun.scenario_run_id } : {}),
     },
   });
 }
@@ -293,6 +338,15 @@ export function assembleOutput(data = {}) {
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+function deriveFragilityIndex(snap) {
+  const conc = snap?.top_client_share_pct;
+  if (conc == null) return null;
+  if (conc >= 70) return 80;
+  if (conc >= 50) return 65;
+  if (conc >= 30) return 45;
+  return 25;
+}
 
 function deriveStabilityScore(snap) {
   const revenue = Number(snap.revenue_monthly || 0);
@@ -319,28 +373,50 @@ function deriveSurvivalScore({ revenue, costs, startingCash, runwayMonths }) {
   return Math.max(0, Math.min(100, score));
 }
 
-function deriveBusinessIntelligenceScore({ viabilityScore, stabilityScore, survivalScore }) {
-  const scores = [viabilityScore, stabilityScore, survivalScore].filter((s) => s != null);
-  if (!scores.length) return null;
-  return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+function deriveBusinessIntelligenceScore({ viabilityScore, stabilityScore, survivalScore, growthScore }) {
+  // Blueprint v3 formula: 0.30×V + 0.25×S + 0.20×St + 0.25×G
+  const v = viabilityScore;
+  const s = survivalScore;
+  const st = stabilityScore;
+  const g = growthScore;
+
+  if (v != null && s != null && st != null && g != null) {
+    return Math.round(0.30 * v + 0.25 * s + 0.20 * st + 0.25 * g);
+  }
+  // Partial: weighted average of available scores
+  const pairs = [[v, 0.30], [s, 0.25], [st, 0.20], [g, 0.25]].filter(([val]) => val != null);
+  if (!pairs.length) return null;
+  const totalWeight = pairs.reduce((acc, [, w]) => acc + w, 0);
+  const weighted = pairs.reduce((acc, [val, w]) => acc + val * w, 0);
+  return Math.round(weighted / totalWeight);
 }
 
-function classifyPrimary(bi, survivalScore) {
+function classifyPrimary(bi, survivalScore, fragilityIndex) {
   if (bi == null) return null;
-  if (bi >= 75) return "HIGH_PERFORMING";
-  if (bi >= 60) return "STRONG_BUT_NEEDS_OPTIMISATION";
-  if (survivalScore != null && survivalScore < 40) return "CRITICAL";
+  const fi = fragilityIndex ?? 50;
+  if (bi < 35 || (survivalScore != null && survivalScore < 25) || fi >= 80) return "CRITICAL";
+  if (bi >= 70 && fi <= 40) return "HIGH_PERFORMING";
+  if (bi >= 50) return "STRONG_BUT_NEEDS_OPTIMISATION";
   return "AT_RISK";
 }
 
-function classifyStructural({ viabilityScore, stabilityScore, survivalScore, snap }) {
-  const v = viabilityScore;
-  const st = stabilityScore;
-  const su = survivalScore;
-  const conc = snap?.top_client_share_pct;
-  if (su != null && su < 40) return "VIABLE_BUT_CASH_CRITICAL";
-  if (v != null && v >= 65 && conc != null && conc > 50) return "PROFITABLE_BUT_FRAGILE";
-  if (st != null && st >= 70) return "BALANCED_BUSINESS";
+function classifyStructural({ viabilityScore, stabilityScore, survivalScore, growthScore, fragilityIndex }) {
+  const bi = deriveBusinessIntelligenceScore({ viabilityScore, stabilityScore, survivalScore, growthScore });
+  const fi = fragilityIndex ?? 50;
+  const v = viabilityScore ?? 50;
+  const s = survivalScore ?? 50;
+  const st = stabilityScore ?? 50;
+  const g = growthScore ?? 50;
+
+  if (bi == null) return null;
+
+  if (bi < 30 || fi >= 80) return "CRITICAL_BUSINESS_STATE";
+  if (bi >= 75 && fi <= 35) return "BALANCED_BUSINESS";
+  if (v >= 65 && s < 40) return "VIABLE_BUT_CASH_CRITICAL";
+  if (g >= 65 && st < 50) return "GROWTH_READY_BUT_UNSTABLE";
+  if (st >= 65 && g < 40) return "STABLE_BUT_STAGNANT";
+  if (bi >= 60 && fi >= 60) return "PROFITABLE_BUT_FRAGILE";
+  if (g >= 55 && fi >= 50) return "SCALING_WITH_FRAGILITY";
   return "WEAK_FOUNDATION";
 }
 
@@ -435,8 +511,8 @@ function deriveRecCategory(rec) {
   return "stability";
 }
 
-function buildExecutiveSummary({ viabilityScore, stabilityScore, survivalScore, topRisks, topRecs, snap }) {
-  const bi = deriveBusinessIntelligenceScore({ viabilityScore, stabilityScore, survivalScore });
+function buildExecutiveSummary({ viabilityScore, stabilityScore, survivalScore, topRisks, topRecs, masterOutput }) {
+  const bi = masterOutput?.bi_score ?? deriveBusinessIntelligenceScore({ viabilityScore, stabilityScore, survivalScore });
   const scores = [viabilityScore, stabilityScore, survivalScore].filter((s) => s != null);
   const maxScore = scores.length ? Math.max(...scores) : null;
   const minScore = scores.length ? Math.min(...scores) : null;
@@ -454,12 +530,15 @@ function buildExecutiveSummary({ viabilityScore, stabilityScore, survivalScore, 
   const strength = maxScore != null ? `${scoreNames[maxScore] || "—"} (${maxScore}/100)` : "—";
   const weakness = minScore != null ? `${scoreNames[minScore] || "—"} (${minScore}/100)` : "—";
 
+  const masterPriority = masterOutput?.priority_recommendations?.[0] || null;
   const priority =
+    masterPriority ||
     topRisks.find((r) => r.severity === "CRITICAL")?.recommendedAction ||
     topRisks.find((r) => r.severity === "HIGH")?.recommendedAction ||
     (topRecs[0]?.text || "Review all high-priority risk areas.");
 
-  const nextActions = topRecs.slice(0, 3).map((r) => r.text);
+  const masterActions = masterOutput?.priority_recommendations?.slice(0, 3) || [];
+  const nextActions = masterActions.length ? masterActions : topRecs.slice(0, 3).map((r) => r.text);
   if (!nextActions.length) nextActions.push("Run a simulation to explore scenario outcomes.");
 
   return {
@@ -477,52 +556,168 @@ function buildExecutiveSummary({ viabilityScore, stabilityScore, survivalScore, 
   };
 }
 
+function buildEngineResults({ viabilityScore, stabilityScore, survivalScore, growthScore,
+    revenue, costs, profit, startingCash, runwayMonths, currency, confidenceLevel,
+    confidenceNotes, viability, topRisks, topRecs, multiEngineOutput }) {
+  const engConf = () => ({
+    level: multiEngineOutput ? "MEDIUM" : confidenceLevel,
+    note: multiEngineOutput ? "" : (confidenceNotes[0] || ""),
+    penaltyApplied: false,
+  });
+
+  const ma = multiEngineOutput?.master?.engine_summary || {};
+  const surv = multiEngineOutput?.survival?.scores || {};
+  const stab = multiEngineOutput?.stability?.scores || {};
+  const grow = multiEngineOutput?.growth?.scores || {};
+
+  const survClass = surv.survival_score != null
+    ? surv.survival_score >= 70 ? "RESILIENT" : surv.survival_score >= 50 ? "STABLE" : surv.survival_score >= 35 ? "AT_RISK" : "CRITICAL"
+    : null;
+  const stabClass = stab.stability_score != null
+    ? stab.stability_score >= 70 ? "HIGHLY_STABLE" : stab.stability_score >= 55 ? "STABLE" : "AT_RISK"
+    : null;
+  const growClass = grow.growth_score != null
+    ? grow.growth_score >= 70 ? "HIGH_GROWTH_POTENTIAL" : grow.growth_score >= 50 ? "GROWTH_READY" : "LIMITED_GROWTH"
+    : null;
+
+  return {
+    stability: {
+      engine: "stability",
+      score: stabilityScore,
+      classification: stabClass || (stabilityScore >= 70 ? "HIGHLY_STABLE" : stabilityScore >= 55 ? "STABLE" : "AT_RISK"),
+      headline: stabilityScore >= 70 ? "Business is stable." : stabilityScore >= 55 ? "Some stability concerns." : "Stability risk detected.",
+      summary: multiEngineOutput?.stability?.classification || "",
+      keyMetrics: [
+        { name: "Monthly revenue", value: revenue, unit: currency },
+        { name: "Monthly costs", value: costs, unit: currency },
+        { name: "Monthly profit", value: profit, unit: currency },
+        { name: "Starting cash", value: startingCash, unit: currency },
+        ...(runwayMonths !== null ? [{ name: "Cash runway", value: Math.round(runwayMonths * 10) / 10, unit: "months" }] : []),
+      ],
+      riskFlags: topRisks,
+      recommendations: topRecs,
+      confidence: engConf(),
+    },
+    ...(viabilityScore != null ? {
+      viability: {
+        engine: "viability",
+        score: viabilityScore,
+        classification: viabilityScore >= 70 ? "VIABLE" : viabilityScore >= 45 ? "MARGINAL" : "WEAK",
+        headline: viability?.headline || `Viability score: ${viabilityScore}/100.`,
+        summary: viability?.summary || "",
+        keyMetrics: [],
+        riskFlags: [],
+        recommendations: [],
+        confidence: engConf(),
+      },
+    } : {}),
+    ...(survivalScore != null && multiEngineOutput ? {
+      survival: {
+        engine: "survival",
+        score: survivalScore,
+        classification: survClass,
+        headline: ma.survival?.band ? `Survival band: ${ma.survival.band}.` : `Survival score: ${survivalScore}/100.`,
+        summary: multiEngineOutput?.survival?.classification || "",
+        keyMetrics: [
+          { name: "Cash runway", value: surv.cash_runway_months ?? runwayMonths, unit: "months" },
+          { name: "Burn rate", value: Math.max(0, costs - revenue), unit: currency },
+        ].filter((m) => m.value != null),
+        riskFlags: multiEngineOutput?.survival?.risk_flags || [],
+        recommendations: multiEngineOutput?.survival?.recommendations || [],
+        confidence: engConf(),
+      },
+    } : {}),
+    ...(growthScore != null && multiEngineOutput ? {
+      growth: {
+        engine: "growth",
+        score: growthScore,
+        classification: growClass,
+        headline: ma.growth?.band ? `Growth band: ${ma.growth.band}.` : `Growth score: ${growthScore}/100.`,
+        summary: multiEngineOutput?.growth?.classification || "",
+        keyMetrics: [],
+        riskFlags: multiEngineOutput?.growth?.risk_flags || [],
+        recommendations: multiEngineOutput?.growth?.recommendations || [],
+        confidence: engConf(),
+      },
+    } : {}),
+  };
+}
+
 function buildScenarioBlock(scenarioRun, timeline) {
   const base = scenarioRun.baseline_metrics || {};
   const sim = scenarioRun.scenario_metrics || {};
-  const deltas = scenarioRun.deltas || {};
+  const multiEngine = scenarioRun.multi_engine || {};
   const lastRow = timeline.length ? timeline[timeline.length - 1] : null;
+
+  // Extract all 6 scores from multi-engine output when available
+  const baselineStates = multiEngine.baseline_states || {};
+  const scenarioStates = multiEngine.scenario_states || {};
+
+  function _eng(states, engine, ...keys) {
+    const s = states[engine] || {};
+    const scores = s.scores || s;
+    for (const k of keys) {
+      if (scores[k] != null) return scores[k];
+    }
+    return null;
+  }
+
+  const baseViability  = _eng(baselineStates, "viability",  "score", "viability_score") ?? base.viability_score ?? null;
+  const baseSurvival   = _eng(baselineStates, "survival",   "survival_score", "score")  ?? base.survival_score  ?? null;
+  const baseStability  = _eng(baselineStates, "stability",  "stability_score", "score") ?? base.stability_score ?? null;
+  const baseGrowth     = _eng(baselineStates, "growth",     "growth_score", "score")    ?? base.growth_score    ?? null;
+  const baseFragility  = _eng(baselineStates, "fragility",  "fragility_index", "fragility_score") ?? base.fragility_index ?? null;
+  const baseBI = deriveBusinessIntelligenceScore({ viabilityScore: baseViability, survivalScore: baseSurvival, stabilityScore: baseStability, growthScore: baseGrowth });
+
+  const simViability  = _eng(scenarioStates, "viability",  "score", "viability_score") ?? sim.viability_score ?? null;
+  const simSurvival   = _eng(scenarioStates, "survival",   "survival_score", "score")  ?? sim.survival_score  ?? null;
+  const simStability  = _eng(scenarioStates, "stability",  "stability_score", "score") ?? sim.stability_score ?? null;
+  const simGrowth     = _eng(scenarioStates, "growth",     "growth_score", "score")    ?? sim.growth_score    ?? null;
+  const simFragility  = _eng(scenarioStates, "fragility",  "fragility_index", "fragility_score") ?? sim.fragility_index ?? null;
+  const simBI = deriveBusinessIntelligenceScore({ viabilityScore: simViability, survivalScore: simSurvival, stabilityScore: simStability, growthScore: simGrowth });
+
+  function _delta(a, b) { return a != null && b != null ? Math.round((b - a) * 10) / 10 : null; }
+
   return {
     scenarioId: scenarioRun.scenario_run_id,
     scenarioName: scenarioRun.scenario_name,
     scenarioType: scenarioRun.scenario_type,
     baseScores: {
-      stability: base.stability_score ?? null,
-      viability: null,
-      survival: null,
-      growth: null,
-      businessIntelligence: null,
-      fragilityIndex: null,
+      viability: baseViability,
+      survival: baseSurvival,
+      stability: baseStability,
+      growth: baseGrowth,
+      businessIntelligence: baseBI,
+      fragilityIndex: baseFragility,
     },
     simulatedScores: {
-      stability: sim.stability_score ?? null,
-      viability: null,
-      survival: null,
-      growth: null,
-      businessIntelligence: null,
-      fragilityIndex: null,
+      viability: simViability,
+      survival: simSurvival,
+      stability: simStability,
+      growth: simGrowth,
+      businessIntelligence: simBI,
+      fragilityIndex: simFragility,
     },
     deltas: {
-      stabilityDelta: deltas.stability_score ?? null,
-      viabilityDelta: null,
-      survivalDelta: null,
-      growthDelta: null,
-      businessIntelligenceDelta: null,
-      fragilityDelta: null,
+      viabilityDelta:           _delta(baseViability, simViability),
+      survivalDelta:            _delta(baseSurvival,  simSurvival),
+      stabilityDelta:           _delta(baseStability, simStability),
+      growthDelta:              _delta(baseGrowth,    simGrowth),
+      businessIntelligenceDelta: _delta(baseBI,       simBI),
+      fragilityDelta:           _delta(baseFragility, simFragility),
     },
     riskChanges: [],
-    recommendationChanges: [],
-    decisionPath: scenarioRun.state_result
-      ? {
-          rankingScore: null,
-          reason: scenarioRun.state_result,
-          recommendedActions: (scenarioRun.recommendations || []).map((r) => r.title).filter(Boolean),
-        }
-      : null,
+    recommendationChanges: (scenarioRun.recommendations || multiEngine.recommendation_delta || [])
+      .map((r) => ({ text: r.title, action: r.action_type })).filter((r) => r.text),
+    decisionPath: {
+      rankingScore: multiEngine.scenario_ranking_score ?? scenarioRun.scenario_ranking_score ?? null,
+      reason: scenarioRun.state_result || multiEngine.state_result || "neutral",
+      recommendedActions: (scenarioRun.recommendations || []).map((r) => r.title).filter(Boolean),
+    },
     timelineSummary: lastRow
       ? {
           endRevenue: lastRow.revenue,
-          endCosts: lastRow.costs,
+          endCosts: lastRow.costs ?? lastRow.expenses,
           endProfit: lastRow.profit,
           endCashBalance: lastRow.cash_balance,
         }

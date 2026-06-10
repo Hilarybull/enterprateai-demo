@@ -154,7 +154,15 @@ def _templates() -> List[ScenarioTemplate]:
             title="Loss of Largest Client",
             description="Simulate losing your largest client.",
             mode="adaptive_or_manual",
-            required_inputs=[],
+            required_inputs=["client_loss_pct"],
+        ),
+        ScenarioTemplate(
+            scenario_template_id="tmpl_contractor_addition",
+            scenario_type="contractor_addition",
+            title="Add a Contractor",
+            description="Simulate bringing on a contractor to add capacity without a permanent hire.",
+            mode="manual",
+            required_inputs=["employee_count", "contractor_monthly_cost"],
         ),
         ScenarioTemplate(
             scenario_template_id="tmpl_price_increase",
@@ -195,6 +203,22 @@ def _templates() -> List[ScenarioTemplate]:
             description="Simulate slower cash collection.",
             mode="adaptive_or_manual",
             required_inputs=["delay_months"],
+        ),
+        ScenarioTemplate(
+            scenario_template_id="tmpl_reduce_fixed_cost",
+            scenario_type="reduce_fixed_cost",
+            title="Reduce Fixed Costs",
+            description="Simulate cutting overhead or fixed operating costs.",
+            mode="manual",
+            required_inputs=["cost_reduction_pct"],
+        ),
+        ScenarioTemplate(
+            scenario_template_id="tmpl_delay_hiring",
+            scenario_type="delay_hiring",
+            title="Delay a Hire",
+            description="Simulate cancelling or deferring a planned hire.",
+            mode="manual",
+            required_inputs=["employee_count", "employee_monthly_cost"],
         ),
         ScenarioTemplate(
             scenario_template_id="tmpl_service_launch",
@@ -488,6 +512,16 @@ def _monthly_projection_values(
         expenses += add_cost * employee_count
     elif scenario_type == "contractor_addition":
         expenses += float(params.get("contractor_monthly_cost") or 0.0)
+    elif scenario_type == "reduce_fixed_cost":
+        red_pct = float(params.get("cost_reduction_pct") or 0.0)
+        progress = min(1.0, month_index / float(cost_ramp_months))
+        multiplier = max(0.0, 1.0 - ((red_pct / 100.0) * progress))
+        expenses *= multiplier
+    elif scenario_type == "delay_hiring":
+        # Removes the planned hire cost — shows how much the business saves
+        saved_cost = float(params.get("employee_monthly_cost") or 0.0)
+        employee_count = max(1, int(params.get("employee_count") or 1))
+        expenses = max(0.0, expenses - saved_cost * employee_count)
     elif scenario_type == "service_launch":
         uplift = float(params.get("revenue_uplift_pct") or 0.0)
         cost_up = float(params.get("cost_uplift_pct") or 0.0)
@@ -664,6 +698,24 @@ async def create_scenario_run(
     deltas = _deltas(baseline_metrics, scenario_metrics)
     state_result = _result_state(baseline_metrics["stability_score"], scenario_metrics["stability_score"])
 
+    # Run the multi-engine orchestration (baseline + scenario) and attach outputs
+    # Import here to avoid circular import
+    try:
+        from app.modules.scenario_intelligence.orchestration_service import (
+            run_scenario_with_all_engines,
+        )
+        multi_engine_outputs = await run_scenario_with_all_engines(
+            scenario_id=run_id,
+            business_id=business_id,
+            tenant_id=tenant_id,
+            business_state=state,
+            scenario_type=scenario_type,
+            parameters=params,
+            timeline_months=timeline_months,
+        )
+    except Exception:
+        multi_engine_outputs = None
+
     run_doc = dict(
         scenario_run_id=run_id,
         tenant_id=tenant_id,
@@ -687,6 +739,7 @@ async def create_scenario_run(
         scenario_metrics=scenario_metrics,
         deltas=deltas,
         state_result=state_result,
+        multi_engine=multi_engine_outputs,
     )
 
     stored = await _safe_insert("scenario_runs", run_doc)
@@ -779,12 +832,23 @@ def _recommendations_from_result(
         if scenario_type in fallback_by_scenario:
             return fallback_by_scenario[scenario_type]
 
+    trigger_descriptions = {
+        "CLIENT_CONCENTRATION_HIGH": "Client concentration remains high after this scenario run.",
+        "RECEIVABLES_APPROACHING_DUE": "Some receivables are nearing their due date in this scenario.",
+        "OVERDUE_RECEIVABLES": "Overdue receivables were detected in this scenario's output.",
+        "CAPACITY_OVERLOAD": "Capacity utilisation is high in this scenario.",
+        "NEGATIVE_MARGIN": "This scenario produces a negative profit margin.",
+        "LOW_RUNWAY": "Cash runway is limited in this scenario.",
+        "PAYABLE_PRESSURE": "Payables pressure was detected in this scenario's output.",
+        "PAYABLES_APPROACHING_DUE": "Some payables are approaching their due date in this scenario.",
+        "BASELINE_CHECK": "Run this to stress-test your current baseline.",
+    }
     if scenario_follow_ups:
         return [
             dict(
                 action_type="run_next_scenario",
                 title=rec.title,
-                description=f"Triggered by {rec.trigger_reason.lower().replace('_', ' ')} in this run's output.",
+                description=trigger_descriptions.get(rec.trigger_reason, "Suggested based on this scenario's output."),
                 scenario_template_id=rec.scenario_template_id,
             )
             for rec in scenario_follow_ups[:3]

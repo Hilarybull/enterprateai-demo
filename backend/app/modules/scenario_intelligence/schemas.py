@@ -14,6 +14,8 @@ ScenarioType = Literal[
     "payment_delay",
     "cost_increase",
     "service_launch",
+    "reduce_fixed_cost",
+    "delay_hiring",
     "do_nothing_projection",
 ]
 
@@ -134,6 +136,11 @@ class ScenarioRunResult(BaseModel):
     timeline_summary: Dict[str, str]
     risk_signals: List[RiskSignal] = Field(default_factory=list)
     recommendations: List[Dict[str, Any]]
+    # Multi-engine outputs (baseline + scenario + deltas for all 5 engines)
+    multi_engine: Dict[str, Any] | None = Field(default=None, description="Multi-engine orchestration output (viability, survival, growth, fragility, stability)")
+    survival_delta: Dict[str, Any] | None = Field(default=None, description="Survival engine delta (baseline -> scenario)")
+    growth_delta: Dict[str, Any] | None = Field(default=None, description="Growth engine delta (baseline -> scenario)")
+    fragility_delta: Dict[str, Any] | None = Field(default=None, description="Fragility engine delta (baseline -> scenario)")
 
 
 class ScenarioTimelineEntry(BaseModel):

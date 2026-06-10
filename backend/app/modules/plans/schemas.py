@@ -5,9 +5,13 @@ from pydantic import BaseModel, EmailStr
 
 VALID_PLAN_KEYS = Literal[
     "free_trial",
+    "explorer",
+    "starter_insight",
     "insight_starter",
     "decision_engine",
+    "growth_navigator",
     "strategic_intelligence",
+    "strategic_business_os",
 ]
 
 VALID_BILLING = Literal["monthly", "annual"]

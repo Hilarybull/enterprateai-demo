@@ -162,10 +162,15 @@ def evaluate_service_idea(payload: ServiceIdeaValidateRequest) -> dict:
         "viability_score": viability_score,
     }
 
+    market_context = f"Market: {payload.target_market_scope}, {payload.target_customer_type}"
+    if payload.country:
+        market_context = f"{payload.country} — {payload.target_market_scope} market, targeting {payload.target_customer_type}"
+
     interpretation = {
         "summary": summary,
         "key_driver": key_driver,
         "recommendation": recommendation,
+        "market_context": market_context,
     }
 
     return {

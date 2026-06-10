@@ -26,10 +26,18 @@ GRANDFATHERED_BEFORE = datetime(2026, 5, 7, 0, 0, 0, tzinfo=timezone.utc)
 
 # Maps (plan_key, billing_period) → settings attribute name
 _PRICE_ATTR = {
-    ("insight_starter", "monthly"): "stripe_price_insight_starter_monthly",
-    ("insight_starter", "annual"):  "stripe_price_insight_starter_annual",
+    # Current active plans
+    ("starter_insight", "monthly"): "stripe_price_insight_starter_monthly",
+    ("starter_insight", "annual"):  "stripe_price_insight_starter_annual",
     ("decision_engine", "monthly"): "stripe_price_decision_engine_monthly",
     ("decision_engine", "annual"):  "stripe_price_decision_engine_annual",
+    ("growth_navigator", "monthly"): "stripe_price_strategic_intelligence_monthly",
+    ("growth_navigator", "annual"):  "stripe_price_strategic_intelligence_annual",
+    ("strategic_business_os", "monthly"): "stripe_price_strategic_business_os_monthly",
+    ("strategic_business_os", "annual"):  "stripe_price_strategic_business_os_annual",
+    # Legacy aliases
+    ("insight_starter", "monthly"): "stripe_price_insight_starter_monthly",
+    ("insight_starter", "annual"):  "stripe_price_insight_starter_annual",
     ("strategic_intelligence", "monthly"): "stripe_price_strategic_intelligence_monthly",
     ("strategic_intelligence", "annual"):  "stripe_price_strategic_intelligence_annual",
 }
@@ -59,6 +67,60 @@ def _frontend_url() -> str:
     if isinstance(url, list):
         url = url[0]
     return str(url).rstrip("/")
+
+
+# ── Add-on catalogue ─────────────────────────────────────────────────────────
+
+ADDONS = [
+    # Featured listing boosts — recurring monthly
+    {"key": "addon_featured_1",  "label": "Extra Featured Listing",        "price": 15,  "currency": "gbp", "mode": "subscription", "desc": "1 featured listing slot added to your plan, billed monthly.",       "price_attr": "stripe_price_addon_featured_1"},
+    {"key": "addon_featured_5",  "label": "5 Featured Listing Boosts",     "price": 49,  "currency": "gbp", "mode": "subscription", "desc": "5 featured listing boosts per month, billed monthly.",              "price_attr": "stripe_price_addon_featured_5"},
+    {"key": "addon_featured_20", "label": "20 Featured Listing Boosts",    "price": 149, "currency": "gbp", "mode": "subscription", "desc": "20 featured listing boosts per month, billed monthly.",             "price_attr": "stripe_price_addon_featured_20"},
+    # RFQ credit packs — one-time
+    {"key": "addon_rfq_20",      "label": "RFQ Credits — 20",              "price": 10,  "currency": "gbp", "mode": "payment",      "desc": "20 RFQ response credits. Use to respond to buyer requests.",      "price_attr": "stripe_price_addon_rfq_20"},
+    {"key": "addon_rfq_50",      "label": "RFQ Credits — 50",              "price": 20,  "currency": "gbp", "mode": "payment",      "desc": "50 RFQ response credits. Best value for active suppliers.",       "price_attr": "stripe_price_addon_rfq_50"},
+    {"key": "addon_rfq_100",     "label": "RFQ Credits — 100",             "price": 35,  "currency": "gbp", "mode": "payment",      "desc": "100 RFQ response credits. Maximum pack for high-volume sellers.", "price_attr": "stripe_price_addon_rfq_100"},
+]
+
+_ADDON_BY_KEY = {a["key"]: a for a in ADDONS}
+
+
+@router.get("/addons")
+async def list_addons():
+    """Return available marketplace add-ons."""
+    return ADDONS
+
+
+@router.post("/addons/checkout")
+async def addon_checkout(
+    payload: dict,
+    user=Depends(get_current_user),
+):
+    """Create a Stripe Checkout session for a marketplace add-on."""
+    addon_key = payload.get("addon_key")
+    addon = _ADDON_BY_KEY.get(addon_key)
+    if not addon:
+        raise HTTPException(status_code=400, detail="Unknown add-on.")
+
+    client = _stripe_client()
+    settings = get_settings()
+    price_id = getattr(settings, addon["price_attr"], None)
+    if not price_id or not price_id.startswith("price_"):
+        raise HTTPException(status_code=503, detail=f"Add-on '{addon['label']}' is not yet available for purchase.")
+
+    base = _frontend_url()
+    session = client.checkout.sessions.create(
+        mode=addon["mode"],
+        line_items=[{"price": price_id, "quantity": 1}],
+        customer_email=user["email"],
+        metadata={
+            "user_id": user["id"],
+            "addon_key": addon_key,
+        },
+        success_url=f"{base}/pricing/success?addon={addon_key}",
+        cancel_url=f"{base}/pricing",
+    )
+    return {"checkout_url": session.url}
 
 
 # ── Public: subscribe interest capture ───────────────────────────────────────
