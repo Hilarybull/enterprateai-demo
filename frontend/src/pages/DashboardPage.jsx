@@ -15,6 +15,8 @@ import { formatCurrency, formatNumber } from "../lib/format";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 
+const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
+
 export default function DashboardPage() {
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -106,8 +108,16 @@ export default function DashboardPage() {
         }
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => navigate("/validation")}>Run Idea Validation</Button>
-            <Button onClick={() => navigate("/simulation")}>Run Simulation</Button>
+            {IS_DEMO ? (
+              <Button variant="secondary" onClick={() => navigate("/validation")}>Run Idea Validation</Button>
+            ) : (
+              <Button variant="secondary" onClick={() => openComingSoon("Idea Validation")}>Run Idea Validation</Button>
+            )}
+            {IS_DEMO ? (
+              <Button onClick={() => navigate("/simulation")}>Run Simulation</Button>
+            ) : (
+              <Button onClick={() => openComingSoon("Simulation")}>Run Simulation</Button>
+            )}
           </div>
         }
       />

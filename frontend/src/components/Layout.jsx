@@ -10,8 +10,14 @@ import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 import { hasModuleAccess, isPlatformModuleRestricted } from "../lib/permissions";
 import { planHasModuleAccess, planLabel } from "../lib/plans";
 
+const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
+
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid", moduleKey: "dashboard" },
+  ...(IS_DEMO ? [
+    { to: "/validation", label: "Idea Validation", subtitle: "Validate your concept", icon: "bulb", moduleKey: "validation" },
+    { to: "/simulation", label: "Simulation", subtitle: "Run what-if scenarios", icon: "beaker", moduleKey: "simulation" },
+  ] : []),
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
