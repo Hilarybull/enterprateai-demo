@@ -60,8 +60,11 @@ def _get_price_id(plan_key: str, billing_period: str) -> str:
     if not attr:
         raise HTTPException(status_code=400, detail="Invalid plan or billing period.")
     price_id = getattr(settings, attr, None)
-    if not price_id:
-        raise HTTPException(status_code=503, detail=f"Price not configured for {plan_key} ({billing_period}).")
+    if not price_id or not str(price_id).startswith("price_"):
+        raise HTTPException(
+            status_code=503,
+            detail=f"Payment not yet configured for this plan. Please use Bank Transfer or contact support.",
+        )
     return price_id
 
 
