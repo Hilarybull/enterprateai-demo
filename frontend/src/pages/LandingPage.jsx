@@ -152,8 +152,8 @@ function FAQItem({ q, a }) {
 export default function LandingPage() {
   const [annualBilling, setAnnualBilling] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showMarketplacePopup, setShowMarketplacePopup] = useState(false);
-  const [marketplaceDismissed, setMarketplaceDismissed] = useState(false);
+  const [showExitPopup, setShowExitPopup] = useState(false);
+  const [exitDismissed, setExitDismissed] = useState(false);
   const exitTimerRef = useRef(null);
   const navigate = useNavigate();
 
@@ -168,8 +168,8 @@ export default function LandingPage() {
       if (e.clientY > 10) return;
       clearTimeout(exitTimerRef.current);
       const hasToken = !!localStorage.getItem("ea_token");
-      if (!hasToken && !marketplaceDismissed && !showMarketplacePopup) {
-        exitTimerRef.current = setTimeout(() => setShowMarketplacePopup(true), 400);
+      if (!hasToken && !exitDismissed && !showExitPopup) {
+        exitTimerRef.current = setTimeout(() => setShowExitPopup(true), 400);
       }
     }
     document.addEventListener("mouseleave", onMouseLeave);
@@ -177,30 +177,34 @@ export default function LandingPage() {
       document.removeEventListener("mouseleave", onMouseLeave);
       clearTimeout(exitTimerRef.current);
     };
-  }, [marketplaceDismissed, showMarketplacePopup]);
+  }, [exitDismissed, showExitPopup]);
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-white font-sans text-slate-800 antialiased">
 
-      {/* ── Marketplace signup popup ── */}
-      {showMarketplacePopup && (
+      {/* ── Exit-intent popup (landing page) ── */}
+      {showExitPopup && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-sm">
           <div className="relative w-full max-w-md rounded-2xl bg-white p-6 sm:p-8 shadow-2xl">
             <button
               type="button"
-              onClick={() => { setShowMarketplacePopup(false); setMarketplaceDismissed(true); }}
+              onClick={() => { setShowExitPopup(false); setExitDismissed(true); }}
               className="absolute right-4 top-4 text-slate-400 hover:text-slate-600"
             >✕</button>
             <div className="mb-1 flex items-center gap-2">
-              <span className="text-2xl">🏪</span>
-              <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Marketplace</span>
+              <span className="text-2xl">👋</span>
+              <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Before you go</span>
             </div>
-            <h3 className="mt-2 text-xl font-bold text-slate-900">Connect with UK businesses</h3>
+            <h3 className="mt-2 text-xl font-bold text-slate-900">Start your free 14-day trial</h3>
             <p className="mt-2 text-sm text-slate-500">
-              List your products or services, discover suppliers, and grow your network within the EnterprateAI ecosystem. Create a free account to get started.
+              EnterprateAI gives you the business intelligence tools to validate ideas, run scenario simulations, and make smarter decisions — completely free to start.
             </p>
             <ul className="mt-4 space-y-2 text-sm text-slate-600">
-              {["List your first product or service free", "Discover verified UK suppliers and partners", "Receive enquiries directly to your inbox"].map((f) => (
+              {[
+                "Validate your business idea in minutes",
+                "Run scenario simulations before committing",
+                "Generate investor-ready business plans",
+              ].map((f) => (
                 <li key={f} className="flex items-center gap-2"><span className="text-emerald-500 font-bold">✓</span>{f}</li>
               ))}
             </ul>
@@ -209,16 +213,16 @@ export default function LandingPage() {
               onClick={() => navigate("/login")}
               className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition"
             >
-              Create Free Account →
+              Start My Free Trial →
             </button>
             <button
               type="button"
-              onClick={() => navigate("/login")}
+              onClick={() => { setShowExitPopup(false); setExitDismissed(true); }}
               className="mt-2 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
             >
-              Sign in to existing account
+              Maybe later
             </button>
-            <p className="mt-3 text-center text-xs text-slate-400">Free forever · No credit card · Cancel anytime</p>
+            <p className="mt-3 text-center text-xs text-slate-400">14-day free trial · No credit card required</p>
           </div>
         </div>
       )}
