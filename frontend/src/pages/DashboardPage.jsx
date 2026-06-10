@@ -14,17 +14,12 @@ import { useAuthStore } from "../store/auth";
 import { formatCurrency, formatNumber } from "../lib/format";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
-import ReportDownloadPanel from "../components/ReportDownloadPanel";
-import { assembleOutput } from "../lib/contracts/index";
 
 export default function DashboardPage() {
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
   const currency = useWorkspaceStore((s) => s.currency);
-  const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
-  const inputs = useWorkspaceStore((s) => s.inputs);
-
   const email = useAuthStore((s) => s.email);
 
   const [loading, setLoading] = useState(true);
@@ -199,29 +194,11 @@ export default function DashboardPage() {
           </div>
 
           <div>
-            <div className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Reports</div>
-            <ReportDownloadPanel
-              output={assembleOutput({
-                workspaceId,
-                currency: currency || "GBP",
-                inputs,
-                ideaValidation,
-                financialInsights: metrics,
-                riskSignals: metrics.riskItems || [],
-                recommendations: metrics.recommendations || [],
-              })}
-              currency={currency || "GBP"}
-              reportTypes={["business_health_report", "investor_summary", "fragility_report", "stability_report"]}
-              className="mb-6"
-            />
-          </div>
-
-          <div>
             <div className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Explore modules</div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               {[
-                { label: "Idea Validation", subtitle: "Evaluate your business concept.", href: "/validation", illustration: <ValidationIllustration /> },
-                { label: "Simulation", subtitle: "Model what-if scenarios.", href: "/simulation", illustration: <SimulationIllustration /> },
+                { label: "Idea Validation", subtitle: "Evaluate your business concept.", href: "/validation", illustration: <ValidationIllustration />, comingSoon: true },
+                { label: "Simulation", subtitle: "Model what-if scenarios.", href: "/simulation", illustration: <SimulationIllustration />, comingSoon: true },
                 { label: "Blueprints", subtitle: "Generate strategic documents.", href: "/blueprint", illustration: <BlueprintIllustration /> },
                 { label: "Catalogue", subtitle: "Manage products & customers.", href: "/catalogue", illustration: <CatalogueIllustration /> },
                 { label: "Financials", subtitle: "Invoicing & cash tracking.", href: "/financials", illustration: <FinancialIllustration /> },
