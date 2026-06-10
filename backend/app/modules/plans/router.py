@@ -113,17 +113,17 @@ async def addon_checkout(
         raise HTTPException(status_code=503, detail=f"Add-on '{addon['label']}' is not yet available for purchase.")
 
     base = _frontend_url()
-    session = client.checkout.sessions.create(
-        mode=addon["mode"],
-        line_items=[{"price": price_id, "quantity": 1}],
-        customer_email=user["email"],
-        metadata={
+    session = client.checkout.sessions.create({
+        "mode": addon["mode"],
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "customer_email": user["email"],
+        "metadata": {
             "user_id": user["id"],
             "addon_key": addon_key,
         },
-        success_url=f"{base}/pricing/success?addon={addon_key}",
-        cancel_url=f"{base}/pricing",
-    )
+        "success_url": f"{base}/pricing/success?addon={addon_key}",
+        "cancel_url": f"{base}/pricing",
+    })
     return {"checkout_url": session.url}
 
 
@@ -171,23 +171,23 @@ async def create_subscription(
     customer_id: str | None = (existing or {}).get("stripe_customer_id")
 
     if not customer_id:
-        customer = client.customers.create(
-            email=user["email"],
-            metadata={"user_id": str(user["id"])},
-        )
+        customer = client.customers.create({
+            "email": user["email"],
+            "metadata": {"user_id": str(user["id"])},
+        })
         customer_id = customer.id
 
-    subscription = client.subscriptions.create(
-        customer=customer_id,
-        items=[{"price": price_id}],
-        payment_behavior="default_incomplete",
-        expand=["latest_invoice.payment_intent"],
-        metadata={
+    subscription = client.subscriptions.create({
+        "customer": customer_id,
+        "items": [{"price": price_id}],
+        "payment_behavior": "default_incomplete",
+        "expand": ["latest_invoice.payment_intent"],
+        "metadata": {
             "user_id": str(user["id"]),
             "plan_key": payload.plan_key,
             "billing_period": payload.billing_period,
         },
-    )
+    })
 
     pi = subscription.latest_invoice.payment_intent  # type: ignore[union-attr]
     return {
@@ -207,18 +207,18 @@ async def create_checkout_session(
     price_id = _get_price_id(payload.plan_key, payload.billing_period)
     base = _frontend_url()
 
-    session = client.checkout.sessions.create(
-        mode="subscription",
-        line_items=[{"price": price_id, "quantity": 1}],
-        customer_email=user["email"],
-        metadata={
+    session = client.checkout.sessions.create({
+        "mode": "subscription",
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "customer_email": user["email"],
+        "metadata": {
             "user_id": user["id"],
             "plan_key": payload.plan_key,
             "billing_period": payload.billing_period,
         },
-        success_url=f"{base}/pricing/success?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{base}/pricing",
-    )
+        "success_url": f"{base}/pricing/success?session_id={{CHECKOUT_SESSION_ID}}",
+        "cancel_url": f"{base}/pricing",
+    })
     return CheckoutResponse(checkout_url=session.url)
 
 
