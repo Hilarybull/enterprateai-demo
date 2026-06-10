@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { loadStripe } from "@stripe/stripe-js";
 import {
@@ -99,7 +99,7 @@ const ELEM_STYLE = {
   },
 };
 
-function StripeCardForm({ plan, billing, onSwitchToBank }) {
+function StripeCardForm({ plan, billing, onSwitchToBank, onNetworkError }) {
   const stripe = useStripe();
   const elements = useElements();
   const [brand, setBrand] = useState("unknown");
@@ -107,6 +107,15 @@ function StripeCardForm({ plan, billing, onSwitchToBank }) {
   const [nameOnCard, setNameOnCard] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [elemReady, setElemReady] = useState(false);
+
+  // If the card element hasn't signalled ready within 5s, it likely has a network issue
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (!elemReady) onNetworkError?.();
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [elemReady, onNetworkError]);
 
   const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
   const priceLabel =
@@ -211,7 +220,14 @@ function StripeCardForm({ plan, billing, onSwitchToBank }) {
             <div className="rounded-lg border border-slate-200 bg-white px-3 py-[10px] transition focus-within:border-brand-400 focus-within:ring-1 focus-within:ring-brand-200 dark:border-slate-700 dark:bg-slate-800">
               <CardNumberElement
                 options={ELEM_STYLE}
-                onChange={(e) => setBrand(e.brand)}
+                onReady={() => setElemReady(true)}
+                onChange={(e) => {
+                  if (e.error?.type === "network_error" || e.error?.code === "NETWORK_ERROR") {
+                    onNetworkError?.();
+                    return;
+                  }
+                  setBrand(e.brand);
+                }}
               />
             </div>
           </div>
@@ -400,6 +416,7 @@ function CheckIcon() {
 
 function PaymentModal({ plan, billing, onClose }) {
   const [method, setMethod] = useState(null); // null | 'card' | 'paypal' | 'bank'
+  const [elementsAvailable, setElementsAvailable] = useState(true);
   const [bankEmail, setBankEmail] = useState("");
   const [bankSent, setBankSent] = useState(false);
   const [bankSending, setBankSending] = useState(false);
@@ -533,12 +550,13 @@ function PaymentModal({ plan, billing, onClose }) {
             </button>
             {method === "card" && (
               <div className="border-t border-slate-100 px-4 pb-4 pt-3 dark:border-slate-700">
-                {stripePromise ? (
+                {stripePromise && elementsAvailable ? (
                   <Elements stripe={stripePromise}>
                     <StripeCardForm
                       plan={plan}
                       billing={billing}
                       onSwitchToBank={switchToBank}
+                      onNetworkError={() => setElementsAvailable(false)}
                     />
                   </Elements>
                 ) : (
