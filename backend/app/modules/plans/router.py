@@ -43,11 +43,15 @@ _PRICE_ATTR = {
 }
 
 
-def _stripe_client() -> stripe.Stripe:
+def _stripe_client():
     settings = get_settings()
     if not settings.stripe_secret_key:
         raise HTTPException(status_code=503, detail="Payment system not configured. Contact support.")
-    return stripe.Stripe(settings.stripe_secret_key)
+    # stripe.StripeClient is the constructor in SDK v5–v11; v12+ also accepts stripe.Stripe
+    cls = getattr(stripe, "StripeClient", None) or getattr(stripe, "Stripe", None)
+    if cls is None:
+        raise HTTPException(status_code=503, detail="Stripe SDK version not supported.")
+    return cls(settings.stripe_secret_key)
 
 
 def _get_price_id(plan_key: str, billing_period: str) -> str:
@@ -227,9 +231,8 @@ async def stripe_webhook(request: Request):
     sig_header = request.headers.get("stripe-signature", "")
 
     if settings.stripe_webhook_secret:
-        client = _stripe_client()
         try:
-            event = client.webhooks.construct_event(
+            event = stripe.Webhook.construct_event(
                 payload_bytes, sig_header, settings.stripe_webhook_secret
             )
         except stripe.SignatureVerificationError:
