@@ -3,17 +3,17 @@ import { Link, useNavigate } from "react-router-dom";
 import logoUrl from "../enterprate-logo.png";
 
 const PAIN_ITEMS = [
-  { icon: "😰", text: '"I want to hire but I genuinely don\'t know if I can afford it six months from now."' },
-  { icon: "📉", text: '"I\'m thinking of raising prices but terrified of losing customers and ending up worse off."' },
-  { icon: "💸", text: '"My accountant shows me last month\'s numbers. I need to know what next month looks like."' },
-  { icon: "🤷", text: '"I guessed wrong on a big decision last year. I can\'t afford to guess again."' },
+  { icon: "🔁", text: "You enter your business details once, then repeat them again for proposals, invoices, quotations, product listings, and business plans." },
+  { icon: "🗂️", text: "You use too many disconnected tools that don't talk to each other — and waste time bridging the gap between them manually." },
+  { icon: "❓", text: "You make pricing, hiring, or growth decisions based on gut feel because you don't have a way to model what happens before you commit." },
+  { icon: "⏳", text: "You spend more time managing tools and repeating data than actually running and growing your business." },
 ];
 
 const STEPS = [
-  { n: "1", title: "Validate your business idea", body: "Start with Idea Validation. EnterprateAI analyses your idea against real market data, gives you a viability score, competitive landscape, and a clear go or no-go verdict before you commit time or money." },
-  { n: "2", title: "Build your live business model", body: "Once your idea is validated, EnterprateAI maps your revenue streams, cost centres, and operational elements into a live model unique to your business. Your foundation for every decision." },
-  { n: "3", title: "Simulate decisions on your validated model", body: "Run scenarios on your real business model: hire a team member, raise prices, cut costs. See the exact financial ripple effect across 6, 12, and 24 months before acting." },
-  { n: "4", title: "Act with certainty, not guesswork", body: "Get a clear recommendation: go, wait, or adapt. Every conclusion is backed by numbers from your own validated business model so you commit with full confidence." },
+  { n: "1", title: "Input your business data once", body: "Add your business, product, customer, vendor, financial, and marketplace information once into your EnterprateAI workspace. This becomes the foundation for everything else." },
+  { n: "2", title: "Generate across your business", body: "Use the same data to instantly create business plans, proposals, sales letters, invoices, quotations, contracts, marketplace listings, and reports — without repeating manual work." },
+  { n: "3", title: "Simulate before acting", body: "Test the impact of pricing changes, new hires, cost increases, product launches, or expansion decisions before you commit resources. See how one decision ripples across revenue, cashflow, risk, and growth readiness." },
+  { n: "4", title: "Grow with intelligence", body: "Discover risks using Fragility Index. Uncover opportunities using Adaptive Scenario Intelligence. Make smarter decisions with a connected view of your entire business." },
 ];
 
 const EXAMPLES = [
@@ -293,21 +293,18 @@ export default function LandingPage() {
               </div>
 
               <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-4xl xl:text-5xl">
-                Know Exactly What Hiring, Raising Prices, or Cutting Costs Will Do -{" "}
+                Input data once. Generate everywhere.{" "}
                 <span className="bg-gradient-to-r from-brand-600 to-accent-500 bg-clip-text text-transparent">
-                  Before You Do It
+                  Simulate before acting. Grow with intelligence.
                 </span>
               </h1>
 
               <p className="mt-5 text-lg leading-relaxed text-slate-600">
-                EnterprateAI builds a live model of your business and simulates every major decision,
-                showing you the exact impact on cash, revenue, and risk over 6, 12, and 24 months.{" "}
-                <strong className="text-slate-800">Act with certainty. Stop guessing.</strong>
+                EnterprateAI is a Decision Intelligence Platform that helps small businesses save time, reduce cost, discover risks, uncover opportunities, and move from idea to market faster.
               </p>
 
-              <p className="mt-3 text-sm font-medium text-slate-500">
-                Most tools show what <em>already happened.</em>{" "}
-                EnterprateAI shows what <em>will happen next.</em>
+              <p className="mt-3 text-sm leading-relaxed text-slate-500">
+                Turn one set of business data into business plans, proposals, invoices, quotations, marketplace listings, simulations, risk insights, and growth opportunities — all from one intelligent workspace.
               </p>
 
               <div className="mt-7 flex flex-col gap-3 sm:flex-row">
@@ -316,7 +313,7 @@ export default function LandingPage() {
                   onClick={() => navigate("/login")}
                   className="w-full rounded-xl bg-brand-600 px-7 py-3.5 text-base font-semibold text-white shadow-lg shadow-brand-200 transition hover:bg-brand-700 active:scale-95 sm:w-auto"
                 >
-                  Start My Free 14-Day Trial →
+                  Get Started Free →
                 </button>
                 <a
                   href="#how-it-works"
@@ -327,9 +324,9 @@ export default function LandingPage() {
               </div>
 
               <div className="mt-5 flex flex-wrap gap-4 text-sm text-slate-500">
-                <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> 14-day free trial</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> Free to start</span>
                 <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> No credit card required</span>
-                <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> Set up in under 15 minutes</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> One workspace for everything</span>
               </div>
             </div>
 
@@ -398,19 +395,20 @@ export default function LandingPage() {
       <section className="py-16 sm:py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-10 text-center">
-            <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Sound Familiar?</h2>
-            <p className="mt-3 text-slate-500">Every week, UK small business owners make high-stakes decisions with incomplete information.</p>
+            <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">From idea to market — faster</h2>
+            <p className="mt-3 text-slate-500">Most small businesses waste time repeating the same information across disconnected tools.</p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {PAIN_ITEMS.map((p) => (
               <div key={p.icon} className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
                 <div className="mb-3 text-3xl">{p.icon}</div>
-                <p className="text-sm leading-relaxed text-slate-600 italic">{p.text}</p>
+                <p className="text-sm leading-relaxed text-slate-600">{p.text}</p>
               </div>
             ))}
           </div>
           <div className="mt-10 text-center">
-            <p className="text-lg font-semibold text-slate-800">There is now a better way. ↓</p>
+            <p className="text-lg font-semibold text-slate-800">EnterprateAI changes that. ↓</p>
+            <p className="mt-2 text-sm text-slate-500">With EnterprateAI, you input your business data once and use it across your business to generate, manage, simulate, and grow faster.</p>
           </div>
         </div>
       </section>
@@ -422,60 +420,60 @@ export default function LandingPage() {
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-12 text-center">
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">The Platform</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">One Platform. Every Tool Your Business Needs.</h2>
-            <p className="mt-3 text-slate-500">From validating your idea to running live decision simulations, everything in one place.</p>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">What you can do with EnterprateAI</h2>
+            <p className="mt-3 text-slate-500">One intelligent workspace. Multiple business outputs.</p>
           </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {[
               {
+                icon: "📋",
+                name: "Create your business plan with one click",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
+                desc: "Generate a structured business plan using your business data, idea, target market, services, financial assumptions, and growth goals.",
+              },
+              {
+                icon: "📄",
+                name: "Create business proposals with one click",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
+                desc: "Turn your business information, products, services, and customer needs into professional proposals faster.",
+              },
+              {
+                icon: "🏪",
+                name: "Launch on the marketplace",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
+                desc: "Publish your products and services to the EnterprateAI marketplace and make your business discoverable to potential buyers.",
+                isMarketplace: true,
+              },
+              {
                 icon: "💡",
-                name: "Idea Validation",
+                name: "Validate business ideas before investing",
                 tag: "Coming soon",
                 tagColor: "bg-amber-100 text-amber-700",
-                desc: "Test your business idea before you invest a penny. Get a market viability score, competitive landscape analysis, target customer profile, and a clear go or no-go recommendation based on real data.",
+                desc: "Assess whether an idea makes commercial sense before spending time, money, and resources.",
               },
               {
                 icon: "⚡",
-                name: "Decision Simulation",
+                name: "Simulate business decisions before acting",
                 tag: "Coming soon",
                 tagColor: "bg-amber-100 text-amber-700",
-                desc: "Simulate any major business decision: hiring, pricing, cutting costs. See the exact impact on cash, revenue, and risk across 6, 12, and 24 months before you commit.",
-              },
-              {
-                icon: "📋",
-                name: "Business Blueprints",
-                tag: "Available now",
-                tagColor: "bg-emerald-100 text-emerald-700",
-                desc: "Generate professional business plans, pitch decks, executive summaries, and strategy documents in minutes. Tailored to your business data and ready to share with investors or partners.",
+                desc: "Test the possible impact of pricing, cost, demand, capacity, and growth decisions. See how one decision propagates across revenue, cashflow, risk exposure, and growth readiness.",
               },
               {
                 icon: "💷",
-                name: "Financials",
+                name: "Create quick invoices and quotations",
                 tag: "Available now",
                 tagColor: "bg-emerald-100 text-emerald-700",
-                desc: "Track invoices, expenses, contracts, and quotations. Get real-time financial intelligence including cashflow forecasting, revenue trends, and profit margin analysis, all in one dashboard.",
-              },
-              {
-                icon: "📦",
-                name: "Catalogue",
-                tag: "Available now",
-                tagColor: "bg-emerald-100 text-emerald-700",
-                desc: "Manage your full product and service catalogue, customer database, and vendor relationships. Keep everything organised and linked to your financial and operational data.",
+                desc: "Generate invoices and quotations from your business, customer, product, and service data without repeating manual work.",
               },
               {
                 icon: "⚖️",
                 name: "Business Registration",
                 tag: "Available now",
                 tagColor: "bg-emerald-100 text-emerald-700",
-                desc: "Navigate UK company registration, legal structure decisions, and compliance requirements with guided step-by-step support. Know exactly what you need to do and when.",
-              },
-              {
-                icon: "🏪",
-                name: "Marketplace",
-                tag: "Available now",
-                tagColor: "bg-emerald-100 text-emerald-700",
-                desc: "Discover and connect with other UK businesses. Find suppliers, partners, and customers within the EnterprateAI ecosystem to grow your network and opportunities.",
-                isMarketplace: true,
+                desc: "Navigate UK company registration, legal structure decisions, and compliance requirements with guided step-by-step support.",
               },
             ].map((m) => (
               <div key={m.name} className="rounded-2xl border border-slate-200 bg-white p-6 transition hover:border-brand-200 hover:shadow-md">
@@ -494,7 +492,7 @@ export default function LandingPage() {
               onClick={() => navigate("/login")}
               className="rounded-xl bg-brand-600 px-7 py-3 text-sm font-semibold text-white shadow transition hover:bg-brand-700"
             >
-              Access All Modules Free for 14 Days →
+              Try it now for free →
             </button>
           </div>
         </div>
@@ -506,16 +504,16 @@ export default function LandingPage() {
       <section className="bg-slate-900 py-16 text-white sm:py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-12 text-center">
-            <span className="rounded-full bg-brand-500/20 px-3 py-1 text-xs font-semibold text-brand-300">Why EnterprateAI</span>
-            <h2 className="mt-3 text-2xl font-extrabold sm:text-3xl">Your Business, Modelled as a Living System</h2>
-            <p className="mt-3 text-slate-400">Spreadsheets show snapshots. Accountants show history. EnterprateAI shows you <strong className="text-white">what happens next.</strong></p>
+            <span className="rounded-full bg-brand-500/20 px-3 py-1 text-xs font-semibold text-brand-300">One workspace. Multiple business outputs.</span>
+            <h2 className="mt-3 text-2xl font-extrabold sm:text-3xl">EnterprateAI connects your business activities into one intelligent operating flow.</h2>
+            <p className="mt-3 text-slate-400">Input once. Generate everywhere. Simulate before acting. Grow with intelligence.</p>
           </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { emoji: "🔗", title: "Built as a System", body: "Models your business as interconnected components. Every decision ripples across revenue, costs, and cashflow exactly like the real world." },
-              { emoji: "⚡", title: "Simulate Before You Spend", body: "Test any decision: hire, raise prices, cut costs. See the complete financial outcome before committing a single pound." },
-              { emoji: "📊", title: "See Ripple Effects", body: "Visualise how one decision cascades across your business at 6, 12, and 24 months with clear go / wait / adapt guidance." },
-              { emoji: "🛡️", title: "Detect Risk Early", body: "Identifies structural vulnerabilities in your cashflow and operations weeks before they become real problems." },
+              { emoji: "📥", title: "Input once", body: "Add your business, product, customer, vendor, financial, and marketplace information once. No more repeating the same data across disconnected tools." },
+              { emoji: "⚙️", title: "Generate everywhere", body: "Use the same data to create plans, proposals, sales letters, invoices, quotations, contracts, listings, and reports without repeating manual work." },
+              { emoji: "🔬", title: "Simulate before acting", body: "A pricing change, new hire, cost increase, or expansion decision can affect multiple areas of your business. See those connections before you act." },
+              { emoji: "📈", title: "Grow with intelligence", body: "Discover risks, uncover opportunities, and make better decisions using Fragility Index and Adaptive Scenario Intelligence." },
             ].map((c) => (
               <div key={c.title} className="rounded-2xl border border-white/10 bg-white/5 p-5">
                 <div className="mb-3 text-3xl">{c.emoji}</div>
@@ -527,15 +525,25 @@ export default function LandingPage() {
 
           <div className="mt-10 grid gap-4 sm:grid-cols-2">
             <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-6">
-              <h4 className="mb-4 font-semibold text-rose-300">Before EnterprateAI</h4>
+              <h4 className="mb-4 font-semibold text-rose-300">Without EnterprateAI</h4>
               <ul className="space-y-2 text-sm text-slate-300">
-                {["Making decisions on gut feel and last month's numbers", "Finding out the impact after it's too late to change course", "Guessing at cashflow and hoping for the best", "Reacting to problems after they've already cost you money"].map((t) => <li key={t} className="flex items-start gap-2"><span className="shrink-0 mt-0.5 text-rose-400">✕</span>{t}</li>)}
+                {[
+                  "Repeat the same data across proposals, invoices, plans, and listings manually",
+                  "Use multiple disconnected tools that don't share information",
+                  "Make decisions based on gut feel with no way to model the outcome first",
+                  "Discover risks and mistakes after they have already cost you money",
+                ].map((t) => <li key={t} className="flex items-start gap-2"><span className="shrink-0 mt-0.5 text-rose-400">✕</span>{t}</li>)}
               </ul>
             </div>
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-6">
               <h4 className="mb-4 font-semibold text-emerald-300">With EnterprateAI</h4>
               <ul className="space-y-2 text-sm text-slate-300">
-                {["Simulate any decision and see the exact financial outcome first", "Know the impact on cash, revenue, and risk before committing", "Precise cashflow forecasting based on your live business model", "Spot vulnerabilities weeks early and act before they escalate"].map((t) => <li key={t} className="flex items-start gap-2"><span className="shrink-0 mt-0.5 text-emerald-400">✓</span>{t}</li>)}
+                {[
+                  "Input business data once and generate plans, proposals, invoices, and listings from it",
+                  "Manage your entire business from one connected platform",
+                  "Simulate any decision before committing and see the likely outcome first",
+                  "Spot vulnerabilities early and act before they become expensive problems",
+                ].map((t) => <li key={t} className="flex items-start gap-2"><span className="shrink-0 mt-0.5 text-emerald-400">✓</span>{t}</li>)}
               </ul>
             </div>
           </div>
@@ -548,9 +556,9 @@ export default function LandingPage() {
       <section id="how-it-works" className="py-16 sm:py-20">
         <div className="mx-auto max-w-3xl px-4 sm:px-6">
           <div className="mb-12 text-center">
-            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">The Process</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">From Your Data to Clear Decisions in Minutes</h2>
-            <p className="mt-3 text-slate-500">No lengthy setup. No consultants. No spreadsheet hell.</p>
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">How It Works</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">From idea to market — faster</h2>
+            <p className="mt-3 text-slate-500">One workspace. One set of data. Multiple business outputs.</p>
           </div>
           <div className="relative">
             <div className="absolute left-5 top-5 bottom-5 w-0.5 bg-slate-100" aria-hidden="true" />
@@ -577,9 +585,9 @@ export default function LandingPage() {
       <section id="examples" className="bg-slate-50 py-16 sm:py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-12 text-center">
-            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">See It In Action</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Real Decision Outputs</h2>
-            <p className="mt-3 text-slate-500">This is exactly what EnterprateAI produces for your business decisions.</p>
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Built for small businesses</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Simulate decisions before making them</h2>
+            <p className="mt-3 max-w-2xl mx-auto text-slate-500">Before increasing prices, hiring staff, launching a product, reducing costs, or expanding operations, EnterprateAI helps you simulate the possible impact — and see how one decision from one business activity propagates across other business areas.</p>
           </div>
           <div className="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
             {EXAMPLES.map((ex) => (
@@ -607,6 +615,10 @@ export default function LandingPage() {
             ))}
           </div>
           <p className="mt-6 text-center text-xs text-slate-400">Results are generated from <em>your actual business data</em> and update dynamically as conditions change.</p>
+          <div className="mt-10 rounded-2xl border border-brand-100 bg-brand-50 p-6 text-center">
+            <p className="text-sm font-semibold text-slate-800">EnterprateAI is designed for founders, freelancers, consultants, service providers, suppliers, agencies, and small businesses that need to plan, operate, sell, and grow without using too many disconnected tools.</p>
+            <p className="mt-2 text-sm text-slate-500">Whether you are validating a new idea, preparing a proposal, launching a service, responding to an RFQ, creating invoices, or testing a business decision — EnterprateAI helps you work faster from one connected platform.</p>
+          </div>
         </div>
       </section>
 
@@ -615,16 +627,16 @@ export default function LandingPage() {
       ══════════════════════════════════════════ */}
       <section className="bg-gradient-to-r from-brand-600 to-brand-700 py-14 text-white">
         <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
-          <h2 className="text-2xl font-extrabold sm:text-3xl">Ready to Simulate Your First Decision, Free?</h2>
-          <p className="mt-3 text-brand-100">14-day free trial. No credit card required. Set up in under 15 minutes.</p>
+          <h2 className="text-2xl font-extrabold sm:text-3xl">Start free today</h2>
+          <p className="mt-3 text-brand-100">Input data once. Generate everywhere. Simulate before acting. Grow with intelligence.</p>
           <button
             type="button"
             onClick={() => navigate("/login")}
             className="mt-7 rounded-xl bg-white px-8 py-3.5 text-sm font-bold text-brand-700 shadow transition hover:bg-brand-50 active:scale-95"
           >
-            Start My Free Trial →
+            Get Started Free →
           </button>
-          <p className="mt-3 text-xs text-brand-200">No spam · No commitment · Cancel anytime</p>
+          <p className="mt-3 text-xs text-brand-200">No credit card required · Free to start · Cancel anytime</p>
         </div>
       </section>
 
@@ -740,17 +752,17 @@ export default function LandingPage() {
       ══════════════════════════════════════════ */}
       <section className="bg-gradient-to-br from-slate-900 to-brand-900 py-16 text-white sm:py-20">
         <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
-          <h2 className="text-2xl font-extrabold sm:text-3xl">Stop Guessing. Start Knowing.</h2>
-          <p className="mt-4 text-slate-300">Try EnterprateAI free for 14 days. No credit card. No commitment. Run your first simulation in minutes.</p>
+          <h2 className="text-2xl font-extrabold sm:text-3xl">From business data to business intelligence</h2>
+          <p className="mt-4 text-slate-300">Not just reports. Not just documents. Not just automation.<br />A connected business workspace that helps you create, manage, simulate, and grow.</p>
           <button
             type="button"
             onClick={() => navigate("/login")}
             className="mt-8 rounded-xl bg-brand-500 px-10 py-4 text-base font-bold text-white shadow-xl shadow-brand-900/50 transition hover:bg-brand-400 active:scale-95"
           >
-            Start My Free 14-Day Trial →
+            Try EnterprateAI now for free →
           </button>
           <div className="mt-6 flex flex-wrap justify-center gap-4 text-xs text-slate-400">
-            <span>✓ 14-day free trial</span>
+            <span>✓ Free to start</span>
             <span>✓ No credit card required</span>
             <span>✓ Cancel anytime</span>
             <span>✓ GDPR compliant</span>
