@@ -397,6 +397,7 @@ export default function LandingPage() {
           <div className="mb-10 text-center">
             <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">From idea to market - faster</h2>
             <p className="mt-3 text-slate-500">Most small businesses waste time repeating the same information across disconnected tools.</p>
+            <p className="mt-2 text-slate-500">You enter your business details in one place, then repeat them again for proposals, invoices, quotations, product listings, customer records, vendor records, financial documents, and business planning.</p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {PAIN_ITEMS.map((p) => (
@@ -441,7 +442,7 @@ export default function LandingPage() {
               },
               {
                 icon: "🏪",
-                name: "Launch on the marketplace",
+                name: "Launch your products and services on the marketplace",
                 tag: "Available now",
                 tagColor: "bg-emerald-100 text-emerald-700",
                 desc: "Publish your products and services to the EnterprateAI marketplace and make your business discoverable to potential buyers.",
@@ -456,10 +457,10 @@ export default function LandingPage() {
               },
               {
                 icon: "⚡",
-                name: "Simulate business decisions before acting",
+                name: "Simulate business decisions before taking action",
                 tag: "Coming soon",
                 tagColor: "bg-amber-100 text-amber-700",
-                desc: "Test the possible impact of pricing, cost, demand, capacity, and growth decisions. See how one decision propagates across revenue, cashflow, risk exposure, and growth readiness.",
+                desc: "Test the possible impact of pricing, cost, demand, capacity, customer dependency, and growth decisions before implementing them. See how one decision from one business activity propagates across other business areas - from revenue and cashflow to operations, risk exposure, customer behaviour, and growth readiness.",
               },
               {
                 icon: "💷",
@@ -512,7 +513,7 @@ export default function LandingPage() {
             {[
               { emoji: "📥", title: "Input once", body: "Add your business, product, customer, vendor, financial, and marketplace information once. No more repeating the same data across disconnected tools." },
               { emoji: "⚙️", title: "Generate everywhere", body: "Use the same data to create plans, proposals, sales letters, invoices, quotations, contracts, listings, and reports without repeating manual work." },
-              { emoji: "🔬", title: "Simulate before acting", body: "A pricing change, new hire, cost increase, or expansion decision can affect multiple areas of your business. See those connections before you act." },
+              { emoji: "🔬", title: "Simulate before acting", body: "Understand the likely impact of business decisions before making costly moves. A pricing change, new hire, cost increase, customer loss, product launch, or expansion decision can affect multiple areas of your business. EnterprateAI helps you see those connections before you act." },
               { emoji: "📈", title: "Grow with intelligence", body: "Discover risks, uncover opportunities, and make better decisions using Fragility Index and Adaptive Scenario Intelligence." },
             ].map((c) => (
               <div key={c.title} className="rounded-2xl border border-white/10 bg-white/5 p-5">
@@ -545,6 +546,82 @@ export default function LandingPage() {
                   "Spot vulnerabilities early and act before they become expensive problems",
                 ].map((t) => <li key={t} className="flex items-start gap-2"><span className="shrink-0 mt-0.5 text-emerald-400">✓</span>{t}</li>)}
               </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════
+          WHY DIFFERENT
+      ══════════════════════════════════════════ */}
+      <section className="py-16 sm:py-20">
+        <div className="mx-auto max-w-4xl px-4 sm:px-6">
+          <div className="mb-8 text-center">
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Why EnterprateAI</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Why EnterprateAI is different</h2>
+            <p className="mt-3 text-slate-500">Most tools help you complete one task. EnterprateAI helps you connect the full business journey.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm">
+            <p className="mb-4 text-sm font-semibold text-slate-700">Your business data becomes the foundation for:</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+              {[
+                "Business planning", "Proposals", "Sales letters", "Product and service listings",
+                "Customer records", "Vendor records", "Invoices", "Quotations",
+                "Expenses", "Contracts", "Marketplace visibility", "Decision simulations",
+                "Risk discovery", "Opportunity discovery",
+              ].map((item) => (
+                <div key={item} className="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700">
+                  <span className="shrink-0 text-brand-500">✓</span>{item}
+                </div>
+              ))}
+            </div>
+            <p className="mt-6 text-center text-sm text-slate-500">The more you use EnterprateAI, the more your business data becomes useful for better decisions.</p>
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════
+          DISCOVER RISKS
+      ══════════════════════════════════════════ */}
+      <section className="bg-slate-50 py-16 sm:py-20">
+        <div className="mx-auto max-w-5xl px-4 sm:px-6">
+          <div className="grid gap-10 lg:grid-cols-2 lg:items-center">
+            <div>
+              <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">Fragility Index</span>
+              <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Discover risks before they become expensive</h2>
+              <p className="mt-3 text-slate-600">EnterprateAI is more than a document generator. It helps you understand what could weaken your business.</p>
+              <p className="mt-2 text-sm text-slate-500">Using Fragility Index, EnterprateAI helps identify areas such as:</p>
+              <ul className="mt-4 space-y-2">
+                {[
+                  "Weak cash position", "Customer dependency", "Unstable revenue",
+                  "Operational bottlenecks", "Capacity constraints", "Low market readiness", "Poor scalability",
+                ].map((item) => (
+                  <li key={item} className="flex items-center gap-2 text-sm text-slate-600">
+                    <span className="shrink-0 text-rose-500">⚠</span>{item}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-4 text-sm text-slate-500">This helps you act earlier, protect your business, and make smarter decisions.</p>
+            </div>
+            <div className="rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
+              <p className="mb-4 text-xs font-bold uppercase tracking-widest text-rose-600">Fragility Index - Example</p>
+              {[
+                { label: "Cash Position", level: 2, max: 5, color: "bg-rose-500" },
+                { label: "Revenue Stability", level: 3, max: 5, color: "bg-amber-400" },
+                { label: "Customer Dependency", level: 1, max: 5, color: "bg-rose-600" },
+                { label: "Market Readiness", level: 4, max: 5, color: "bg-emerald-500" },
+                { label: "Scalability", level: 3, max: 5, color: "bg-amber-400" },
+              ].map((item) => (
+                <div key={item.label} className="mb-3">
+                  <div className="mb-1 flex justify-between text-xs">
+                    <span className="font-medium text-slate-600">{item.label}</span>
+                    <span className="text-slate-400">{item.level}/{item.max}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-100">
+                    <div className={`h-2 rounded-full ${item.color}`} style={{ width: `${(item.level / item.max) * 100}%` }} />
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -587,7 +664,9 @@ export default function LandingPage() {
           <div className="mb-12 text-center">
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Built for small businesses</span>
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Simulate decisions before making them</h2>
-            <p className="mt-3 max-w-2xl mx-auto text-slate-500">Before increasing prices, hiring staff, launching a product, reducing costs, or expanding operations, EnterprateAI helps you simulate the possible impact - and see how one decision from one business activity propagates across other business areas.</p>
+            <p className="mt-3 mx-auto max-w-2xl text-slate-500">Before increasing prices, hiring staff, launching a product, reducing costs, entering a new market, or expanding operations, EnterprateAI helps you simulate the possible impact.</p>
+            <p className="mt-2 mx-auto max-w-2xl text-slate-500">You can test decisions before committing resources and see how one decision from one business activity propagates across other business areas.</p>
+            <p className="mt-2 mx-auto max-w-2xl text-slate-500">For example, a pricing change may affect demand, revenue, cashflow, customer behaviour, profitability, risk exposure, operational capacity, and growth readiness. This helps you reduce guesswork, avoid avoidable mistakes, and choose a better path.</p>
           </div>
           <div className="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
             {EXAMPLES.map((ex) => (
@@ -616,8 +695,9 @@ export default function LandingPage() {
           </div>
           <p className="mt-6 text-center text-xs text-slate-400">Results are generated from <em>your actual business data</em> and update dynamically as conditions change.</p>
           <div className="mt-10 rounded-2xl border border-brand-100 bg-brand-50 p-6 text-center">
-            <p className="text-sm font-semibold text-slate-800">EnterprateAI is designed for founders, freelancers, consultants, service providers, suppliers, agencies, and small businesses that need to plan, operate, sell, and grow without using too many disconnected tools.</p>
-            <p className="mt-2 text-sm text-slate-500">Whether you are validating a new idea, preparing a proposal, launching a service, responding to an RFQ, creating invoices, or testing a business decision - EnterprateAI helps you work faster from one connected platform.</p>
+            <h3 className="text-base font-extrabold text-slate-900">Built for small businesses that want to move faster</h3>
+            <p className="mt-2 text-sm text-slate-600">EnterprateAI is designed for founders, freelancers, consultants, service providers, suppliers, agencies, and small businesses that need to plan, operate, sell, and grow without using too many disconnected tools.</p>
+            <p className="mt-2 text-sm text-slate-500">Whether you are validating a new idea, preparing a proposal, launching a service, responding to an RFQ, creating invoices, or testing a business decision, EnterprateAI helps you work faster from one connected platform.</p>
           </div>
         </div>
       </section>
