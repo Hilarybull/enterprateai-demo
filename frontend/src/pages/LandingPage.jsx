@@ -4,14 +4,14 @@ import logoUrl from "../enterprate-logo.png";
 
 const PAIN_ITEMS = [
   { icon: "🔁", text: "You enter your business details once, then repeat them again for proposals, invoices, quotations, product listings, and business plans." },
-  { icon: "🗂️", text: "You use too many disconnected tools that don't talk to each other — and waste time bridging the gap between them manually." },
+  { icon: "🗂️", text: "You use too many disconnected tools that don't talk to each other - and waste time bridging the gap between them manually." },
   { icon: "❓", text: "You make pricing, hiring, or growth decisions based on gut feel because you don't have a way to model what happens before you commit." },
   { icon: "⏳", text: "You spend more time managing tools and repeating data than actually running and growing your business." },
 ];
 
 const STEPS = [
   { n: "1", title: "Input your business data once", body: "Add your business, product, customer, vendor, financial, and marketplace information once into your EnterprateAI workspace. This becomes the foundation for everything else." },
-  { n: "2", title: "Generate across your business", body: "Use the same data to instantly create business plans, proposals, sales letters, invoices, quotations, contracts, marketplace listings, and reports — without repeating manual work." },
+  { n: "2", title: "Generate across your business", body: "Use the same data to instantly create business plans, proposals, sales letters, invoices, quotations, contracts, marketplace listings, and reports - without repeating manual work." },
   { n: "3", title: "Simulate before acting", body: "Test the impact of pricing changes, new hires, cost increases, product launches, or expansion decisions before you commit resources. See how one decision ripples across revenue, cashflow, risk, and growth readiness." },
   { n: "4", title: "Grow with intelligence", body: "Discover risks using Fragility Index. Uncover opportunities using Adaptive Scenario Intelligence. Make smarter decisions with a connected view of your entire business." },
 ];
@@ -197,7 +197,7 @@ export default function LandingPage() {
             </div>
             <h3 className="mt-2 text-xl font-bold text-slate-900">Start your free 14-day trial</h3>
             <p className="mt-2 text-sm text-slate-500">
-              EnterprateAI gives you the business intelligence tools to validate ideas, run scenario simulations, and make smarter decisions — completely free to start.
+              EnterprateAI gives you the business intelligence tools to validate ideas, run scenario simulations, and make smarter decisions - completely free to start.
             </p>
             <ul className="mt-4 space-y-2 text-sm text-slate-600">
               {[
@@ -304,7 +304,7 @@ export default function LandingPage() {
               </p>
 
               <p className="mt-3 text-sm leading-relaxed text-slate-500">
-                Turn one set of business data into business plans, proposals, invoices, quotations, marketplace listings, simulations, risk insights, and growth opportunities — all from one intelligent workspace.
+                Turn one set of business data into business plans, proposals, invoices, quotations, marketplace listings, simulations, risk insights, and growth opportunities - all from one intelligent workspace.
               </p>
 
               <div className="mt-7 flex flex-col gap-3 sm:flex-row">
@@ -395,7 +395,7 @@ export default function LandingPage() {
       <section className="py-16 sm:py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-10 text-center">
-            <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">From idea to market — faster</h2>
+            <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">From idea to market - faster</h2>
             <p className="mt-3 text-slate-500">Most small businesses waste time repeating the same information across disconnected tools.</p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -557,7 +557,7 @@ export default function LandingPage() {
         <div className="mx-auto max-w-3xl px-4 sm:px-6">
           <div className="mb-12 text-center">
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">How It Works</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">From idea to market — faster</h2>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">From idea to market - faster</h2>
             <p className="mt-3 text-slate-500">One workspace. One set of data. Multiple business outputs.</p>
           </div>
           <div className="relative">
@@ -587,7 +587,7 @@ export default function LandingPage() {
           <div className="mb-12 text-center">
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Built for small businesses</span>
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Simulate decisions before making them</h2>
-            <p className="mt-3 max-w-2xl mx-auto text-slate-500">Before increasing prices, hiring staff, launching a product, reducing costs, or expanding operations, EnterprateAI helps you simulate the possible impact — and see how one decision from one business activity propagates across other business areas.</p>
+            <p className="mt-3 max-w-2xl mx-auto text-slate-500">Before increasing prices, hiring staff, launching a product, reducing costs, or expanding operations, EnterprateAI helps you simulate the possible impact - and see how one decision from one business activity propagates across other business areas.</p>
           </div>
           <div className="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
             {EXAMPLES.map((ex) => (
@@ -617,7 +617,7 @@ export default function LandingPage() {
           <p className="mt-6 text-center text-xs text-slate-400">Results are generated from <em>your actual business data</em> and update dynamically as conditions change.</p>
           <div className="mt-10 rounded-2xl border border-brand-100 bg-brand-50 p-6 text-center">
             <p className="text-sm font-semibold text-slate-800">EnterprateAI is designed for founders, freelancers, consultants, service providers, suppliers, agencies, and small businesses that need to plan, operate, sell, and grow without using too many disconnected tools.</p>
-            <p className="mt-2 text-sm text-slate-500">Whether you are validating a new idea, preparing a proposal, launching a service, responding to an RFQ, creating invoices, or testing a business decision — EnterprateAI helps you work faster from one connected platform.</p>
+            <p className="mt-2 text-sm text-slate-500">Whether you are validating a new idea, preparing a proposal, launching a service, responding to an RFQ, creating invoices, or testing a business decision - EnterprateAI helps you work faster from one connected platform.</p>
           </div>
         </div>
       </section>
