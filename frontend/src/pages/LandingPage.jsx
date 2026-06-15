@@ -278,7 +278,7 @@ export default function LandingPage() {
         <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
           <div className="grid gap-10 lg:grid-cols-2 lg:gap-16 lg:items-center">
             <div>
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-brand-400/30 bg-white/10 px-3 py-1.5 text-xs font-semibold text-brand-300">
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white">
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-75" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-400" />
@@ -293,15 +293,15 @@ export default function LandingPage() {
                 </span>
               </h1>
 
-              <p className="mt-5 text-lg font-semibold leading-relaxed text-slate-100">
+              <p className="mt-5 text-lg font-semibold leading-relaxed text-white">
                 The intelligent business workspace for small businesses that want to move faster.
               </p>
 
-              <p className="mt-3 text-base leading-relaxed text-slate-300">
+              <p className="mt-3 text-base leading-relaxed text-indigo-100">
                 EnterprateAI helps small businesses save time, reduce cost, discover risks, uncover opportunities, and move from idea to market faster.
               </p>
 
-              <p className="mt-3 text-sm leading-relaxed text-slate-400">
+              <p className="mt-3 text-sm leading-relaxed text-indigo-200">
                 Turn one set of business data into business plans, proposals, invoices, quotations, marketplace listings, simulations, risk insights, and growth opportunities - all from one connected workspace.
               </p>
 
@@ -321,7 +321,7 @@ export default function LandingPage() {
                 </a>
               </div>
 
-              <div className="mt-5 flex flex-wrap gap-4 text-sm text-slate-400">
+              <div className="mt-5 flex flex-wrap gap-4 text-sm text-indigo-200">
                 <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Free to start</span>
                 <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> No credit card required</span>
                 <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> One workspace for everything</span>
