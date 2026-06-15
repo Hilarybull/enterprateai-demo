@@ -278,14 +278,6 @@ export default function LandingPage() {
         <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
           <div className="grid gap-10 lg:grid-cols-2 lg:gap-16 lg:items-center">
             <div>
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-400" />
-                </span>
-                UK Built · SEIS Approved · GDPR Compliant
-              </div>
-
               <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-white sm:text-4xl xl:text-5xl">
                 Input data once. Generate everywhere.{" "}
                 <span className="bg-gradient-to-r from-brand-400 to-accent-400 bg-clip-text text-transparent">
