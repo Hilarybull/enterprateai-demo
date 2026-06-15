@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.core.config import get_settings
 from app.core.supabase import sb_insert, sb_select, sb_update
 from app.shared.auth.google import verify_google_id_token
@@ -96,13 +96,14 @@ async def update_profile(payload: UpdateProfileRequest, user=Depends(get_current
     return _user_public(user)
 
 
-@router.post("/me/password", status_code=status.HTTP_204_NO_CONTENT)
-async def change_password(payload: ChangePasswordRequest, user=Depends(get_current_user)) -> None:
+@router.post("/me/password", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def change_password(payload: ChangePasswordRequest, user=Depends(get_current_user)) -> Response:
     if user.get("auth_provider") == "google" and not user.get("password_hash"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password change is not available for Google accounts")
     if not verify_password(payload.current_password, user.get("password_hash") or ""):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
     await sb_update("users", filters=[("id", "eq", user["id"])], payload={"password_hash": hash_password(payload.new_password)})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 _RESET_TOKEN_EXPIRY_MINUTES = 60
@@ -133,8 +134,8 @@ async def forgot_password(payload: ForgotPasswordRequest) -> dict:
     return {"detail": "If that email is registered, a reset link has been sent."}
 
 
-@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
-async def reset_password(payload: ResetPasswordRequest) -> None:
+@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def reset_password(payload: ResetPasswordRequest) -> Response:
     user = await sb_select("users", filters=[("reset_token", "eq", payload.token)], single=True)
     if not user or not user.get("reset_token_expires_at"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link.")
@@ -154,6 +155,7 @@ async def reset_password(payload: ResetPasswordRequest) -> None:
             "reset_token_expires_at": None,
         },
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/restrictions")

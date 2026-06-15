@@ -124,15 +124,15 @@ async def blueprint_documents_update(
     return doc
 
 
-@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def blueprint_documents_delete(
     document_id: str,
     user=Depends(get_current_user),
-) -> None:
+) -> Response:
     ok = await delete_document(user_id=user["id"], document_id=document_id)
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    return None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/documents/{document_id}/share", response_model=BlueprintShareLinkResponse)
@@ -217,15 +217,15 @@ async def blueprint_financial_documents_share(
     )
 
 
-@router.delete("/documents/{document_id}/share", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/documents/{document_id}/share", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def blueprint_documents_share_revoke(
     document_id: str,
     user=Depends(get_current_user),
-) -> None:
+) -> Response:
     ok = await revoke_share_tokens(user_id=user["id"], document_id=document_id)
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
-    return None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/share/{token}/email", response_model=BlueprintShareEmailResponse)
