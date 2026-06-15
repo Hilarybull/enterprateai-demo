@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 
 from app.modules.workspace_access.schemas import CreateInvitationRequest, UpdateMemberRequest
 from app.modules.workspace_access.service import (
@@ -56,16 +56,18 @@ async def get_workspace_share_links(user=Depends(get_current_user)) -> list:
     return await list_document_share_links(workspace_id)
 
 
-@router.delete("/invitations/{invitation_id}", status_code=204)
-async def delete_workspace_invitation(invitation_id: str, user=Depends(get_current_user)) -> None:
+@router.delete("/invitations/{invitation_id}", status_code=204, response_class=Response)
+async def delete_workspace_invitation(invitation_id: str, user=Depends(get_current_user)) -> Response:
     workspace_id = await get_owner_workspace_id(user["id"])
     await revoke_invitation(invitation_id, workspace_id)
+    return Response(status_code=204)
 
 
-@router.delete("/share-links/{share_id}", status_code=204)
-async def delete_workspace_share_link(share_id: str, user=Depends(get_current_user)) -> None:
+@router.delete("/share-links/{share_id}", status_code=204, response_class=Response)
+async def delete_workspace_share_link(share_id: str, user=Depends(get_current_user)) -> Response:
     workspace_id = await get_owner_workspace_id(user["id"])
     await revoke_document_share(share_id, workspace_id)
+    return Response(status_code=204)
 
 
 @router.get("/join/{token}")
@@ -89,10 +91,11 @@ async def update_workspace_member(
     return await update_member(member_id, workspace_id, payload.permission_type, payload.permissions)
 
 
-@router.delete("/members/{member_id}", status_code=204)
-async def delete_workspace_member(member_id: str, user=Depends(get_current_user)) -> None:
+@router.delete("/members/{member_id}", status_code=204, response_class=Response)
+async def delete_workspace_member(member_id: str, user=Depends(get_current_user)) -> Response:
     workspace_id = await get_owner_workspace_id(user["id"])
     await remove_member(member_id, workspace_id)
+    return Response(status_code=204)
 
 
 @router.get("/me/memberships")

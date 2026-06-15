@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from app.shared.auth.deps import get_current_user, get_optional_user
 from app.modules.marketplace.schemas import (
@@ -166,11 +166,12 @@ async def reject_rfq_endpoint(
     return await reject_rfq(user_id=user["id"], workspace_id=workspace_id, rfq_id=rfq_id)
 
 
-@router.delete("/rfq/{rfq_id}", status_code=204)
+@router.delete("/rfq/{rfq_id}", status_code=204, response_class=Response)
 async def delete_rfq_endpoint(
     rfq_id: str,
     workspace_id: str | None = Query(default=None),
     user=Depends(get_current_user),
-):
+) -> Response:
     """Owner: permanently delete an RFQ request."""
     await delete_rfq(user_id=user["id"], workspace_id=workspace_id, rfq_id=rfq_id)
+    return Response(status_code=204)

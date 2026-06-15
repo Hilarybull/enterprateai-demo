@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 
 from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
@@ -449,12 +449,12 @@ async def add_user_restriction(
         raise HTTPException(status_code=500, detail=f"Migration required: run the user_platform_restrictions schema migration first. ({e})")
 
 
-@router.delete("/users/{user_id}/restrictions/{restriction_id}", status_code=204)
+@router.delete("/users/{user_id}/restrictions/{restriction_id}", status_code=204, response_class=Response)
 async def remove_user_restriction(
     user_id: str,
     restriction_id: str,
     user=Depends(require_admin),
-) -> None:
+) -> Response:
     try:
         await sb_delete(
             "user_platform_restrictions",
@@ -462,13 +462,15 @@ async def remove_user_restriction(
         )
     except Exception:
         pass  # If table doesn't exist yet, nothing to delete
+    return Response(status_code=204)
 
 
-@router.delete("/users/{user_id}", status_code=204)
-async def delete_user(user_id: str, user=Depends(require_admin)) -> None:
+@router.delete("/users/{user_id}", status_code=204, response_class=Response)
+async def delete_user(user_id: str, user=Depends(require_admin)) -> Response:
     if user_id == user.get("id"):
         raise HTTPException(status_code=400, detail="Cannot delete your own admin account.")
     await sb_delete("users", filters=[("id", "eq", user_id)])
+    return Response(status_code=204)
 
 
 @router.patch("/workspaces/{workspace_id}")
@@ -563,34 +565,40 @@ async def restore_workspace_snapshot(
     return {"restored": True, "ws_name": restored_name, "saved_at": snap.get("created_at")}
 
 
-@router.delete("/workspaces/{workspace_id}", status_code=204)
-async def delete_workspace(workspace_id: str, user=Depends(require_admin)) -> None:
+@router.delete("/workspaces/{workspace_id}", status_code=204, response_class=Response)
+async def delete_workspace(workspace_id: str, user=Depends(require_admin)) -> Response:
     await sb_delete("workspaces", filters=[("id", "eq", workspace_id)])
+    return Response(status_code=204)
 
 
-@router.delete("/members/{member_id}", status_code=204)
-async def remove_workspace_member(member_id: str, user=Depends(require_admin)) -> None:
+@router.delete("/members/{member_id}", status_code=204, response_class=Response)
+async def remove_workspace_member(member_id: str, user=Depends(require_admin)) -> Response:
     await sb_delete("workspace_members", filters=[("id", "eq", member_id)])
+    return Response(status_code=204)
 
 
-@router.delete("/upgrade-clicks/{record_id}", status_code=204)
-async def delete_upgrade_click(record_id: str, user=Depends(require_admin)) -> None:
+@router.delete("/upgrade-clicks/{record_id}", status_code=204, response_class=Response)
+async def delete_upgrade_click(record_id: str, user=Depends(require_admin)) -> Response:
     await sb_delete("upgrade_clicks", filters=[("id", "eq", record_id)])
+    return Response(status_code=204)
 
 
-@router.delete("/module-interest/{record_id}", status_code=204)
-async def delete_module_interest(record_id: str, user=Depends(require_admin)) -> None:
+@router.delete("/module-interest/{record_id}", status_code=204, response_class=Response)
+async def delete_module_interest(record_id: str, user=Depends(require_admin)) -> Response:
     await sb_delete("module_interest", filters=[("id", "eq", record_id)])
+    return Response(status_code=204)
 
 
-@router.delete("/mailing-list/{record_id}", status_code=204)
-async def delete_mailing_list_entry(record_id: str, user=Depends(require_admin)) -> None:
+@router.delete("/mailing-list/{record_id}", status_code=204, response_class=Response)
+async def delete_mailing_list_entry(record_id: str, user=Depends(require_admin)) -> Response:
     await sb_delete("mailing_list", filters=[("id", "eq", record_id)])
+    return Response(status_code=204)
 
 
-@router.delete("/support-messages/{record_id}", status_code=204)
-async def delete_support_message(record_id: str, user=Depends(require_admin)) -> None:
+@router.delete("/support-messages/{record_id}", status_code=204, response_class=Response)
+async def delete_support_message(record_id: str, user=Depends(require_admin)) -> Response:
     await sb_delete("support_messages", filters=[("id", "eq", record_id)])
+    return Response(status_code=204)
 
 
 @router.patch("/invitations/{invitation_id}/revoke")
