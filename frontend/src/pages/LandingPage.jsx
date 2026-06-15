@@ -49,9 +49,9 @@ const EXAMPLES = [
 const TESTIMONIALS = [
   {
     quote: "I was about to hire a second developer. EnterprateAI ran the simulation and showed me my cash runway would drop to 4 months under two realistic revenue scenarios. I hired a contractor instead. Six months later, that decision saved my business.",
-    name: "Sarah K.",
-    role: "Founder, Brightpath Digital, London",
-    init: "S",
+    name: "Victor",
+    role: "Rhema Concept, London",
+    init: "V",
     color: "bg-brand-500",
   },
   {
@@ -272,9 +272,9 @@ export default function LandingPage() {
       {/* ══════════════════════════════════════════
           HERO
       ══════════════════════════════════════════ */}
-      <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-brand-900/80 to-slate-900 pb-16 pt-14 sm:pt-20">
-        <div className="pointer-events-none absolute -right-32 -top-32 h-[500px] w-[500px] rounded-full bg-brand-600/20 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-20 -left-20 h-[400px] w-[400px] rounded-full bg-accent-500/10 blur-3xl" />
+      <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-brand-900 via-brand-800 to-brand-900 pb-16 pt-14 sm:pt-20">
+        <div className="pointer-events-none absolute -right-32 -top-32 h-[500px] w-[500px] rounded-full bg-brand-500/25 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-20 -left-20 h-[400px] w-[400px] rounded-full bg-accent-500/15 blur-3xl" />
         <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
           <div className="grid gap-10 lg:grid-cols-2 lg:gap-16 lg:items-center">
             <div>
@@ -377,15 +377,6 @@ export default function LandingPage() {
       {/* ══════════════════════════════════════════
           TRUST BAR
       ══════════════════════════════════════════ */}
-      <section className="border-y border-slate-100 bg-slate-50/60 py-4">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-xs font-medium text-slate-500">
-            {["🇬🇧 UK Built", "🏅 SEIS Approved", "🛡️ ICO Registered", "🔒 GDPR Compliant", "⚖️ Registered in England & Wales", "🏢 Built for UK SMEs"].map((t) => (
-              <span key={t}>{t}</span>
-            ))}
-          </div>
-        </div>
-      </section>
 
       {/* ══════════════════════════════════════════
           PAIN SECTION
