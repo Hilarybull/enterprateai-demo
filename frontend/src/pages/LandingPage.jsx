@@ -454,13 +454,6 @@ export default function LandingPage() {
                 tagColor: "bg-emerald-100 text-emerald-700",
                 desc: "Generate invoices and quotations from your business, customer, product, and service data without repeating manual work.",
               },
-              {
-                icon: "⚖️",
-                name: "Business Registration",
-                tag: "Available now",
-                tagColor: "bg-emerald-100 text-emerald-700",
-                desc: "Navigate UK company registration, legal structure decisions, and compliance requirements with guided step-by-step support.",
-              },
             ].map((m) => (
               <div key={m.name} className="rounded-2xl border border-slate-200 bg-white p-6 transition hover:border-brand-200 hover:shadow-md">
                 <div className="flex items-start justify-between gap-3">
@@ -881,7 +874,7 @@ export default function LandingPage() {
           </div>
           <p className="mt-6 text-center text-[11px] text-slate-300">
             © {new Date().getFullYear()} Enterprate Limited. All rights reserved.
-            ICO Registered · GDPR Compliant · SEIS Approved
+            ICO Registered · GDPR Compliant · SEIS Advance Assurance Approved
           </p>
         </div>
       </footer>
