@@ -70,6 +70,27 @@ function getLineGrandTotal(item) {
   return Number((subtotal + costOfSales).toFixed(2));
 }
 
+function biScoreColor(score) {
+  if (score >= 80) return "#16a34a";
+  if (score >= 65) return "#2563eb";
+  if (score >= 50) return "#d97706";
+  if (score >= 30) return "#ea580c";
+  return "#dc2626";
+}
+
+function fragilityIndexColor(index) {
+  if (index <= 20) return "#16a34a";
+  if (index <= 40) return "#2563eb";
+  if (index <= 60) return "#d97706";
+  if (index <= 80) return "#ea580c";
+  return "#dc2626";
+}
+
+function biBandLabel(band) {
+  if (!band) return "";
+  return band.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+}
+
 export default function SimulationPage() {
   const simulationEnabled = true;
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -184,8 +205,11 @@ export default function SimulationPage() {
   const [decisionNotice, setDecisionNotice] = useState(null);
   const [autoProjectionDone, setAutoProjectionDone] = useState(false);
   const [autoSignalsDone, setAutoSignalsDone] = useState(false);
+  const [biIntelligence, setBiIntelligence] = useState(null);
+  const [biLoading, setBiLoading] = useState(false);
   const lastSnapshotHashRef = useRef("");
   const lastSignalsSnapshotHashRef = useRef("");
+  const lastBiSnapshotHashRef = useRef("");
 
   const canRun = Boolean(workspaceId);
   const productScenarioOptions = useMemo(() => {
@@ -297,6 +321,7 @@ export default function SimulationPage() {
   useEffect(() => {
     lastSnapshotHashRef.current = "";
     lastSignalsSnapshotHashRef.current = "";
+    lastBiSnapshotHashRef.current = "";
   }, [workspaceId]);
 
   useEffect(() => {
@@ -425,6 +450,24 @@ export default function SimulationPage() {
     }
   }
 
+  async function loadIntelligence() {
+    if (!canRun || !stateSnapshot) return;
+    setBiLoading(true);
+    try {
+      const res = await apiRequest("/v1/scenario-intelligence/intelligence/run", "POST", {
+        tenant_id: tenantId,
+        business_id: businessId,
+        state_version: stateVersion,
+        state: stateSnapshot,
+      });
+      setBiIntelligence(res || null);
+    } catch {
+      // silently skip — BI panel just stays hidden
+    } finally {
+      setBiLoading(false);
+    }
+  }
+
   const snapshotHash = useMemo(() => JSON.stringify(stateSnapshot || {}), [stateSnapshot]);
   const lastManualTemplateIdRef = useRef(null);
 
@@ -436,6 +479,14 @@ export default function SimulationPage() {
     lastSnapshotHashRef.current = snapshotHash;
     runDoNothing(6, false, true);
     setAutoProjectionDone(true);
+  }, [tab, canRun, loading, snapshotHash]);
+
+  useEffect(() => {
+    if (!canRun || tab !== "adaptive") return;
+    if (loading) return;
+    if (snapshotHash === lastBiSnapshotHashRef.current) return;
+    lastBiSnapshotHashRef.current = snapshotHash;
+    loadIntelligence();
   }, [tab, canRun, loading, snapshotHash]);
 
   useEffect(() => {
@@ -541,7 +592,7 @@ export default function SimulationPage() {
     if (code === "NEGATIVE_MARGIN") {
       return {
         title: "Negative margin",
-        detail: `Your monthly profit is currently ${formatCurrency(value ?? 0, currency)}.`
+        detail: `Your monthly net profit is currently ${formatCurrency(value ?? 0, currency)}.`
       };
     }
     if (code === "LOW_RUNWAY") {
@@ -705,6 +756,106 @@ export default function SimulationPage() {
 
       {workspaceId && tab === "adaptive" ? (
         <div className="mt-4 space-y-4">
+          {canSimFeature("scenario_intelligence") && (
+            <SectionCard
+              title={
+                <div className="flex items-center gap-2">
+                  <span>Business Intelligence</span>
+                  {biLoading ? <Spinner size={14} /> : null}
+                  <InfoTip text="Multi-engine analysis across viability, survival, stability, growth, and fragility dimensions." />
+                </div>
+              }
+              subtitle="Engine-level health scores and structural classification."
+            >
+              {biIntelligence?.master ? (() => {
+                const master = biIntelligence.master;
+                const biScore = master.bi_score ?? 0;
+                const summary = master.engine_summary ?? {};
+                const structClass = master.structural_classification ?? {};
+                const risks = Array.isArray(master.consolidated_risks) ? master.consolidated_risks : [];
+                const recs = Array.isArray(master.priority_recommendations) ? master.priority_recommendations : [];
+                const engines = [
+                  { key: "viability", label: "Viability", score: summary.viability?.score ?? 0, band: summary.viability?.band },
+                  { key: "survival", label: "Survival", score: summary.survival?.score ?? 0, band: summary.survival?.band },
+                  { key: "stability", label: "Stability", score: summary.stability?.score ?? 0, band: summary.stability?.band },
+                  { key: "growth", label: "Growth", score: summary.growth?.score ?? 0, band: summary.growth?.band },
+                ];
+                const fragScore = summary.fragility?.index ?? master.fragility_index ?? 0;
+                const fragBand = summary.fragility?.band;
+                return (
+                  <div className="space-y-4">
+                    <div>
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="text-sm font-semibold text-slate-700">BI Score</span>
+                        <span className="text-2xl font-bold" style={{ color: biScoreColor(biScore) }}>{biScore}<span className="text-sm font-normal text-slate-400">/100</span></span>
+                      </div>
+                      <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${biScore}%`, backgroundColor: biScoreColor(biScore) }} />
+                      </div>
+                    </div>
+                    {structClass.label && (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Classification</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">{biBandLabel(structClass.label)}</div>
+                        {structClass.description && <div className="mt-1 text-xs text-slate-600">{structClass.description}</div>}
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-3">
+                      {engines.map(({ key, label, score, band }) => (
+                        <div key={key}>
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="text-xs font-semibold text-slate-600">{label}</span>
+                            <span className="text-xs font-bold" style={{ color: biScoreColor(score) }}>{score}</span>
+                          </div>
+                          <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                            <div className="h-full rounded-full transition-all duration-500" style={{ width: `${score}%`, backgroundColor: biScoreColor(score) }} />
+                          </div>
+                          {band && <div className="mt-0.5 text-xs text-slate-400">{biBandLabel(band)}</div>}
+                        </div>
+                      ))}
+                    </div>
+                    <div>
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-600">Fragility Index</span>
+                        <span className="text-xs font-bold" style={{ color: fragilityIndexColor(fragScore) }}>{fragScore}</span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${fragScore}%`, backgroundColor: fragilityIndexColor(fragScore) }} />
+                      </div>
+                      {fragBand && <div className="mt-0.5 text-xs text-slate-400">{biBandLabel(fragBand)}</div>}
+                    </div>
+                    {risks.length > 0 && (
+                      <div>
+                        <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Key Risks</div>
+                        <ul className="space-y-1">
+                          {risks.slice(0, 4).map((r, i) => (
+                            <li key={i} className="flex items-start gap-1.5 text-xs text-slate-700">
+                              <span className="mt-0.5 shrink-0 text-amber-500">▲</span>{r}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {recs.length > 0 && (
+                      <div>
+                        <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Priority Actions</div>
+                        <ul className="space-y-1">
+                          {recs.slice(0, 3).map((r, i) => (
+                            <li key={i} className="flex items-start gap-1.5 text-xs text-slate-700">
+                              <span className="mt-0.5 shrink-0 text-emerald-500">&#8594;</span>{r}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                );
+              })() : (
+                <div className="text-sm text-slate-500">{biLoading ? "Analysing your business data..." : "No intelligence data available yet."}</div>
+              )}
+            </SectionCard>
+          )}
+
           {canSimFeature("scenario_intelligence") && (
             <SectionCard
               title={
@@ -976,7 +1127,7 @@ export default function SimulationPage() {
                       <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.costs_monthly || 0, currency || "GBP")}</div>
                     </div>
                     <div className={`rounded-lg px-2 py-2 ${(stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0) >= 0 ? "bg-emerald-50" : "bg-rose-50"}`}>
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly profit</div>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly net profit</div>
                       <div className={`mt-1 font-semibold ${(stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
                         {formatCurrency((stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0), currency || "GBP")}
                       </div>
@@ -1120,7 +1271,7 @@ function scenarioOutputNote(templateId, largestClient) {
     case "tmpl_client_loss":
       return `This shows what may happen if your biggest client${largestClient?.name ? ` (${largestClient.name})` : ""} stops buying from you, with revenue and cost of sales stepping down over the first months of the run.`;
     case "tmpl_price_increase":
-      return "This shows whether a price increase on selected products or services improves revenue and profit without changing your current cost base straight away.";
+      return "This shows whether a price increase on selected products or services improves revenue and net profit without changing your current cost base straight away.";
     case "tmpl_hire_staff":
       return "This shows how adding staff increases monthly costs first, so you can see whether your current revenue can absorb the extra payroll.";
     case "tmpl_contractor_addition":
@@ -1128,17 +1279,17 @@ function scenarioOutputNote(templateId, largestClient) {
     case "tmpl_cost_increase":
       return "This shows what happens if delivery or operating costs rise, and whether your margin and projected cash balance can still hold up.";
     case "tmpl_revenue_drop":
-      return "This shows what happens if sales slow down across the business, including the knock-on effect on profit and projected cash balance.";
+      return "This shows what happens if sales slow down across the business, including the knock-on effect on net profit and projected cash balance.";
     case "tmpl_payment_delay":
-      return "This shows what happens when selected pending customer payments land later than expected, so profit may still look fine while cash comes in more slowly.";
+      return "This shows what happens when selected pending customer payments land later than expected, so net profit may still look fine while cash comes in more slowly.";
     case "tmpl_reduce_fixed_cost":
       return "This shows what happens when you cut overhead or fixed costs, so you can see how much margin and cash headroom the reduction creates.";
     case "tmpl_delay_hiring":
-      return "This shows how deferring or cancelling a planned hire removes that payroll cost, so you can see the direct effect on expenses, profit, and cash runway.";
+      return "This shows how deferring or cancelling a planned hire removes that payroll cost, so you can see the direct effect on expenses, net profit, and cash runway.";
     case "tmpl_service_launch":
       return "This shows whether a new service could lift revenue enough to justify the extra delivery and operating costs.";
     default:
-      return "This output compares your current baseline with the scenario you selected, so you can see the effect on revenue, costs, profit, and projected cash balance.";
+      return "This output compares your current baseline with the scenario you selected, so you can see the effect on revenue, costs, net profit, and projected cash balance.";
   }
 }
 
@@ -1185,7 +1336,7 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
       return [
         `Payment delay: ${Math.max(0, Number(manualParams?.delay_months ?? 0))} month${Number(manualParams?.delay_months ?? 0) === 1 ? "" : "s"}.`,
         `Selected pending items: ${Array.isArray(manualParams?.selected_pending_ids) && manualParams.selected_pending_ids.length ? manualParams.selected_pending_ids.length : "all pending receivables"}.`,
-        "Profit can stay unchanged while projected cash balance moves more slowly.",
+        "Gross profit can stay unchanged while projected cash balance moves more slowly.",
       ];
     case "tmpl_reduce_fixed_cost":
       return [
@@ -1313,7 +1464,7 @@ function buildScenarioExecutionBreakdown(
       `Price increase applied: ${formatPercentValue(changePct)} from month ${effectiveMonth}.`,
       `Selected products/services: ${selectedCount || "all"}${selectedRevenue > 0 ? `, covering ${formatCurrency(selectedRevenue, currency)} of monthly revenue` : ""}.`,
       `Month 1 revenue in the table is ${formatCurrency(firstRow?.revenue ?? baselineRevenue, currency)} based on when the increase begins.`,
-      "Profit changes because revenue moves while costs stay on the current baseline unless the scenario changes them."
+      "Gross profit changes because revenue moves while costs stay on the current baseline unless the scenario changes them."
     ];
   }
 
@@ -1323,7 +1474,7 @@ function buildScenarioExecutionBreakdown(
       `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}. Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
       `Cost increase applied: ${formatPercentValue(increasePct)} over the 2-month cost ramp.`,
       `Month 1 expenses: ${formatCurrency(firstRow?.expenses ?? baselineExpenses, currency)}. Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales, currency)}.`,
-      "Both expenses and cost of sales move upward in this scenario, which is why profit and projected cash balance tighten."
+      "Both expenses and cost of sales move upward in this scenario, which is why net profit and projected cash balance tighten."
     ];
   }
 
@@ -1359,7 +1510,7 @@ function buildScenarioExecutionBreakdown(
       `Payment delay applied: ${delayMonths} month${delayMonths === 1 ? "" : "s"}.`,
       `Selected pending items: ${selectedPendingCount || "all pending receivables"}${selectedPendingAmount > 0 ? `, worth ${formatCurrency(selectedPendingAmount, currency)}` : ""}.`,
       `Month 1 projected cash balance is ${formatCurrency(firstRow?.cash_balance ?? 0, currency)} because collections are pushed back.`,
-      "Profit can stay unchanged while projected cash balance moves later in the timeline."
+      "Gross profit can stay unchanged while projected cash balance moves later in the timeline."
     ];
   }
 
@@ -1369,7 +1520,7 @@ function buildScenarioExecutionBreakdown(
       `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
       `Cost reduction applied: ${formatPercentValue(reductionPct)} over the 2-month ramp.`,
       `Month 1 expenses: ${formatCurrency(firstRow?.expenses ?? baselineExpenses, currency)}.`,
-      "Expenses fall gradually as the saving takes effect, improving both profit and projected cash balance."
+      "Expenses fall gradually as the saving takes effect, improving both net profit and projected cash balance."
     ];
   }
 
@@ -1469,10 +1620,10 @@ function buildScenarioMeaning(activeRun, timeline, currency) {
 
   const profitText =
     profitDelta > 0
-      ? `profit improves by ${formatCurrency(Math.abs(profitDelta), cur)}`
+      ? `net profit improves by ${formatCurrency(Math.abs(profitDelta), cur)}`
       : profitDelta < 0
-        ? `profit falls by ${formatCurrency(Math.abs(profitDelta), cur)}`
-        : "profit is broadly unchanged";
+        ? `net profit falls by ${formatCurrency(Math.abs(profitDelta), cur)}`
+        : "net profit is broadly unchanged";
 
   const costsText =
     costsDelta > 0
@@ -1487,11 +1638,11 @@ function buildScenarioMeaning(activeRun, timeline, currency) {
   } else if (scenarioType === "price_change") {
     scenarioRule = "This run increases revenue from the selected effective month onward. Costs stay on the current baseline unless the scenario says otherwise.";
   } else if (scenarioType === "cost_increase") {
-    scenarioRule = "This run pushes expenses and cost of sales upward, so the table shows how higher costs affect profit and cash over time.";
+    scenarioRule = "This run pushes expenses and cost of sales upward, so the table shows how higher costs affect net profit and cash over time.";
   } else if (scenarioType === "revenue_drop") {
     scenarioRule = "This run reduces revenue and lets cost of sales fall with it, so you can see how a slower sales pace affects the business month by month.";
   } else if (scenarioType === "payment_delay") {
-    scenarioRule = "This run keeps the revenue assumption but delays when the cash is collected, so profit and projected cash balance can move differently.";
+    scenarioRule = "This run keeps the revenue assumption but delays when the cash is collected, so net profit and projected cash balance can move differently.";
   } else if (scenarioType === "hire_staff") {
     scenarioRule = "This run adds staff cost into monthly expenses, so the output shows whether the current revenue base can absorb the extra payroll.";
   } else if (scenarioType === "contractor_addition") {
@@ -1501,16 +1652,16 @@ function buildScenarioMeaning(activeRun, timeline, currency) {
   } else if (scenarioType === "reduce_fixed_cost") {
     scenarioRule = "This run reduces overhead and fixed costs, so the table shows how the saving flows through to margin and cash over time.";
   } else if (scenarioType === "delay_hiring") {
-    scenarioRule = "This run removes the cost of a planned hire from monthly expenses, so the output shows the direct effect on profit and cash runway.";
+    scenarioRule = "This run removes the cost of a planned hire from monthly expenses, so the output shows the direct effect on net profit and cash runway.";
   }
 
   const cashLine = lastRow
     ? scenarioCash > 0
       ? `Projected cash balance ends at ${formatCurrency(scenarioCash, cur)} because the model adds cash only when revenue is collected and subtracts cash when costs are actually paid.`
       : "Projected cash balance stays tight through the projection."
-    : "Projected cash balance is based on when revenue is collected and costs are paid, not just on profit.";
+    : "Projected cash balance is based on when revenue is collected and costs are paid, not just on net profit.";
   const firstMonthLine = firstRow
-    ? `In the first projected month, revenue is ${formatCurrency(Number(firstRow.revenue || 0), cur)}, total costs are ${formatCurrency(Number(firstRow.costs || 0), cur)}, and profit is ${formatCurrency(Number(firstRow.profit || 0), cur)}.`
+    ? `In the first projected month, revenue is ${formatCurrency(Number(firstRow.revenue || 0), cur)}, total costs are ${formatCurrency(Number(firstRow.costs || 0), cur)}, and net profit is ${formatCurrency(Number(firstRow.profit || 0), cur)}.`
     : "";
 
   return `${scenarioRule} Compared with your baseline, ${revenueText}, ${costsText}, and ${profitText}. ${firstMonthLine} ${cashLine}`;
@@ -1599,7 +1750,7 @@ function ScenarioOutput({
     if (code === "NEGATIVE_MARGIN") {
       return {
         title: "Negative margin",
-        detail: `Monthly profit is ${formatCurrency(value ?? 0, currency)}.`
+        detail: `Monthly net profit is ${formatCurrency(value ?? 0, currency)}.`
       };
     }
     if (code === "LOW_RUNWAY") {
@@ -1769,7 +1920,7 @@ function ScenarioOutput({
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Expenses</th>
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Cost of sales</th>
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Total costs</th>
-                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Profit</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Net Profit</th>
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Cash balance</th>
                   <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Status</th>
                 </tr>
@@ -1844,7 +1995,7 @@ function MetricCard({ title, metrics, currency, isDelta, info }) {
     ["Monthly expenses", metrics.monthly_expenses],
     ["Cost of sales", metrics.monthly_cost_of_sales],
     ["Total costs", metrics.monthly_costs],
-    ["Profit", metrics.net_profit],
+    ["Net Profit", metrics.net_profit],
   ].filter(([, v]) => v != null);
 
   function renderValue(label, value) {

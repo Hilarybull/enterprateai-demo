@@ -3329,32 +3329,16 @@ export default function ValidationWizardPage() {
                 title="What are you validating?"
                 subtitle="Choose the option that best matches your idea."
               >
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <select
+                  className="ea-input"
+                  value={form.pathway}
+                  onChange={(e) => selectPathway(e.target.value)}
+                >
                   {canEvaluateIdea && (
-                  <button
-                    type="button"
-                    onClick={() => selectPathway("business_idea")}
-                    className={
-                      "rounded-2xl border p-4 text-left transition " +
-                      (form.pathway === "business_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
-                    }
-                  >
-                    <div className="text-sm font-semibold text-slate-900">Business idea</div>
-                    <div className="mt-1 text-xs text-slate-600">A service, marketplace, or company concept you want to start.</div>
-                  </button>
+                    <option value="business_idea">Business idea</option>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => selectPathway("product_service_idea")}
-                    className={
-                      "rounded-2xl border p-4 text-left transition " +
-                      (form.pathway === "product_service_idea" ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
-                    }
-                  >
-                    <div className="text-sm font-semibold text-slate-900">Product / service idea</div>
-                    <div className="mt-1 text-xs text-slate-600">A product or offering you want to build or add.</div>
-                  </button>
-                </div>
+                  <option value="product_service_idea">Product / service idea</option>
+                </select>
               </SectionCard>
             ) : null}
 
@@ -4363,7 +4347,9 @@ export default function ValidationWizardPage() {
                   </Button>
                 </div>
               ) : mode === "select" ? (
-                <Button disabled={!canEdit || !selectedCount} onClick={startFilling} className="w-full">Continue</Button>
+                <div className="flex justify-center">
+                  <Button disabled={!canEdit || !selectedCount} onClick={startFilling} className="px-16">Continue</Button>
+                </div>
               ) : (
                 <div className="flex flex-1 items-center gap-2">
                   {mode === "fill" && isBusinessStageFlow && !isLastBusinessStage ? (

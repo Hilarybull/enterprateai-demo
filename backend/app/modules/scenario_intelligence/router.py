@@ -37,6 +37,7 @@ from app.modules.scenario_intelligence.service import (
     scenario_history,
     template_list,
 )
+from app.modules.scenario_intelligence.orchestration_service import run_full_engine_suite
 
 router = APIRouter(prefix="/v1/scenario-intelligence", tags=["scenario-intelligence"])
 
@@ -147,6 +148,7 @@ async def scenario_runs_get(
         timeline_summary=timeline_summary,
         risk_signals=risk_signals,
         recommendations=recs,
+        multi_engine=run.get("multi_engine"),
     )
 
 
@@ -219,3 +221,12 @@ async def scenario_history_clear(
 ) -> dict:
     deleted = await clear_history(tenant_id=tenant_id, business_id=business_id)
     return {"deleted_runs": deleted}
+
+
+@router.post("/intelligence/run")
+async def intelligence_run(
+    payload: DoNothingRequest,
+    _user=Depends(get_current_user),
+) -> dict:
+    result = await run_full_engine_suite(payload.state)
+    return result
