@@ -9,6 +9,7 @@ from app.modules.marketplace.schemas import (
     MarketplacePublishRequest,
     MarketplaceStatusResponse,
     MarketplaceUnpublishRequest,
+    ProfileViewRequest,
     RatingSubmitRequest,
     RatingResponse,
     RFQApproveRequest,
@@ -22,10 +23,12 @@ from app.modules.marketplace.service import (
     delete_rating,
     get_listing,
     get_listing_status,
+    get_profile_views,
     get_ratings,
     list_marketplace,
     list_rfqs,
     publish_workspace,
+    record_profile_view,
     reject_rfq,
     submit_rating,
     submit_rfq,
@@ -175,3 +178,24 @@ async def delete_rfq_endpoint(
     """Owner: permanently delete an RFQ request."""
     await delete_rfq(user_id=user["id"], workspace_id=workspace_id, rfq_id=rfq_id)
     return Response(status_code=204)
+
+
+@router.post("/listings/{workspace_id}/view")
+async def record_listing_view(
+    workspace_id: str,
+    payload: ProfileViewRequest,
+    _user=Depends(get_optional_user),
+) -> dict:
+    return await record_profile_view(
+        workspace_id=workspace_id,
+        viewer_workspace_id=payload.viewer_workspace_id,
+        viewer_email=payload.viewer_email,
+    )
+
+
+@router.get("/my/views")
+async def my_profile_views(
+    workspace_id: str | None = Query(default=None),
+    user=Depends(get_current_user),
+) -> dict:
+    return await get_profile_views(user_id=user["id"], workspace_id=workspace_id)

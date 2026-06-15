@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -505,6 +505,73 @@ async def delete_rfq(*, user_id: str, workspace_id: str | None = None, rfq_id: s
     merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
     now = datetime.now(timezone.utc).isoformat()
     await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
+
+
+async def record_profile_view(
+    *,
+    workspace_id: str,
+    viewer_workspace_id: str | None,
+    viewer_email: str | None,
+) -> dict:
+    ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
+    if not ws:
+        return {"recorded": False}
+    data = ws.get("data") or {}
+    marketplace = data.get("marketplace") or {}
+    if not marketplace.get("is_active"):
+        return {"recorded": False}
+
+    now = datetime.now(timezone.utc)
+
+    # Deduplicate: skip if same viewer already recorded a view within the last hour
+    views = list(marketplace.get("profile_views") or [])
+    if viewer_workspace_id or viewer_email:
+        cutoff = (now - timedelta(hours=1)).isoformat()
+        for v in reversed(views):
+            if v.get("viewed_at", "") < cutoff:
+                break
+            if viewer_workspace_id and v.get("viewer_workspace_id") == viewer_workspace_id:
+                return {"recorded": False}
+            if viewer_email and v.get("viewer_email") == viewer_email:
+                return {"recorded": False}
+
+    # Look up viewer's company name if they're a platform user
+    viewer_company: str | None = None
+    if viewer_workspace_id:
+        try:
+            viewer_ws = await sb_select("workspaces", filters=[("id", "eq", viewer_workspace_id)], single=True)
+            if viewer_ws:
+                vdata = viewer_ws.get("data") or {}
+                vprofile = vdata.get("workspace_profile") or {}
+                viewer_company = vprofile.get("company_name") or None
+        except Exception:
+            pass
+
+    view = {
+        "view_id": str(uuid4()),
+        "viewer_workspace_id": viewer_workspace_id,
+        "viewer_email": viewer_email,
+        "viewer_company": viewer_company,
+        "viewed_at": now.isoformat(),
+    }
+    views.append(view)
+    if len(views) > 500:
+        views = views[-500:]
+
+    merged = {**data, "marketplace": {**marketplace, "profile_views": views}}
+    await sb_update("workspaces", filters=[("id", "eq", workspace_id)], payload={"data": merged})
+    return {"recorded": True}
+
+
+async def get_profile_views(*, user_id: str, workspace_id: str | None = None) -> dict:
+    ws = await _load_workspace(user_id, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    _, data = _ws_fields(ws)
+    marketplace = data.get("marketplace") or {}
+    views = list(marketplace.get("profile_views") or [])
+    recent = list(reversed(views[-100:]))
+    return {"views": recent, "total": len(views)}
 
 
 async def respond_to_quote(*, token: str, viewer_email: str, action: str) -> dict:

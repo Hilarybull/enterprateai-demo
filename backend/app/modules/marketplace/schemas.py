@@ -111,3 +111,8 @@ class RFQApproveRequest(BaseModel):
     validity_days: int = 30
     notes: str | None = None
     item_prices: list[dict] | None = None
+
+
+class ProfileViewRequest(BaseModel):
+    viewer_workspace_id: str | None = None
+    viewer_email: str | None = None
