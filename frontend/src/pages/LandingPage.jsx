@@ -272,36 +272,36 @@ export default function LandingPage() {
       {/* ══════════════════════════════════════════
           HERO
       ══════════════════════════════════════════ */}
-      <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-slate-50 via-brand-50/40 to-white pb-16 pt-14 sm:pt-20">
-        <div className="pointer-events-none absolute -right-32 -top-32 h-[500px] w-[500px] rounded-full bg-brand-100/40 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-20 -left-20 h-[400px] w-[400px] rounded-full bg-accent-100/30 blur-3xl" />
+      <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-brand-900/80 to-slate-900 pb-16 pt-14 sm:pt-20">
+        <div className="pointer-events-none absolute -right-32 -top-32 h-[500px] w-[500px] rounded-full bg-brand-600/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-20 -left-20 h-[400px] w-[400px] rounded-full bg-accent-500/10 blur-3xl" />
         <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
           <div className="grid gap-10 lg:grid-cols-2 lg:gap-16 lg:items-center">
             <div>
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700">
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-brand-400/30 bg-white/10 px-3 py-1.5 text-xs font-semibold text-brand-300">
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-500" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-400" />
                 </span>
                 UK Built · SEIS Approved · GDPR Compliant
               </div>
 
-              <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-4xl xl:text-5xl">
+              <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-white sm:text-4xl xl:text-5xl">
                 Input data once. Generate everywhere.{" "}
-                <span className="bg-gradient-to-r from-brand-600 to-accent-500 bg-clip-text text-transparent">
+                <span className="bg-gradient-to-r from-brand-400 to-accent-400 bg-clip-text text-transparent">
                   Simulate before acting. Grow with intelligence.
                 </span>
               </h1>
 
-              <p className="mt-5 text-lg font-semibold leading-relaxed text-slate-700">
+              <p className="mt-5 text-lg font-semibold leading-relaxed text-slate-100">
                 The intelligent business workspace for small businesses that want to move faster.
               </p>
 
-              <p className="mt-3 text-base leading-relaxed text-slate-600">
+              <p className="mt-3 text-base leading-relaxed text-slate-300">
                 EnterprateAI helps small businesses save time, reduce cost, discover risks, uncover opportunities, and move from idea to market faster.
               </p>
 
-              <p className="mt-3 text-sm leading-relaxed text-slate-500">
+              <p className="mt-3 text-sm leading-relaxed text-slate-400">
                 Turn one set of business data into business plans, proposals, invoices, quotations, marketplace listings, simulations, risk insights, and growth opportunities - all from one connected workspace.
               </p>
 
@@ -309,28 +309,28 @@ export default function LandingPage() {
                 <button
                   type="button"
                   onClick={() => navigate("/login")}
-                  className="w-full rounded-xl bg-brand-600 px-7 py-3.5 text-base font-semibold text-white shadow-lg shadow-brand-200 transition hover:bg-brand-700 active:scale-95 sm:w-auto"
+                  className="w-full rounded-xl bg-brand-500 px-7 py-3.5 text-base font-semibold text-white shadow-lg shadow-brand-900/60 transition hover:bg-brand-400 active:scale-95 sm:w-auto"
                 >
                   Get Started Free →
                 </button>
                 <a
                   href="#how-it-works"
-                  className="flex w-full items-center justify-center rounded-xl border border-slate-200 px-7 py-3.5 text-base font-semibold text-slate-700 transition hover:border-brand-200 hover:text-brand-700 sm:w-auto"
+                  className="flex w-full items-center justify-center rounded-xl border border-white/20 px-7 py-3.5 text-base font-semibold text-slate-200 transition hover:border-white/40 hover:text-white sm:w-auto"
                 >
                   See How It Works
                 </a>
               </div>
 
-              <div className="mt-5 flex flex-wrap gap-4 text-sm text-slate-500">
-                <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> Free to start</span>
-                <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> No credit card required</span>
-                <span className="flex items-center gap-1.5"><span className="text-emerald-500">✓</span> One workspace for everything</span>
+              <div className="mt-5 flex flex-wrap gap-4 text-sm text-slate-400">
+                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Free to start</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> No credit card required</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> One workspace for everything</span>
               </div>
             </div>
 
             {/* Preview card — hidden on mobile to keep hero tight */}
             <div className="relative hidden lg:block">
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-200/60">
+              <div className="overflow-hidden rounded-2xl border border-white/10 bg-white shadow-2xl shadow-black/40">
                 <div className="flex items-center gap-1.5 border-b border-slate-100 bg-slate-50 px-4 py-3">
                   <span className="h-3 w-3 rounded-full bg-rose-400" />
                   <span className="h-3 w-3 rounded-full bg-amber-400" />
@@ -390,20 +390,29 @@ export default function LandingPage() {
       {/* ══════════════════════════════════════════
           PAIN SECTION
       ══════════════════════════════════════════ */}
-      <section className="py-16 sm:py-20">
-        <div className="mx-auto max-w-3xl px-4 sm:px-6">
+      <section className="bg-slate-50/50 py-16 sm:py-20">
+        <div className="mx-auto max-w-2xl px-4 sm:px-6">
           <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Stop repeating the same business information across different tools</h2>
           <p className="mt-4 text-slate-600">Most small businesses waste valuable time entering the same information again and again.</p>
-          <div className="mt-6 space-y-1.5 rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm leading-relaxed text-slate-600">
-            <p>You describe your business in one place.</p>
-            <p className="pl-5 text-slate-400">Then repeat it for proposals.</p>
-            <p className="pl-10 text-slate-400">Then again for invoices.</p>
-            <p className="pl-14 text-slate-400">Then again for quotations.</p>
-            <p className="pl-14 text-slate-400">Then again for product listings, customer records, vendor records, financial documents, and business planning.</p>
+          <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            {[
+              { text: "You describe your business in one place.", icon: "→", active: true, indent: 0 },
+              { text: "Then repeat it for proposals.", icon: "↳", active: false, indent: 1 },
+              { text: "Then again for invoices.", icon: "↳", active: false, indent: 2 },
+              { text: "Then again for quotations.", icon: "↳", active: false, indent: 3 },
+              { text: "Then again for product listings, customer records, vendor records, financial documents, and business planning.", icon: "↳", active: false, indent: 3 },
+            ].map((item, i) => (
+              <div key={i} className={`flex items-start gap-3 border-b border-slate-100 px-5 py-3 text-sm last:border-0 ${item.active ? "bg-brand-50/60" : ""}`} style={{ paddingLeft: `${20 + item.indent * 18}px` }}>
+                <span className={`shrink-0 mt-0.5 font-bold ${item.active ? "text-brand-500" : "text-slate-300"}`}>{item.icon}</span>
+                <p className={item.active ? "font-semibold text-slate-800" : "text-slate-400 leading-relaxed"}>{item.text}</p>
+              </div>
+            ))}
           </div>
-          <p className="mt-6 text-base font-semibold text-slate-800">That slows you down.</p>
-          <p className="mt-4 text-slate-600"><span className="font-semibold text-brand-700">EnterprateAI changes this.</span></p>
-          <p className="mt-2 text-slate-600">With EnterprateAI, you input your business data once and use it across multiple business activities - from planning and proposals to marketplace visibility, quotations, invoices, simulations, and decision intelligence.</p>
+          <p className="mt-6 text-base font-bold text-slate-900">That slows you down.</p>
+          <div className="mt-5 rounded-2xl border border-brand-100 bg-brand-50 p-5">
+            <p className="font-semibold text-brand-700">EnterprateAI changes this.</p>
+            <p className="mt-1.5 text-sm leading-relaxed text-slate-600">With EnterprateAI, you input your business data once and use it across multiple business activities - from planning and proposals to marketplace visibility, quotations, invoices, simulations, and decision intelligence.</p>
+          </div>
         </div>
       </section>
 
