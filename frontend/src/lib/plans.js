@@ -12,18 +12,19 @@ export const PLANS = [
     ctaStyle: "solid",
     features: [
       "1 idea validation/month",
-      "Business Registration Guide",
-      "1 business plan (read-only)",
+      "1 business plan/month",
       "10 sales letters/month",
-      "25 products · 25 customers · 10 vendors",
-      "5 invoices & 5 quotations/month",
+      "Unlimited products, customers & vendors",
+      "Unlimited invoices & quotations",
       "1 marketplace listing",
+      "Business Registration Guide",
       "Basic PDF reports",
     ],
   },
   {
     key: "starter_insight",
-    label: "Starter Insight",
+    label: "Starter",
+    tier: "Insight",
     tagline: "Solo founders & new service businesses",
     monthlyPrice: 19,
     annualPrice: 15.83,
@@ -131,7 +132,7 @@ export function normalisePlanKey(key) {
 export const PLAN_MODULE_ACCESS = {
   // Explorer: 1 marketplace listing included, no simulation
   explorer:              ["dashboard", "validation", "blueprint", "catalogue", "financials", "registration", "marketplace"],
-  // Starter Insight: 2 scenario simulations included
+  // Starter (Insight): 2 scenario simulations included
   starter_insight:       ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
   decision_engine:       ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
   growth_navigator:      ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],

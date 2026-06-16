@@ -867,9 +867,16 @@ function PlanCard({ plan, billing, onAction, currentPlanKey }) {
       )}
 
       <div className="mb-5">
-        <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-          {plan.label}
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+            {plan.label}
+          </h3>
+          {plan.tier && (
+            <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-600 dark:bg-brand-900/30 dark:text-brand-400">
+              {plan.tier}
+            </span>
+          )}
+        </div>
         <p className="mt-1 text-[13px] text-slate-500 dark:text-slate-400">
           {plan.tagline}
         </p>
@@ -1071,32 +1078,32 @@ export default function PricingPage() {
               {
                 title: "Idea Validation",
                 desc: "Submit a product or service idea and get an AI-driven viability assessment covering market fit, revenue potential, and a clear accept or reject outcome to guide your next step.",
-                plans: ["Explorer", "Starter Insight"],
+                plans: ["Explorer", "Starter"],
               },
               {
                 title: "Business Blueprints",
                 desc: "Turn your validated idea into professional documents: business plans, investor-ready proposals, and sales letters, all generated from your actual business profile.",
-                plans: ["Explorer", "Starter Insight"],
+                plans: ["Explorer", "Starter"],
               },
               {
                 title: "Catalogue",
-                desc: "Manage your products and services in one place. Organise offerings by category, maintain a customer list, track vendors, and keep your business inventory structured and accessible.",
-                plans: ["Explorer", "Starter Insight"],
+                desc: "Manage products, customers, and vendors in one place. Free on Explorer with no record limits. Starter includes up to 250 products, 500 customers, and 250 vendors.",
+                plans: ["Explorer", "Starter"],
               },
               {
                 title: "Financials",
-                desc: "Handle the numbers side of your business: create invoices, raise quotations, log expenses, manage contracts, and export financial reports for review or filing.",
-                plans: ["Explorer", "Starter Insight"],
+                desc: "Create invoices, raise quotations, log expenses, and manage contracts. Explorer includes unlimited invoices and quotations. Starter includes 50 of each per month.",
+                plans: ["Explorer", "Starter"],
               },
               {
                 title: "Scenario Simulation",
                 desc: "Run what-if analyses to see how your business holds up under different conditions. Adjust revenue, costs, and growth assumptions to stress-test decisions before committing.",
-                plans: ["Starter Insight"],
+                plans: ["Starter"],
               },
               {
                 title: "Fragility Index",
                 desc: "As you run simulations, the system flags variables that put your business model under stress, surfacing risk signals early so you can course-correct before they become real problems.",
-                plans: ["Starter Insight"],
+                plans: ["Starter"],
               },
             ].map((item) => (
               <div key={item.title} className="space-y-1.5">

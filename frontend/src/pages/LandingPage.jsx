@@ -80,18 +80,19 @@ const PLANS = [
     desc: "Test the platform. No card needed.",
     features: [
       "1 idea validation/month",
-      "Business Registration Guide",
-      "1 business plan (read-only)",
+      "1 business plan/month",
       "10 sales letters/month",
-      "25 products · 25 customers · 10 vendors",
-      "5 invoices & 5 quotations/month",
+      "Unlimited products, customers & vendors",
+      "Unlimited invoices & quotations",
       "1 marketplace listing",
+      "Business Registration Guide",
       "Basic PDF reports",
     ],
     highlight: false,
   },
   {
-    name: "Starter Insight",
+    name: "Starter",
+    tier: "Insight",
     monthly: 19,
     annual: 15.83,
     annualTotal: 190,
@@ -102,11 +103,11 @@ const PLANS = [
       "5 idea validations/month",
       "5 business plans/month",
       "5 proposals · 30 sales letters/month",
-      "250 products · 500 customers · 250 vendors",
-      "50 invoices · 50 quotations/month",
       "2 scenario simulations",
       "Basic Fragility Index",
       "Adaptive Scenario Intelligence",
+      "250 products · 500 customers · 250 vendors",
+      "50 invoices · 50 quotations/month",
       "1 marketplace listing",
       "1 user",
     ],
@@ -777,7 +778,12 @@ export default function LandingPage() {
                 {plan.badge && (
                   <div className="absolute right-5 top-5 rounded-full bg-brand-600 px-2.5 py-0.5 text-[11px] font-bold text-white">{plan.badge}</div>
                 )}
-                <h3 className="font-bold text-slate-900">{plan.name}</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-slate-900">{plan.name}</h3>
+                  {plan.tier && (
+                    <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-600">{plan.tier}</span>
+                  )}
+                </div>
                 <div className="mt-2 flex items-end gap-1">
                   {plan.free ? (
                     <span className="text-3xl font-extrabold text-slate-900">£0</span>
