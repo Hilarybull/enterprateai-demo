@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.shared.auth.deps import get_current_user, get_optional_user
 from app.modules.marketplace.schemas import (
@@ -182,14 +182,18 @@ async def delete_rfq_endpoint(
 
 @router.post("/listings/{workspace_id}/view")
 async def record_listing_view(
+    request: Request,
     workspace_id: str,
     payload: ProfileViewRequest,
     _user=Depends(get_optional_user),
 ) -> dict:
+    forwarded = request.headers.get("x-forwarded-for")
+    client_ip = (forwarded.split(",")[0].strip() if forwarded else None) or (request.client.host if request.client else None)
     return await record_profile_view(
         workspace_id=workspace_id,
         viewer_workspace_id=payload.viewer_workspace_id,
         viewer_email=payload.viewer_email,
+        viewer_ip=client_ip,
     )
 
 

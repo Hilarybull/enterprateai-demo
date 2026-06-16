@@ -512,7 +512,9 @@ async def record_profile_view(
     workspace_id: str,
     viewer_workspace_id: str | None,
     viewer_email: str | None,
+    viewer_ip: str | None = None,
 ) -> dict:
+    import hashlib
     ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
     if not ws:
         return {"recorded": False}
@@ -522,18 +524,21 @@ async def record_profile_view(
         return {"recorded": False}
 
     now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(hours=24)).isoformat()
 
-    # Deduplicate: skip if same viewer already recorded a view within the last hour
+    # Deduplicate: skip if same viewer already recorded a view within the last 24 hours
     views = list(marketplace.get("profile_views") or [])
-    if viewer_workspace_id or viewer_email:
-        cutoff = (now - timedelta(hours=1)).isoformat()
-        for v in reversed(views):
-            if v.get("viewed_at", "") < cutoff:
-                break
-            if viewer_workspace_id and v.get("viewer_workspace_id") == viewer_workspace_id:
-                return {"recorded": False}
-            if viewer_email and v.get("viewer_email") == viewer_email:
-                return {"recorded": False}
+    ip_hash = hashlib.sha256(viewer_ip.encode()).hexdigest()[:16] if viewer_ip else None
+    for v in reversed(views):
+        if v.get("viewed_at", "") < cutoff:
+            break
+        if viewer_workspace_id and v.get("viewer_workspace_id") == viewer_workspace_id:
+            return {"recorded": False}
+        if viewer_email and v.get("viewer_email") == viewer_email:
+            return {"recorded": False}
+        # Anonymous visitor dedup by IP hash
+        if ip_hash and not viewer_workspace_id and not viewer_email and v.get("viewer_ip_hash") == ip_hash:
+            return {"recorded": False}
 
     # Look up viewer's company name if they're a platform user
     viewer_company: str | None = None
@@ -552,6 +557,7 @@ async def record_profile_view(
         "viewer_workspace_id": viewer_workspace_id,
         "viewer_email": viewer_email,
         "viewer_company": viewer_company,
+        "viewer_ip_hash": ip_hash,
         "viewed_at": now.isoformat(),
     }
     views.append(view)
