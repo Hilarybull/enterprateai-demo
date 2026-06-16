@@ -523,6 +523,13 @@ async def record_profile_view(
     if not marketplace.get("is_active"):
         return {"recorded": False}
 
+    # Block self-views — user_id on the workspace row is the owner's email
+    owner_email = (ws.get("user_id") or "").lower()
+    if viewer_workspace_id and viewer_workspace_id == workspace_id:
+        return {"recorded": False}
+    if viewer_email and owner_email and viewer_email.lower() == owner_email:
+        return {"recorded": False}
+
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(hours=24)).isoformat()
 
@@ -536,12 +543,12 @@ async def record_profile_view(
             return {"recorded": False}
         if viewer_email and v.get("viewer_email") == viewer_email:
             return {"recorded": False}
-        # Anonymous visitor dedup by IP hash
         if ip_hash and not viewer_workspace_id and not viewer_email and v.get("viewer_ip_hash") == ip_hash:
             return {"recorded": False}
 
-    # Look up viewer's company name if they're a platform user
+    # Look up viewer's company name — by workspace_id first, then fall back to email lookup
     viewer_company: str | None = None
+    resolved_workspace_id = viewer_workspace_id
     if viewer_workspace_id:
         try:
             viewer_ws = await sb_select("workspaces", filters=[("id", "eq", viewer_workspace_id)], single=True)
@@ -551,10 +558,21 @@ async def record_profile_view(
                 viewer_company = vprofile.get("company_name") or None
         except Exception:
             pass
+    elif viewer_email:
+        try:
+            viewer_ws_rows = await sb_select("workspaces", filters=[("user_id", "eq", viewer_email.lower())])
+            if viewer_ws_rows:
+                viewer_ws = viewer_ws_rows[0]
+                resolved_workspace_id = str(viewer_ws["id"])
+                vdata = viewer_ws.get("data") or {}
+                vprofile = vdata.get("workspace_profile") or {}
+                viewer_company = vprofile.get("company_name") or None
+        except Exception:
+            pass
 
     view = {
         "view_id": str(uuid4()),
-        "viewer_workspace_id": viewer_workspace_id,
+        "viewer_workspace_id": resolved_workspace_id,
         "viewer_email": viewer_email,
         "viewer_company": viewer_company,
         "viewer_ip_hash": ip_hash,
