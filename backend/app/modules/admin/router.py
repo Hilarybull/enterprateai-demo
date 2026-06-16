@@ -462,7 +462,76 @@ async def remove_user_restriction(
             filters=[("id", "eq", restriction_id), ("user_id", "eq", user_id)],
         )
     except Exception:
-        pass  # If table doesn't exist yet, nothing to delete
+        pass
+    return Response(status_code=204)
+
+
+# ── Platform grants ───────────────────────────────────────────────────────────
+
+async def _select_grants(user_id: str, columns: str = "id,module_key,feature_key,created_at") -> list:
+    try:
+        return await sb_select(
+            "user_platform_grants",
+            filters=[("user_id", "eq", user_id)],
+            columns=columns,
+            order="created_at",
+        )
+    except Exception:
+        return []
+
+
+@router.get("/users/{user_id}/grants")
+async def get_user_grants(user_id: str, user=Depends(require_admin)) -> list:
+    return await _select_grants(user_id)
+
+
+@router.post("/users/{user_id}/grants")
+async def add_user_grant(
+    user_id: str,
+    payload: RestrictionPayload,
+    user=Depends(require_admin),
+) -> dict:
+    feature_key = payload.feature_key or ""
+    try:
+        existing = await sb_select(
+            "user_platform_grants",
+            filters=[
+                ("user_id", "eq", user_id),
+                ("module_key", "eq", payload.module_key),
+                ("feature_key", "eq", feature_key),
+            ],
+            single=True,
+        )
+        if existing:
+            return existing
+        doc = {
+            "id": str(uuid4()),
+            "user_id": user_id,
+            "module_key": payload.module_key,
+            "feature_key": feature_key,
+            "created_by": user.get("id"),
+        }
+        result = await sb_insert("user_platform_grants", doc)
+        return result[0] if isinstance(result, list) else result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Run the user_platform_grants schema migration first. ({e})")
+
+
+@router.delete("/users/{user_id}/grants/{grant_id}", status_code=204, response_class=Response)
+async def remove_user_grant(
+    user_id: str,
+    grant_id: str,
+    user=Depends(require_admin),
+) -> Response:
+    try:
+        await sb_delete(
+            "user_platform_grants",
+            filters=[("id", "eq", grant_id), ("user_id", "eq", user_id)],
+        )
+    except Exception:
+        pass
     return Response(status_code=204)
 
 

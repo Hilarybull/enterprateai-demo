@@ -170,3 +170,17 @@ async def get_my_restrictions(user=Depends(get_current_user)) -> list:
         )
     except Exception:
         return []
+
+
+@router.get("/grants")
+async def get_my_grants(user=Depends(get_current_user)) -> list:
+    """Returns platform-level module/feature grants set by an admin for the current user."""
+    from app.core.supabase import sb_select as _sb_select
+    try:
+        return await _sb_select(
+            "user_platform_grants",
+            filters=[("user_id", "eq", user["id"])],
+            columns="module_key,feature_key",
+        )
+    except Exception:
+        return []

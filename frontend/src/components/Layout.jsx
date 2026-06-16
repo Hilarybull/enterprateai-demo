@@ -7,7 +7,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import BusinessAssistant from "./BusinessAssistant";
 import InviteModal from "./InviteModal";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
-import { hasModuleAccess, isPlatformModuleRestricted } from "../lib/permissions";
+import { hasModuleAccess, isPlatformModuleGranted, isPlatformModuleRestricted } from "../lib/permissions";
 import { planHasModuleAccess, planLabel } from "../lib/plans";
 
 const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
@@ -309,6 +309,7 @@ export default function Layout() {
   const userName = useAuthStore((s) => s.name);
   const userPicture = useAuthStore((s) => s.picture);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
+  const platformGrants = useAuthStore((s) => s.platformGrants);
   const subscription = useAuthStore((s) => s.subscription);
   const profileInitials = userName
     ? (userName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || initialsFromEmail(email))
@@ -561,7 +562,7 @@ export default function Layout() {
         subscription?.plan_key ?? "free_trial",
         item.moduleKey,
         subscription?.status ?? "trial",
-      );
+      ) && !isPlatformModuleGranted(item.moduleKey, platformGrants);
       const adminLocked = isPlatformModuleRestricted(item.moduleKey, platformRestrictions);
       const memberLocked = isMemberMode && !hasModuleAccess(item.moduleKey, memberPermissionType, memberPermissions);
       return {
@@ -570,7 +571,7 @@ export default function Layout() {
         planLocked,
       };
     });
-  }, [search, isMemberMode, memberPermissionType, memberPermissions, platformRestrictions, subscription]);
+  }, [search, isMemberMode, memberPermissionType, memberPermissions, platformRestrictions, platformGrants, subscription]);
 
   // Determine if the current route is locked for this member
   const currentRouteModuleKey = useMemo(() => {
@@ -588,6 +589,7 @@ export default function Layout() {
 
   const isCurrentRoutePlanLocked = currentRouteModuleKey
     ? !planHasModuleAccess(subscription?.plan_key ?? "free_trial", currentRouteModuleKey, subscription?.status ?? "trial")
+      && !isPlatformModuleGranted(currentRouteModuleKey, platformGrants)
     : false;
 
   const isCurrentRouteLocked =

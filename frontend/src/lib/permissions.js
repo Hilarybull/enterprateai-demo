@@ -91,6 +91,15 @@ export function hasModuleAccess(moduleKey, permissionType, permissions) {
 }
 
 /**
+ * Returns true if an admin has explicitly granted this module to the user (overrides plan limits).
+ */
+export function isPlatformModuleGranted(moduleKey, platformGrants) {
+  return (platformGrants || []).some(
+    (g) => g.module_key === moduleKey && !g.feature_key
+  );
+}
+
+/**
  * Returns true if an admin has blocked the entire module for this user platform-wide.
  */
 export function isPlatformModuleRestricted(moduleKey, platformRestrictions) {

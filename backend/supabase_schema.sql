@@ -254,6 +254,22 @@ create unique index if not exists upr_user_module_feature_idx
 
 create index if not exists upr_user_idx on user_platform_restrictions(user_id);
 
+-- ── Per-user platform grants (admin can grant plan-locked modules to a user) ──
+create table if not exists user_platform_grants (
+  id uuid primary key default gen_random_uuid(),
+  user_id text references users(id) on delete cascade,
+  module_key text not null,
+  feature_key text not null default '',
+  created_by text references users(id),
+  created_at timestamptz default now()
+);
+
+-- empty feature_key means the entire module is granted
+create unique index if not exists upg_user_module_feature_idx
+  on user_platform_grants(user_id, module_key, feature_key);
+
+create index if not exists upg_user_idx on user_platform_grants(user_id);
+
 -- ── Marketplace ratings ───────────────────────────────────────────────────────
 
 create table if not exists marketplace_ratings (

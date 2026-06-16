@@ -449,6 +449,11 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   const [addFeature, setAddFeature] = useState("");
   const [addingRestriction, setAddingRestriction] = useState(false);
   const [removingId, setRemovingId] = useState(null);
+  const [grants, setGrants] = useState([]);
+  const [grantsLoading, setGrantsLoading] = useState(false);
+  const [grantModule, setGrantModule] = useState("");
+  const [addingGrant, setAddingGrant] = useState(false);
+  const [removingGrantId, setRemovingGrantId] = useState(null);
   const [blockLoading, setBlockLoading] = useState(false);
   const [showBlockForm, setShowBlockForm] = useState(false);
   const [blockReasonInput, setBlockReasonInput] = useState("");
@@ -473,10 +478,12 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     setFullData(null);
     setSubscription(null);
     setSubscriptionLoading(true);
+    setGrants([]);
     setShowBlockForm(false);
     setBlockReasonInput("");
     loadRestrictions(user.id);
     loadSubscription(user.id);
+    loadGrants(user.id);
   }, [user?.id]);
 
   useEffect(() => {
@@ -494,6 +501,46 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
       setRestrictions([]);
     } finally {
       setRestrictionsLoading(false);
+    }
+  }
+
+  async function loadGrants(userId) {
+    setGrantsLoading(true);
+    try {
+      const data = await apiRequest(`/admin/users/${userId}/grants`, "GET");
+      setGrants(data || []);
+    } catch {
+      setGrants([]);
+    } finally {
+      setGrantsLoading(false);
+    }
+  }
+
+  async function handleAddGrant() {
+    if (!grantModule || addingGrant) return;
+    setAddingGrant(true);
+    try {
+      const g = await apiRequest(`/admin/users/${user.id}/grants`, "POST", { module_key: grantModule, feature_key: "" });
+      setGrants((prev) => [...prev, g]);
+      setGrantModule("");
+      showToast("success", `Access granted to ${grantModule}.`);
+    } catch (e) {
+      showToast("error", e.message || "Failed to add grant.");
+    } finally {
+      setAddingGrant(false);
+    }
+  }
+
+  async function handleRemoveGrant(id) {
+    setRemovingGrantId(id);
+    try {
+      await apiRequest(`/admin/users/${user.id}/grants/${id}`, "DELETE");
+      setGrants((prev) => prev.filter((g) => g.id !== id));
+      showToast("success", "Grant removed.");
+    } catch (e) {
+      showToast("error", e.message || "Failed to remove grant.");
+    } finally {
+      setRemovingGrantId(null);
     }
   }
 
@@ -957,6 +1004,74 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                   className="w-full rounded-xl bg-brand-600 py-2 text-xs font-semibold text-white transition hover:bg-brand-700 disabled:opacity-40"
                 >
                   {addingRestriction ? "Adding…" : "Add restriction"}
+                </button>
+              </div>
+            </div>
+
+            {/* Module access grants */}
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Module access grants</h3>
+                {grantsLoading && <div className="h-3.5 w-3.5 animate-spin rounded-full border border-slate-300 border-t-slate-600" />}
+              </div>
+              <p className="mb-3 text-[11px] text-slate-500 leading-relaxed">
+                Grants unlock plan-locked modules for this user, overriding their current subscription limits.
+              </p>
+
+              {/* Current grants */}
+              {grants.length > 0 ? (
+                <div className="mb-3 divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
+                  {grants.map((g) => (
+                    <div key={g.id} className="flex items-center gap-3 px-3 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                            {moduleLabel(g.module_key)}
+                          </span>
+                          {g.feature_key ? (
+                            <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[11px] font-semibold text-teal-700">
+                              {featureLabel(g.module_key, g.feature_key)}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-slate-400">entire module</span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={removingGrantId === g.id}
+                        onClick={() => handleRemoveGrant(g.id)}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition disabled:opacity-30"
+                      >
+                        <XIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mb-3 text-xs text-slate-400">No grants — access follows the user's plan.</p>
+              )}
+
+              {/* Add grant form */}
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 space-y-2">
+                <div className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide">Grant module access</div>
+                <select
+                  value={grantModule}
+                  onChange={(e) => setGrantModule(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                >
+                  <option value="">Select module…</option>
+                  {MODULES.filter((m) => m.key !== "dashboard").map((m) => (
+                    <option key={m.key} value={m.key}>{m.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!grantModule || addingGrant}
+                  onClick={handleAddGrant}
+                  className="w-full rounded-xl bg-emerald-600 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  {addingGrant ? "Granting…" : "Grant access"}
                 </button>
               </div>
             </div>
