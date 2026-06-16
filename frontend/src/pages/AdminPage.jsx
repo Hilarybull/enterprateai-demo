@@ -452,6 +452,8 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   const [blockLoading, setBlockLoading] = useState(false);
   const [showBlockForm, setShowBlockForm] = useState(false);
   const [blockReasonInput, setBlockReasonInput] = useState("");
+  const [subscription, setSubscription] = useState(null);
+  const [trialLoading, setTrialLoading] = useState(false);
 
   // Activity tab state
   const [fullData, setFullData] = useState(null);
@@ -468,9 +470,11 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     setPanelTab("access");
     setRestrictions([]);
     setFullData(null);
+    setSubscription(null);
     setShowBlockForm(false);
     setBlockReasonInput("");
     loadRestrictions(user.id);
+    loadSubscription(user.id);
   }, [user?.id]);
 
   useEffect(() => {
@@ -488,6 +492,29 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
       setRestrictions([]);
     } finally {
       setRestrictionsLoading(false);
+    }
+  }
+
+  async function loadSubscription(userId) {
+    try {
+      const data = await apiRequest(`/admin/users/${userId}/subscription`, "GET");
+      setSubscription(data);
+    } catch {
+      setSubscription(null);
+    }
+  }
+
+  async function handleRenewTrial() {
+    if (!user || trialLoading) return;
+    setTrialLoading(true);
+    try {
+      const res = await apiRequest(`/admin/users/${user.id}/renew-trial`, "POST");
+      setSubscription((s) => ({ ...s, status: "trial", current_period_end: res.trial_end }));
+      showToast("success", `Free trial renewed — expires ${new Date(res.trial_end).toLocaleDateString()}`);
+    } catch (e) {
+      showToast("error", e.message || "Failed to renew trial.");
+    } finally {
+      setTrialLoading(false);
     }
   }
 
@@ -785,6 +812,64 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+
+            {/* Subscription & Trial */}
+            <div>
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Subscription & trial</h3>
+              {subscription ? (() => {
+                const isExpired = subscription.status === "expired";
+                const isTrial = subscription.status === "trial";
+                const isActive = subscription.status === "active";
+                const isGrandfathered = subscription.status === "grandfathered";
+                const endDate = subscription.current_period_end
+                  ? new Date(subscription.current_period_end).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+                  : null;
+                const statusColor = isExpired
+                  ? "border-rose-200 bg-rose-50"
+                  : isActive
+                  ? "border-emerald-100 bg-emerald-50"
+                  : "border-brand-100 bg-brand-50";
+                const dotColor = isExpired ? "bg-rose-500" : isActive ? "bg-emerald-500" : "bg-brand-500";
+                const statusLabel = isExpired ? "Trial expired" : isTrial ? "Free trial" : isActive ? "Paid plan" : "Grandfathered";
+                const planLabel = { explorer: "Explorer", starter_insight: "Starter", free_trial: "Explorer" }[subscription.plan_key] ?? subscription.plan_key;
+                return (
+                  <div className={`rounded-xl border p-4 ${statusColor}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className={`h-2 w-2 rounded-full ${dotColor}`} />
+                          <span className="text-sm font-semibold text-slate-800">{statusLabel}</span>
+                          <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{planLabel}</span>
+                        </div>
+                        {endDate && (
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            {isExpired ? "Expired" : "Expires"}: {endDate}
+                          </p>
+                        )}
+                        {isActive && subscription.stripe_subscription_id && (
+                          <p className="mt-1 text-[11px] text-slate-400">Stripe: {subscription.stripe_subscription_id}</p>
+                        )}
+                      </div>
+                      {!isActive && !isGrandfathered && (
+                        <button
+                          type="button"
+                          disabled={trialLoading}
+                          onClick={handleRenewTrial}
+                          className="shrink-0 rounded-xl border border-brand-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 transition hover:bg-brand-50 disabled:opacity-40"
+                        >
+                          {trialLoading ? "Renewing…" : "Renew trial"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })() : (
+                <div className="flex items-center gap-2 text-[12px] text-slate-400">
+                  <div className="h-3 w-3 animate-spin rounded-full border border-slate-300 border-t-slate-500" />
+                  Loading…
                 </div>
               )}
             </div>

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from uuid import uuid4
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 
-from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
+from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update, sb_upsert
 from app.shared.auth.deps import get_current_user
 
 ADMIN_EMAIL = "tech.support@enterprateai.com"
@@ -611,3 +612,62 @@ async def revoke_workspace_invitation(invitation_id: str, user=Depends(require_a
     if not result:
         raise HTTPException(status_code=404, detail="Invitation not found.")
     return result[0]
+
+
+TRIAL_DAYS = 14
+
+
+@router.get("/users/{user_id}/subscription")
+async def get_user_subscription(user_id: str, user=Depends(require_admin)) -> dict:
+    try:
+        sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+    except Exception:
+        sub = None
+    if sub:
+        return sub
+    # Fall back to deriving from account creation date
+    user_row = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
+    if not user_row:
+        raise HTTPException(status_code=404, detail="User not found.")
+    created_at_str = user_row.get("created_at", "")
+    try:
+        created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+        trial_end = created_at + timedelta(days=TRIAL_DAYS)
+        now = datetime.now(timezone.utc)
+        return {
+            "user_id": user_id,
+            "plan_key": "explorer",
+            "status": "trial" if now < trial_end else "expired",
+            "current_period_end": trial_end.isoformat(),
+            "trial_started_at": created_at_str,
+            "_derived": True,
+        }
+    except Exception:
+        return {"user_id": user_id, "plan_key": "explorer", "status": "expired", "_derived": True}
+
+
+@router.post("/users/{user_id}/renew-trial")
+async def renew_user_trial(user_id: str, user=Depends(require_admin)) -> dict:
+    user_row = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
+    if not user_row:
+        raise HTTPException(status_code=404, detail="User not found.")
+    now = datetime.now(timezone.utc)
+    trial_end = now + timedelta(days=TRIAL_DAYS)
+    await sb_upsert(
+        "user_subscriptions",
+        payload={
+            "user_id": user_id,
+            "plan_key": "explorer",
+            "billing_period": "monthly",
+            "status": "trial",
+            "stripe_subscription_id": None,
+            "stripe_customer_id": None,
+            "current_period_start": now.isoformat(),
+            "current_period_end": trial_end.isoformat(),
+            "trial_started_at": now.isoformat(),
+            "cancelled_at": None,
+            "updated_at": now.isoformat(),
+        },
+        on_conflict="user_id",
+    )
+    return {"renewed": True, "trial_end": trial_end.isoformat()}
