@@ -108,7 +108,7 @@ const STAR_LABELS = ["", "Poor", "Fair", "Good", "Very Good", "Excellent"];
 
 // ─── business card ────────────────────────────────────────────────────────────
 
-function BusinessCard({ listing, onClick }) {
+function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
   const grad = avatarGradient(listing.company_name);
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
   return (
@@ -174,7 +174,20 @@ function BusinessCard({ listing, onClick }) {
             ) : (
               <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">No ratings yet</span>
             )}
-            <span className="text-[11px] font-semibold text-brand-600 group-hover:text-brand-700 dark:text-brand-400 transition-colors">View Profile →</span>
+            {isOwn ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onViewsClick(); }}
+                className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 hover:bg-brand-50 hover:text-brand-600 transition dark:hover:bg-brand-900/20 dark:hover:text-brand-400"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                </svg>
+                {viewCount != null ? `${viewCount} view${viewCount !== 1 ? "s" : ""}` : "Views"}
+              </button>
+            ) : (
+              <span className="text-[11px] font-semibold text-brand-600 group-hover:text-brand-700 dark:text-brand-400 transition-colors">View Profile →</span>
+            )}
           </div>
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0 text-[11px] text-slate-500 dark:text-slate-400">
@@ -785,6 +798,7 @@ export default function MarketplacePage() {
   const [myStatus, setMyStatus] = useState(null);
   const [profileViews, setProfileViews] = useState(null);
   const [viewsLoading, setViewsLoading] = useState(false);
+  const [showViews, setShowViews] = useState(false);
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -972,53 +986,9 @@ export default function MarketplacePage() {
           </div>
         )}
 
-        {/* Profile views panel — only shown to listing owners */}
-        {isLoggedIn && myStatus?.is_published && (
-          <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-[14px] font-bold text-slate-900 dark:text-slate-100">Who viewed your profile</h3>
-                <p className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">
-                  {viewsLoading ? "Loading…" : profileViews ? `${profileViews.total} total view${profileViews.total !== 1 ? "s" : ""}` : ""}
-                </p>
-              </div>
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-400">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-                </svg>
-              </div>
-            </div>
-            {viewsLoading ? (
-              <div className="flex items-center gap-2 text-[13px] text-slate-400 dark:text-slate-500"><Spinner size={14} /> Loading views…</div>
-            ) : profileViews?.views?.length ? (
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {profileViews.views.slice(0, 9).map((v) => {
-                  const label = v.viewer_company || (v.viewer_workspace_id ? "Platform user" : "Marketplace visitor");
-                  const grad = avatarGradient(v.viewer_company || v.viewer_workspace_id || "anon");
-                  const date = new Date(v.viewed_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
-                  const time = new Date(v.viewed_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-                  return (
-                    <div key={v.view_id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-800/50">
-                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${grad} text-[11px] font-bold text-white`}>
-                        {v.viewer_company ? initials(v.viewer_company) : <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[12px] font-semibold text-slate-800 dark:text-slate-200">{label}</div>
-                        <div className="text-[10px] text-slate-400 dark:text-slate-500">{date} · {time}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-[13px] italic text-slate-400 dark:text-slate-500">No profile views yet. Views will appear here as people discover your listing.</p>
-            )}
-          </div>
-        )}
-
         {/* Filter bar */}
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="flex gap-2 flex-1">
+          <div className="flex gap-2 flex-1 flex-wrap items-center">
             <button onClick={() => setShowFilters((p) => !p)}
               className={`inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] font-medium transition ${hasFilters
                 ? "border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-900/30 dark:text-brand-300"
@@ -1106,7 +1076,19 @@ export default function MarketplacePage() {
         ) : (
           <>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {listings.map((l) => <BusinessCard key={l.workspace_id} listing={l} onClick={setSelected} />)}
+              {listings.map((l) => {
+                const isOwn = isLoggedIn && myStatus?.is_published && l.workspace_id === (myStatus?.workspace_id || workspaceId);
+                return (
+                  <BusinessCard
+                    key={l.workspace_id}
+                    listing={l}
+                    onClick={setSelected}
+                    isOwn={isOwn}
+                    viewCount={isOwn ? profileViews?.total : null}
+                    onViewsClick={() => setShowViews(true)}
+                  />
+                );
+              })}
             </div>
             {totalPages > 1 && (
               <div className="mt-8 flex items-center justify-center gap-2">
@@ -1160,6 +1142,51 @@ export default function MarketplacePage() {
       )}
       {rfqTarget && <RFQModal listing={rfqTarget} onClose={() => setRfqTarget(null)} />}
       {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}
+
+      {/* Profile views modal */}
+      {showViews && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowViews(false)}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div className="relative w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-[14px] font-semibold text-slate-800 dark:text-slate-200">Who viewed your profile</h3>
+              <button type="button" onClick={() => setShowViews(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+            {viewsLoading ? (
+              <div className="flex items-center gap-2 text-[13px] text-slate-400 dark:text-slate-500"><Spinner size={14} /> Loading views…</div>
+            ) : profileViews?.views?.length ? (
+              <div className="flex flex-col gap-2 max-h-80 overflow-y-auto">
+                {profileViews.views.slice(0, 12).map((v) => {
+                  const isRegistered = !!(v.viewer_workspace_id || v.viewer_email);
+                  const label = v.viewer_company || v.viewer_email || (v.viewer_workspace_id ? "Platform user" : "Marketplace visitor");
+                  const sublabel = v.viewer_company && v.viewer_email ? v.viewer_email : null;
+                  const grad = avatarGradient(v.viewer_company || v.viewer_email || v.viewer_workspace_id || "anon");
+                  const avatarText = v.viewer_company ? initials(v.viewer_company) : v.viewer_email ? v.viewer_email[0].toUpperCase() : null;
+                  const date = new Date(v.viewed_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+                  const time = new Date(v.viewed_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+                  return (
+                    <div key={v.view_id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-800/50">
+                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[11px] font-bold text-white ${isRegistered ? `bg-gradient-to-br ${grad}` : "bg-slate-200 dark:bg-slate-700"}`}>
+                        {avatarText ?? <svg className="h-3.5 w-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[12px] font-semibold text-slate-800 dark:text-slate-200">{label}</div>
+                        <div className="text-[10px] text-slate-400 dark:text-slate-500">
+                          {sublabel && <span className="mr-1">{sublabel} ·</span>}{date} · {time}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-[13px] italic text-slate-400 dark:text-slate-500">No profile views yet. Views will appear here as people discover your listing.</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

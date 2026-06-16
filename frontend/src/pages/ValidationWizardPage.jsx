@@ -41,6 +41,31 @@ function FieldLabel({ children, info }) {
   );
 }
 
+function FormSection({ title, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={"overflow-hidden rounded-2xl border bg-white transition-colors " + (open ? "border-brand-200 shadow-sm" : "border-slate-200")}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+      >
+        <span className="text-sm font-semibold text-slate-900">{title}</span>
+        <svg
+          className={"h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 " + (open ? "rotate-180" : "")}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open ? <div className="px-5 pb-5">{children}</div> : null}
+    </div>
+  );
+}
+
 const UPPER_ABBREVIATIONS = new Set(["llp", "sme", "smes", "b2b", "b2c", "b2g", "it", "hr", "uk", "usa"]);
 const VALIDATION_DEFAULTS_KEY = "ea_validation_stage_defaults";
 const FREQUENCY_OPTIONS = ["daily", "weekly", "monthly", "yearly", "custom"];
@@ -438,7 +463,7 @@ export default function ValidationWizardPage() {
       { key: "offer_demand", label: "Offer & demand", desc: "Offer, pricing, volume assumptions, and sales cycle." },
       { key: "costs", label: "Costs", desc: "Fixed and variable costs behind the model." },
       { key: "capacity_cash", label: "Capacity & cash", desc: "Capacity assumptions and starting cash/runway inputs." },
-      { key: "go_to_market", label: "Go-to-market", desc: "Target market and acquisition channels." }
+      { key: "go_to_market", label: "Go to market", desc: "Target market and acquisition channels." }
     ];
   }, [isCreateWorkspace, isProductPath]);
 
@@ -2655,7 +2680,7 @@ export default function ValidationWizardPage() {
                 </div>
                 ) : null}
 
-                {/* Positioning + Go-to-Market */}
+                {/* Positioning + Go to Market */}
                 {insightVisibility.showPositioning || insightVisibility.showGoToMarket ? (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   {insightVisibility.showPositioning && marketResearch.positioning ? (
@@ -2677,7 +2702,7 @@ export default function ValidationWizardPage() {
                   ) : null}
 
                   {insightVisibility.showGoToMarket && marketResearch.go_to_market ? (
-                    <SectionCard title="Go-To-Market Recommendation">
+                    <SectionCard title="Go to Market Recommendation">
                       <div className="space-y-2 text-sm">
                         {Array.isArray(marketResearch.go_to_market.primary_channels) && marketResearch.go_to_market.primary_channels.length ? (
                           <div>
@@ -3105,7 +3130,7 @@ export default function ValidationWizardPage() {
                   ) : null}
 
                   {tabMarketResearch.go_to_market ? (
-                    <SectionCard title="Go-To-Market Recommendation">
+                    <SectionCard title="Go to Market Recommendation">
                       <div className="space-y-2 text-sm">
                         {Array.isArray(tabMarketResearch.go_to_market.primary_channels) && tabMarketResearch.go_to_market.primary_channels.length ? (
                           <div><span className="font-semibold text-slate-700">Primary channels: </span>{tabMarketResearch.go_to_market.primary_channels.join(", ")}</div>
@@ -3329,16 +3354,60 @@ export default function ValidationWizardPage() {
                 title="What are you validating?"
                 subtitle="Choose the option that best matches your idea."
               >
-                <select
-                  className="ea-input"
-                  value={form.pathway}
-                  onChange={(e) => selectPathway(e.target.value)}
-                >
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {canEvaluateIdea && (
-                    <option value="business_idea">Business idea</option>
+                    <button
+                      type="button"
+                      onClick={() => selectPathway("business_idea")}
+                      className={
+                        "flex items-start gap-4 rounded-2xl border-2 p-5 text-left transition " +
+                        (form.pathway === "business_idea"
+                          ? "border-brand-500 bg-brand-50"
+                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50")
+                      }
+                    >
+                      <div className={"flex h-10 w-10 shrink-0 items-center justify-center rounded-xl " + (form.pathway === "business_idea" ? "bg-brand-100" : "bg-slate-100")}>
+                        <svg className={"h-5 w-5 " + (form.pathway === "business_idea" ? "text-brand-700" : "text-slate-500")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M9 18h6" /><path d="M10 22h4" /><path d="M12 2a7 7 0 0 0-4 12c.6.5 1 1.2 1.1 2h5.8c.1-.8.5-1.5 1.1-2A7 7 0 0 0 12 2Z" />
+                        </svg>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className={"text-sm font-semibold " + (form.pathway === "business_idea" ? "text-brand-900" : "text-slate-900")}>Business idea</div>
+                        <div className="mt-1 text-xs text-slate-500">Validate a full business concept: problem, offer, demand, and unit economics.</div>
+                      </div>
+                      {form.pathway === "business_idea" ? (
+                        <svg className="h-5 w-5 shrink-0 text-brand-600" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5z" clipRule="evenodd" />
+                        </svg>
+                      ) : null}
+                    </button>
                   )}
-                  <option value="product_service_idea">Product / service idea</option>
-                </select>
+                  <button
+                    type="button"
+                    onClick={() => selectPathway("product_service_idea")}
+                    className={
+                      "flex items-start gap-4 rounded-2xl border-2 p-5 text-left transition " +
+                      (form.pathway === "product_service_idea"
+                        ? "border-brand-500 bg-brand-50"
+                        : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50")
+                    }
+                  >
+                    <div className={"flex h-10 w-10 shrink-0 items-center justify-center rounded-xl " + (form.pathway === "product_service_idea" ? "bg-brand-100" : "bg-slate-100")}>
+                      <svg className={"h-5 w-5 " + (form.pathway === "product_service_idea" ? "text-brand-700" : "text-slate-500")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className={"text-sm font-semibold " + (form.pathway === "product_service_idea" ? "text-brand-900" : "text-slate-900")}>Product / service idea</div>
+                      <div className="mt-1 text-xs text-slate-500">Evaluate a specific product or service: pricing, costs, capacity, and market position.</div>
+                    </div>
+                    {form.pathway === "product_service_idea" ? (
+                      <svg className="h-5 w-5 shrink-0 text-brand-600" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5z" clipRule="evenodd" />
+                      </svg>
+                    ) : null}
+                  </button>
+                </div>
               </SectionCard>
             ) : null}
 
@@ -3350,15 +3419,13 @@ export default function ValidationWizardPage() {
                 >
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     {formBlocks.map((b, index) => (
-                      <div key={b.key} className="rounded-2xl border border-slate-200 bg-white p-4 text-left">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-50 text-sm font-bold text-brand-700">
-                            {index + 1}
-                          </div>
-                          <div>
-                            <div className="text-sm font-semibold text-slate-900">{b.label}</div>
-                            <div className="mt-1 text-xs text-slate-600">{b.desc}</div>
-                          </div>
+                      <div key={b.key} className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left">
+                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white shadow-sm">
+                          {index + 1}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-900">{b.label}</div>
+                          <div className="mt-0.5 text-xs text-slate-500">{b.desc}</div>
                         </div>
                       </div>
                     ))}
@@ -3378,21 +3445,22 @@ export default function ValidationWizardPage() {
                           type="button"
                           onClick={() => setEnabledForms((prev) => ({ ...prev, [b.key]: !checked }))}
                           className={
-                            "flex items-start justify-between gap-3 rounded-2xl border p-4 text-left transition " +
-                            (checked ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:bg-slate-50")
+                            "flex items-start justify-between gap-3 rounded-2xl border-2 p-4 text-left transition " +
+                            (checked ? "border-brand-400 bg-brand-50" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50")
                           }
                         >
-                          <div>
+                          <div className="min-w-0 flex-1">
                             <div className={"text-sm font-semibold " + (checked ? "text-brand-900" : "text-slate-900")}>{b.label}</div>
-                            <div className="mt-1 text-xs text-slate-600">{b.desc}</div>
+                            <div className="mt-0.5 text-xs text-slate-500">{b.desc}</div>
                           </div>
-                          <div className="pt-1">
-                            <div
-                              className={
-                                "h-5 w-5 rounded-full ring-2 ring-offset-2 " +
-                                (checked ? "bg-brand-600 ring-brand-200 ring-offset-white" : "bg-white ring-slate-200 ring-offset-white")
-                              }
-                            />
+                          <div className="shrink-0 pt-0.5">
+                            {checked ? (
+                              <svg className="h-5 w-5 text-brand-600" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5z" clipRule="evenodd" />
+                              </svg>
+                            ) : (
+                              <div className="h-5 w-5 rounded-full border-2 border-slate-300 bg-white" />
+                            )}
                           </div>
                         </button>
                       );
@@ -3415,10 +3483,7 @@ export default function ValidationWizardPage() {
           >
             <div className="space-y-3">
               {enabledForms.business && !isProductPath && (!isBusinessStageFlow || currentBusinessStageKey === "business") ? (
-                <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">
-                    {isProductPath ? "Product details" : "Business details"}
-                  </summary>
+                <FormSection title={isProductPath ? "Product details" : "Business details"} defaultOpen>
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                       <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel
@@ -3564,14 +3629,11 @@ export default function ValidationWizardPage() {
                       </>
                     ) : null}
                   </div>
-                </details>
+                </FormSection>
               ) : null}
 
               {enabledForms.workspace_profile ? (
-                <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">
-                    Workspace profile
-                  </summary>
+                <FormSection title="Workspace profile" defaultOpen>
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                     <div className="md:col-span-2 xl:col-span-3">
                       <FieldLabel info="Legal or trading name.">Company name *</FieldLabel>
@@ -3830,14 +3892,13 @@ export default function ValidationWizardPage() {
                       <Input value={profile.key_offering_focus} onChange={(e) => updateProfile("key_offering_focus", e.target.value)} />
                     </div>
                   </div>
-                </details>
+                </FormSection>
               ) : null}
 
               {isProductPath && (enabledForms.service_basics || enabledForms.revenue_inputs || enabledForms.direct_costs || enabledForms.fixed_costs || enabledForms.capacity_inputs || enabledForms.demand_inputs || enabledForms.competition) ? (
                 <>
                   {enabledForms.service_basics && (!isServiceStageFlow || currentServiceStageKey === "service_basics") ? (
-                    <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
-                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Service basics</summary>
+                    <FormSection title="Service basics" defaultOpen>
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-4">
                         <div className="md:col-span-2 xl:col-span-4">
                           <FieldLabel info="Name of the service idea you want to validate.">Service name *</FieldLabel>
@@ -3930,12 +3991,11 @@ export default function ValidationWizardPage() {
                           />
                         </div>
                       </div>
-                    </details>
+                    </FormSection>
                   ) : null}
 
                     {enabledForms.revenue_inputs && (!isServiceStageFlow || currentServiceStageKey === "revenue_inputs") ? (
-                      <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
-                        <summary className="cursor-pointer text-sm font-semibold text-slate-900">Revenue inputs</summary>
+                      <FormSection title="Revenue inputs" defaultOpen>
                         <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2">
                           <div>
                             <FieldLabel info="Price charged per sale.">Price per sale *</FieldLabel>
@@ -3946,12 +4006,11 @@ export default function ValidationWizardPage() {
                           <NumberInput placeholder="0" value={serviceForm.expected_sales_per_month} onChange={(v) => updateService("expected_sales_per_month", v)} />
                         </div>
                       </div>
-                    </details>
+                    </FormSection>
                   ) : null}
 
                   {enabledForms.direct_costs && (!isServiceStageFlow || currentServiceStageKey === "direct_costs") ? (
-                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Direct delivery costs</summary>
+                    <FormSection title="Direct delivery costs">
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Labour cost to deliver one sale.">Direct labour cost per sale *</FieldLabel>
@@ -3974,12 +4033,11 @@ export default function ValidationWizardPage() {
                           <NumberInput placeholder="0" value={serviceForm.other_direct_cost_per_sale} onChange={(v) => updateService("other_direct_cost_per_sale", v)} />
                         </div>
                       </div>
-                    </details>
+                    </FormSection>
                   ) : null}
 
                   {enabledForms.fixed_costs && (!isServiceStageFlow || currentServiceStageKey === "fixed_costs") ? (
-                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Fixed monthly costs</summary>
+                    <FormSection title="Fixed monthly costs">
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Recurring software costs per month.">Monthly software cost *</FieldLabel>
@@ -4002,12 +4060,11 @@ export default function ValidationWizardPage() {
                           <NumberInput placeholder="0" value={serviceForm.monthly_other_fixed_cost} onChange={(v) => updateService("monthly_other_fixed_cost", v)} />
                         </div>
                       </div>
-                    </details>
+                    </FormSection>
                   ) : null}
 
                     {enabledForms.capacity_inputs && (!isServiceStageFlow || currentServiceStageKey === "capacity_inputs") ? (
-                      <details className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <summary className="cursor-pointer text-sm font-semibold text-slate-900">Capacity inputs</summary>
+                      <FormSection title="Capacity inputs">
                         <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2">
                           <div>
                             <FieldLabel info="Hours required to deliver one sale.">Hours required *</FieldLabel>
@@ -4036,12 +4093,11 @@ export default function ValidationWizardPage() {
                           ) : null}
                         </div>
                       </div>
-                    </details>
+                    </FormSection>
                   ) : null}
 
                   {enabledForms.demand_inputs && (!isServiceStageFlow || currentServiceStageKey === "demand_inputs") ? (
-                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Demand evidence</summary>
+                    <FormSection title="Demand evidence">
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Strength of demand evidence.">Demand evidence type *</FieldLabel>
@@ -4058,12 +4114,11 @@ export default function ValidationWizardPage() {
                           <NumberInput placeholder="0" value={serviceForm.number_of_paying_customers} onChange={(v) => updateService("number_of_paying_customers", v)} />
                         </div>
                       </div>
-                    </details>
+                    </FormSection>
                   ) : null}
 
                   {enabledForms.competition && (!isServiceStageFlow || currentServiceStageKey === "competition") ? (
-                    <details className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Competitive positioning</summary>
+                    <FormSection title="Competitive positioning">
                       <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div>
                           <FieldLabel info="Lowest competitor price you see.">Competitor price (low)</FieldLabel>
@@ -4080,14 +4135,13 @@ export default function ValidationWizardPage() {
                           </select>
                         </div>
                       </div>
-                    </details>
+                    </FormSection>
                   ) : null}
                 </>
               ) : null}
 
               {enabledForms.offer_demand && (!isBusinessStageFlow || currentBusinessStageKey === "offer_demand") ? (
-                <details className="rounded-2xl border border-slate-200 bg-white p-4" open>
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">Offer & demand</summary>
+                <FormSection title="Offer & demand" defaultOpen>
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                     {!isBusinessStageFlow ? (
                       <>
@@ -4176,12 +4230,11 @@ export default function ValidationWizardPage() {
                       <NumberInput placeholder="14" value={form.demand.payment_terms_days} onChange={(v) => update("demand.payment_terms_days", v)} />
                     </div>
                   </div>
-                </details>
+                </FormSection>
               ) : null}
 
               {enabledForms.costs && (!isBusinessStageFlow || currentBusinessStageKey === "costs") ? (
-                <details className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">Costs</summary>
+                <FormSection title="Costs">
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                     <div>
                       <FieldLabel info="Variable cost to deliver one unit.">Variable cost / unit</FieldLabel>
@@ -4200,12 +4253,11 @@ export default function ValidationWizardPage() {
                       <NumberInput placeholder="0" value={form.costs.contractor_costs_monthly} onChange={(v) => update("costs.contractor_costs_monthly", v)} />
                     </div>
                   </div>
-                </details>
+                </FormSection>
               ) : null}
 
               {enabledForms.capacity_cash && (!isBusinessStageFlow || currentBusinessStageKey === "capacity_cash") ? (
-                <details className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">Capacity & cash</summary>
+                <FormSection title="Capacity & cash">
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                     <div>
                       <FieldLabel info="How many people are delivering the work.">Team size</FieldLabel>
@@ -4237,12 +4289,11 @@ export default function ValidationWizardPage() {
                       <NumberInput placeholder="0" value={form.cash.upfront_costs} onChange={(v) => update("cash.upfront_costs", v)} />
                     </div>
                   </div>
-                </details>
+                </FormSection>
               ) : null}
 
               {enabledForms.go_to_market && (!isBusinessStageFlow || currentBusinessStageKey === "go_to_market") ? (
-                <details className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">Go-to-market</summary>
+                <FormSection title="Go to market">
                   <div className="mt-3 grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
                     <div>
                       <FieldLabel info="Who you are primarily selling to.">Target market</FieldLabel>
@@ -4261,7 +4312,7 @@ export default function ValidationWizardPage() {
                       <Input value={form.go_to_market.sub_industry} onChange={(e) => update("go_to_market.sub_industry", e.target.value)} />
                     </div>
                     <div className="md:col-span-2 xl:col-span-3">
-                      <FieldLabel info="Select the channels you plan to use first.">Go-to-market channels</FieldLabel>
+                      <FieldLabel info="Select the channels you plan to use first.">Go to market channels</FieldLabel>
                       <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5">
                         {GTM_CHANNEL_OPTIONS.map((ch) => {
                           const selected = Array.isArray(form.go_to_market.channels) && form.go_to_market.channels.includes(ch);
@@ -4283,7 +4334,7 @@ export default function ValidationWizardPage() {
                       </div>
                     </div>
                   </div>
-                </details>
+                </FormSection>
               ) : null}
               {null}
             </div>
