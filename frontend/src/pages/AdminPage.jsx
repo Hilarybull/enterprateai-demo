@@ -453,6 +453,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   const [showBlockForm, setShowBlockForm] = useState(false);
   const [blockReasonInput, setBlockReasonInput] = useState("");
   const [subscription, setSubscription] = useState(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
   const [trialLoading, setTrialLoading] = useState(false);
 
   // Activity tab state
@@ -471,6 +472,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     setRestrictions([]);
     setFullData(null);
     setSubscription(null);
+    setSubscriptionLoading(true);
     setShowBlockForm(false);
     setBlockReasonInput("");
     loadRestrictions(user.id);
@@ -496,11 +498,14 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   }
 
   async function loadSubscription(userId) {
+    setSubscriptionLoading(true);
     try {
       const data = await apiRequest(`/admin/users/${userId}/subscription`, "GET");
       setSubscription(data);
     } catch {
-      setSubscription(null);
+      setSubscription(false);
+    } finally {
+      setSubscriptionLoading(false);
     }
   }
 
@@ -819,7 +824,14 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
             {/* Subscription & Trial */}
             <div>
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Subscription & trial</h3>
-              {subscription ? (() => {
+              {subscriptionLoading ? (
+                <div className="flex items-center gap-2 text-[12px] text-slate-400">
+                  <div className="h-3 w-3 animate-spin rounded-full border border-slate-300 border-t-slate-500" />
+                  Loading…
+                </div>
+              ) : subscription === false ? (
+                <p className="text-[12px] text-slate-400 italic">Could not load subscription data.</p>
+              ) : subscription ? (() => {
                 const isExpired = subscription.status === "expired";
                 const isTrial = subscription.status === "trial";
                 const isActive = subscription.status === "active";
@@ -866,12 +878,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                     </div>
                   </div>
                 );
-              })() : (
-                <div className="flex items-center gap-2 text-[12px] text-slate-400">
-                  <div className="h-3 w-3 animate-spin rounded-full border border-slate-300 border-t-slate-500" />
-                  Loading…
-                </div>
-              )}
+              })() : null}
             </div>
 
             {/* Platform restrictions */}
