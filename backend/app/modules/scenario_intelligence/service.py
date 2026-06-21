@@ -87,11 +87,41 @@ def _stability_score(state: BusinessStateSnapshot) -> float:
 
 
 def _state_label(score: float) -> str:
+    """Legacy label used by snapshot metrics and risk detection. DO NOT REMOVE."""
     if score >= 70:
         return "stable"
     if score >= 55:
         return "tight"
     return "risk"
+
+
+def _classify_health_status(
+    net_profit: float,
+    cash_balance: float,
+    total_costs: float,
+    prev_cash: float | None = None,
+) -> str:
+    """
+    Accounting-correct 5-state health classifier.
+
+    States (in priority order):
+      critical  — cash is negative (overdraft / insolvent)
+      stress    — loss-making AND cash barely covers costs
+      at_risk   — loss-making BUT enough cash buffer for now
+      tight     — profitable but thin cash cushion (< 2× monthly costs)
+      stable    — profitable AND strong cash coverage (≥ 2× monthly costs)
+    """
+    coverage = cash_balance / max(abs(total_costs), 1.0)  # months of cover
+
+    if cash_balance < 0:
+        return "critical"
+    if net_profit < 0 and coverage < 1:
+        return "stress"
+    if net_profit < 0 and coverage >= 1:
+        return "at_risk"
+    if net_profit >= 0 and coverage < 2:
+        return "tight"
+    return "stable"
 
 
 def _month_span_from_days(days: int | None, fallback: int = 1, cap: int = 3) -> int:
@@ -560,22 +590,45 @@ def _timeline(
     cash = float(scenario_state.starting_cash)
     accruals_balance = _opening_accrual_balance(state, pending_receivables_schedule)
     timeline: List[Dict[str, Any]] = []
+    cumulative_profit = 0.0
+    prev_cash: float | None = None
 
     for m in range(1, months + 1):
         revenue, expenses, cost_of_sales = _monthly_projection_values(state, scenario_type, params, m)
         costs = expenses + cost_of_sales
         profit = revenue - costs
+        cumulative_profit += profit
+
+        # ── Accruals (signed invoices only — earned but not yet collected) ──
+        # Opening accruals grow with this month's earned revenue, then
+        # shrink as scheduled receivables are collected in cash.
         displayed_accruals = max(0.0, accruals_balance)
 
+        # ── Cash flow (cash basis, payment-terms delayed) ──
         scheduled_receivable = pending_receivables_schedule[m - 1] if m - 1 < len(pending_receivables_schedule) else 0.0
         scheduled_payable = pending_payables_schedule[m - 1] if m - 1 < len(pending_payables_schedule) else 0.0
         receivables_queue.append(revenue)
         collected_revenue = receivables_queue.pop(0) + scheduled_receivable
         payables_queue.append(costs)
         paid_costs = payables_queue.pop(0) + scheduled_payable
-        cash = max(0.0, cash + collected_revenue - paid_costs)
+
+        # Allow negative cash — hiding insolvency behind a zero floor is misleading.
+        cash = cash + collected_revenue - paid_costs
         accruals_balance = max(0.0, accruals_balance - scheduled_receivable)
 
+        # ── Gross profit (delivery viability signal) ──
+        gross_profit = revenue - cost_of_sales
+        gross_margin_pct = round((gross_profit / revenue * 100) if revenue > 0 else 0.0, 2)
+
+        # ── Cash runway (how many months at current burn rate) ──
+        monthly_burn = paid_costs - collected_revenue  # positive = burning cash
+        cash_runway_months: float | None = None
+        if monthly_burn > 0 and cash > 0:
+            cash_runway_months = round(cash / monthly_burn, 2)
+        elif cash <= 0:
+            cash_runway_months = 0.0
+
+        # ── Legacy stability score (kept for multi-engine compatibility) ──
         score = _stability_score(
             BusinessStateSnapshot(
                 revenue_monthly=revenue,
@@ -594,6 +647,15 @@ def _timeline(
             )
         )
 
+        # ── Accounting-correct 5-state health classification ──
+        health_status = _classify_health_status(
+            net_profit=profit,
+            cash_balance=cash,
+            total_costs=costs,
+            prev_cash=prev_cash,
+        )
+        prev_cash = cash
+
         timeline.append(
             dict(
                 month_index=m,
@@ -601,11 +663,15 @@ def _timeline(
                 accruals=round(displayed_accruals, 2),
                 expenses=round(expenses, 2),
                 cost_of_sales=round(cost_of_sales, 2),
+                gross_profit=round(gross_profit, 2),
+                gross_margin_pct=gross_margin_pct,
                 costs=round(costs, 2),
                 profit=round(profit, 2),
+                cumulative_profit=round(cumulative_profit, 2),
                 cash_balance=round(cash, 2),
+                cash_runway_months=cash_runway_months,
                 stability_score=round(score, 2),
-                state_label=_state_label(score),
+                state_label=health_status,
             )
         )
 
@@ -1021,10 +1087,15 @@ async def do_nothing_projection(
     pending_payables_schedule = _normalise_schedule(state.pending_payables_schedule, months)
     accruals_balance = _opening_accrual_balance(state, pending_receivables_schedule)
     forecast: List[Dict[str, Any]] = []
+    cumulative_profit = 0.0
+    prev_cash: float | None = None
+
     for m in range(1, months + 1):
         revenue, expenses, cost_of_sales = _monthly_projection_values(state, "do_nothing_projection", {}, m)
         costs = expenses + cost_of_sales
         profit = revenue - costs
+        cumulative_profit += profit
+
         displayed_accruals = max(0.0, accruals_balance)
         scheduled_receivable = pending_receivables_schedule[m - 1] if m - 1 < len(pending_receivables_schedule) else 0.0
         scheduled_payable = pending_payables_schedule[m - 1] if m - 1 < len(pending_payables_schedule) else 0.0
@@ -1032,8 +1103,23 @@ async def do_nothing_projection(
         collected_revenue = receivables_queue.pop(0) + scheduled_receivable
         payables_queue.append(costs)
         paid_costs = payables_queue.pop(0) + scheduled_payable
-        cash = max(0.0, cash + collected_revenue - paid_costs)
+
+        # Allow negative — hiding insolvency behind a zero floor is misleading.
+        cash = cash + collected_revenue - paid_costs
         accruals_balance = max(0.0, accruals_balance - scheduled_receivable)
+
+        # ── Gross profit ──
+        gross_profit = revenue - cost_of_sales
+        gross_margin_pct = round((gross_profit / revenue * 100) if revenue > 0 else 0.0, 2)
+
+        # ── Cash runway ──
+        monthly_burn = paid_costs - collected_revenue
+        cash_runway_months: float | None = None
+        if monthly_burn > 0 and cash > 0:
+            cash_runway_months = round(cash / monthly_burn, 2)
+        elif cash <= 0:
+            cash_runway_months = 0.0
+
         score = _stability_score(
             BusinessStateSnapshot(
                 revenue_monthly=revenue,
@@ -1051,6 +1137,15 @@ async def do_nothing_projection(
                 clients_count=state.clients_count,
             )
         )
+
+        health_status = _classify_health_status(
+            net_profit=profit,
+            cash_balance=cash,
+            total_costs=costs,
+            prev_cash=prev_cash,
+        )
+        prev_cash = cash
+
         forecast.append(
             dict(
                 month_index=m,
@@ -1058,12 +1153,15 @@ async def do_nothing_projection(
                 accruals=round(displayed_accruals, 2),
                 expenses=round(expenses, 2),
                 cost_of_sales=round(cost_of_sales, 2),
+                gross_profit=round(gross_profit, 2),
+                gross_margin_pct=gross_margin_pct,
                 costs=round(costs, 2),
                 profit=round(profit, 2),
+                cumulative_profit=round(cumulative_profit, 2),
                 cash_balance=round(cash, 2),
-                runway_months=round(_runway_months(revenue, costs, cash), 2),
+                cash_runway_months=cash_runway_months,
                 stability_score=round(score, 2),
-                state_label=_state_label(score),
+                state_label=health_status,
             )
         )
 

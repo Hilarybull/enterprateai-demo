@@ -35,7 +35,7 @@ export default function DashboardPage() {
   function openComingSoon(feature) {
     setComingSoonFeature(feature);
     if (email) {
-      apiRequest("/support/module-interest", "POST", { email, feature }).catch(() => {});
+      apiRequest("/support/module-interest", "POST", { email, feature }).catch(() => { });
     }
   }
   const [snapshot, setSnapshot] = useState({
@@ -112,16 +112,8 @@ export default function DashboardPage() {
         }
         actions={
           <div className="flex flex-wrap gap-2">
-            {IS_DEMO ? (
-              <Button variant="secondary" onClick={() => navigate("/validation")}>Run Idea Validation</Button>
-            ) : (
-              <Button variant="secondary" onClick={() => openComingSoon("Idea Validation")}>Run Idea Validation</Button>
-            )}
-            {IS_DEMO ? (
-              <Button onClick={() => navigate("/simulation")}>Run Simulation</Button>
-            ) : (
-              <Button onClick={() => openComingSoon("Simulation")}>Run Simulation</Button>
-            )}
+            <Button variant="secondary" onClick={() => navigate("/validation")}>Run Idea Validation</Button>
+            <Button onClick={() => navigate("/simulation")}>Run Simulation</Button>
           </div>
         }
       />
@@ -231,8 +223,8 @@ export default function DashboardPage() {
             <div className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Explore modules</div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               {[
-                { label: "Idea Validation", subtitle: "Evaluate your business concept.", href: "/validation", illustration: <ValidationIllustration />, comingSoon: !IS_DEMO },
-                { label: "Simulation", subtitle: "Model what-if scenarios.", href: "/simulation", illustration: <SimulationIllustration />, comingSoon: !IS_DEMO },
+                { label: "Idea Validation", subtitle: "Evaluate your business concept.", href: "/validation", illustration: <ValidationIllustration /> },
+                { label: "Simulation", subtitle: "Model what-if scenarios.", href: "/simulation", illustration: <SimulationIllustration /> },
                 { label: "Blueprints", subtitle: "Generate strategic documents.", href: "/blueprint", illustration: <BlueprintIllustration /> },
                 { label: "Catalogue", subtitle: "Manage products & customers.", href: "/catalogue", illustration: <CatalogueIllustration /> },
                 { label: "Financials", subtitle: "Invoicing & cash tracking.", href: "/financials", illustration: <FinancialIllustration /> },

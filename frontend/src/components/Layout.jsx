@@ -14,10 +14,8 @@ const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid", moduleKey: "dashboard" },
-  ...(IS_DEMO ? [
-    { to: "/validation", label: "Idea Validation", subtitle: "Validate your concept", icon: "bulb", moduleKey: "validation" },
-    { to: "/simulation", label: "Simulation", subtitle: "Run what-if scenarios", icon: "beaker", moduleKey: "simulation" },
-  ] : []),
+  { to: "/validation", label: "Idea Validation", subtitle: "Validate your concept", icon: "bulb", moduleKey: "validation", public: true },
+  { to: "/simulation", label: "Simulation", subtitle: "Run what-if scenarios", icon: "beaker", moduleKey: "simulation", public: true },
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
@@ -589,7 +587,7 @@ export default function Layout() {
 
   const isCurrentRoutePlanLocked = currentRouteModuleKey
     ? !planHasModuleAccess(subscription?.plan_key ?? "free_trial", currentRouteModuleKey, subscription?.status ?? "trial")
-      && !isPlatformModuleGranted(currentRouteModuleKey, platformGrants)
+    && !isPlatformModuleGranted(currentRouteModuleKey, platformGrants)
     : false;
 
   const isCurrentRouteLocked =

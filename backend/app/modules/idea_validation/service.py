@@ -12,6 +12,13 @@ from app.modules.idea_validation.calculations import CapacityInputs as CapacityC
 from app.modules.idea_validation.calculations import FinancialInputs, evaluate_viability_v3
 from app.modules.idea_validation.market_fit_service import build_fallback_market_fit, get_market_fit
 from app.modules.idea_validation.schemas import FinancialInputsPayload, IdeaValidationPayload
+from app.modules.idea_validation.idea_validation_engine import IdeaValidationInputs, ResearchSignals, evaluate_idea_v1
+from app.modules.idea_validation.market_research_service import (
+    run_research_data,
+    run_ai_narration,
+    extract_research_signals,
+    flatten_fields_from_payload
+)
 from app.shared.schemas.common import WorkspaceDocument
 from app.core.supabase import sb_insert, sb_select, sb_update
 
@@ -164,6 +171,69 @@ async def _safe_market_fit(params: dict[str, Any], *, timeout_sec: float = 1.5) 
         return build_fallback_market_fit(**params, reason="error")
 
 
+async def check_user_usage(user_id: str, limit: int = 5) -> bool:
+    """
+    Check if the user has reached their daily validation limit.
+    Returns True if allowed, False if limit reached.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    usage = await sb_select(
+        "idea_validation_usage",
+        filters=[("user_id", "eq", user_id), ("request_date", "eq", today)],
+        single=True
+    )
+    
+    if not usage:
+        # First request today
+        await sb_insert("idea_validation_usage", {
+            "user_id": user_id,
+            "request_date": today,
+            "request_count": 1
+        })
+        return True
+    
+    count = usage.get("request_count", 0)
+    if count >= limit:
+        return False
+    
+    # Increment count
+    await sb_update(
+        "idea_validation_usage",
+        payload={"request_count": count + 1, "last_request_at": datetime.now(timezone.utc).isoformat()},
+        filters=[("id", "eq", usage["id"])]
+    )
+    return True
+
+
+async def save_validation_result(
+    user_id: str,
+    workspace_id: str | None,
+    pathway: str,
+    eval_result: dict,
+    narrative_report: dict,
+    fields: dict
+) -> str:
+    """
+    Persist a snapshot of the validation result to the database.
+    """
+    business_name = fields.get("business_name") or fields.get("business_idea_name") or "Concept"
+    
+    row = {
+        "user_id": user_id,
+        "workspace_id": workspace_id,
+        "pathway": pathway,
+        "business_name": business_name,
+        "total_score": eval_result.get("viability_score", 0),
+        "confidence_score": eval_result.get("confidence_score", 0),
+        "scoring_details": eval_result.get("scoring_details", {}),
+        "metrics": eval_result.get("metrics", {}),
+        "report_narration": narrative_report.get("executive_summary") or str(narrative_report),
+    }
+    
+    res = await sb_insert("idea_validation_results", row)
+    return res[0]["id"] if res else ""
+
+
 async def evaluate(
     *,
     user_id: str,
@@ -171,72 +241,121 @@ async def evaluate(
     inputs: FinancialInputsPayload | None,
     idea_validation: IdeaValidationPayload | None = None,
 ) -> dict:
-    # Always prefer the user's current input payloads when provided.
-    if idea_validation is not None:
-        fin, payment_terms_days, sales_cycle_days, cap = _inputs_from_idea_validation(idea_validation)
-        mf_params = _market_fit_params_from_idea_validation(idea_validation)
-        market_fit = await _safe_market_fit(mf_params) if mf_params else None
-        mf_score = market_fit.get("market_fit_score") if isinstance(market_fit, dict) else None
-        result = evaluate_viability_v3(
-            fin,
-            payment_terms_days=payment_terms_days,
-            sales_cycle_days=sales_cycle_days,
-            capacity=cap,
-            market_fit_score=mf_score,
+    """
+    Main evaluation entry point.
+    Now follows the deterministic research-backed flow for idea validation.
+    """
+    # 1. Usage Limit Check
+    is_allowed = await check_user_usage(user_id)
+    if not is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Daily validation limit reached. Please upgrade or try again tomorrow."
         )
-        if isinstance(market_fit, dict):
-            result.setdefault("metrics", {})["market_fit"] = market_fit
-        result["pathway"] = idea_validation.pathway
-        return result
+    
+    # Always prefer the user's current input payloads when provided.
+    iv_payload = None
+    if idea_validation:
+        iv_payload = idea_validation
+    elif workspace_id:
+        ws = await get_workspace(user_id=user_id, workspace_id=workspace_id)
+        ws_iv = ws.data.get("idea_validation") or ws.data.get("draft_idea_validation")
+        if isinstance(ws_iv, dict):
+            try:
+                iv_payload = IdeaValidationPayload(**ws_iv)
+            except Exception:
+                iv_payload = None
 
+    if iv_payload:
+        # NEW FLOW: Research -> Scoring -> Narration
+        # Defensive conversion for Pydantic v1/v2 compatibility
+        payload_dict = iv_payload.model_dump() if hasattr(iv_payload, "model_dump") else iv_payload.dict()
+        fields = flatten_fields_from_payload(payload_dict)
+        
+        # A. Research Retrieval
+        research_res = await run_research_data(fields)
+        
+        # B. Signal Extraction
+        signals_dict = extract_research_signals(research_res["evidence"], research_res["sources"])
+        research_signals = ResearchSignals(**signals_dict)
+        
+        # C. Deterministic Scoring
+        # Map pydantic payload to engine inputs safely
+        engine_inputs = IdeaValidationInputs(
+            idea_name=iv_payload.context.business_name or fields.get("business_name") or "Concept",
+            idea_description=iv_payload.context.business_offering or iv_payload.context.description or fields.get("what_building") or "",
+            target_customer=iv_payload.problem.customer_segment if iv_payload.problem else "",
+            problem_description=iv_payload.problem.problem_type if iv_payload.problem else "",
+            pain_level=iv_payload.problem.severity if iv_payload.problem else "moderate",
+            alternatives=(iv_payload.problem.description or iv_payload.problem.alternatives) if iv_payload.problem else "",
+            differentiation=iv_payload.offer.service_type or "",
+            market_scope=iv_payload.context.location or "Global",
+            spoken_to_count=iv_payload.validation.spoken_count if iv_payload.validation else "0",
+            evidence_signals=iv_payload.validation.demand_proof if iv_payload.validation else [],
+            estimated_price=iv_payload.offer.price_per_unit,
+            currency=iv_payload.context.currency
+        )
+        
+        eval_result = evaluate_idea_v1(engine_inputs, research_signals)
+        
+        # D. Claude Narration
+        # We pass the deterministic scores to Claude so it justifies them instead of inventing them
+        narration_fields = {**fields, "deterministic_evaluation": eval_result}
+        narrative_report = await run_ai_narration(narration_fields, research_res["evidence"], research_res["shopping"])
+        
+        # E. Final Result Assembly
+        # Ensure we meet the ValidationResult schema requirements
+        final_result = {
+            "score": eval_result.get("score", 50),
+            "classification": eval_result.get("classification", "Fair"),
+            "reasons": eval_result.get("reasons", []),
+            "recommendations": eval_result.get("recommendations", []),
+            "dimension_scores": eval_result.get("dimension_scores", {}),
+            "metrics": {
+                **(eval_result.get("metrics") or {}),
+                "market_evidence": {
+                    "items": research_res["evidence"],
+                    "sources": research_res["sources"],
+                    "queries": research_res["search_queries"]
+                }
+            },
+            "pathway": iv_payload.pathway,
+            "validation_explanation": narrative_report.get("executive_summary") or "",
+            "dimension_explanations": narrative_report.get("dimension_explanations") or {},
+        }
+        
+        # F. Persist to History
+        try:
+            result_id = await save_validation_result(
+                user_id=user_id,
+                workspace_id=workspace_id,
+                pathway=iv_payload.pathway,
+                eval_result=eval_result,
+                narrative_report=narrative_report,
+                fields=fields
+            )
+            final_result["result_id"] = result_id
+        except Exception as e:
+            # Don't fail the whole request if history save fails, just log it
+            print(f"Warning: Failed to save validation history: {e}")
+        
+        return final_result
+
+    # Fallback to legacy behavior if no idea validation structure is found
     if inputs is not None:
         return evaluate_viability_v3(_inputs_from_payload(inputs))
 
     if workspace_id:
         ws = await get_workspace(user_id=user_id, workspace_id=workspace_id)
-
-        ws_iv = ws.data.get("idea_validation")
-        if isinstance(ws_iv, dict):
-            try:
-                iv_payload = IdeaValidationPayload(**ws_iv)
-            except Exception:
-                # Auto-clear invalid idea_validation and continue with assumptions/inputs if available.
-                await update_workspace(
-                    user_id=user_id,
-                    workspace_id=str(ws.id),
-                    data_patch={"idea_validation": None},
-                )
-                ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
-                ws_iv = None
-            else:
-                fin, payment_terms_days, sales_cycle_days, cap = _inputs_from_idea_validation(iv_payload)
-                mf_params = _market_fit_params_from_idea_validation(iv_payload)
-                market_fit = await _safe_market_fit(mf_params) if mf_params else None
-                mf_score = market_fit.get("market_fit_score") if isinstance(market_fit, dict) else None
-                result = evaluate_viability_v3(
-                    fin,
-                    payment_terms_days=payment_terms_days,
-                    sales_cycle_days=sales_cycle_days,
-                    capacity=cap,
-                    market_fit_score=mf_score,
-                )
-                if isinstance(market_fit, dict):
-                    result.setdefault("metrics", {})["market_fit"] = market_fit
-                result["pathway"] = iv_payload.pathway
-                return result
-
         ws_inputs = ws.data.get("assumptions", ws.data.get("inputs"))
-        if not isinstance(ws_inputs, dict):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace missing assumptions/inputs")
-        try:
-            inputs_payload = FinancialInputsPayload(**ws_inputs)
-        except Exception:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace inputs invalid")
-        return evaluate_viability_v3(_inputs_from_payload(inputs_payload))
-
-    if inputs is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide workspace_id or inputs")
-    return evaluate_viability_v3(_inputs_from_payload(inputs))
+        if isinstance(ws_inputs, dict):
+            try:
+                inputs_payload = FinancialInputsPayload(**ws_inputs)
+                return evaluate_viability_v3(_inputs_from_payload(inputs_payload))
+            except Exception:
+                pass
+    
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not determine evaluation path")
 
 
 async def market_fit(

@@ -61,6 +61,8 @@ class BusinessContext(BaseModel):
     uk_region: str = Field(default="GB-ENG", max_length=16)
     currency: str = Field(default="GBP", max_length=8)
     founder_hours_per_week: float = Field(default=40, ge=0, le=168)
+    business_offering: Optional[str] = Field(default=None, max_length=1000)
+    description: Optional[str] = Field(default=None, max_length=1000)
     stage: str = Field(default="idea", max_length=32)
 
 
@@ -68,8 +70,10 @@ class ProblemCustomer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     customer_segment: str = Field(default="", max_length=120)
     problem_type: str = Field(default="", max_length=160)
+    severity: str = Field(default="moderate", max_length=32)
     frequency: str = Field(default="", max_length=80)
-    alternatives: Optional[str] = Field(default=None, max_length=400)
+    description: Optional[str] = Field(default=None, max_length=1000)
+    alternatives: Optional[str] = Field(default=None, max_length=1000)
 
 
 class OfferDefinition(BaseModel):
@@ -80,6 +84,7 @@ class OfferDefinition(BaseModel):
 
 
 class DemandAssumptions(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     expected_units_per_month: float = Field(ge=0, default=0)
     expected_customers: int = Field(ge=0, default=0)
     sales_cycle_days: int = Field(ge=0, default=0)
@@ -103,6 +108,12 @@ class CashBuffer(BaseModel):
     upfront_costs: float = Field(ge=0, default=0)
 
 
+class ValidationAssumptions(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    spoken_count: str = Field(default="0")
+    demand_proof: list[str] = Field(default_factory=list)
+
+
 class ExistingBusinessSnapshot(BaseModel):
     existing_revenue_monthly: float = Field(ge=0, default=0)
     existing_costs_monthly: float = Field(ge=0, default=0)
@@ -117,6 +128,7 @@ class IdeaValidationPayload(BaseModel):
     offer: OfferDefinition
     demand: DemandAssumptions
     costs: CostInputs
+    validation: Optional[ValidationAssumptions] = None
     capacity: Optional[CapacityInputs] = None
     cash: Optional[CashBuffer] = None
     existing_business: Optional[ExistingBusinessSnapshot] = None

@@ -130,18 +130,18 @@ export function normalisePlanKey(key) {
 
 // Which top-level modules each plan can access
 export const PLAN_MODULE_ACCESS = {
-  // Explorer: 1 marketplace listing included, no simulation
-  explorer:              ["dashboard", "validation", "blueprint", "catalogue", "financials", "registration", "marketplace"],
+  // Explorer: all modules included for development/trial optimization
+  explorer: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
   // Starter (Insight): 2 scenario simulations included
-  starter_insight:       ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
-  decision_engine:       ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
-  growth_navigator:      ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
+  starter_insight: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
+  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
+  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
   strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
 };
 
 // Minimum plan needed to access a module (for upgrade prompts)
 export const MODULE_MIN_PLAN = {
-  simulation: "starter_insight",
+  simulation: "explorer",
 };
 
 const PLAN_ORDER = ["explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os"];

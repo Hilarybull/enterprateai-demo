@@ -888,10 +888,9 @@ def _normalize_report(report: dict[str, Any], *, fields: dict[str, Any], search_
     }
 
 
-async def run_market_research(fields: dict[str, Any]) -> dict[str, Any]:
+async def run_research_data(fields: dict[str, Any]) -> dict[str, Any]:
     """
-    Takes flattened form fields and returns the normalized market research report.
-    Never raises and always returns a dict.
+    Step 1: Just get the raw research data (SERP/Search results).
     """
     settings = get_settings()
     evidence: dict[str, list[str]] = {}
@@ -927,16 +926,25 @@ async def run_market_research(fields: dict[str, Any]) -> dict[str, Any]:
                 continue
             evidence[key] = _snippets(result)
             sources[key] = _sources(result)
-    else:
-        logger.info("SERP_API_KEY and SERPER_API_KEY not set - skipping web retrieval and falling back to model knowledge.")
 
+    return {
+        "evidence": evidence,
+        "sources": sources,
+        "shopping": shopping,
+        "search_queries": search_queries
+    }
+
+async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]], shopping: list[dict[str, Any]] = None) -> dict[str, Any]:
+    """
+    Step 2: Take research data and generate the AI narrative.
+    """
+    settings = get_settings()
     prompt = _build_synthesis_prompt(fields, evidence)
     report: dict[str, Any] = {}
 
     if settings.claude_api_key:
         report = await _call_claude(prompt)
-
-    if not report and settings.openai_api_key:
+    elif settings.openai_api_key:
         report = await _call_openai(prompt)
 
     if shopping and isinstance(report.get("competitor_pricing"), list):
@@ -952,14 +960,51 @@ async def run_market_research(fields: dict[str, Any]) -> dict[str, Any]:
                     "notes": item.get("source", ""),
                 }
             )
+    return report
 
+async def run_market_research(fields: dict[str, Any]) -> dict[str, Any]:
+    """
+    Main entry point — combines retrieval and narration (legacy compatibility).
+    """
+    res = await run_research_data(fields)
+    report = await run_ai_narration(fields, res["evidence"], res["shopping"])
+    
     return _normalize_report(
         report,
         fields=fields,
-        search_queries=search_queries,
-        evidence=evidence,
-        sources=sources,
+        search_queries=res["search_queries"],
+        evidence=res["evidence"],
+        sources=res["sources"],
     )
+
+def extract_research_signals(evidence: dict[str, list[str]], sources: dict[str, list[dict[str, str]]]) -> dict[str, Any]:
+    """
+    Extract deterministic signals from raw research evidence.
+    """
+    competitors = _sources(evidence.get("competitors") or {}) # Simplified
+    # Count unique domains in sources
+    all_sources = []
+    for s_list in sources.values():
+        all_sources.extend(s_list)
+    
+    unique_domains = len(set(s.get("source") for s in all_sources if s.get("source")))
+    
+    # Heuristic for demand: number of snippets found for problem/industry
+    demand_snippets = len(evidence.get("problem_validation") or []) + len(evidence.get("industry_trends") or [])
+    
+    demand_score = min(100, demand_snippets * 5)
+    trend_score = 60 # Default
+    if "growing" in str(evidence).lower() or "increasing" in str(evidence).lower():
+        trend_score = 85
+    elif "declining" in str(evidence).lower() or "decreasing" in str(evidence).lower():
+        trend_score = 40
+
+    return {
+        "demand_score": float(demand_score),
+        "competition_level": "high" if unique_domains > 10 else "medium" if unique_domains > 3 else "low",
+        "competitor_count": unique_domains,
+        "trend_score": float(trend_score)
+    }
 
 
 def flatten_fields_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1003,8 +1048,8 @@ def flatten_fields_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     offer = payload.get("offer") or {}
     demand = payload.get("demand") or {}
 
-    business_name = _clean_text(ctx.get("business_name"))
-    service_type = _clean_text(offer.get("service_type"))
+    business_name = _clean_text(ctx.get("business_name") or ctx.get("business_offering") or ctx.get("description"))
+    service_type = _clean_text(offer.get("service_type") or ctx.get("business_offering") or ctx.get("description"))
 
     return {
         "idea_type": "business_idea",

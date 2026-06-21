@@ -149,11 +149,15 @@ class ScenarioTimelineEntry(BaseModel):
     accruals: float = 0
     expenses: float
     cost_of_sales: float
+    gross_profit: float = 0
+    gross_margin_pct: float = 0
     costs: float
     profit: float
+    cumulative_profit: float = 0
     cash_balance: float
+    cash_runway_months: Optional[float] = None
     stability_score: float
-    state_label: Literal["stable", "tight", "risk"]
+    state_label: Literal["stable", "tight", "at_risk", "stress", "critical"]
 
 
 class ScenarioTimelineResponse(BaseModel):
