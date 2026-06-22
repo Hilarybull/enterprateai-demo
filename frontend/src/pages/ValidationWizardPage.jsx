@@ -147,6 +147,7 @@ function mergeStageDefaultsIntoBusinessForm(source) {
   next.context ||= {};
   next.problem ||= {};
   next.offer ||= {};
+  next.validation ||= {};
 
   next.context.business_name ||= defaults.business_name || "";
   next.context.business_type_category ||= defaults.business_type_category || "Technology";
@@ -2895,7 +2896,7 @@ export default function ValidationWizardPage() {
                             <FieldLabel info="Evidence of demand.">9. Do you have any proof people want this?</FieldLabel>
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                               {["Waiting list", "Survey responses", "Pre-orders", "Existing customers", "Social media interest", "None yet"].map((item) => {
-                                const isSelected = (form.validation.demand_proof || []).includes(item);
+                                const isSelected = (form.validation?.demand_proof || []).includes(item);
                                 return (
                                   <button
                                     key={item}
