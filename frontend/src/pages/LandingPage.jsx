@@ -56,16 +56,16 @@ const TESTIMONIALS = [
   },
   {
     quote: "We were debating a price increase for months. EnterprateAI modelled three scenarios in minutes and showed us we could raise by 18% and still retain 94% of customers. We raised prices within a week. Best decision we made this year.",
-    name: "Marcus O.",
-    role: "Director, Osei Consulting, Birmingham",
-    init: "M",
+    name: "Irene A.",
+    role: "Sombeauty London Ltd, UK",
+    init: "I",
     color: "bg-accent-500",
   },
   {
     quote: "As a solo founder I was making £40k decisions based on spreadsheets and gut feel. EnterprateAI gave me the confidence of a CFO without the cost of one. I now run every major decision through it before acting.",
-    name: "Rachel T.",
-    role: "Founder, Trent Creative Studio, Manchester",
-    init: "R",
+    name: "Gilbert C.",
+    role: "OIC3 Auto Services Ltd, UK",
+    init: "G",
     color: "bg-emerald-500",
   },
 ];
