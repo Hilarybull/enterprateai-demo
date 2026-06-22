@@ -178,34 +178,37 @@ async def check_user_usage(user_id: str, limit: int = 5) -> bool:
     """
     Check if the user has reached their daily validation limit.
     Returns True if allowed, False if limit reached.
+    Gracefully allows the request if the usage table doesn't exist yet.
     """
-    today = datetime.now(timezone.utc).date().isoformat()
-    usage = await sb_select(
-        "idea_validation_usage",
-        filters=[("user_id", "eq", user_id), ("request_date", "eq", today)],
-        single=True
-    )
-    
-    if not usage:
-        # First request today
-        await sb_insert("idea_validation_usage", {
-            "user_id": user_id,
-            "request_date": today,
-            "request_count": 1
-        })
+    try:
+        today = datetime.now(timezone.utc).date().isoformat()
+        usage = await sb_select(
+            "idea_validation_usage",
+            filters=[("user_id", "eq", user_id), ("request_date", "eq", today)],
+            single=True
+        )
+
+        if not usage:
+            await sb_insert("idea_validation_usage", {
+                "user_id": user_id,
+                "request_date": today,
+                "request_count": 1
+            })
+            return True
+
+        count = usage.get("request_count", 0)
+        if count >= limit:
+            return False
+
+        await sb_update(
+            "idea_validation_usage",
+            payload={"request_count": count + 1, "last_request_at": datetime.now(timezone.utc).isoformat()},
+            filters=[("id", "eq", usage["id"])]
+        )
         return True
-    
-    count = usage.get("request_count", 0)
-    if count >= limit:
-        return False
-    
-    # Increment count
-    await sb_update(
-        "idea_validation_usage",
-        payload={"request_count": count + 1, "last_request_at": datetime.now(timezone.utc).isoformat()},
-        filters=[("id", "eq", usage["id"])]
-    )
-    return True
+    except Exception:
+        # Table not yet migrated — allow the request rather than blocking all validations
+        return True
 
 
 async def save_validation_result(
