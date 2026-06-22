@@ -10,7 +10,7 @@ export default function InfoTip({ text, className = "" }) {
       >
         <span className="text-[9px] font-extrabold leading-none">i</span>
 
-        <span className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 w-64 -translate-x-1/2 rounded-xl bg-slate-900 px-3 py-2 text-left text-xs leading-snug text-white opacity-0 shadow-lg transition group-hover:opacity-100 group-focus-visible:opacity-100">
+        <span className="pointer-events-none absolute left-1/2 top-full z-[9999] mt-2 w-64 max-w-[85vw] -translate-x-1/2 rounded-xl bg-slate-900 px-3 py-2 text-left text-xs leading-snug text-white opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-all whitespace-normal break-words shadow-xl">
           <span className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-slate-900" />
           {text}
         </span>

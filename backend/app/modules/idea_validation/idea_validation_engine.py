@@ -18,6 +18,9 @@ class IdeaValidationInputs:
     evidence_signals: List[str] = field(default_factory=list)
     spoken_to_count: str = "0"
     estimated_price: Optional[float] = None
+    expected_units_per_month: float = 0.0
+    variable_cost_per_unit: float = 0.0
+    fixed_costs_monthly: float = 0.0
     currency: str = "GBP"
 
 
@@ -124,6 +127,29 @@ def evaluate_idea_v1(
         reasons.append("Limited direct evidence from potential customers at this stage.")
         recommendations.append("Speak to at least 10 more potential customers to gather direct feedback.")
 
+    # Calculate Deterministic Metrics
+    price = inputs.estimated_price or 0.0
+    units = inputs.expected_units_per_month or 0.0
+    var_cost = inputs.variable_cost_per_unit or 0.0
+    fix_cost = inputs.fixed_costs_monthly or 0.0
+    
+    revenue_monthly = price * units
+    costs_monthly = fix_cost + (var_cost * units)
+    net_monthly = revenue_monthly - costs_monthly
+    margin = (price - var_cost) / price if price > 0 else 0.0
+    
+    # Simple break-even calc (very basic for early stage)
+    # If starting cash is ignored for now, how many months to cover FIXED costs?
+    # This is more of a 'time to profitability' proxy if revenue > costs
+    be_months = 0
+    if revenue_monthly > costs_monthly:
+        be_months = 1 # Immediate if monthly positive
+    elif (price - var_cost) > 0:
+        # If unit is profitable but fixed costs aren't covered yet
+        be_months = fix_cost / (price - var_cost) if (price - var_cost) > 0 else 99
+    else:
+        be_months = 99 # Never
+        
     return {
         "score": round(total_score),
         "classification": classification,
@@ -133,6 +159,11 @@ def evaluate_idea_v1(
         "metrics": {
             "research_demand": research.demand_score if research else None,
             "competitor_count": research.competitor_count if research else 0,
-            "trend": research.trend_score if research else None
+            "trend": research.trend_score if research else None,
+            "revenue_monthly": round(revenue_monthly, 2),
+            "costs_monthly": round(costs_monthly, 2),
+            "net_monthly": round(net_monthly, 2),
+            "margin": round(margin, 4),
+            "break_even_months": round(be_months, 1)
         }
     }

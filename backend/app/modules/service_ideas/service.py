@@ -47,7 +47,11 @@ def evaluate_service_idea(payload: ServiceIdeaValidateRequest) -> dict:
             break_even_months = break_even_sales / payload.expected_sales_per_month
 
     # Capacity
-    capacity_sales_per_month = payload.available_delivery_hours_per_month / payload.hours_required_per_sale
+    if payload.hours_required_per_sale > 0:
+        capacity_sales_per_month = payload.available_delivery_hours_per_month / payload.hours_required_per_sale
+    else:
+        capacity_sales_per_month = 0
+
     capacity_utilisation = (
         payload.expected_sales_per_month / capacity_sales_per_month if capacity_sales_per_month > 0 else 0
     )

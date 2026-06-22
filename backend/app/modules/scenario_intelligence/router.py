@@ -126,8 +126,10 @@ async def scenario_runs_get(
     timeline_summary = {f"month_{t['month_index']}": t["state_label"] for t in timeline}
 
     scenario_snapshot = run.get("scenario_snapshot")
-    risk_signals = []
-    if isinstance(scenario_snapshot, dict):
+    # Use stored signals if they exist (calculated from timeline outcome)
+    risk_signals = run.get("risk_signals", [])
+    
+    if not risk_signals and isinstance(scenario_snapshot, dict):
         try:
             scenario_state = BusinessStateSnapshot(**scenario_snapshot)
             for sig in detect_risks(scenario_state):

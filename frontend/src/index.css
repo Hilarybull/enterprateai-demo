@@ -41,6 +41,19 @@
   .ea-input {
     @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none ring-brand-200 focus:ring focus:border-brand-300 transition;
     @apply dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-slate-600;
+    
+    /* Extreme bulletproof fix: hide placeholder if there is any content */
+    &:not(:placeholder-shown)::placeholder {
+      color: transparent !important;
+      opacity: 0 !important;
+      visibility: hidden !important;
+    }
+
+    &::placeholder {
+      @apply text-slate-400;
+      @apply dark:text-slate-500;
+      transition: opacity 0.15s ease;
+    }
   }
 
   select.ea-input {

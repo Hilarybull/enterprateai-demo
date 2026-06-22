@@ -66,8 +66,7 @@ function getLineGrandTotal(item) {
   const subtotal = item?.subtotal_amount != null
     ? Number(item.subtotal_amount || 0)
     : Number(item?.unit_price || 0) * quantity;
-  const costOfSales = Number(item?.unit_cost_of_sales || 0) * quantity;
-  return Number((subtotal + costOfSales).toFixed(2));
+  return Number(subtotal.toFixed(2));
 }
 
 function biScoreColor(score) {
@@ -172,8 +171,8 @@ export default function SimulationPage() {
   const [tab, setTab] = useState(() => {
     // Default to manual if user only has run_simulation but not adaptive features
     if (isMemberMode && !hasFeatureAccess("simulation", "scenario_intelligence", memberPermissionType, memberPermissions)
-        && !hasFeatureAccess("simulation", "risk_detection", memberPermissionType, memberPermissions)
-        && !hasFeatureAccess("simulation", "recommendations", memberPermissionType, memberPermissions)) {
+      && !hasFeatureAccess("simulation", "risk_detection", memberPermissionType, memberPermissions)
+      && !hasFeatureAccess("simulation", "recommendations", memberPermissionType, memberPermissions)) {
       return "manual";
     }
     return "adaptive";
@@ -625,6 +624,18 @@ export default function SimulationPage() {
         detail: risk?.detail || "Some payables are close to term expiry."
       };
     }
+    if (code === "HIGH_RECEIVABLE_EXPOSURE") {
+      return {
+        title: "Critical receivable exposure",
+        detail: risk?.detail || "Accruals exceed current cash balance. Liquidity depends entirely on collections."
+      };
+    }
+    if (code === "MODERATE_RECEIVABLE_EXPOSURE") {
+      return {
+        title: "Moderate receivable exposure",
+        detail: risk?.detail || "Accruals represent over 50% of your cash balance."
+      };
+    }
     return {
       title: risk?.title || "Risk signal",
       detail: risk?.detail || `${risk?.risk_type || "Risk"} detected.`
@@ -727,7 +738,7 @@ export default function SimulationPage() {
   }
 
   return (
-    <div>
+    <div className="max-w-full overflow-x-hidden pb-12">
       <PageHeader
         title="Simulation"
         description="Adaptive scenario intelligence with time-based impact modelling."
@@ -954,7 +965,7 @@ export default function SimulationPage() {
             >
               <div className="space-y-2">
                 {history.length ? (
-                history.slice(0, 2).map((h) => (
+                  history.slice(0, 2).map((h) => (
                     <div
                       key={h.scenario_run_id}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3"
@@ -982,7 +993,7 @@ export default function SimulationPage() {
             </SectionCard>
           </div>
 
-          
+
         </div>
       ) : null}
 
@@ -991,184 +1002,184 @@ export default function SimulationPage() {
           <SectionCard title="Manual scenario" subtitle="Build a custom simulation." className="self-start lg:sticky lg:top-4">
             <div className="space-y-4">
               <div className="space-y-3">
-              <div>
-                <FieldLabel info="Choose a scenario template to simulate.">Scenario template</FieldLabel>
-                <select className="ea-input" value={manualTemplateId} onChange={(e) => setManualTemplateId(e.target.value)}>
-                  <option value="do_nothing_projection">Baseline Continuity Projection</option>
-                  {templates
-                    .filter((t) => t.mode !== "adaptive")
-                    .map((t) => (
-                      <option key={t.scenario_template_id} value={t.scenario_template_id}>
-                        {t.title}
-                      </option>
-                    ))}
-                </select>
-              </div>
-              <div>
-                <FieldLabel info="Give the run a name for tracking.">Scenario name</FieldLabel>
-                <input
-                  className="ea-input"
-                  value={manualName}
-                  onChange={(e) => setManualName(e.target.value)}
-                  disabled={manualTemplateId === "do_nothing_projection"}
-                />
-              </div>
-              <div>
-                <FieldLabel info="How many months to project.">Timeline months</FieldLabel>
-                <NumberInput value={manualTimelineMonths} onChange={setManualTimelineMonths} placeholder="6" />
-              </div>
-
-              {manualTemplateId === "do_nothing_projection" ? (
-                <div className="text-sm text-slate-600">Uses current inputs. No additional inputs required.</div>
-              ) : manualTemplate?.required_inputs?.length ? (
-                <>
-                  {manualTemplate.required_inputs.map((key) => (
-                    <div key={key}>
-                      <FieldLabel info={fieldHelp(key)}>{prettyLabel(key, manualTemplate?.scenario_type)}</FieldLabel>
-                      <NumberInput
-                        value={String(manualParams[key] ?? "")}
-                        onChange={(v) => setManualParams((p) => ({ ...p, [key]: parseNumber(v, 0) }))}
-                        placeholder="0"
-                      />
-                      {key === "client_loss_pct" && largestClient ? (
-                        <div className="mt-1 text-xs text-slate-500">
-                          Largest client: {largestClient.name}
-                          {largestClient.share != null ? ` (~${largestClient.share}% of revenue)` : ""}.
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                  {manualTemplate.scenario_type === "price_change" ? (
-                    <MultiSelectChecklist
-                      label="Products / Services To Include"
-                      info={fieldHelp("selected_product_ids")}
-                      items={productScenarioOptions.map((item) => ({
-                        id: item.id,
-                        label: item.label,
-                        detail: item.revenueMonthly > 0 ? `Current monthly revenue contribution: ${formatCurrency(item.revenueMonthly, currency || "GBP")}` : "No tracked revenue yet for this item."
-                      }))}
-                      selectedIds={Array.isArray(manualParams?.selected_product_ids) ? manualParams.selected_product_ids : []}
-                      onToggle={(id) => toggleManualSelection("selected_product_ids", id)}
-                      emptyText="No products or services available yet."
-                    />
-                  ) : null}
-                  {manualTemplate.scenario_type === "payment_delay" ? (
-                    <MultiSelectChecklist
-                      label="Pending Items To Delay"
-                      info={fieldHelp("selected_pending_ids")}
-                      items={pendingScenarioLineOptions.map((item) => ({
-                        id: item.id,
-                        label: item.label,
-                        detail: `Pending amount: ${formatCurrency(item.amount, currency || "GBP")}`
-                      }))}
-                      selectedIds={Array.isArray(manualParams?.selected_pending_ids) ? manualParams.selected_pending_ids : []}
-                      onToggle={(id) => toggleManualSelection("selected_pending_ids", id)}
-                      emptyText="No pending receivables available right now."
-                    />
-                  ) : null}
-                </>
-              ) : (
-                <div className="text-sm text-slate-600">No additional inputs required.</div>
-              )}
-              </div>
-
-            <div>
-              <div className="flex justify-end">
-                <Button
-                  disabled={actionLoading || !canRun}
-                  onClick={() => {
-                    if (manualTemplateId === "do_nothing_projection") {
-                      runDoNothing(parseNumber(manualTimelineMonths, 6), true);
-                      return;
-                    }
-                    const selectedProductIds = Array.isArray(manualParams?.selected_product_ids) ? manualParams.selected_product_ids : [];
-                    const selectedPendingIds = Array.isArray(manualParams?.selected_pending_ids) ? manualParams.selected_pending_ids : [];
-                    const selectedProductRevenue = productScenarioOptions
-                      .filter((item) => !selectedProductIds.length || selectedProductIds.includes(item.id))
-                      .reduce((sum, item) => sum + Number(item.revenueMonthly || 0), 0);
-                    const selectedPendingReceivableAmount = pendingScenarioLineOptions
-                      .filter((item) => !selectedPendingIds.length || selectedPendingIds.includes(item.id))
-                      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
-                    runScenario(
-                      manualTemplateId,
-                      "manual",
-                      {
-                        ...manualParams,
-                        selected_product_revenue_monthly: Number(selectedProductRevenue.toFixed(2)),
-                        selected_pending_receivable_amount: Number(selectedPendingReceivableAmount.toFixed(2)),
-                        timeline_months: parseNumber(manualTimelineMonths, 6)
-                      },
-                      manualName
-                    );
-                  }}
-                >
-                  {actionLoading ? <Spinner size={16} /> : null}
-                  {manualTemplateId === "do_nothing_projection" ? "Run projection" : "Run manual scenario"}
-                </Button>
-              </div>
-              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
-                {scenarioOutputNote(manualTemplateId, largestClient)}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
-              <div className="rounded-xl border border-slate-200 bg-white">
-                <div className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 border-b border-slate-100">
-                  Current baseline
+                <div>
+                  <FieldLabel info="Choose a scenario template to simulate.">Scenario template</FieldLabel>
+                  <select className="ea-input" value={manualTemplateId} onChange={(e) => setManualTemplateId(e.target.value)}>
+                    <option value="do_nothing_projection">Baseline Continuity Projection</option>
+                    {templates
+                      .filter((t) => t.mode !== "adaptive")
+                      .map((t) => (
+                        <option key={t.scenario_template_id} value={t.scenario_template_id}>
+                          {t.title}
+                        </option>
+                      ))}
+                  </select>
                 </div>
-                <div className="p-3">
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="rounded-lg bg-slate-50 px-2 py-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly revenue</div>
-                      <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.revenue_monthly || 0, currency || "GBP")}</div>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-2 py-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly costs</div>
-                      <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.costs_monthly || 0, currency || "GBP")}</div>
-                    </div>
-                    <div className={`rounded-lg px-2 py-2 ${(stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0) >= 0 ? "bg-emerald-50" : "bg-rose-50"}`}>
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly net profit</div>
-                      <div className={`mt-1 font-semibold ${(stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                        {formatCurrency((stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0), currency || "GBP")}
+                <div>
+                  <FieldLabel info="Give the run a name for tracking.">Scenario name</FieldLabel>
+                  <input
+                    className="ea-input"
+                    value={manualName}
+                    onChange={(e) => setManualName(e.target.value)}
+                    disabled={manualTemplateId === "do_nothing_projection"}
+                  />
+                </div>
+                <div>
+                  <FieldLabel info="How many months to project.">Timeline months</FieldLabel>
+                  <NumberInput value={manualTimelineMonths} onChange={setManualTimelineMonths} placeholder="6" />
+                </div>
+
+                {manualTemplateId === "do_nothing_projection" ? (
+                  <div className="text-sm text-slate-600">Uses current inputs. No additional inputs required.</div>
+                ) : manualTemplate?.required_inputs?.length ? (
+                  <>
+                    {manualTemplate.required_inputs.map((key) => (
+                      <div key={key}>
+                        <FieldLabel info={fieldHelp(key)}>{prettyLabel(key, manualTemplate?.scenario_type)}</FieldLabel>
+                        <NumberInput
+                          value={String(manualParams[key] ?? "")}
+                          onChange={(v) => setManualParams((p) => ({ ...p, [key]: parseNumber(v, 0) }))}
+                          placeholder="0"
+                        />
+                        {key === "client_loss_pct" && largestClient ? (
+                          <div className="mt-1 text-xs text-slate-500">
+                            Largest client: {largestClient.name}
+                            {largestClient.share != null ? ` (~${largestClient.share}% of revenue)` : ""}.
+                          </div>
+                        ) : null}
                       </div>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-2 py-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Starting cash</div>
-                      <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.starting_cash || 0, currency || "GBP")}</div>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-2 py-2 col-span-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Largest client</div>
-                      <div className="mt-1 font-semibold text-slate-900 break-words">
-                        {largestClient ? `${largestClient.name} (${largestClient.share}% of revenue)` : "Not identified"}
+                    ))}
+                    {manualTemplate.scenario_type === "price_change" ? (
+                      <MultiSelectChecklist
+                        label="Products / Services To Include"
+                        info={fieldHelp("selected_product_ids")}
+                        items={productScenarioOptions.map((item) => ({
+                          id: item.id,
+                          label: item.label,
+                          detail: item.revenueMonthly > 0 ? `Current monthly revenue contribution: ${formatCurrency(item.revenueMonthly, currency || "GBP")}` : "No tracked revenue yet for this item."
+                        }))}
+                        selectedIds={Array.isArray(manualParams?.selected_product_ids) ? manualParams.selected_product_ids : []}
+                        onToggle={(id) => toggleManualSelection("selected_product_ids", id)}
+                        emptyText="No products or services available yet."
+                      />
+                    ) : null}
+                    {manualTemplate.scenario_type === "payment_delay" ? (
+                      <MultiSelectChecklist
+                        label="Pending Items To Delay"
+                        info={fieldHelp("selected_pending_ids")}
+                        items={pendingScenarioOptions.map((item) => ({
+                          id: item.id,
+                          label: item.label,
+                          detail: item.detail
+                        }))}
+                        selectedIds={Array.isArray(manualParams?.selected_pending_ids) ? manualParams.selected_pending_ids : []}
+                        onToggle={(id) => toggleManualSelection("selected_pending_ids", id)}
+                        emptyText="No pending receivables available right now."
+                      />
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="text-sm text-slate-600">No additional inputs required.</div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex justify-end">
+                  <Button
+                    disabled={actionLoading || !canRun}
+                    onClick={() => {
+                      if (manualTemplateId === "do_nothing_projection") {
+                        runDoNothing(parseNumber(manualTimelineMonths, 6), true);
+                        return;
+                      }
+                      const selectedProductIds = Array.isArray(manualParams?.selected_product_ids) ? manualParams.selected_product_ids : [];
+                      const selectedPendingIds = Array.isArray(manualParams?.selected_pending_ids) ? manualParams.selected_pending_ids : [];
+                      const selectedProductRevenue = productScenarioOptions
+                        .filter((item) => !selectedProductIds.length || selectedProductIds.includes(item.id))
+                        .reduce((sum, item) => sum + Number(item.revenueMonthly || 0), 0);
+                      const selectedPendingReceivableAmount = pendingScenarioOptions
+                        .filter((item) => !selectedPendingIds.length || selectedPendingIds.includes(item.id))
+                        .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+                      runScenario(
+                        manualTemplateId,
+                        "manual",
+                        {
+                          ...manualParams,
+                          selected_product_revenue_monthly: Number(selectedProductRevenue.toFixed(2)),
+                          selected_pending_receivable_amount: Number(selectedPendingReceivableAmount.toFixed(2)),
+                          timeline_months: parseNumber(manualTimelineMonths, 6)
+                        },
+                        manualName
+                      );
+                    }}
+                  >
+                    {actionLoading ? <Spinner size={16} /> : null}
+                    {manualTemplateId === "do_nothing_projection" ? "Run projection" : "Run manual scenario"}
+                  </Button>
+                </div>
+                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                  {scenarioOutputNote(manualTemplateId, largestClient)}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                <div className="rounded-xl border border-slate-200 bg-white">
+                  <div className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 border-b border-slate-100">
+                    Current baseline
+                  </div>
+                  <div className="p-3">
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="rounded-lg bg-slate-50 px-2 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly revenue</div>
+                        <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.revenue_monthly || 0, currency || "GBP")}</div>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly costs</div>
+                        <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.costs_monthly || 0, currency || "GBP")}</div>
+                      </div>
+                      <div className={`rounded-lg px-2 py-2 ${(stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0) >= 0 ? "bg-emerald-50" : "bg-rose-50"}`}>
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly net profit</div>
+                        <div className={`mt-1 font-semibold ${(stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                          {formatCurrency((stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0), currency || "GBP")}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">Starting cash</div>
+                        <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.starting_cash || 0, currency || "GBP")}</div>
+                      </div>
+                      <div className="rounded-lg bg-slate-50 px-2 py-2 col-span-2">
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">Largest client</div>
+                        <div className="mt-1 font-semibold text-slate-900 break-words">
+                          {largestClient ? `${largestClient.name} (${largestClient.share}% of revenue)` : "Not identified"}
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              <details className="rounded-xl border border-slate-200 bg-white">
-                <summary className="cursor-pointer select-none px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-50 rounded-xl list-none flex items-center justify-between">
-                  <span>How this run works</span>
-                  <svg viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5 text-slate-400"><path fillRule="evenodd" d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z" clipRule="evenodd"/></svg>
-                </summary>
-                <div className="border-t border-slate-100 p-3 space-y-2 text-xs leading-5 text-slate-600">
-                  {buildScenarioExecutionBreakdown(
-                    activeRun,
-                    timeline,
-                    currency || "GBP",
-                    manualTemplateId,
-                    templates,
-                    largestClient,
-                    manualParams,
-                    parseNumber(manualTimelineMonths, 6)
-                  ).map((line, index) => (
-                    <div key={`${manualTemplateId || activeRun?.scenario_template_id || "scenario"}-${index}`} className="rounded-lg bg-slate-50 px-2 py-2">
-                      {line}
-                    </div>
-                  ))}
-                </div>
-              </details>
-            </div>
+                <details className="rounded-xl border border-slate-200 bg-white">
+                  <summary className="cursor-pointer select-none px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-50 rounded-xl list-none flex items-center justify-between">
+                    <span>How this run works</span>
+                    <svg viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5 text-slate-400"><path fillRule="evenodd" d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z" clipRule="evenodd" /></svg>
+                  </summary>
+                  <div className="border-t border-slate-100 p-3 space-y-2 text-xs leading-5 text-slate-600">
+                    {buildScenarioExecutionBreakdown(
+                      activeRun,
+                      timeline,
+                      currency || "GBP",
+                      manualTemplateId,
+                      templates,
+                      largestClient,
+                      manualParams,
+                      parseNumber(manualTimelineMonths, 6)
+                    ).map((line, index) => (
+                      <div key={`${manualTemplateId || activeRun?.scenario_template_id || "scenario"}-${index}`} className="rounded-lg bg-slate-50 px-2 py-2">
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </div>
 
             </div>
           </SectionCard>
@@ -1210,7 +1221,7 @@ export default function SimulationPage() {
           onCancel={confirmDialog.onCancel}
         />
       ) : null}
-</div>
+    </div>
   );
 }
 
@@ -1483,10 +1494,10 @@ function buildScenarioExecutionBreakdown(
     const contractorCost = Number(params?.contractor_monthly_cost ?? 0);
     const totalCost = contractorCount * contractorCost;
     return [
-      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
+      `Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
       `Contractors added: ${contractorCount} x ${formatCurrency(contractorCost, currency)} = ${formatCurrency(totalCost, currency)} per month.`,
-      `Month 1 expenses: ${formatCurrency(firstRow?.expenses ?? baselineExpenses + totalCost, currency)}.`,
-      "Revenue stays on the current baseline — this run shows the direct cost of adding contractor capacity."
+      `Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales + totalCost, currency)}.`,
+      "Revenue stays on the current baseline — this run shows the direct delivery cost of adding contractor capacity."
     ];
   }
 
@@ -1613,58 +1624,59 @@ function buildScenarioMeaning(activeRun, timeline, currency) {
 
   const revenueText =
     revenueDelta > 0
-      ? `monthly run-rate revenue is up by ${formatCurrency(Math.abs(revenueDelta), cur)}`
+      ? `your estimated monthly sales grow by ${formatCurrency(Math.abs(revenueDelta), cur)}`
       : revenueDelta < 0
-        ? `monthly run-rate revenue is down by ${formatCurrency(Math.abs(revenueDelta), cur)}`
-        : "monthly run-rate revenue is broadly unchanged";
+        ? `your estimated monthly sales fall by ${formatCurrency(Math.abs(revenueDelta), cur)}`
+        : "your monthly sales volume stays about the same";
 
   const profitText =
     profitDelta > 0
-      ? `net profit improves by ${formatCurrency(Math.abs(profitDelta), cur)}`
+      ? `actual profit on paper improves by ${formatCurrency(Math.abs(profitDelta), cur)}`
       : profitDelta < 0
-        ? `net profit falls by ${formatCurrency(Math.abs(profitDelta), cur)}`
-        : "net profit is broadly unchanged";
+        ? `actual profit on paper falls by ${formatCurrency(Math.abs(profitDelta), cur)}`
+        : "profit on paper remains steady";
 
   const costsText =
     costsDelta > 0
-      ? `total costs rise by ${formatCurrency(Math.abs(costsDelta), cur)}`
+      ? `total bills and delivery costs rise by ${formatCurrency(Math.abs(costsDelta), cur)}`
       : costsDelta < 0
-        ? `total costs fall by ${formatCurrency(Math.abs(costsDelta), cur)}`
-        : "total costs stay broadly flat";
+        ? `total bills and delivery costs fall by ${formatCurrency(Math.abs(costsDelta), cur)}`
+        : "your overhead and delivery costs stay flat";
 
-  let scenarioRule = "The scenario changes your baseline monthly figures and then projects them across the timeline.";
+  let scenarioRule = "This simulation takes your current financial pace and projects it forward based on the changes you selected.";
   if (scenarioType === "client_loss") {
-    scenarioRule = "This run reduces revenue based on the client-loss percentage over the first months of the timeline. Cost of sales falls in the same proportion as revenue during that ramp.";
+    scenarioRule = "This run shows what happens when a customer stops buying. Revenue and the costs to serve them both drop gradually over the first few months.";
   } else if (scenarioType === "price_change") {
-    scenarioRule = "This run increases revenue from the selected effective month onward. Costs stay on the current baseline unless the scenario says otherwise.";
+    scenarioRule = "This run shows the effect of changing your prices. It assumes your delivery costs stay the same while your sales income increases.";
   } else if (scenarioType === "cost_increase") {
-    scenarioRule = "This run pushes expenses and cost of sales upward, so the table shows how higher costs affect net profit and cash over time.";
+    scenarioRule = "This run shows what happens if your suppliers charge more or your bills go up, eating into your profit margin.";
   } else if (scenarioType === "revenue_drop") {
-    scenarioRule = "This run reduces revenue and lets cost of sales fall with it, so you can see how a slower sales pace affects the business month by month.";
+    scenarioRule = "This run shows a general slowdown in sales, allowing you to see how much of a cushion you have before profits turn into losses.";
   } else if (scenarioType === "payment_delay") {
-    scenarioRule = "This run keeps the revenue assumption but delays when the cash is collected, so net profit and projected cash balance can move differently.";
+    scenarioRule = "This is a timing test. It keeps your sales steady but assumes customers take longer to pay, showing you how much cash 'gets stuck' in unpaid invoices.";
   } else if (scenarioType === "hire_staff") {
-    scenarioRule = "This run adds staff cost into monthly expenses, so the output shows whether the current revenue base can absorb the extra payroll.";
+    scenarioRule = "This run adds new salary costs to your monthly bills so you can see if your current sales can safely cover the extra payroll.";
   } else if (scenarioType === "contractor_addition") {
-    scenarioRule = "This run adds contractor cost into monthly expenses from day one, so the output shows whether the capacity gain is financially justified.";
+    scenarioRule = "This run adds immediate contractor costs. Since contractors can be stopped quickly, it's a good way to see if extra help pays for itself.";
   } else if (scenarioType === "service_launch") {
-    scenarioRule = "This run lifts revenue and costs together over a short ramp, so you can compare whether the added income outweighs the added delivery cost.";
+    scenarioRule = "This run models a new product or service. It balances the new income against the higher delivery costs and overhead needed to run it.";
   } else if (scenarioType === "reduce_fixed_cost") {
-    scenarioRule = "This run reduces overhead and fixed costs, so the table shows how the saving flows through to margin and cash over time.";
+    scenarioRule = "This run models the impact of cutting overhead. It shows how saving on bills directly improves your profit margin and bank balance over time.";
   } else if (scenarioType === "delay_hiring") {
-    scenarioRule = "This run removes the cost of a planned hire from monthly expenses, so the output shows the direct effect on net profit and cash runway.";
+    scenarioRule = "This run shows the benefit of NOT hiring someone yet. By removing that planned cost, you can see how much more cash you keep in the business.";
   }
 
   const cashLine = lastRow
     ? scenarioCash > 0
-      ? `Projected cash balance ends at ${formatCurrency(scenarioCash, cur)} because the model adds cash only when revenue is collected and subtracts cash when costs are actually paid.`
-      : "Projected cash balance stays tight through the projection."
-    : "Projected cash balance is based on when revenue is collected and costs are paid, not just on net profit.";
+      ? `Your bank balance is projected to end at ${formatCurrency(scenarioCash, cur)}. This is different from profit because it depends on exactly when money arrives or leaves your account.`
+      : "Your bank balance remains very tight in this scenario, suggesting you may need to find extra cash to cover bills."
+    : "The cash balance is the 'real' money you have left after paying all bills, once customer payments finally arrive.";
+  
   const firstMonthLine = firstRow
-    ? `In the first projected month, revenue is ${formatCurrency(Number(firstRow.revenue || 0), cur)}, total costs are ${formatCurrency(Number(firstRow.costs || 0), cur)}, and net profit is ${formatCurrency(Number(firstRow.profit || 0), cur)}.`
+    ? `Starting next month, you'd be looking at ${formatCurrency(Number(firstRow.revenue || 0), cur)} in sales and ${formatCurrency(Number(firstRow.costs || 0), cur)} in total bills.`
     : "";
 
-  return `${scenarioRule} Compared with your baseline, ${revenueText}, ${costsText}, and ${profitText}. ${firstMonthLine} ${cashLine}`;
+  return `${scenarioRule} Compared to your current state, ${revenueText}, ${costsText}, and ${profitText}. ${firstMonthLine} ${cashLine}`;
 }
 
 function ScenarioOutput({
@@ -1783,6 +1795,24 @@ function ScenarioOutput({
         detail: value != null ? `${value} payable item(s) are close to term expiry.` : "Some payables are nearing their due date."
       };
     }
+    if (code === "HIGH_RECEIVABLE_EXPOSURE") {
+      return {
+        title: "Critical receivable exposure",
+        detail: "Outstanding accruals exceed cash balance. High dependency on collections."
+      };
+    }
+    if (code === "MODERATE_RECEIVABLE_EXPOSURE") {
+      return {
+        title: "Significant receivable exposure",
+        detail: "Outstanding accruals exceed 50% of cash balance. Monitoring suggested."
+      };
+    }
+    if (code === "CRITICAL_COLLECTION_RISK") {
+      return {
+        title: "Critical collection risk",
+        detail: "Paper profits are accumulating but cash conversion is failing. Check billing terms."
+      };
+    }
     return {
       title: risk?.title || "Risk signal",
       detail: risk?.detail || `${risk?.risk_type || "Risk"} detected.`
@@ -1804,14 +1834,13 @@ function ScenarioOutput({
         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Scenario</div>
         <div className="mt-1 text-lg font-semibold text-slate-900">{activeRun.scenario_name}</div>
         {activeRun.state_result ? (
-          <div className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${
-            activeRun.state_result === "improved" ? "bg-emerald-100 text-emerald-700" :
+          <div className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${activeRun.state_result === "improved" ? "bg-emerald-100 text-emerald-700" :
             activeRun.state_result === "worse" ? "bg-rose-100 text-rose-700" :
-            "bg-slate-100 text-slate-600"
-          }`}>
+              "bg-slate-100 text-slate-600"
+            }`}>
             {activeRun.state_result === "improved" ? "Improves stability" :
-             activeRun.state_result === "worse" ? "Reduces stability" :
-             "Neutral impact"}
+              activeRun.state_result === "worse" ? "Reduces stability" :
+                "Neutral impact"}
           </div>
         ) : null}
       </div>
@@ -1908,21 +1937,129 @@ function ScenarioOutput({
 
       {timeline?.length ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Risk Ratios (Final Month)</div>
+            <InfoTip text="Measures the gap between paper profit and actual cash. Receivable Exposure > 1 or Cash Conversion < 0.3 indicates high risk." />
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {(() => {
+              const last = timeline[timeline.length - 1];
+              return (
+                <>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Cash Conversion</div>
+                    <div className="mt-1 flex items-baseline gap-2">
+                      <span className={`text-lg font-bold ${(last?.cash_conversion_ratio ?? 1) < 0.3 ? "text-rose-600" : "text-slate-900"}`}>
+                        {(last?.cash_conversion_ratio ?? 0).toFixed(2)}
+                      </span>
+                      <span className="text-xs text-slate-500">Ratio</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Receivable Exposure</div>
+                    <div className="mt-1 flex items-baseline gap-2">
+                      <span className={`text-lg font-bold ${(last?.receivable_exposure_ratio ?? 0) >= 1.0 ? "text-rose-600" : (last?.receivable_exposure_ratio ?? 0) >= 0.5 ? "text-amber-600" : "text-slate-900"}`}>
+                        {(last?.receivable_exposure_ratio ?? 0).toFixed(2)}
+                      </span>
+                      <span className="text-xs text-slate-500">Ratio</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Delayed Revenue</div>
+                    <div className="mt-1 flex items-baseline gap-2">
+                      <span className="text-lg font-bold text-slate-900">
+                        {((last?.delayed_revenue_pct ?? 0) * 100).toFixed(1)}%
+                      </span>
+                      <span className="text-xs text-slate-500">of Profit</span>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      ) : null}
+
+      {timeline?.length ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Timeline</div>
           {isTrimmed ? <div className="mt-1 text-xs text-slate-500">Showing first {maxTimelineRows} months.</div> : null}
-          <div className="mt-3 overflow-auto">
+          <div className="mt-3 overflow-x-auto max-w-full border rounded-xl border-slate-100">
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Month</th>
-                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Revenue</th>
-                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Accruals</th>
-                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Expenses</th>
-                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Cost of sales</th>
-                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Total costs</th>
-                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Net Profit</th>
-                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Cash balance</th>
-                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Status</th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">
+                    <div className="flex items-center gap-1.5">
+                      <span>Month</span>
+                      <InfoTip text="The specific month being projected." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Revenue</span>
+                      <InfoTip text="Expected earnings from sales made this month (on paper)." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Accruals</span>
+                      <InfoTip text="Outstanding payments owed to you by customers." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Expenses</span>
+                      <InfoTip text="Fixed monthly costs like utilities, rent, and software." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Cost of sales</span>
+                      <InfoTip text="Direct costs to deliver your products or services." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Total costs</span>
+                      <InfoTip text="Sum of all your monthly bills (Expenses + Cost of sales)." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Gross Profit</span>
+                      <InfoTip text="Sales income minus the direct cost to deliver it." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Gross Margin %</span>
+                      <InfoTip text="Percentage of sales income kept after direct costs." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Net Profit</span>
+                      <InfoTip text="Final earnings left this month after paying ALL bills." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Cum. Profit</span>
+                      <InfoTip text="The total running total of profit earned since month 1." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Cash balance</span>
+                      <InfoTip text="Actual money in your bank account once payments arrive." />
+                    </div>
+                  </th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">
+                    <div className="flex items-center gap-1.5">
+                      <span>Status</span>
+                      <InfoTip text="The financial health of the business in this month." />
+                    </div>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1938,17 +2075,19 @@ function ScenarioOutput({
                       <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.expenses, currency)}</td>
                       <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.cost_of_sales, currency)}</td>
                       <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.costs, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.gross_profit, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{row.gross_margin_pct != null ? `${row.gross_margin_pct}%` : "—"}</td>
                       <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${profitPositive ? "text-emerald-600" : profitNegative ? "text-rose-600" : "text-slate-700"}`}>
                         {formatCurrency(profit, currency)}
                       </td>
+                      <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row.cumulative_profit, currency)}</td>
                       <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.cash_balance, currency)}</td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 text-left text-slate-500 whitespace-nowrap">
                         {row.state_label ? (
-                          <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                            String(row.state_label).toLowerCase().includes("stable") ? "bg-emerald-50 text-emerald-700" :
+                          <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${String(row.state_label).toLowerCase().includes("stable") ? "bg-emerald-50 text-emerald-700" :
                             String(row.state_label).toLowerCase().includes("risk") || String(row.state_label).toLowerCase().includes("stress") ? "bg-rose-50 text-rose-700" :
-                            "bg-slate-100 text-slate-600"
-                          }`}>
+                              "bg-slate-100 text-slate-600"
+                            }`}>
                             {row.state_label}
                           </span>
                         ) : "—"}

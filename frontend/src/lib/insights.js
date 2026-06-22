@@ -56,8 +56,10 @@ export function buildActionPlan({ validation, ideaValidation, maxItems = 10 }) {
   const variableCost = typeof ideaValidation?.costs?.variable_cost_per_unit === "number" ? ideaValidation.costs.variable_cost_per_unit : null;
   const units = typeof ideaValidation?.demand?.expected_units_per_month === "number" ? ideaValidation.demand.expected_units_per_month : null;
 
-  if (!revenue || revenue <= 0) {
-    actions.push("Fill in price per unit and expected units/month so the baseline model can compute revenue and margin.");
+  const hasFinancialData = price !== null && units !== null && price > 0;
+
+  if (!hasFinancialData) {
+    actions.push("Define your proposed price and expected monthly sales in the wizard to see deterministic revenue and margin models.");
   }
   if (price !== null && variableCost !== null && price <= variableCost) {
     actions.push("Your price is at/below variable cost — raise price or cut variable costs so each unit is profitable.");

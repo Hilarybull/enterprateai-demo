@@ -264,8 +264,9 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     return !isPendingWithinTerms(item, vendorTerms);
   });
 
-  const totalInvoiceRevenue = paidInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
-  const totalInvoiceCostOfSales = paidInvoices.reduce((sum, item) => {
+  const allRevenueInvoices = [...paidInvoices, ...pendingInvoices];
+  const totalInvoiceRevenue = allRevenueInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
+  const totalInvoiceCostOfSales = allRevenueInvoices.reduce((sum, item) => {
     if (item.cost_of_sales != null) return sum + toNumber(item.cost_of_sales);
     const productIds = getRecordProductIds(item);
     if (!productIds.length) {
@@ -275,7 +276,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     const perUnitCost = productIds.reduce((running, productId) => running + getProductCostOfSales(productMap.get(productId)), 0);
     return sum + perUnitCost * Math.max(1, toNumber(item.quantity || 1));
   }, 0);
-  const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
+  const allExpenses = [...paidExpenses, ...pendingExpenses];
+  const totalOperationalExpenses = allExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
 
   // Count distinct calendar months that actually have paid invoices/expenses.
   // This prevents the "marking an invoice paid reduces revenue" bug that occurs when using
@@ -292,8 +294,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     return Math.max(1, months.size);
   }
 
-  const invoiceMonths = distinctMonthCount(paidInvoices);
-  const expenseMonths = distinctMonthCount(paidExpenses);
+  const invoiceMonths = distinctMonthCount(allRevenueInvoices);
+  const expenseMonths = distinctMonthCount(allExpenses);
   const invoiceRevenue = totalInvoiceRevenue > 0 ? Number((totalInvoiceRevenue / invoiceMonths).toFixed(2)) : 0;
   const invoiceCostOfSales = totalInvoiceCostOfSales > 0 ? Number((totalInvoiceCostOfSales / invoiceMonths).toFixed(2)) : 0;
   const operationalExpenses = totalOperationalExpenses > 0 ? Number((totalOperationalExpenses / expenseMonths).toFixed(2)) : 0;
@@ -310,20 +312,20 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     );
   });
   salesContracts.forEach((item) => {
-      const contractTotal = toNumber(item.price);
-      // Deduct all linked invoices (paid or pending) to avoid double-counting
-      const linkedTotal = invoices
-        .filter((inv) => inv.contract_id === item.id)
-        .reduce((sum, inv) => sum + toNumber(inv.total_amount), 0);
-      const uninvoiced = Math.max(0, contractTotal - linkedTotal);
-      if (uninvoiced > 0) {
-        addToSchedule(
-          pendingReceivablesSchedule,
-          effectiveDueDate(item, item.payment_terms || 30),
-          uninvoiced
-        );
-      }
-    });
+    const contractTotal = toNumber(item.price);
+    // Deduct all linked invoices (paid or pending) to avoid double-counting
+    const linkedTotal = invoices
+      .filter((inv) => inv.contract_id === item.id)
+      .reduce((sum, inv) => sum + toNumber(inv.total_amount), 0);
+    const uninvoiced = Math.max(0, contractTotal - linkedTotal);
+    if (uninvoiced > 0) {
+      addToSchedule(
+        pendingReceivablesSchedule,
+        effectiveDueDate(item, item.payment_terms || 30),
+        uninvoiced
+      );
+    }
+  });
   pendingExpenses.forEach((item) => {
     addToSchedule(
       pendingPayablesSchedule,
@@ -332,19 +334,19 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     );
   });
   purchaseContracts.forEach((item) => {
-      const contractTotal = toNumber(item.price);
-      const linkedTotal = invoices
-        .filter((inv) => inv.contract_id === item.id)
-        .reduce((sum, inv) => sum + toNumber(inv.total_amount), 0);
-      const uninvoiced = Math.max(0, contractTotal - linkedTotal);
-      if (uninvoiced > 0) {
-        addToSchedule(
-          pendingPayablesSchedule,
-          effectiveDueDate(item, item.payment_terms || 30),
-          uninvoiced
-        );
-      }
-    });
+    const contractTotal = toNumber(item.price);
+    const linkedTotal = invoices
+      .filter((inv) => inv.contract_id === item.id)
+      .reduce((sum, inv) => sum + toNumber(inv.total_amount), 0);
+    const uninvoiced = Math.max(0, contractTotal - linkedTotal);
+    if (uninvoiced > 0) {
+      addToSchedule(
+        pendingPayablesSchedule,
+        effectiveDueDate(item, item.payment_terms || 30),
+        uninvoiced
+      );
+    }
+  });
 
   const recognisedRevenue = invoiceRevenue;
   const recognisedCostOfSales = invoiceCostOfSales;
@@ -385,22 +387,22 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   const largestClient =
     largestCustomerEntry && topClientSharePct != null
       ? {
-          id: largestCustomerEntry[0],
-          name: customerNameMap.get(largestCustomerEntry[0]) || "Largest client",
-          share: Number(topClientSharePct.toFixed(2)),
-        }
+        id: largestCustomerEntry[0],
+        name: customerNameMap.get(largestCustomerEntry[0]) || "Largest client",
+        share: Number(topClientSharePct.toFixed(2)),
+      }
       : null;
 
   const paymentTermsDays = customers.length
     ? Math.round(customers.reduce((sum, item) => sum + parsePaymentTerms(item.payment_terms), 0) / customers.length)
     : null;
   const uninvoicedContractBalance = salesContracts.reduce((sum, item) => {
-      const contractTotal = toNumber(item.price);
-      const linkedTotal = invoices
-        .filter((inv) => inv.contract_id === item.id)
-        .reduce((s, inv) => s + toNumber(inv.total_amount), 0);
-      return sum + Math.max(0, contractTotal - linkedTotal);
-    }, 0);
+    const contractTotal = toNumber(item.price);
+    const linkedTotal = invoices
+      .filter((inv) => inv.contract_id === item.id)
+      .reduce((s, inv) => s + toNumber(inv.total_amount), 0);
+    return sum + Math.max(0, contractTotal - linkedTotal);
+  }, 0);
   const openingAccrualBalance = Number(
     (pendingInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0) + uninvoicedContractBalance).toFixed(2)
   );
@@ -479,6 +481,28 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       detail: `${pendingExpenseApproachingDue.length} payable item${pendingExpenseApproachingDue.length > 1 ? "s are" : " is"} close to term expiry.`,
     });
   }
+  const accrualsTotal = Number(openingAccrualBalance.toFixed(2));
+  const startingCashVal = Number(startingCash.toFixed(2));
+
+  if (startingCashVal > 0 && accrualsTotal > 0) {
+    const exposureRatio = accrualsTotal / startingCashVal;
+    if (exposureRatio >= 1.0) {
+      pushRisk({
+        reason_code: "HIGH_RECEIVABLE_EXPOSURE",
+        severity: "high",
+        title: "Critical receivable exposure",
+        detail: `Outstanding accruals (${formatCurrency(accrualsTotal, currency)}) exceed your current cash balance.`,
+      });
+    } else if (exposureRatio >= 0.5) {
+      pushRisk({
+        reason_code: "MODERATE_RECEIVABLE_EXPOSURE",
+        severity: "medium",
+        title: "Significant receivable exposure",
+        detail: `Outstanding accruals represent over 50% of your current cash balance.`,
+      });
+    }
+  }
+
   if (!paidInvoices.length && !salesContracts.length && validationRevenueContribution <= 0) {
     pushRisk({
       reason_code: "NO_ACTIVE_REVENUE",

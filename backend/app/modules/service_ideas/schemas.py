@@ -26,7 +26,7 @@ class ServiceIdeaValidateRequest(BaseModel):
     target_customer_type: TargetCustomerType
     target_market_scope: TargetMarketScope
 
-    price_per_sale: float = Field(gt=0)
+    price_per_sale: float = Field(ge=0)
     expected_sales_per_month: float = Field(ge=0)
 
     direct_labour_cost_per_sale: float = Field(ge=0)
@@ -41,8 +41,8 @@ class ServiceIdeaValidateRequest(BaseModel):
     monthly_rent_cost: float = Field(ge=0, default=0)
     monthly_other_fixed_cost: float = Field(ge=0, default=0)
 
-    hours_required_per_sale: float = Field(gt=0)
-    available_delivery_hours_per_month: float = Field(gt=0)
+    hours_required_per_sale: float = Field(ge=0, default=0)
+    available_delivery_hours_per_month: float = Field(ge=0, default=0)
 
     demand_evidence_type: DemandEvidenceType
     number_of_interested_leads: int = Field(ge=0, default=0)
@@ -50,7 +50,7 @@ class ServiceIdeaValidateRequest(BaseModel):
 
     competitor_price_low: float = Field(ge=0, default=0)
     competitor_price_high: float = Field(ge=0, default=0)
-    differentiation_level: DifferentiationLevel
+    differentiation_level: DifferentiationLevel = "medium"
     country: Optional[str] = None
 
     @model_validator(mode="after")

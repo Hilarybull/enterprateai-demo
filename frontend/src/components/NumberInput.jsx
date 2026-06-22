@@ -30,10 +30,11 @@ export function parseIntSafe(value, fallback = 0) {
   return Math.trunc(n);
 }
 
-export default function NumberInput({ value, onChange, className = "", ...props }) {
+export default function NumberInput({ value, onChange, className = "", placeholder, ...props }) {
   return (
     <input
       {...props}
+      placeholder={value ? null : placeholder}
       value={value ?? ""}
       onChange={(e) => onChange(sanitizeNumberString(e.target.value))}
       inputMode="decimal"

@@ -29,6 +29,52 @@ function riskCopy(classification) {
   return { title: "High Failure Risk", subtitle: "Tighten assumptions and reduce costs before investing further.", tone: "danger" };
 }
 
+function CircularScore({ score, size = 120, strokeWidth = 10, tone = "success" }) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const offset = circumference - (score / 100) * circumference;
+
+  const colors = {
+    success: { stroke: "#10b981", bg: "#ecfdf5" },
+    warn: { stroke: "#f59e0b", bg: "#fffbeb" },
+    danger: { stroke: "#ef4444", bg: "#fef2f2" },
+    slate: { stroke: "#64748b", bg: "#f8fafc" }
+  };
+
+  const config = colors[tone] || colors.success;
+
+  return (
+    <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
+      <svg className="transform -rotate-90" width={size} height={size}>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={config.bg}
+          strokeWidth={strokeWidth}
+          fill="transparent"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={config.stroke}
+          strokeWidth={strokeWidth}
+          fill="transparent"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          className="transition-all duration-1000 ease-out"
+        />
+      </svg>
+      <div className="absolute flex flex-col items-center">
+        <span className="text-2xl font-bold text-slate-900">{score ? Math.round(score) : 0}</span>
+        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Score</span>
+      </div>
+    </div>
+  );
+}
+
 export default function ResultsPage() {
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -260,44 +306,57 @@ export default function ResultsPage() {
         : "—";
     return (
       <div className="space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
-                {validation?.service_name || "Service idea"}
+        <div className="flex flex-col gap-4">
+          <button
+            type="button"
+            onClick={() => navigate("/validation")}
+            className="group flex w-fit items-center gap-2 text-sm font-bold text-slate-500 transition-colors hover:text-brand-600"
+          >
+            <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M19 12H5m7 7l-7-7 7-7" />
+            </svg>
+            Back to Validation
+          </button>
+
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
+                  {validation?.service_name || "Service idea"}
+                </div>
+                {serviceOutcome ? <Badge>{serviceOutcome}</Badge> : null}
+                <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
               </div>
-              {serviceOutcome ? <Badge>{serviceOutcome}</Badge> : null}
-              <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
+              <div className="mt-1 text-sm text-slate-600">Service idea viability results.</div>
             </div>
-            <div className="mt-1 text-sm text-slate-600">Service idea viability results.</div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="secondary"
-              disabled={!workspaceId}
-              onClick={() =>
-                navigate(
-                  `/validation?workspace_id=${workspaceId}${activeServiceValidationId ? `&history_id=${encodeURIComponent(activeServiceValidationId)}&history_type=service_validation` : ""}`
-                )
-              }
-            >
-              Modify
-            </Button>
-            <Button
-              variant="danger"
-              className={serviceDecisionLocked ? "opacity-50" : ""}
-              disabled={decisionSaving || !workspaceId || serviceDecisionLocked}
-              onClick={() => setDecisionStatus("rejected")}
-            >
-              Reject
-            </Button>
-            <Button
-              className={serviceDecisionLocked ? "opacity-50" : ""}
-              disabled={decisionSaving || !workspaceId || serviceDecisionLocked}
-              onClick={() => setDecisionStatus("accepted")}
-            >
-              Accept
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                disabled={!workspaceId}
+                onClick={() =>
+                  navigate(
+                    `/validation?workspace_id=${workspaceId}${activeServiceValidationId ? `&history_id=${encodeURIComponent(activeServiceValidationId)}&history_type=service_validation` : ""}`
+                  )
+                }
+              >
+                Modify
+              </Button>
+              <Button
+                variant="danger"
+                className={serviceDecisionLocked ? "opacity-50" : ""}
+                disabled={decisionSaving || !workspaceId || serviceDecisionLocked}
+                onClick={() => setDecisionStatus("rejected")}
+              >
+                Reject
+              </Button>
+              <Button
+                className={serviceDecisionLocked ? "opacity-50" : ""}
+                disabled={decisionSaving || !workspaceId || serviceDecisionLocked}
+                onClick={() => setDecisionStatus("accepted")}
+              >
+                Accept
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -411,13 +470,43 @@ export default function ResultsPage() {
           </div>
 
           <aside className="space-y-4 lg:col-span-4 lg:sticky lg:top-24">
-            <div className="ea-card p-5 border border-slate-200 bg-white">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Viability scores</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">{formatNumber(viabilityScore)}/100</div>
-              {serviceOutcome ? <div className="mt-1 text-sm font-semibold text-slate-700">{serviceOutcome}</div> : null}
+            <div className={`relative overflow-hidden rounded-3xl border-2 p-8 shadow-xl transition-all duration-500 ${viabilityScore < 50 ? "border-rose-100 bg-white shadow-rose-100/50" :
+              viabilityScore < 75 ? "border-amber-100 bg-white shadow-amber-100/50" :
+                "border-emerald-100 bg-white shadow-emerald-100/50"
+              }`}>
+              <div className={`absolute top-0 left-0 w-1.5 h-full ${viabilityScore < 50 ? "bg-rose-500" :
+                viabilityScore < 75 ? "bg-amber-500" :
+                  "bg-emerald-500"
+                }`} />
+
+              <div className="flex flex-col items-center text-center">
+                <CircularScore
+                  score={viabilityScore}
+                  tone={viabilityScore < 50 ? "danger" : viabilityScore < 75 ? "warn" : "success"}
+                  size={140}
+                  strokeWidth={12}
+                />
+
+                <div className="mt-8">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-2">Outcome</div>
+                  <div className={`text-2xl font-black tracking-tight ${viabilityScore < 50 ? "text-rose-600" :
+                    viabilityScore < 75 ? "text-amber-600" :
+                      "text-emerald-600"
+                    }`}>
+                    {serviceOutcome}
+                  </div>
+                </div>
+
+                <div className="mt-8 w-full pt-6 border-t border-slate-100">
+                  <div className="flex items-center justify-center gap-2 px-4 py-2 rounded-2xl bg-slate-50 text-[11px] font-bold text-slate-500 ring-1 ring-slate-100">
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
+                    <span>SERVICE VIABILITY ANALYSIS</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <SectionCard title="Scores" subtitle="Weighted viability scores (0-100).">
+            <SectionCard title="Score breakdown" subtitle="Weighted viability scores (0-100).">
               <div className="grid grid-cols-1 gap-3">
                 {[
                   ["Margin score", serviceScores.margin_score],
@@ -538,43 +627,56 @@ export default function ResultsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">{businessName || "Validation"}</div>
-            <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
-            {pathwayLabel ? <Badge>{pathwayLabel}</Badge> : null}
-          </div>
-          <div className="mt-1 text-sm text-slate-600">Validation report and recommended next steps.</div>
-        </div>
+      <div className="flex flex-col gap-4">
+        <button
+          type="button"
+          onClick={() => navigate("/validation")}
+          className="group flex w-fit items-center gap-2 text-sm font-bold text-slate-500 transition-colors hover:text-brand-600"
+        >
+          <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M19 12H5m7 7l-7-7 7-7" />
+          </svg>
+          Back to Validation
+        </button>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <SegmentedTabs
-            ariaLabel="View mode"
-            value={viewMode}
-            onChange={setViewMode}
-            options={[
-              { value: "simple", label: "Simple" },
-              { value: "detailed", label: "Detailed" }
-            ]}
-          />
-          <Button
-            variant="secondary"
-            disabled={!workspaceId}
-            onClick={() =>
-              navigate(
-                `/validation?workspace_id=${workspaceId}${activeValidationId ? `&history_id=${encodeURIComponent(activeValidationId)}&history_type=business_validation` : ""}`
-              )
-            }
-          >
-            Modify
-          </Button>
-          <Button variant="danger" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("rejected")}>
-            Reject
-          </Button>
-          <Button disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("accepted")}>
-            Accept
-          </Button>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">{businessName || validation?.business_name || "Validation"}</div>
+              <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
+              {pathwayLabel ? <Badge>{pathwayLabel}</Badge> : null}
+            </div>
+            <div className="mt-1 text-sm text-slate-600">Validation report and recommended next steps.</div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <SegmentedTabs
+              ariaLabel="View mode"
+              value={viewMode}
+              onChange={setViewMode}
+              options={[
+                { value: "simple", label: "Simple" },
+                { value: "detailed", label: "Detailed" }
+              ]}
+            />
+            <Button
+              variant="secondary"
+              disabled={!workspaceId}
+              onClick={() =>
+                navigate(
+                  `/validation?workspace_id=${workspaceId}${activeValidationId ? `&history_id=${encodeURIComponent(activeValidationId)}&history_type=business_validation` : ""}`
+                )
+              }
+            >
+              Modify
+            </Button>
+            <Button variant="danger" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("rejected")}>
+              Reject
+            </Button>
+            <Button disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("accepted")}>
+              Accept
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -716,69 +818,69 @@ export default function ResultsPage() {
                 }
               >
                 <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1">
-                {signalsTab === "trend" ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Keyword trend</div>
-                      <InfoTip text="We build the keyword set from your Business name + Industry + Offer. Trend data appears when connected." />
-                    </div>
+                  {signalsTab === "trend" ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Keyword trend</div>
+                        <InfoTip text="We build the keyword set from your Business name + Industry + Offer. Trend data appears when connected." />
+                      </div>
 
-                    <div className="grid grid-cols-1 gap-3">
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Keywords to track</div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {(keywordsToTrack.length ? keywordsToTrack : ["Add business name and industry to generate keywords."]).map((k) => (
-                            <span key={k} className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
-                              {k}
-                            </span>
-                          ))}
+                      <div className="grid grid-cols-1 gap-3">
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Keywords to track</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {(keywordsToTrack.length ? keywordsToTrack : ["Add business name and industry to generate keywords."]).map((k) => (
+                              <span key={k} className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
+                                {k}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="mt-3 text-xs text-slate-500">We will track demand signals and query growth for these terms.</div>
                         </div>
-                        <div className="mt-3 text-xs text-slate-500">We will track demand signals and query growth for these terms.</div>
-                      </div>
 
-                      <div className="rounded-2xl border border-dashed border-slate-300 bg-gradient-to-br from-brand-50 via-white to-accent-50 p-4">
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trend preview</div>
-                          <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">Market signals</span>
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-gradient-to-br from-brand-50 via-white to-accent-50 p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trend preview</div>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">Market signals</span>
+                          </div>
+                          <div className="mt-3 rounded-xl bg-white/70 p-3 text-sm text-slate-600 ring-1 ring-slate-200">
+                            {keywordsToTrack.length
+                              ? "Keyword trend insights will appear here when demand data is connected."
+                              : "Add business name and industry details to generate keywords and prepare the trend preview."}
+                          </div>
                         </div>
-                        <div className="mt-3 rounded-xl bg-white/70 p-3 text-sm text-slate-600 ring-1 ring-slate-200">
-                          {keywordsToTrack.length
-                            ? "Keyword trend insights will appear here when demand data is connected."
-                            : "Add business name and industry details to generate keywords and prepare the trend preview."}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Community signals</div>
+                        <InfoTip text="Mentions and discussions related to your space. Signals appear when connected." />
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3">
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Mentions</div>
+                          <div className="mt-1 text-lg font-semibold text-slate-900">-</div>
+                          <div className="mt-1 text-xs text-slate-500">Across tracked communities</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Momentum</div>
+                          <div className="mt-1 text-lg font-semibold text-slate-900">-</div>
+                          <div className="mt-1 text-xs text-slate-500">Week-over-week change</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Top spaces</div>
+                          <div className="mt-1 text-lg font-semibold text-slate-900">-</div>
+                          <div className="mt-1 text-xs text-slate-500">Where people discuss it</div>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Community signals</div>
-                      <InfoTip text="Mentions and discussions related to your space. Signals appear when connected." />
-                    </div>
 
-                    <div className="grid grid-cols-1 gap-3">
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Mentions</div>
-                        <div className="mt-1 text-lg font-semibold text-slate-900">-</div>
-                        <div className="mt-1 text-xs text-slate-500">Across tracked communities</div>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Momentum</div>
-                        <div className="mt-1 text-lg font-semibold text-slate-900">-</div>
-                        <div className="mt-1 text-xs text-slate-500">Week-over-week change</div>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Top spaces</div>
-                        <div className="mt-1 text-lg font-semibold text-slate-900">-</div>
-                        <div className="mt-1 text-xs text-slate-500">Where people discuss it</div>
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+                        No community signals yet.
                       </div>
                     </div>
-
-                    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-                      No community signals yet.
-                    </div>
-                  </div>
-                )}
+                  )}
                 </div>
               </SectionCard>
 
@@ -836,18 +938,36 @@ export default function ResultsPage() {
         </div>
 
         <aside className="space-y-4 lg:col-span-4 lg:sticky lg:top-24">
-          <div className={"ea-card p-5 " + (risk.tone === "danger" ? "border-rose-200 bg-rose-50" : risk.tone === "warn" ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50")}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Outcome</div>
-                <div className={"mt-2 text-2xl font-semibold tracking-tight " + (risk.tone === "danger" ? "text-rose-700" : risk.tone === "warn" ? "text-amber-800" : "text-emerald-800")}>
+          <div className={`relative overflow-hidden rounded-3xl border-2 p-8 shadow-xl transition-all duration-500 ${risk.tone === "danger" ? "border-rose-100 bg-white shadow-rose-100/50" :
+            risk.tone === "warn" ? "border-amber-100 bg-white shadow-amber-100/50" :
+              "border-emerald-100 bg-white shadow-emerald-100/50"
+            }`}>
+            <div className={`absolute top-0 left-0 w-1.5 h-full ${risk.tone === "danger" ? "bg-rose-500" :
+              risk.tone === "warn" ? "bg-amber-500" :
+                "bg-emerald-500"
+              }`} />
+
+            <div className="flex flex-col items-center text-center">
+              <CircularScore score={score} tone={risk.tone} size={140} strokeWidth={12} />
+
+              <div className="mt-8">
+                <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-2">Verdict</div>
+                <div className={`text-2xl font-black tracking-tight ${risk.tone === "danger" ? "text-rose-600" :
+                  risk.tone === "warn" ? "text-amber-600" :
+                    "text-emerald-600"
+                  }`}>
                   {risk.title}
                 </div>
-                <div className="mt-1 text-sm text-slate-700">{risk.subtitle}</div>
+                <p className="mt-3 text-sm font-medium leading-relaxed text-slate-600 max-w-[240px]">
+                  {risk.subtitle}
+                </p>
               </div>
-              <div className="flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
-                <span>Score {formatNumber(score)}/100</span>
-                <InfoTip text={validationExplanation} />
+
+              <div className="mt-8 w-full pt-6 border-t border-slate-100">
+                <div className="flex items-center justify-center gap-2 px-4 py-2 rounded-2xl bg-slate-50 text-[11px] font-bold text-slate-500 ring-1 ring-slate-100">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
+                  <span>BASED ON DETERMINISTIC ANALYSIS</span>
+                </div>
               </div>
             </div>
           </div>
@@ -858,17 +978,17 @@ export default function ResultsPage() {
                 {orderedDimensions.map((k) => {
                   const v = typeof dimensionScores?.[k] === "number" ? dimensionScores[k] : 0;
                   return (
-                  <div key={k} className={"rounded-2xl border bg-white p-3 " + toneForScore(v).borderClass}>
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs font-semibold text-slate-500">{dimLabel(k)}</div>
-                      <InfoTip text={dimHelp(k)} />
+                    <div key={k} className={"rounded-2xl border bg-white p-3 " + toneForScore(v).borderClass}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-xs font-semibold text-slate-500">{dimLabel(k)}</div>
+                        <InfoTip text={dimHelp(k)} />
+                      </div>
+                      <div className="mt-1 text-lg font-semibold text-slate-900">{formatNumber(v)}/100</div>
+                      <div className={"mt-2 h-2 w-full overflow-hidden rounded-full " + toneForScore(v).trackClass}>
+                        <div className={"h-full " + toneForScore(v).barClass} style={{ width: pctWidth(v) }} />
+                      </div>
+                      <div className="mt-2 text-xs text-slate-600">{shortExplanation(dimHelp(k), 120)}</div>
                     </div>
-                    <div className="mt-1 text-lg font-semibold text-slate-900">{formatNumber(v)}/100</div>
-                    <div className={"mt-2 h-2 w-full overflow-hidden rounded-full " + toneForScore(v).trackClass}>
-                      <div className={"h-full " + toneForScore(v).barClass} style={{ width: pctWidth(v) }} />
-                    </div>
-                    <div className="mt-2 text-xs text-slate-600">{shortExplanation(dimHelp(k), 120)}</div>
-                  </div>
                   );
                 })}
               </div>
@@ -884,72 +1004,72 @@ export default function ResultsPage() {
               className="flex h-[360px] flex-col overflow-hidden"
               headerRight={mfKeyword ? <InfoTip text={`Signals for: ${mfKeyword}`} /> : null}
             >
-            {!mfKeyword ? (
-              <div className="text-sm text-slate-600">Add a business name and industry to load market fit.</div>
-            ) : mfLoading ? (
-              <div className="flex items-center gap-2 text-sm text-slate-700">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                Fetching signals…
-              </div>
-            ) : mfError ? (
-              <div className="space-y-2">
-                <InlineAlert tone="danger" title="Market fit unavailable" message={mfError} />
-                <Button variant="secondary" onClick={fetchMarketFit}>
-                  Retry
-                </Button>
-              </div>
-            ) : marketFit?.market_fit_score == null ? (
-              <div className="text-sm text-slate-600">No market fit data yet.</div>
-            ) : (
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <div className="mb-3">
-                  <SegmentedTabs
-                    ariaLabel="Market fit tabs"
-                    value={marketFitTab}
-                    onChange={setMarketFitTab}
-                    size="sm"
-                    options={[
-                      { value: "score", label: "Market fit score" },
-                      { value: "demand", label: "Demand trend" },
-                      { value: "survival", label: "Sector survival" },
-                      { value: "competition", label: "Local competition" }
-                    ]}
-                  />
+              {!mfKeyword ? (
+                <div className="text-sm text-slate-600">Add a business name and industry to load market fit.</div>
+              ) : mfLoading ? (
+                <div className="flex items-center gap-2 text-sm text-slate-700">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                  Fetching signals…
                 </div>
-
-                {marketFitTab === "score" ? (
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Market fit score</div>
-                    <div className="mt-1 text-2xl font-semibold text-slate-900">{formatNumber(marketFit.market_fit_score)}/100</div>
-                    <div className="mt-1 text-sm font-semibold text-slate-700">{String(marketFit.market_fit_classification || "—")}</div>
-                    <div className="mt-3 text-xs text-slate-600">
-                      {shortExplanation(String(marketFit.market_fit_explanation || ""), 180)}
-                    </div>
+              ) : mfError ? (
+                <div className="space-y-2">
+                  <InlineAlert tone="danger" title="Market fit unavailable" message={mfError} />
+                  <Button variant="secondary" onClick={fetchMarketFit}>
+                    Retry
+                  </Button>
+                </div>
+              ) : marketFit?.market_fit_score == null ? (
+                <div className="text-sm text-slate-600">No market fit data yet.</div>
+              ) : (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <div className="mb-3">
+                    <SegmentedTabs
+                      ariaLabel="Market fit tabs"
+                      value={marketFitTab}
+                      onChange={setMarketFitTab}
+                      size="sm"
+                      options={[
+                        { value: "score", label: "Market fit score" },
+                        { value: "demand", label: "Demand trend" },
+                        { value: "survival", label: "Sector survival" },
+                        { value: "competition", label: "Local competition" }
+                      ]}
+                    />
                   </div>
-                ) : (
-                  (() => {
-                    const map = {
-                      demand: ["market_demand", "Demand trend"],
-                      survival: ["sector_survival", "Sector survival"],
-                      competition: ["local_competition", "Local competition"]
-                    };
-                    const [key, label] = map[marketFitTab] || map.demand;
-                    const v = typeof marketFit?.dimension_scores?.[key] === "number" ? marketFit.dimension_scores[key] : 0;
-                    const help = String(marketFit?.dimension_explanations?.[key] || "");
-                    return (
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-                        <div className="mt-1 text-2xl font-semibold text-slate-900">{formatNumber(v)}/100</div>
-                        <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                          <div className="h-full bg-indigo-500" style={{ width: pctWidth(v) }} />
-                        </div>
-                        <div className="mt-3 text-xs text-slate-600">{help || "—"}</div>
+
+                  {marketFitTab === "score" ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Market fit score</div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">{formatNumber(marketFit.market_fit_score)}/100</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-700">{String(marketFit.market_fit_classification || "—")}</div>
+                      <div className="mt-3 text-xs text-slate-600">
+                        {shortExplanation(String(marketFit.market_fit_explanation || ""), 180)}
                       </div>
-                    );
-                  })()
-                )}
-              </div>
-            )}
+                    </div>
+                  ) : (
+                    (() => {
+                      const map = {
+                        demand: ["market_demand", "Demand trend"],
+                        survival: ["sector_survival", "Sector survival"],
+                        competition: ["local_competition", "Local competition"]
+                      };
+                      const [key, label] = map[marketFitTab] || map.demand;
+                      const v = typeof marketFit?.dimension_scores?.[key] === "number" ? marketFit.dimension_scores[key] : 0;
+                      const help = String(marketFit?.dimension_explanations?.[key] || "");
+                      return (
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+                          <div className="mt-1 text-2xl font-semibold text-slate-900">{formatNumber(v)}/100</div>
+                          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                            <div className="h-full bg-indigo-500" style={{ width: pctWidth(v) }} />
+                          </div>
+                          <div className="mt-3 text-xs text-slate-600">{help || "—"}</div>
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+              )}
             </SectionCard>
           ) : null}
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict
 from uuid import uuid4
@@ -21,6 +22,8 @@ from app.modules.idea_validation.market_research_service import (
 )
 from app.shared.schemas.common import WorkspaceDocument
 from app.core.supabase import sb_insert, sb_select, sb_update
+
+logger = logging.getLogger(__name__)
 
 
 async def create_workspace(
@@ -223,9 +226,9 @@ async def save_validation_result(
         "workspace_id": workspace_id,
         "pathway": pathway,
         "business_name": business_name,
-        "total_score": eval_result.get("viability_score", 0),
-        "confidence_score": eval_result.get("confidence_score", 0),
-        "scoring_details": eval_result.get("scoring_details", {}),
+        "total_score": eval_result.get("score", eval_result.get("viability_score", 0)),
+        "confidence_score": eval_result.get("confidence_score", 100),
+        "scoring_details": eval_result.get("dimension_scores", eval_result.get("scoring_details", {})),
         "metrics": eval_result.get("metrics", {}),
         "report_narration": narrative_report.get("executive_summary") or str(narrative_report),
     }
@@ -272,39 +275,70 @@ async def evaluate(
         payload_dict = iv_payload.model_dump() if hasattr(iv_payload, "model_dump") else iv_payload.dict()
         fields = flatten_fields_from_payload(payload_dict)
         
+        # Map payload to engine inputs
+        engine_inputs = IdeaValidationInputs(
+            idea_name=iv_payload.context.business_name,
+            idea_description=iv_payload.context.business_offering,
+            target_customer=iv_payload.problem.customer_segment,
+            problem_description=iv_payload.problem.problem_type,
+            pain_level=iv_payload.problem.severity,
+            alternatives=iv_payload.problem.alternatives,
+            differentiation=iv_payload.offer.service_type,
+            market_scope=iv_payload.context.location,
+            evidence_signals=iv_payload.validation.demand_proof,
+            spoken_to_count=iv_payload.validation.spoken_count,
+            estimated_price=iv_payload.offer.price_per_unit,
+            expected_units_per_month=iv_payload.demand.expected_units_per_month,
+            variable_cost_per_unit=iv_payload.costs.variable_cost_per_unit,
+            fixed_costs_monthly=iv_payload.costs.fixed_costs_monthly,
+            currency=iv_payload.context.currency or "GBP"
+        )
+
         # A. Research Retrieval
-        research_res = await run_research_data(fields)
+        logger.info(f"Starting research retrieval for idea: {engine_inputs.idea_name}")
+        try:
+            research_res = await run_research_data(fields)
+        except Exception as e:
+            logger.error(f"Research retrieval failed: {e}")
+            # Provide a fallback research result so the flow can continue
+            research_res = {
+                "evidence": {},
+                "sources": {},
+                "shopping": [],
+                "search_queries": {}
+            }
         
         # B. Signal Extraction
-        signals_dict = extract_research_signals(research_res["evidence"], research_res["sources"])
-        research_signals = ResearchSignals(**signals_dict)
+        logger.info("Extracting research signals...")
+        try:
+            signals_dict = extract_research_signals(research_res["evidence"], research_res["sources"])
+            research_signals = ResearchSignals(**signals_dict)
+        except Exception as e:
+            logger.error(f"Signal extraction failed: {e}")
+            research_signals = ResearchSignals() # Empty signals fallback
         
         # C. Deterministic Scoring
-        # Map pydantic payload to engine inputs safely
-        engine_inputs = IdeaValidationInputs(
-            idea_name=iv_payload.context.business_name or fields.get("business_name") or "Concept",
-            idea_description=iv_payload.context.business_offering or iv_payload.context.description or fields.get("what_building") or "",
-            target_customer=iv_payload.problem.customer_segment if iv_payload.problem else "",
-            problem_description=iv_payload.problem.problem_type if iv_payload.problem else "",
-            pain_level=iv_payload.problem.severity if iv_payload.problem else "moderate",
-            alternatives=(iv_payload.problem.description or iv_payload.problem.alternatives) if iv_payload.problem else "",
-            differentiation=iv_payload.offer.service_type or "",
-            market_scope=iv_payload.context.location or "Global",
-            spoken_to_count=iv_payload.validation.spoken_count if iv_payload.validation else "0",
-            evidence_signals=iv_payload.validation.demand_proof if iv_payload.validation else [],
-            estimated_price=iv_payload.offer.price_per_unit,
-            currency=iv_payload.context.currency
-        )
-        
-        eval_result = evaluate_idea_v1(engine_inputs, research_signals)
-        
+        logger.info("Calculating deterministic scores...")
+        try:
+            eval_result = evaluate_idea_v1(engine_inputs, research_signals)
+        except Exception as e:
+            logger.error(f"Deterministic scoring failed: {e}")
+            eval_result = {"score": 50, "classification": "Fair", "reasons": ["Scoring engine error, using baseline."], "metrics": {}}
+
         # D. Claude Narration
-        # We pass the deterministic scores to Claude so it justifies them instead of inventing them
-        narration_fields = {**fields, "deterministic_evaluation": eval_result}
-        narrative_report = await run_ai_narration(narration_fields, research_res["evidence"], research_res["shopping"])
+        logger.info("Generating AI narration...")
+        try:
+            narration_fields = {**fields, "deterministic_evaluation": eval_result}
+            narrative_report = await run_ai_narration(narration_fields, research_res["evidence"], research_res["shopping"])
+        except Exception as e:
+            logger.error(f"AI narration failed: {e}")
+            narrative_report = {
+                "executive_summary": "Our AI narration service is temporarily unavailable, but your deterministic scores are ready below.",
+                "dimension_explanations": {}
+            }
         
         # E. Final Result Assembly
-        # Ensure we meet the ValidationResult schema requirements
+        logger.info("Assembling final validation report...")
         final_result = {
             "score": eval_result.get("score", 50),
             "classification": eval_result.get("classification", "Fair"),
@@ -320,6 +354,8 @@ async def evaluate(
                 }
             },
             "pathway": iv_payload.pathway,
+            "business_name": engine_inputs.idea_name,
+            "service_name": engine_inputs.idea_name,
             "validation_explanation": narrative_report.get("executive_summary") or "",
             "dimension_explanations": narrative_report.get("dimension_explanations") or {},
         }
@@ -335,9 +371,9 @@ async def evaluate(
                 fields=fields
             )
             final_result["result_id"] = result_id
+            logger.info(f"Validation result saved to history: {result_id}")
         except Exception as e:
-            # Don't fail the whole request if history save fails, just log it
-            print(f"Warning: Failed to save validation history: {e}")
+            logger.warning(f"Failed to save validation history: {e}")
         
         return final_result
 

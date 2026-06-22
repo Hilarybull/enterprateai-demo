@@ -86,18 +86,19 @@ def _classify_structural(bi: int, fragility: int, inp: MasterAggregatorInput) ->
 def _consolidate_risks(inp: MasterAggregatorInput) -> list:
     seen = set()
     result = []
-    for flag in (
+    for flag_obj in (
         inp.viability_risks +
         inp.survival_risks +
         inp.stability_risks +
         inp.growth_risks +
         inp.fragility_risks
     ):
+        flag = str(flag_obj.flag if hasattr(flag_obj, "flag") else flag_obj)
         key = flag.lower().strip()[:60]
         if key not in seen:
             seen.add(key)
             result.append(flag)
-    return result[:12]  # cap at 12 consolidated risks
+    return result[:12]
 
 
 # ---------------------------------------------------------------------------
@@ -123,13 +124,14 @@ def _priority_recommendations(inp: MasterAggregatorInput, bi: int) -> list:
     if bi < 50:
         ordered.append("Prioritise cash flow stabilisation before any growth initiatives.")
 
-    for rec in all_recs:
+    for rec_obj in all_recs:
+        rec = str(getattr(rec_obj, "recommendation", rec_obj))
         key = rec.lower().strip()[:60]
         if key not in seen:
             seen.add(key)
             ordered.append(rec)
 
-    return ordered[:10]  # top 10 recommendations
+    return ordered[:10]
 
 
 # ---------------------------------------------------------------------------

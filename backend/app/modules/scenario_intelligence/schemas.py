@@ -30,7 +30,7 @@ class BusinessStateSnapshot(BaseModel):
     accrued_revenue_total: float | None = Field(default=0, ge=0)
     accrued_expenses_total: float | None = Field(default=0, ge=0)
     accrued_cost_of_sales_total: float | None = Field(default=0, ge=0)
-    starting_cash: float = Field(default=0, ge=0)
+    starting_cash: float = Field(default=0)
     top_client_share_pct: float | None = Field(default=None, ge=0, le=100)
     # Some upstream modules may temporarily report extreme utilisation values (e.g. > 200%).
     # Accept them here to avoid hard failures in simulation flows; UI can clamp for display.
@@ -158,6 +158,11 @@ class ScenarioTimelineEntry(BaseModel):
     cash_runway_months: Optional[float] = None
     stability_score: float
     state_label: Literal["stable", "tight", "at_risk", "stress", "critical"]
+    
+    # Risk Enhancement Ratios
+    cash_conversion_ratio: float = 0.0
+    receivable_exposure_ratio: float = 0.0
+    delayed_revenue_pct: float = 0.0
 
 
 class ScenarioTimelineResponse(BaseModel):
