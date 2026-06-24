@@ -251,13 +251,13 @@ async def evaluate(
     Main evaluation entry point.
     Now follows the deterministic research-backed flow for idea validation.
     """
-    # 1. Usage Limit Check
-    is_allowed = await check_user_usage(user_id)
-    if not is_allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Daily validation limit reached. Please upgrade or try again tomorrow."
-        )
+    # 1. Usage Limit Check (DISABLED for testing)
+    # is_allowed = await check_user_usage(user_id)
+    # if not is_allowed:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+    #         detail="Daily validation limit reached. Please upgrade or try again tomorrow."
+    #     )
     
     # Always prefer the user's current input payloads when provided.
     iv_payload = None
@@ -320,18 +320,42 @@ async def evaluate(
             logger.error(f"Signal extraction failed: {e}")
             research_signals = ResearchSignals() # Empty signals fallback
         
-        # C. Deterministic Scoring
+        # C. Market Fit Analysis (Google Trends, Sector Survival, Competition)
+        logger.info("Retreiving deterministic market fit signals...")
+        try:
+            mf_params = _market_fit_params_from_idea_validation(iv_payload)
+            if mf_params:
+                market_fit_res = await get_market_fit(**mf_params)
+            else:
+                market_fit_res = build_fallback_market_fit(keyword=engine_inputs.idea_name, industry="general", location=engine_inputs.market_scope or "UK")
+        except Exception as e:
+            logger.error(f"Market fit analysis failed: {e}")
+            market_fit_res = build_fallback_market_fit(keyword=engine_inputs.idea_name, industry="general", location=engine_inputs.market_scope or "UK")
+
+        # D. Deterministic Scoring
         logger.info("Calculating deterministic scores...")
         try:
+            # Merge market fit signals into research signals for the engine
+            mf_signals = {
+                "demand_avg": (market_fit_res.get("demand") or {}).get("avg_interest", 50),
+                "sector_survival": (market_fit_res.get("sector") or {}).get("survival_ratio", 0.6),
+                "local_competition": (market_fit_res.get("competition") or {}).get("score", 50),
+            }
+            # Note: evaluate_idea_v1 might need an update or we just pass the research_signals as is 
+            # and use market_fit_res for the final UI report.
             eval_result = evaluate_idea_v1(engine_inputs, research_signals)
         except Exception as e:
             logger.error(f"Deterministic scoring failed: {e}")
             eval_result = {"score": 50, "classification": "Fair", "reasons": ["Scoring engine error, using baseline."], "metrics": {}}
 
-        # D. Claude Narration
+        # E. Claude Narration
         logger.info("Generating AI narration...")
         try:
-            narration_fields = {**fields, "deterministic_evaluation": eval_result}
+            narration_fields = {
+                **fields, 
+                "deterministic_evaluation": eval_result,
+                "market_fit_analysis": market_fit_res # Pass market fit to Claude for better summary
+            }
             narrative_report = await run_ai_narration(narration_fields, research_res["evidence"], research_res["shopping"])
         except Exception as e:
             logger.error(f"AI narration failed: {e}")
@@ -340,27 +364,28 @@ async def evaluate(
                 "dimension_explanations": {}
             }
         
-        # E. Final Result Assembly
+        # F. Final Result Assembly
         logger.info("Assembling final validation report...")
         final_result = {
-            "score": eval_result.get("score", 50),
-            "classification": eval_result.get("classification", "Fair"),
-            "reasons": eval_result.get("reasons", []),
-            "recommendations": eval_result.get("recommendations", []),
-            "dimension_scores": eval_result.get("dimension_scores", {}),
-            "metrics": {
-                **(eval_result.get("metrics") or {}),
-                "market_evidence": {
-                    "items": research_res["evidence"],
-                    "sources": research_res["sources"],
-                    "queries": research_res["search_queries"]
-                }
+            "score": eval_result["score"],
+            "dimension_scores": {
+                **eval_result["dimension_scores"],
+                "market_demand": int(market_fit_res.get("dimension_scores", {}).get("market_demand", 50)),
+                "market_trend": int(market_fit_res.get("dimension_scores", {}).get("market_trend", 50) if "market_trend" in market_fit_res.get("dimension_scores", {}) else market_fit_res.get("demand", {}).get("score", 50)),
+                "competition_validation": int(eval_result["dimension_scores"].get("competition_validation", 60)),
             },
+            "metrics": eval_result["metrics"],
+            "reasons": eval_result["reasons"],
+            "recommendations": eval_result["recommendations"],
+            "classification": eval_result["classification"],
+            "market_fit": market_fit_res,
+            "research_data": research_res,
+            "market_research": narrative_report,
             "pathway": iv_payload.pathway,
             "business_name": engine_inputs.idea_name,
             "service_name": engine_inputs.idea_name,
-            "validation_explanation": narrative_report.get("executive_summary") or "",
-            "dimension_explanations": narrative_report.get("dimension_explanations") or {},
+            "validation_explanation": narrative_report.get("executive_summary") or "AI synthesis pending...",
+            "dimension_explanations": narrative_report.get("dimension_explanations") or market_fit_res.get("dimension_explanations") or {},
         }
         
         # F. Persist to History
@@ -527,4 +552,29 @@ def _derive_business_profile_from_idea_validation(iv: Dict[str, Any]) -> Dict[st
         "problem": str(prob.get("problem_type") or "").strip() or None,
         "solution": str(offer.get("service_type") or "").strip() or None,
         "pricing_model": str(offer.get("pricing_model") or "").strip() or None,
+    }
+
+
+def _market_fit_params_from_idea_validation(payload: IdeaValidationPayload) -> dict:
+    ctx = payload.context
+    prob = payload.problem
+    offer = payload.offer
+    
+    # Prioritize specific idea name, then service type, then problem type
+    # We strictly avoid workspace metadata here.
+    business_name = str(ctx.business_name or "").strip()
+    offering = str(ctx.business_offering or "").strip()
+    service_type = str(offer.service_type or "").strip()
+    problem_type = str(prob.problem_type or "").strip()
+    
+    keyword = business_name or offering or service_type or problem_type or "new business idea"
+    industry = str(ctx.primary_industry or ctx.business_type or "general").strip()
+    location = str(ctx.location or "United Kingdom").strip()
+    uk_region = str(ctx.uk_region or "GB-ENG").strip()
+    
+    return {
+        "keyword": keyword,
+        "industry": industry,
+        "location": location,
+        "uk_region": uk_region,
     }

@@ -56,26 +56,38 @@ export function buildActionPlan({ validation, ideaValidation, maxItems = 10 }) {
   const variableCost = typeof ideaValidation?.costs?.variable_cost_per_unit === "number" ? ideaValidation.costs.variable_cost_per_unit : null;
   const units = typeof ideaValidation?.demand?.expected_units_per_month === "number" ? ideaValidation.demand.expected_units_per_month : null;
 
+  const isBusinessIdea = validation?.pathway === "business_idea";
   const hasFinancialData = price !== null && units !== null && price > 0;
 
-  if (!hasFinancialData) {
+  // 1. Initial Guidance (Pathway-Specific)
+  if (!hasFinancialData && !isBusinessIdea) {
     actions.push("Define your proposed price and expected monthly sales in the wizard to see deterministic revenue and margin models.");
   }
-  if (price !== null && variableCost !== null && price <= variableCost) {
-    actions.push("Your price is at/below variable cost — raise price or cut variable costs so each unit is profitable.");
+
+  if (isBusinessIdea && !hasFinancialData) {
+    actions.push("Conduct secondary market research to estimate potential customer volume and price tolerance for this concept.");
   }
-  if (margin !== null && margin < 0.25) {
-    actions.push("Improve contribution margin by adjusting price, variable costs, or deliverable scope.");
+
+  // 2. Financial Logic (Only if data exists and NOT a high-level business idea)
+  if (!isBusinessIdea && hasFinancialData) {
+    if (price !== null && variableCost !== null && price <= variableCost) {
+      actions.push("Your price is at/below variable cost — raise price or cut variable costs so each unit is profitable.");
+    }
+    if (margin !== null && margin < 0.25) {
+      actions.push("Improve contribution margin by adjusting price, variable costs, or deliverable scope.");
+    }
+    if (breakEven !== null && breakEven > 12) {
+      actions.push("Reduce fixed costs or increase monthly volume to reach break-even sooner.");
+    }
+    if (runway !== null && runway < 6) {
+      actions.push("Extend runway: reduce monthly burn, increase starting cash, or tighten payment terms.");
+    }
+    if (costs !== null && revenue !== null && costs > revenue) {
+      actions.push("Bring recurring monthly costs below revenue to become cashflow-positive.");
+    }
   }
-  if (breakEven !== null && breakEven > 12) {
-    actions.push("Reduce fixed costs or increase monthly volume to reach break-even sooner.");
-  }
-  if (runway !== null && runway < 6) {
-    actions.push("Extend runway: reduce monthly burn, increase starting cash, or tighten payment terms.");
-  }
-  if (costs !== null && revenue !== null && costs > revenue) {
-    actions.push("Bring recurring monthly costs below revenue to become cashflow-positive.");
-  }
+
+  // 3. Operational & Market Validation
   if (utilization !== null && utilization > 1) {
     actions.push("Demand exceeds delivery capacity — expand capacity (team/tools) or reduce scope before scaling.");
   }

@@ -393,12 +393,12 @@ QUALITY RULES — READ THESE BEFORE WRITING A SINGLE WORD
 8. ANTI-PATTERNS TO AVOID — never write these phrases:
    - "Automation adoption", "Cost sensitivity", "Demand for faster delivery" (lazy trend labels)
    - "Varies" or "Unknown" as a price range when evidence exists
-   - "could", "might", "may want to consider" in the executive summary or verdict
    - "the founder should do more research" without specifying exactly what research and where
+   - "You should lower your price", "Reduce your costs per unit", "Improve your margins" (prohibited financial advice)
 
 RETURN EXACTLY THIS JSON SHAPE — fill every field with sharp, specific content:
 {{
-  "executive_summary": "3-4 sentences. State the commercial opportunity in plain terms: what the market signal says, where the pricing sits vs competition, what the single biggest execution risk is, and a clear verdict (go / go with caveats / stop and rethink). Reference the founder's specific idea, location, and segment. No hedging.",
+  "executive_summary": "3-6 sentences. State the commercial opportunity with a sharp, specific angle: what the market signal says, where the pricing sits vs competition, and a clear verdict (go / go with caveats / stop and rethink). Use subtle bolding for emphasis on key findings. Vary your sentence structure—do not follow a fixed template. Focus on the 'why' behind the verdict. DO NOT GIVE FINANCIAL ADVICE.",
   "idea_validation_result": {{
     "overall_score": "Very Strong / Strong / Fair / Weak",
     "market_demand": "High / Medium / Low",
@@ -960,7 +960,15 @@ async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]
                     "notes": item.get("source", ""),
                 }
             )
-    return report
+    
+    # Normalize result against fallbacks to ensure structured data always exists
+    return _normalize_report(
+        report or {}, 
+        fields=fields, 
+        search_queries={}, 
+        evidence=evidence, 
+        sources={}
+    )
 
 async def run_market_research(fields: dict[str, Any]) -> dict[str, Any]:
     """
@@ -970,7 +978,7 @@ async def run_market_research(fields: dict[str, Any]) -> dict[str, Any]:
     report = await run_ai_narration(fields, res["evidence"], res["shopping"])
     
     return _normalize_report(
-        report,
+        report or {},
         fields=fields,
         search_queries=res["search_queries"],
         evidence=res["evidence"],
@@ -1048,14 +1056,16 @@ def flatten_fields_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     offer = payload.get("offer") or {}
     demand = payload.get("demand") or {}
 
-    business_name = _clean_text(ctx.get("business_name") or ctx.get("business_offering") or ctx.get("description"))
-    service_type = _clean_text(offer.get("service_type") or ctx.get("business_offering") or ctx.get("description"))
+    business_name = _clean_text(ctx.get("business_name") or ctx.get("business_offering"))
+    service_type = _clean_text(offer.get("service_type") or ctx.get("business_offering"))
 
+    # If both business_name and service_type are empty, we do NOT fall back to generic context keys like 'description'
+    # which might contain workspace-level metadata on some legacy payloads.
     return {
         "idea_type": "business_idea",
         "business_idea_name": business_name,
         "business_name": business_name,
-        "what_building": service_type or business_name,
+        "what_building": service_type or business_name or "New Venture",
         "business_type": _clean_text(ctx.get("business_type")),
         "primary_industry": _clean_text(ctx.get("primary_industry")),
         "location": _clean_text(ctx.get("location")) or "United Kingdom",

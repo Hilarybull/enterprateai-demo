@@ -610,7 +610,7 @@ export default function ValidationWizardPage() {
       id: requestedHistoryId,
       type: requestedHistoryType,
       status: "pending",
-    });
+    }, true);
   }, [
     activeWorkspaceId,
     historyRequestHandled,
@@ -1122,7 +1122,7 @@ export default function ValidationWizardPage() {
     return next;
   }
 
-  async function editHistoryEntry(entry) {
+  async function editHistoryEntry(entry, skipNavigation = false) {
     if (!activeWorkspaceId) return;
     setError(null);
     try {
@@ -1155,18 +1155,16 @@ export default function ValidationWizardPage() {
           type: "service_validation",
           created_at: serviceEntry?.created_at || entry.created_at || new Date().toISOString(),
         });
-        if (isViewing) {
-          // Load the stored insight so the panel can show it immediately
-          const mr = serviceEntry?.market_research || data.service_market_research || null;
-          if (mr && typeof mr === "object") {
-            setServiceMarketResearch(mr);
-          }
+        // Load the stored insight so the report can show it immediately if available
+        const mr = serviceEntry?.market_research || data.service_market_research || null;
+        if (mr && typeof mr === "object") {
+          setServiceMarketResearch(mr);
         }
+
         await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
           data: {
             active_service_validation_id: entry.id,
             draft_service_idea: payload,
-            ...(isViewing ? {} : { service_market_research: null }),
           }
         });
       } else {
@@ -1187,17 +1185,15 @@ export default function ValidationWizardPage() {
           type: "business_validation",
           created_at: entry.created_at || new Date().toISOString(),
         });
-        if (isViewing) {
-          const mr = entry.market_research || data.market_research || null;
-          if (mr && typeof mr === "object") {
-            setBusinessMarketResearch(mr);
-          }
+        const mr = entry.market_research || data.market_research || null;
+        if (mr && typeof mr === "object") {
+          setBusinessMarketResearch(mr);
         }
+
         await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
           data: {
             active_validation_id: entry.id,
             draft_idea_validation: payload,
-            ...(isViewing ? {} : { market_research: null }),
           }
         });
       }
@@ -1206,14 +1202,14 @@ export default function ValidationWizardPage() {
       setContentTab("builder");
       setMode("fill");
 
-      if (isViewing) {
-        // Viewing mode — clear research cache to force fresh pull if needed, then navigate to report
+      // Always navigate to results for viewed/resumed history items as requested
+      // UNLESS we are specifically skipping navigation (e.g. from a deep link 'Modify' action)
+      if (!skipNavigation) {
         setBusinessMarketResearch(null);
         setBusinessResearchHash(null);
         setServiceMarketResearch(null);
         setServiceResearchHash(null);
         navigate("/results");
-        return;
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load this validation history item.");
