@@ -1978,10 +1978,12 @@ function ScenarioOutput({
       ) : null}
 
       {timeline?.length ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Timeline</div>
-          {isTrimmed ? <div className="mt-1 text-xs text-slate-500">Showing first {maxTimelineRows} months.</div> : null}
-          <div className="mt-3 overflow-x-auto max-w-full border rounded-xl border-slate-100">
+        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div className="px-4 pt-4 pb-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Timeline</div>
+            {isTrimmed ? <div className="mt-1 text-xs text-slate-500">Showing first {maxTimelineRows} months.</div> : null}
+          </div>
+          <div className="overflow-x-auto border-t border-slate-100">
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
