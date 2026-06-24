@@ -12,7 +12,7 @@ import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permission
 import { useAuthStore } from "../store/auth";
 import InfoTip from "../components/InfoTip";
 import NumberInput, { parseIntSafe, parseNumber } from "../components/NumberInput";
-import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
+import { CURRENCY_CODES, currencyLabel, getCurrencySymbol } from "../lib/currencies";
 import { imageFileToDataUrl } from "../lib/files";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { generateValidationInsightPdf } from "../lib/reports/index";
@@ -353,7 +353,7 @@ export default function ValidationWizardPage() {
     estimated_price: "" // NEW
   }));
   const [serviceCurrency, setServiceCurrency] = useState("GBP");
-  const serviceCurrencySymbol = useMemo(() => currencyLabel(serviceCurrency), [serviceCurrency]);
+  const serviceCurrencySymbol = useMemo(() => getCurrencySymbol(serviceCurrency), [serviceCurrency]);
   const [profile, setProfile] = useState(() => ({
     company_name: "",
     logo_data_url: "",
@@ -3086,9 +3086,8 @@ export default function ValidationWizardPage() {
                                 {serviceCurrencySymbol}
                               </div>
                               <NumberInput
-                                key={!!serviceForm.estimated_price}
-                                className="pl-7 bg-white dark:bg-slate-900 border-slate-200"
-                                placeholder="0.00"
+                                className="pl-8 bg-white dark:bg-slate-900 border-slate-200"
+                                placeholder="0.0"
                                 value={serviceForm.estimated_price}
                                 onChange={(v) => updateService("estimated_price", v)}
                               />
