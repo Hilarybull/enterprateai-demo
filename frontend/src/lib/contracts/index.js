@@ -139,7 +139,8 @@ export function assembleOutput(data = {}) {
     recommendations = [],
     scenarioRun,
     scenarioTimeline = [],
-    multiEngineOutput = null,  // optional: output from run_full_engine_suite
+    multiEngineOutput = null,
+    marketResearch = null,
   } = data;
 
   const snap = financialInsights?.stateSnapshot || {};
@@ -282,6 +283,7 @@ export function assembleOutput(data = {}) {
       topRecs,
       snap,
       masterOutput,
+      marketResearch: viability?.market_research || ideaValidation?.market_research || {},
     }),
     scores: {
       viabilityScore,
@@ -331,6 +333,12 @@ export function assembleOutput(data = {}) {
       rulesetVersion: "v1.0",
       generatedBy: scenarioRun ? "scenario_engine" : "orchestrator",
       ...(scenarioRun ? { simulationRunId: scenarioRun.scenario_run_id } : {}),
+    },
+    narratives: {
+      investorPerspective: marketResearch?.investor_perspective || null,
+      fragilityAnalysis: marketResearch?.fragility_analysis || null,
+      stabilityOutlook: marketResearch?.stability_outlook || null,
+      healthAssessment: marketResearch?.health_assessment || null,
     },
   });
 }
@@ -511,7 +519,7 @@ function deriveRecCategory(rec) {
   return "stability";
 }
 
-function buildExecutiveSummary({ viabilityScore, stabilityScore, survivalScore, topRisks, topRecs, masterOutput }) {
+function buildExecutiveSummary({ viabilityScore, stabilityScore, survivalScore, topRisks, topRecs, snap, masterOutput, marketResearch = {} }) {
   const bi = masterOutput?.bi_score ?? deriveBusinessIntelligenceScore({ viabilityScore, stabilityScore, survivalScore });
   const scores = [viabilityScore, stabilityScore, survivalScore].filter((s) => s != null);
   const maxScore = scores.length ? Math.max(...scores) : null;
@@ -557,8 +565,8 @@ function buildExecutiveSummary({ viabilityScore, stabilityScore, survivalScore, 
 }
 
 function buildEngineResults({ viabilityScore, stabilityScore, survivalScore, growthScore,
-    revenue, costs, profit, startingCash, runwayMonths, currency, confidenceLevel,
-    confidenceNotes, viability, topRisks, topRecs, multiEngineOutput }) {
+  revenue, costs, profit, startingCash, runwayMonths, currency, confidenceLevel,
+  confidenceNotes, viability, topRisks, topRecs, multiEngineOutput }) {
   const engConf = () => ({
     level: multiEngineOutput ? "MEDIUM" : confidenceLevel,
     note: multiEngineOutput ? "" : (confidenceNotes[0] || ""),
@@ -662,18 +670,18 @@ function buildScenarioBlock(scenarioRun, timeline) {
     return null;
   }
 
-  const baseViability  = _eng(baselineStates, "viability",  "score", "viability_score") ?? base.viability_score ?? null;
-  const baseSurvival   = _eng(baselineStates, "survival",   "survival_score", "score")  ?? base.survival_score  ?? null;
-  const baseStability  = _eng(baselineStates, "stability",  "stability_score", "score") ?? base.stability_score ?? null;
-  const baseGrowth     = _eng(baselineStates, "growth",     "growth_score", "score")    ?? base.growth_score    ?? null;
-  const baseFragility  = _eng(baselineStates, "fragility",  "fragility_index", "fragility_score") ?? base.fragility_index ?? null;
+  const baseViability = _eng(baselineStates, "viability", "score", "viability_score") ?? base.viability_score ?? null;
+  const baseSurvival = _eng(baselineStates, "survival", "survival_score", "score") ?? base.survival_score ?? null;
+  const baseStability = _eng(baselineStates, "stability", "stability_score", "score") ?? base.stability_score ?? null;
+  const baseGrowth = _eng(baselineStates, "growth", "growth_score", "score") ?? base.growth_score ?? null;
+  const baseFragility = _eng(baselineStates, "fragility", "fragility_index", "fragility_score") ?? base.fragility_index ?? null;
   const baseBI = deriveBusinessIntelligenceScore({ viabilityScore: baseViability, survivalScore: baseSurvival, stabilityScore: baseStability, growthScore: baseGrowth });
 
-  const simViability  = _eng(scenarioStates, "viability",  "score", "viability_score") ?? sim.viability_score ?? null;
-  const simSurvival   = _eng(scenarioStates, "survival",   "survival_score", "score")  ?? sim.survival_score  ?? null;
-  const simStability  = _eng(scenarioStates, "stability",  "stability_score", "score") ?? sim.stability_score ?? null;
-  const simGrowth     = _eng(scenarioStates, "growth",     "growth_score", "score")    ?? sim.growth_score    ?? null;
-  const simFragility  = _eng(scenarioStates, "fragility",  "fragility_index", "fragility_score") ?? sim.fragility_index ?? null;
+  const simViability = _eng(scenarioStates, "viability", "score", "viability_score") ?? sim.viability_score ?? null;
+  const simSurvival = _eng(scenarioStates, "survival", "survival_score", "score") ?? sim.survival_score ?? null;
+  const simStability = _eng(scenarioStates, "stability", "stability_score", "score") ?? sim.stability_score ?? null;
+  const simGrowth = _eng(scenarioStates, "growth", "growth_score", "score") ?? sim.growth_score ?? null;
+  const simFragility = _eng(scenarioStates, "fragility", "fragility_index", "fragility_score") ?? sim.fragility_index ?? null;
   const simBI = deriveBusinessIntelligenceScore({ viabilityScore: simViability, survivalScore: simSurvival, stabilityScore: simStability, growthScore: simGrowth });
 
   function _delta(a, b) { return a != null && b != null ? Math.round((b - a) * 10) / 10 : null; }
@@ -699,12 +707,12 @@ function buildScenarioBlock(scenarioRun, timeline) {
       fragilityIndex: simFragility,
     },
     deltas: {
-      viabilityDelta:           _delta(baseViability, simViability),
-      survivalDelta:            _delta(baseSurvival,  simSurvival),
-      stabilityDelta:           _delta(baseStability, simStability),
-      growthDelta:              _delta(baseGrowth,    simGrowth),
-      businessIntelligenceDelta: _delta(baseBI,       simBI),
-      fragilityDelta:           _delta(baseFragility, simFragility),
+      viabilityDelta: _delta(baseViability, simViability),
+      survivalDelta: _delta(baseSurvival, simSurvival),
+      stabilityDelta: _delta(baseStability, simStability),
+      growthDelta: _delta(baseGrowth, simGrowth),
+      businessIntelligenceDelta: _delta(baseBI, simBI),
+      fragilityDelta: _delta(baseFragility, simFragility),
     },
     riskChanges: [],
     recommendationChanges: (scenarioRun.recommendations || multiEngine.recommendation_delta || [])
@@ -716,11 +724,11 @@ function buildScenarioBlock(scenarioRun, timeline) {
     },
     timelineSummary: lastRow
       ? {
-          endRevenue: lastRow.revenue,
-          endCosts: lastRow.costs ?? lastRow.expenses,
-          endProfit: lastRow.profit,
-          endCashBalance: lastRow.cash_balance,
-        }
+        endRevenue: lastRow.revenue,
+        endCosts: lastRow.costs ?? lastRow.expenses,
+        endProfit: lastRow.profit,
+        endCashBalance: lastRow.cash_balance,
+      }
       : null,
   };
 }

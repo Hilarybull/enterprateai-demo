@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -9,11 +10,19 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 
 from app.core.config import get_settings
-from app.modules.idea_validation.calculations import CapacityInputs as CapacityCalcInputs
-from app.modules.idea_validation.calculations import FinancialInputs, evaluate_viability_v3
+from app.modules.idea_validation.calculations import (
+    CapacityInputs as CapacityCalcInputs,
+    ConcentrationInputs,
+    FinancialInputs,
+    MarketContextInputs,
+    ProofInputs,
+    ProofLevel,
+    SalesCycleInputs,
+    evaluate_viability_v3,
+)
 from app.modules.idea_validation.market_fit_service import build_fallback_market_fit, get_market_fit
 from app.modules.idea_validation.schemas import FinancialInputsPayload, IdeaValidationPayload
-from app.modules.idea_validation.idea_validation_engine import IdeaValidationInputs, ResearchSignals, evaluate_idea_v1
+from app.modules.idea_validation.idea_validation_engine import IdeaValidationInputs, ResearchSignals, evaluate_idea_validation_v3
 from app.modules.idea_validation.market_research_service import (
     run_research_data,
     run_ai_narration,
@@ -153,13 +162,45 @@ def _inputs_from_idea_validation(payload: IdeaValidationPayload) -> tuple[Financ
     return fin, payment_terms_days, sales_cycle_days, cap
 
 
+def _extract_concise_keyword(text: str) -> str:
+    """Extract a short, search-friendly keyword from potentially long user descriptions."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    lt = t.lower()
+    # Strip common conversational openers
+    for stop in [
+        "i intend to create an ", "i intend to create a ",
+        "i am building a ", "i am building an ",
+        "i want to build a ", "i want to build an ",
+        "we are building a ", "we are building an ",
+        "it is a ", "it is an ", "a startup that ", "an app that ",
+        "a platform that ", "a service that ",
+    ]:
+        if lt.startswith(stop):
+            t = t[len(stop):]
+            lt = t.lower()
+            break
+    # If still long (> 40 chars or > 5 words), truncate to first 5 words
+    words = t.split()
+    if len(words) > 5 or len(t) > 40:
+        t = " ".join(words[:5])
+    return t.strip()
+
+
 def _market_fit_params_from_idea_validation(payload: IdeaValidationPayload) -> dict[str, Any] | None:
     ctx = payload.context
-    business_name = (ctx.business_name or "").strip() or (payload.offer.service_type or "").strip()
-    industry = (getattr(ctx, "primary_industry", "") or "").strip() or (ctx.business_type or "").strip() or (payload.offer.service_type or "").strip()
-    location = (ctx.location or "").strip() or "London"
+    raw_offering = (ctx.business_offering or ctx.business_name or "").strip() or (payload.offer.service_type or "").strip()
+    keyword_base = _extract_concise_keyword(raw_offering)
+    industry = (getattr(ctx, "primary_industry", "") or "").strip() or (ctx.business_type or "").strip()
+    location = (ctx.location or "").strip() or "United Kingdom"
+    if location.lower() == "national":
+        location = "United Kingdom"
     uk_region = (getattr(ctx, "uk_region", "") or "").strip() or "GB-ENG"
-    keyword = " ".join([p for p in [business_name, industry] if p]).strip()
+    # Build clean keyword: concise concept + industry (if different)
+    keyword = keyword_base
+    if industry and industry.lower() not in keyword.lower():
+        keyword = f"{keyword} {industry}".strip()
     if not keyword:
         return None
     return {"keyword": keyword, "industry": industry or "general", "location": location, "uk_region": uk_region}
@@ -217,7 +258,9 @@ async def save_validation_result(
     pathway: str,
     eval_result: dict,
     narrative_report: dict,
-    fields: dict
+    fields: dict,
+    market_fit: Optional[dict] = None,
+    research_data: Optional[dict] = None
 ) -> str:
     """
     Persist a snapshot of the validation result to the database.
@@ -234,6 +277,10 @@ async def save_validation_result(
         "scoring_details": eval_result.get("dimension_scores", eval_result.get("scoring_details", {})),
         "metrics": eval_result.get("metrics", {}),
         "report_narration": narrative_report.get("executive_summary") or str(narrative_report),
+        "service_name": fields.get("service_name") or fields.get("business_idea_name") or fields.get("service_type"),
+        "market_research": narrative_report,
+        "market_fit": market_fit or eval_result.get("market_fit"),
+        "research_data": research_data or eval_result.get("research_data"),
     }
     
     res = await sb_insert("idea_validation_results", row)
@@ -278,24 +325,48 @@ async def evaluate(
         payload_dict = iv_payload.model_dump() if hasattr(iv_payload, "model_dump") else iv_payload.dict()
         fields = flatten_fields_from_payload(payload_dict)
         
-        # Map payload to engine inputs
+        # Sanitise "National" location to "United Kingdom"
+        if getattr(iv_payload.context, 'location', '') == "National":
+            iv_payload.context.location = "United Kingdom"
+        if fields.get("location") == "National":
+            fields["location"] = "United Kingdom"
+        
+        _prob = iv_payload.problem
+        _val = iv_payload.validation
+
+        # Map payload to engine inputs — guard all optional nested objects
+        # USER REQUEST: Do not use Workspace/Business Name as the search term.
+        # Use 'business_offering' for Business Idea, and 'service_type' for Product/Service Idea.
+        if iv_payload.pathway == "business_idea":
+            raw_name = iv_payload.context.business_offering or iv_payload.context.description or iv_payload.context.business_name or "Business Idea"
+        else:
+            raw_name = iv_payload.offer.service_type or iv_payload.context.business_name or "Product Service Idea"
+        
+        # Extract a clean, concise keyword for search queries and report title
+        concise_name = _extract_concise_keyword(raw_name) or raw_name
+
         engine_inputs = IdeaValidationInputs(
-            idea_name=iv_payload.context.business_name,
-            idea_description=iv_payload.context.business_offering,
-            target_customer=iv_payload.problem.customer_segment,
-            problem_description=iv_payload.problem.problem_type,
-            pain_level=iv_payload.problem.severity,
-            alternatives=iv_payload.problem.alternatives,
-            differentiation=iv_payload.offer.service_type,
-            market_scope=iv_payload.context.location,
-            evidence_signals=iv_payload.validation.demand_proof,
-            spoken_to_count=iv_payload.validation.spoken_count,
-            estimated_price=iv_payload.offer.price_per_unit,
-            expected_units_per_month=iv_payload.demand.expected_units_per_month,
-            variable_cost_per_unit=iv_payload.costs.variable_cost_per_unit,
-            fixed_costs_monthly=iv_payload.costs.fixed_costs_monthly,
+            idea_name=concise_name,
+            idea_description=raw_name,  # Keep full description for AI context
+            target_customer=_prob.customer_segment if _prob else "",
+            problem_description=_prob.problem_type if _prob else "",
+            pain_level=(_prob.severity if _prob else "moderate") or "moderate",
+            alternatives=(_prob.alternatives if _prob else "") or "",
+            differentiation=iv_payload.offer.service_type or "",
+            market_scope=iv_payload.context.location or "United Kingdom",
+            evidence_signals=(_val.demand_proof if _val else []) or [],
+            spoken_to_count=(_val.spoken_count if _val else "0") or "0",
+            estimated_price=iv_payload.offer.price_per_unit or 0.0,
+            expected_units_per_month=iv_payload.demand.expected_units_per_month or 0.0,
+            variable_cost_per_unit=iv_payload.costs.variable_cost_per_unit or 0.0,
+            fixed_costs_monthly=iv_payload.costs.fixed_costs_monthly or 0.0,
             currency=iv_payload.context.currency or "GBP"
         )
+        
+        # Override what_building in fields so AI prompt and search queries use the concise keyword
+        fields["what_building"] = concise_name
+        fields["business_name"] = concise_name
+        fields["idea_description"] = raw_name  # AI uses full description for context
 
         # A. Research Retrieval
         logger.info(f"Starting research retrieval for idea: {engine_inputs.idea_name}")
@@ -303,13 +374,7 @@ async def evaluate(
             research_res = await run_research_data(fields)
         except Exception as e:
             logger.error(f"Research retrieval failed: {e}")
-            # Provide a fallback research result so the flow can continue
-            research_res = {
-                "evidence": {},
-                "sources": {},
-                "shopping": [],
-                "search_queries": {}
-            }
+            research_res = {"evidence": {}, "sources": {}, "shopping": [], "search_queries": {}}
         
         # B. Signal Extraction
         logger.info("Extracting research signals...")
@@ -318,7 +383,7 @@ async def evaluate(
             research_signals = ResearchSignals(**signals_dict)
         except Exception as e:
             logger.error(f"Signal extraction failed: {e}")
-            research_signals = ResearchSignals() # Empty signals fallback
+            research_signals = ResearchSignals()
         
         # C. Market Fit Analysis (Google Trends, Sector Survival, Competition)
         logger.info("Retreiving deterministic market fit signals...")
@@ -332,21 +397,98 @@ async def evaluate(
             logger.error(f"Market fit analysis failed: {e}")
             market_fit_res = build_fallback_market_fit(keyword=engine_inputs.idea_name, industry="general", location=engine_inputs.market_scope or "UK")
 
-        # D. Deterministic Scoring
+        # D. Deterministic Scoring — merge real market fit signals into research signals
         logger.info("Calculating deterministic scores...")
         try:
-            # Merge market fit signals into research signals for the engine
-            mf_signals = {
-                "demand_avg": (market_fit_res.get("demand") or {}).get("avg_interest", 50),
-                "sector_survival": (market_fit_res.get("sector") or {}).get("survival_ratio", 0.6),
-                "local_competition": (market_fit_res.get("competition") or {}).get("score", 50),
-            }
-            # Note: evaluate_idea_v1 might need an update or we just pass the research_signals as is 
-            # and use market_fit_res for the final UI report.
-            eval_result = evaluate_idea_v1(engine_inputs, research_signals)
+            # 1. Prepare Market Context (Internal Signal + External Benchmarks)
+            mf_demand = (market_fit_res.get("demand") or {}).get("score", 50)
+            mf_trend = (market_fit_res.get("demand") or {}).get("score", 60)
+            survival = (market_fit_res.get("sector") or {}).get("survival_ratio", 0.6)
+            
+            market_context = MarketContextInputs(
+                demand_trend_index=(float(mf_trend) - 50) / 50.0, # Map 0-100 to -1.0 to +1.0
+                sector_survival_indicator=float(survival),
+            )
+
+            # 2. Map Proof Level
+            proof_val = ProofLevel.NONE
+            spoken = str(iv_payload.validation.spoken_count if iv_payload.validation else "0").lower()
+            if "20+" in spoken or "10-20" in spoken:
+                proof_val = ProofLevel.INFORMAL_INTEREST
+            
+            # Boost proof level based on signals
+            signals = iv_payload.validation.demand_proof if iv_payload.validation else []
+            if any("contract" in s.lower() or "signed" in s.lower() for s in signals):
+                proof_val = ProofLevel.SIGNED_CONTRACT
+            elif any("paid" in s.lower() or "payment" in s.lower() for s in signals):
+                proof_val = ProofLevel.PAID_PILOT
+            elif any("pilot" in s.lower() for s in signals):
+                proof_val = ProofLevel.PILOTS
+
+            proof_inputs = ProofInputs(
+                proof_level=proof_val,
+                proof_count=len(signals)
+            )
+
+            # 3. Financial & Operational Inputs
+            fin_inputs = FinancialInputs(
+                price_per_unit=iv_payload.offer.price_per_unit or 0.0,
+                units_per_month=iv_payload.demand.expected_units_per_month or 0.0,
+                fixed_costs_monthly=iv_payload.costs.fixed_costs_monthly or 0.0,
+                variable_cost_per_unit=iv_payload.costs.variable_cost_per_unit or 0.0,
+                starting_cash=iv_payload.cash.starting_cash if iv_payload.cash else 0.0
+            )
+
+            cap_inputs = CapacityCalcInputs(
+                demand_units_per_month=iv_payload.demand.expected_units_per_month or 1.0,
+                team_size=iv_payload.capacity.team_size if iv_payload.capacity else 1,
+                capacity_units_per_person_per_month=iv_payload.capacity.capacity_units_per_person_per_month if iv_payload.capacity else 100.0
+            )
+
+            sc_inputs = SalesCycleInputs(
+                sales_cycle_days=iv_payload.demand.sales_cycle_days or 30,
+                payment_terms_days=iv_payload.demand.payment_terms_days or 14
+            )
+
+            conc_inputs = ConcentrationInputs(
+                top_client_share_pct=iv_payload.costs.top_client_share_pct or 0.0,
+                client_count=iv_payload.demand.client_count or 0
+            )
+
+            # 4. Routing: Validation vs Feasibility
+            if iv_payload:
+                # NEW FLOW: Core Idea Validation (Standard Engine v3.0)
+                logger.info("Using Idea Validation Engine (v3.0)...")
+                eval_result = evaluate_idea_validation_v3(
+                    inputs=engine_inputs,
+                    research=ResearchSignals(
+                        demand_score=float(mf_demand),
+                        trend_score=float(mf_trend),
+                        competitor_count=market_fit_res.get("competition", {}).get("competitor_count", 0)
+                    )
+                )
+            else:
+                # LEGACY FLOW: Full Feasibility Analysis
+                logger.info("Using Feasibility Engine (v3)...")
+                eval_result = evaluate_viability_v3(
+                    inputs=fin_inputs,
+                    capacity=cap_inputs,
+                    proof=proof_inputs,
+                    sales_cycle=sc_inputs,
+                    concentration=conc_inputs,
+                    market_context=market_context,
+                    market_fit_score=int(mf_demand)
+                )
         except Exception as e:
             logger.error(f"Deterministic scoring failed: {e}")
-            eval_result = {"score": 50, "classification": "Fair", "reasons": ["Scoring engine error, using baseline."], "metrics": {}}
+            eval_result = {
+                "score": 50,
+                "classification": "Fair",
+                "reasons": [f"Scoring engine encountered an error: {str(e)}"],
+                "recommendations": ["Review your inputs for consistency."],
+                "dimension_scores": {},
+                "metrics": {}
+            }
 
         # E. Claude Narration
         logger.info("Generating AI narration...")
@@ -357,6 +499,8 @@ async def evaluate(
                 "market_fit_analysis": market_fit_res # Pass market fit to Claude for better summary
             }
             narrative_report = await run_ai_narration(narration_fields, research_res["evidence"], research_res["shopping"])
+            # CRITICAL: LOG THE RESPONSE FOR VERIFICATION
+            logger.info("AI Narration Response: %s", json.dumps(narrative_report, indent=2))
         except Exception as e:
             logger.error(f"AI narration failed: {e}")
             narrative_report = {
@@ -384,8 +528,21 @@ async def evaluate(
             "pathway": iv_payload.pathway,
             "business_name": engine_inputs.idea_name,
             "service_name": engine_inputs.idea_name,
-            "validation_explanation": narrative_report.get("executive_summary") or "AI synthesis pending...",
-            "dimension_explanations": narrative_report.get("dimension_explanations") or market_fit_res.get("dimension_explanations") or {},
+            # Pull executive summary from AI narration (the source of truth), not from the engine
+            "validation_explanation": (
+                narrative_report.get("executive_summary") or
+                narrative_report.get("viability_score", {}).get("summary") or
+                "Validation summary is being generated based on market signals and your inputs."
+            ),
+            "dimension_explanations": {
+                **eval_result.get("dimension_explanations", {}),
+                **narrative_report.get("dimension_explanations", {}),
+                **market_fit_res.get("dimension_explanations", {}),
+            },
+            "reason_codes": eval_result.get("reason_codes", []),
+            "advisory_flags": eval_result.get("advisory_flags", []),
+            "flags": eval_result.get("flags", []),
+            "rubric_version": eval_result.get("rubric_version", "v0.3"),
         }
         
         # F. Persist to History
@@ -396,12 +553,27 @@ async def evaluate(
                 pathway=iv_payload.pathway,
                 eval_result=eval_result,
                 narrative_report=narrative_report,
-                fields=fields
+                fields=fields,
+                market_fit=market_fit_res,
+                research_data=research_res
             )
             final_result["result_id"] = result_id
-            logger.info(f"Validation result saved to history: {result_id}")
+            
+            # G. Sync with Workspace for immediate UI hydration on refresh
+            # We clear "decision" to ensure a fresh validation starts as 'PENDING'.
+            if workspace_id:
+                await update_workspace(
+                    user_id=user_id, 
+                    workspace_id=workspace_id, 
+                    data_patch={
+                        "idea_validation_result": final_result,
+                        "decision": None
+                    }
+                )
+                
+            logger.info(f"Validation result saved and workspace synced: {result_id}")
         except Exception as e:
-            logger.warning(f"Failed to save validation history: {e}")
+            logger.warning(f"Failed to persist validation result: {e}")
         
         return final_result
 
@@ -560,16 +732,19 @@ def _market_fit_params_from_idea_validation(payload: IdeaValidationPayload) -> d
     prob = payload.problem
     offer = payload.offer
     
-    # Prioritize specific idea name, then service type, then problem type
-    # We strictly avoid workspace metadata here.
-    business_name = str(ctx.business_name or "").strip()
+    # USER REQUEST: Prioritize specific idea name/offering over general business/workspace name.
     offering = str(ctx.business_offering or "").strip()
     service_type = str(offer.service_type or "").strip()
     problem_type = str(prob.problem_type or "").strip()
+    business_name = str(ctx.business_name or "").strip()
     
-    keyword = business_name or offering or service_type or problem_type or "new business idea"
+    keyword = offering or service_type or problem_type or business_name or "new business idea"
     industry = str(ctx.primary_industry or ctx.business_type or "general").strip()
+    
     location = str(ctx.location or "United Kingdom").strip()
+    if location == "National":
+        location = "United Kingdom"
+        
     uk_region = str(ctx.uk_region or "GB-ENG").strip()
     
     return {

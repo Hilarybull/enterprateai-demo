@@ -259,6 +259,42 @@ function confidenceSection({ confidence, narratives }) {
   `;
 }
 
+function aiNarrativeSection({ title, narrative }) {
+  if (!narrative) return "";
+
+  // Handlers for different object structures from the AI
+  const summary = narrative.summary || narrative.readiness_summary || narrative.vulnerability_summary || narrative.resilience_summary || "";
+  const subheadline = narrative.headline || "";
+  const extra = narrative.risk_assessment || narrative.mitigation_plan || narrative.margin_resilience || narrative.growth_constraints || "";
+  const checks = narrative.health_checks || narrative.concentration_risks || narrative.baseline_performance || null;
+
+  return `
+    <div style="margin-bottom:28px;background:#fff;border:1px solid ${BRAND.border};border-radius:8px;padding:24px;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:${BRAND.primary};margin-bottom:12px;">${title}</div>
+      ${subheadline ? `<div style="font-size:16px;font-weight:700;color:${BRAND.dark};margin-bottom:12px;">${subheadline}</div>` : ""}
+      <div style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:16px;">${summary}</div>
+      
+      ${extra ? `
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid ${BRAND.border};">
+          <div style="font-size:11px;font-weight:700;color:${BRAND.muted};text-transform:uppercase;margin-bottom:8px;">Deep Analysis</div>
+          <div style="font-size:12px;color:#374151;line-height:1.5;">${extra}</div>
+        </div>
+      ` : ""}
+
+      ${checks ? `
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid ${BRAND.border};">
+          <div style="font-size:11px;font-weight:700;color:${BRAND.muted};text-transform:uppercase;margin-bottom:8px;">Specific Factors</div>
+          <div style="font-size:12px;color:#374151;">
+            ${Array.isArray(checks)
+        ? checks.map(c => `· ${c}`).join("<br/>")
+        : `· ${checks}`}
+          </div>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
 function disclaimerSection() {
   return `
     <div style="margin-top:32px;padding-top:16px;border-top:1px solid ${BRAND.border};font-size:10px;color:${BRAND.muted};line-height:1.6;">
@@ -293,6 +329,7 @@ export function buildReportSections(reportType, output, currency) {
 
     case "fragility_report":
       return [
+        aiNarrativeSection({ title: "Fragility Analysis", narrative: na?.fragilityAnalysis }),
         executiveSummarySection({ executiveSummary: ex, classifications: cl }),
         risksSection({ risks: ri, currency }),
         recommendationsSection({ recommendations: re }),
@@ -302,6 +339,29 @@ export function buildReportSections(reportType, output, currency) {
 
     case "investor_summary":
       return [
+        aiNarrativeSection({ title: "Investor Perspective", narrative: na?.investorPerspective }),
+        scoreCards({ scores: sc, currency }),
+        executiveSummarySection({ executiveSummary: ex, classifications: cl }),
+        risksSection({ risks: ri, currency }),
+        recommendationsSection({ recommendations: re }),
+        nextActionsSection({ executiveSummary: ex }),
+        confidenceSection({ confidence: co, narratives: na }),
+        disclaimerSection(),
+      ].filter(Boolean).join("");
+
+    case "stability_report":
+      return [
+        aiNarrativeSection({ title: "Stability Outlook", narrative: na?.stabilityOutlook }),
+        scoreCards({ scores: sc, currency }),
+        executiveSummarySection({ executiveSummary: ex, classifications: cl }),
+        risksSection({ risks: ri, currency }),
+        confidenceSection({ confidence: co, narratives: na }),
+        disclaimerSection(),
+      ].filter(Boolean).join("");
+
+    case "business_health_report":
+      return [
+        aiNarrativeSection({ title: "Health Assessment", narrative: na?.healthAssessment }),
         scoreCards({ scores: sc, currency }),
         executiveSummarySection({ executiveSummary: ex, classifications: cl }),
         risksSection({ risks: ri, currency }),

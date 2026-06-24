@@ -782,6 +782,30 @@ export default function SimulationPage() {
                 const structClass = master.structural_classification ?? {};
                 const risks = Array.isArray(master.consolidated_risks) ? master.consolidated_risks : [];
                 const recs = Array.isArray(master.priority_recommendations) ? master.priority_recommendations : [];
+
+                // Extract clean readable text from risk/recommendation items.
+                // Handles plain strings, JS objects with .explanation / .text,
+                // and backend Python repr strings like: RiskFlag(code='X', explanation='...', ...)
+                function extractRiskText(item) {
+                  if (!item) return null;
+                  if (typeof item === "string") {
+                    // Try to pull explanation= or text= out of a Python repr string
+                    const explMatch = item.match(/explanation='([^']+)'/);
+                    if (explMatch) return explMatch[1];
+                    const textMatch = item.match(/text='([^']+)'/);
+                    if (textMatch) return textMatch[1];
+                    // If it looks like a Python object repr, skip it entirely
+                    if (item.startsWith("RiskFlag(") || item.startsWith("Recommendation(")) return null;
+                    return item;
+                  }
+                  if (typeof item === "object") {
+                    return item.explanation || item.text || item.message || item.description || null;
+                  }
+                  return null;
+                }
+
+                const cleanRisks = risks.map(extractRiskText).filter(Boolean);
+                const cleanRecs = recs.map(extractRiskText).filter(Boolean);
                 const engines = [
                   { key: "viability", label: "Viability", score: summary.viability?.score ?? 0, band: summary.viability?.band },
                   { key: "survival", label: "Survival", score: summary.survival?.score ?? 0, band: summary.survival?.band },
@@ -832,24 +856,24 @@ export default function SimulationPage() {
                       </div>
                       {fragBand && <div className="mt-0.5 text-xs text-slate-400">{biBandLabel(fragBand)}</div>}
                     </div>
-                    {risks.length > 0 && (
+                    {cleanRisks.length > 0 && (
                       <div>
                         <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Key Risks</div>
                         <ul className="space-y-1">
-                          {risks.slice(0, 4).map((r, i) => (
-                            <li key={i} className="flex items-start gap-1.5 text-xs text-slate-700">
+                          {cleanRisks.slice(0, 4).map((r, i) => (
+                            <li key={`risk-${i}`} className="flex items-start gap-1.5 text-xs text-slate-700">
                               <span className="mt-0.5 shrink-0 text-amber-500">▲</span>{r}
                             </li>
                           ))}
                         </ul>
                       </div>
                     )}
-                    {recs.length > 0 && (
+                    {cleanRecs.length > 0 && (
                       <div>
                         <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Priority Actions</div>
                         <ul className="space-y-1">
-                          {recs.slice(0, 3).map((r, i) => (
-                            <li key={i} className="flex items-start gap-1.5 text-xs text-slate-700">
+                          {cleanRecs.slice(0, 3).map((r, i) => (
+                            <li key={`rec-${i}`} className="flex items-start gap-1.5 text-xs text-slate-700">
                               <span className="mt-0.5 shrink-0 text-emerald-500">&#8594;</span>{r}
                             </li>
                           ))}

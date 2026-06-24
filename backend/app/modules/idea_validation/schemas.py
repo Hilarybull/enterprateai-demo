@@ -10,7 +10,7 @@ from app.shared.schemas.common import WorkspaceDocument
 
 
 class CreateValidationWorkspaceRequest(BaseModel):
-    name: str = Field(min_length=2, max_length=64)
+    name: str = Field(min_length=2, max_length=255)
     data: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -54,10 +54,10 @@ PricingModel = Literal["hourly", "fixed_job", "retainer"]
 
 class BusinessContext(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    business_name: str = Field(default="", max_length=80)
-    business_type: str = Field(default="service_micro_business", max_length=80)
-    primary_industry: str = Field(default="", max_length=80)
-    location: str = Field(default="", max_length=80)
+    business_name: str = Field(default="", max_length=255)
+    business_type: str = Field(default="service_micro_business", max_length=255)
+    primary_industry: str = Field(default="", max_length=255)
+    location: str = Field(default="", max_length=255)
     uk_region: str = Field(default="GB-ENG", max_length=16)
     currency: str = Field(default="GBP", max_length=8)
     founder_hours_per_week: float = Field(default=40, ge=0, le=168)
@@ -68,16 +68,16 @@ class BusinessContext(BaseModel):
 
 class ProblemCustomer(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    customer_segment: str = Field(default="", max_length=120)
-    problem_type: str = Field(default="", max_length=160)
+    customer_segment: str = Field(default="", max_length=255)
+    problem_type: str = Field(default="", max_length=255)
     severity: str = Field(default="moderate", max_length=32)
-    frequency: str = Field(default="", max_length=80)
+    frequency: str = Field(default="", max_length=255)
     description: Optional[str] = Field(default=None, max_length=1000)
     alternatives: Optional[str] = Field(default=None, max_length=1000)
 
 
 class OfferDefinition(BaseModel):
-    service_type: str = Field(default="", max_length=80)
+    service_type: str = Field(default="", max_length=255)
     pricing_model: PricingModel = "fixed_job"
     price_per_unit: float = Field(ge=0, default=0)
     deliverable_unit: str = Field(default="unit", max_length=32)
@@ -89,6 +89,7 @@ class DemandAssumptions(BaseModel):
     expected_customers: int = Field(ge=0, default=0)
     sales_cycle_days: int = Field(ge=0, default=0)
     payment_terms_days: int = Field(ge=0, default=14)
+    client_count: int = Field(ge=0, default=0)
 
 
 class CostInputs(BaseModel):
@@ -96,6 +97,7 @@ class CostInputs(BaseModel):
     fixed_costs_monthly: float = Field(ge=0, default=0)
     founder_draw_monthly: float = Field(ge=0, default=0)
     contractor_costs_monthly: float = Field(ge=0, default=0)
+    top_client_share_pct: float = Field(ge=0, le=100, default=0)
 
 
 class CapacityInputs(BaseModel):
@@ -141,6 +143,7 @@ class EvaluateRequest(BaseModel):
 
 
 class ValidationResult(BaseModel):
+    model_config = ConfigDict(extra="allow")  # Allow additional fields so nothing is stripped
     score: int
     classification: str
     reasons: list[str]
@@ -148,17 +151,24 @@ class ValidationResult(BaseModel):
     metrics: Dict[str, Any]
     pathway: Optional[Pathway] = None
     flags: list[str] = []
-    dimension_scores: Dict[str, int] = {}
+    dimension_scores: Dict[str, Any] = {}
     dimension_explanations: Dict[str, str] = {}
     validation_explanation: str = ""
     score_pre_context: Optional[int] = None
     reason_codes: list[str] = []
     advisory_flags: list[str] = []
     rubric_version: str = ""
+    # AI narration & research fields
+    market_research: Optional[Dict[str, Any]] = None
+    market_fit: Optional[Dict[str, Any]] = None
+    business_name: Optional[str] = None
+    service_name: Optional[str] = None
+    research_data: Optional[Dict[str, Any]] = None
+    result_id: Optional[str] = None
 
 
 class UpdateWorkspaceRequest(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=64)
+    name: Optional[str] = Field(default=None, max_length=255)
     data: Dict[str, Any] = Field(default_factory=dict)
 
 
