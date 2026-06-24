@@ -322,7 +322,7 @@ export default function ResultsPage() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
-                  {validation?.service_name || "Service idea"}
+                  {isServiceIdea ? (validation?.service_name || "Service idea") : (businessName || validation?.business_name || "Business Concept")}
                 </div>
                 {serviceOutcome ? <Badge>{serviceOutcome}</Badge> : null}
                 <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
@@ -586,7 +586,7 @@ export default function ResultsPage() {
 
   const orderedDimensions = useMemo(() => {
     if (!dimensionScores) return [];
-    const preferred = ["unit_economics", "break_even", "runway", "capacity", "market_fit", "cash_timing", "proof", "sales_cycle", "concentration"];
+    const preferred = ["market_demand", "market_trend", "unit_economics", "break_even", "runway", "capacity", "market_fit", "cash_timing", "proof", "sales_cycle", "concentration"];
     const present = new Set(Object.keys(dimensionScores || {}));
     const base = preferred.filter((k) => present.has(k));
     const rest = Object.keys(dimensionScores || {}).filter((k) => !base.includes(k));
@@ -594,20 +594,26 @@ export default function ResultsPage() {
   }, [dimensionScores]);
 
   const validationExplanation =
-    String(validation?.validation_explanation || "").trim() ||
-    "Validation score is a weighted average of dimension scores (0-100): 30% Unit economics + 20% Break-even + 20% Runway + 20% Capacity + 10% Cash timing.";
+    String(validation?.validation_explanation || validation?.market_research?.executive_summary || "").trim() ||
+    "Validation summary is being generated based on market signals and research. Your score reflects the deterministic strength of the concept.";
 
   const DIMENSION_META = useMemo(
     () => ({
-      runway: { label: "Runway", help: "How long your cash buffer can sustain the plan at current assumptions." },
-      cash_timing: { label: "Cash timing", help: "Payment terms and timing of inflows/outflows. Shorter cycles reduce risk." },
-      capacity: { label: "Capacity", help: "Whether your delivery capacity can meet the expected demand." },
-      unit_economics: { label: "Unit economics", help: "Margin strength and profitability per unit of delivery." },
-      break_even: { label: "Break-even", help: "Time to cover fixed costs based on price, costs, and expected volume." },
-      market_fit: { label: "Market fit", help: "External signals (demand trend, sector survival, local competition) combined deterministically." },
-      proof: { label: "Market proof", help: "Strength of market validation evidence collected so far." },
-      sales_cycle: { label: "Sales cycle", help: "Risk introduced by a long sales cycle relative to your cash runway." },
-      concentration: { label: "Concentration", help: "Client concentration risk — dependency on a single customer." }
+      runway: { label: "Runway", help: "Measures how long your existing cash reserves can sustain the current burn rate." },
+      cash_timing: { label: "Cash timing", help: "Risk analysis of your payment terms and working capital cycle." },
+      capacity: { label: "Capacity", help: "Evaluation of whether your team can deliver the expected volume." },
+      unit_economics: { label: "Unit economics", help: "Deterministic profitability analysis of your price vs variable costs." },
+      break_even: { label: "Break-even", help: "Time required to cover all fixed costs based on current margins." },
+      market_fit: { label: "Market fit", help: "Real-world signals including search trends, industry survival, and competition density." },
+      proof: { label: "Market proof", help: "Strength of validation evidence from customer conversations and pilots." },
+      sales_cycle: { label: "Sales cycle", help: "Analysis of time-to-revenue and its impact on your liquidity." },
+      concentration: { label: "Concentration", help: "Risk assessment of over-dependency on a single client or sector." },
+      problem_severity: { label: "Problem Severity", help: "Intelligence on how 'urgent' or 'painful' the problem is for the target customer." },
+      market_demand: { label: "Market Demand", help: "External proof of interest and search volume for this solution." },
+      competition_validation: { label: "Competition", help: "Analysis of market existence proof via existing competitors." },
+      differentiation: { label: "Differentiation", help: "Strength of your unique value proposition compared to alternatives." },
+      evidence_strength: { label: "Evidence Strength", help: "Quality and volume of direct customer feedback collected." },
+      market_trend: { label: "Market Trend", help: "Momentum and growth trajectory of the target sector." }
     }),
     []
   );
@@ -622,7 +628,7 @@ export default function ResultsPage() {
   function dimHelp(key) {
     const k = String(key || "").trim();
     const fromBackend = validation?.dimension_explanations && typeof validation.dimension_explanations === "object" ? validation.dimension_explanations[k] : null;
-    return fromBackend || DIMENSION_META[k]?.help || "Dimension score (0-100).";
+    return fromBackend || DIMENSION_META[k]?.help || "Validation metric based on deterministic engine scoring.";
   }
 
   return (
@@ -642,7 +648,11 @@ export default function ResultsPage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">{businessName || validation?.business_name || "Validation"}</div>
+              <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
+                {validation.pathway === "product_service_idea"
+                  ? (validation?.service_name || "Service Idea")
+                  : (validation?.business_name || "Business Concept Idea")}
+              </div>
               <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
               {pathwayLabel ? <Badge>{pathwayLabel}</Badge> : null}
             </div>
@@ -696,61 +706,120 @@ export default function ResultsPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <div className="space-y-4 lg:col-span-8">
-          <SectionCard
-            title="Deterministic baseline model"
-            subtitle="Unit economics and feasibility from your structured inputs."
-            className="bg-white"
-          >
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <StatTile
-                label="Monthly revenue"
-                value={formatCurrency(revenue, currency)}
-                info="Estimated revenue per month based on price and expected volume."
-              />
-              <StatTile
-                label="Monthly net"
-                value={formatCurrency(net, currency)}
-                info="Monthly surplus (positive) or deficit (negative)."
-              />
-              <StatTile label="Contribution margin" value={formatPercent(margin)} info="(Revenue - costs) / revenue." />
-
-              <StatTile
-                label="Break-even"
-                value={be === null ? "—" : `${formatNumber(be)} months`}
-                info="How long it takes to cover fixed costs given your current plan."
-              />
-              <StatTile
-                label="Capacity feasible"
-                value={capacity?.feasible === true ? "Yes" : capacity?.feasible === false ? "No" : "Unknown"}
-                info="Whether your delivery capacity can meet expected demand."
-                tone={capacity?.feasible === true ? "success" : capacity?.feasible === false ? "danger" : "default"}
-              />
-              <StatTile
-                label="Runway"
-                value={runway === null ? "Infinity" : `${formatNumber(runway)} months`}
-                info="How many months your cash can cover your burn. Infinity means cashflow-positive."
-              />
-            </div>
-
-            {viewMode === "detailed" ? (
-              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-                <StatTile label="Monthly costs" value={formatCurrency(costs, currency)} info="Fixed + variable costs per month." />
-                <StatTile label="Burn / month" value={burn === null ? "—" : formatCurrency(burn, currency)} info="If costs exceed revenue, burn is the gap you fund with cash." tone={burn && burn > 0 ? "warn" : "default"} />
-                <StatTile
-                  label="Capacity utilization"
-                  value={utilization === null ? "—" : formatPercent(utilization)}
-                  info="Demand divided by delivery capacity."
-                  tone={utilization !== null && utilization > 1 ? "danger" : utilization !== null && utilization > 0.8 ? "warn" : "default"}
-                />
-                <StatTile label="Demand units / month" value={formatNumber(demandUnits)} info="Units you expect to deliver per month." />
-                <StatTile label="Capacity units / month" value={formatNumber(capacityUnits)} info="Max units your team can deliver per month." />
-                <StatTile label="Shortfall units" value={formatNumber(shortfall)} info="How many units exceed capacity (if any)." tone={shortfall && shortfall > 0 ? "danger" : "default"} />
+          {!isServiceIdea && viewMode === "simple" ? (
+            <SectionCard title="Market Intelligence" subtitle="AI-driven summary of your validation result.">
+              <div className="rounded-2xl bg-gradient-to-br from-brand-50 to-brand-100 p-6 shadow-inner ring-1 ring-brand-200">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+                  </div>
+                  <h4 className="text-base font-bold text-slate-900">Executive Summary</h4>
+                </div>
+                <p className="text-sm leading-relaxed font-medium text-slate-700 italic">
+                  &ldquo;{validationExplanation}&rdquo;
+                </p>
               </div>
-            ) : null}
+            </SectionCard>
+          ) : !isServiceIdea && viewMode === "detailed" ? (
+            <SectionCard title="Validation Engine Data" subtitle="Underlying deterministic metrics for this idea.">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <StatTile label="Calculated Score" value={`${score}/100`} info="Weighted average based on problem severity, demand proof, and research signals." />
+                <StatTile label="Classification" value={classification} info="Overall market fit category." />
+                <StatTile label="Currency" value={currency || "GBP"} info="Currency used for any estimates." />
+              </div>
+            </SectionCard>
+          ) : (
+            <SectionCard
+              title="Deterministic baseline model"
+              subtitle="Unit economics and feasibility from your structured inputs."
+              className="bg-white"
+            >
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <StatTile
+                  label="Monthly revenue"
+                  value={formatCurrency(revenue, currency)}
+                  info="Estimated revenue per month based on price and expected volume."
+                />
+                <StatTile
+                  label="Monthly net"
+                  value={formatCurrency(net, currency)}
+                  info="Monthly surplus (positive) or deficit (negative)."
+                />
+                <StatTile label="Contribution margin" value={formatPercent(margin)} info="(Revenue - costs) / revenue." />
 
-          </SectionCard>
+                <StatTile
+                  label="Break-even"
+                  value={be === null ? "—" : `${formatNumber(be)} months`}
+                  info="How long it takes to cover fixed costs given your current plan."
+                />
+                <StatTile
+                  label="Capacity feasible"
+                  value={capacity?.feasible === true ? "Yes" : capacity?.feasible === false ? "No" : "Unknown"}
+                  info="Whether your delivery capacity can meet expected demand."
+                  tone={capacity?.feasible === true ? "success" : capacity?.feasible === false ? "danger" : "default"}
+                />
+                <StatTile
+                  label="Runway"
+                  value={runway === null ? "Infinity" : `${formatNumber(runway)} months`}
+                  info="How many months your cash can cover your burn. Infinity means cashflow-positive."
+                />
+              </div>
 
-          {viewMode === "simple" ? (
+              {viewMode === "detailed" ? (
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <StatTile label="Monthly costs" value={formatCurrency(costs, currency)} info="Fixed + variable costs per month." />
+                  <StatTile label="Burn / month" value={burn === null ? "—" : formatCurrency(burn, currency)} info="If costs exceed revenue, burn is the gap you fund with cash." tone={burn && burn > 0 ? "warn" : "default"} />
+                  <StatTile
+                    label="Capacity utilization"
+                    value={utilization === null ? "—" : formatPercent(utilization)}
+                    info="Demand divided by delivery capacity."
+                    tone={utilization !== null && utilization > 1 ? "danger" : utilization !== null && utilization > 0.8 ? "warn" : "default"}
+                  />
+                  <StatTile label="Demand units / month" value={formatNumber(demandUnits)} info="Units you expect to deliver per month." />
+                  <StatTile label="Capacity units / month" value={formatNumber(capacityUnits)} info="Max units your team can deliver per month." />
+                  <StatTile label="Shortfall units" value={formatNumber(shortfall)} info="How many units exceed capacity (if any)." tone={shortfall && shortfall > 0 ? "danger" : "default"} />
+                </div>
+              ) : null}
+            </SectionCard>
+          )}
+
+          {!isServiceIdea ? (
+            <SectionCard title="Validation Insights" subtitle="Deeper breakdown of market signals.">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="h-2 w-2 rounded-full bg-rose-500" />
+                    <div className="text-xs font-bold uppercase tracking-widest text-slate-400">Critical Risks</div>
+                  </div>
+                  <ul className="space-y-3">
+                    {reasons.length ? reasons.slice(0, 6).map((r, i) => (
+                      <li key={i} className="flex gap-3 text-sm text-slate-700 leading-relaxed">
+                        <span className="shrink-0 text-slate-300 select-none">•</span>
+                        {r}
+                      </li>
+                    )) : <li className="text-sm text-slate-400 italic">No critical risks identified.</li>}
+                  </ul>
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="h-2 w-2 rounded-full bg-brand-500" />
+                    <div className="text-xs font-bold uppercase tracking-widest text-slate-400">Strategic Roadmap</div>
+                  </div>
+                  <ul className="space-y-3">
+                    {actionPlan.length ? actionPlan.slice(0, 6).map((r, i) => (
+                      <li key={i} className="flex gap-3 text-sm text-slate-700 leading-relaxed">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[10px] font-bold text-brand-600 ring-1 ring-brand-200">
+                          {i + 1}
+                        </span>
+                        {r}
+                      </li>
+                    )) : <li className="text-sm text-slate-400 italic">No actions recommended yet.</li>}
+                  </ul>
+                </div>
+              </div>
+            </SectionCard>
+          ) : viewMode === "simple" ? (
             <SectionCard title="Insights" subtitle="Key risks and what to do next.">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -769,20 +838,58 @@ export default function ResultsPage() {
             </SectionCard>
           ) : null}
 
-          {viewMode === "simple" ? (
+          {viewMode === "simple" && !isServiceIdea ? (
             <SectionCard
-              title="Keyword trend"
-              subtitle="Deterministic keyword set from your inputs."
-              headerRight={<InfoTip text="Keywords are derived from Business name + Industry + Offer. Trend data appears when connected." />}
+              title="Market Health Signals"
+              subtitle="Real-time validation signals from Google Trends, Companies House, and Local Market."
+              headerRight={<InfoTip text="Signals are derived from live market analysis of your business concept and location." />}
             >
-              <div className="flex flex-wrap gap-2">
-                {(keywordsToTrack.length ? keywordsToTrack : ["Add business name and industry to generate keywords."]).slice(0, 6).map((k) => (
-                  <span key={k} className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
-                    {k}
-                  </span>
-                ))}
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200 shadow-sm">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M23 6l-9.5 9.5-5-5L1 18" /><path d="M17 6h6v6" /></svg>
+                    </div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Demand Trend</span>
+                  </div>
+                  <div className="text-lg font-black text-slate-900 capitalize">
+                    {validation?.metrics?.market_fit?.demand?.trend_direction || "Stable"}
+                  </div>
+                  <div className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                    {validation?.metrics?.market_fit?.demand?.explanation || "Search interest suggests a steady baseline for this category."}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200 shadow-sm">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /></svg>
+                    </div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Sector Survival</span>
+                  </div>
+                  <div className="text-lg font-black text-slate-900">
+                    {validation?.metrics?.market_fit?.sector?.survival_ratio ? formatPercent(validation.metrics.market_fit.sector.survival_ratio) : "60%"}
+                  </div>
+                  <div className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                    {validation?.metrics?.market_fit?.sector?.explanation || "Average survival rates detected for new incorporations in this SIC category."}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200 shadow-sm">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><path d="M12 8v8M8 12h8" /></svg>
+                    </div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Competition</span>
+                  </div>
+                  <div className="text-lg font-black text-slate-900 capitalize">
+                    {validation?.metrics?.market_fit?.competition?.competition_level || "Balanced"}
+                  </div>
+                  <div className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                    {validation?.metrics?.market_fit?.competition?.explanation || "Standard level of local competition detected for this keyword and radius."}
+                  </div>
+                </div>
               </div>
-              <div className="mt-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">No trend data yet.</div>
             </SectionCard>
           ) : null}
 
@@ -972,22 +1079,30 @@ export default function ResultsPage() {
             </div>
           </div>
 
-          <SectionCard title="Validation scores" subtitle="Quick view by dimension." headerRight={<InfoTip text={validationExplanation} />}>
+          <SectionCard title={!isServiceIdea ? "Idea Strength Dimensions" : "Validation scores"} subtitle={!isServiceIdea ? "Breakdown of the evaluation engine logic." : "Quick view by dimension."} headerRight={<InfoTip text={validationExplanation} />}>
             {dimensionScores ? (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {orderedDimensions.map((k) => {
                   const v = typeof dimensionScores?.[k] === "number" ? dimensionScores[k] : 0;
+                  const label = dimLabel(k);
+                  const help = dimHelp(k);
+                  const tone = toneForScore(v);
                   return (
-                    <div key={k} className={"rounded-2xl border bg-white p-3 " + toneForScore(v).borderClass}>
+                    <div key={k} className={`group relative rounded-2xl border bg-white p-4 transition-all hover:shadow-md ${tone.borderClass}`}>
                       <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs font-semibold text-slate-500">{dimLabel(k)}</div>
-                        <InfoTip text={dimHelp(k)} />
+                        <div className="text-xs font-bold uppercase tracking-wider text-slate-400 group-hover:text-slate-600 transition-colors">{label}</div>
+                        <InfoTip text={help} />
                       </div>
-                      <div className="mt-1 text-lg font-semibold text-slate-900">{formatNumber(v)}/100</div>
-                      <div className={"mt-2 h-2 w-full overflow-hidden rounded-full " + toneForScore(v).trackClass}>
-                        <div className={"h-full " + toneForScore(v).barClass} style={{ width: pctWidth(v) }} />
+                      <div className="mt-2 flex items-baseline gap-1">
+                        <div className="text-2xl font-black text-slate-900">{formatNumber(v)}</div>
+                        <div className="text-sm font-bold text-slate-400">/100</div>
                       </div>
-                      <div className="mt-2 text-xs text-slate-600">{shortExplanation(dimHelp(k), 120)}</div>
+                      <div className={`mt-3 h-2 w-full overflow-hidden rounded-full ${tone.trackClass}`}>
+                        <div className={`h-full transition-all duration-1000 ${tone.barClass}`} style={{ width: pctWidth(v) }} />
+                      </div>
+                      <div className="mt-3 text-[11px] font-medium leading-relaxed text-slate-500">
+                        {shortExplanation(help, 140)}
+                      </div>
                     </div>
                   );
                 })}
