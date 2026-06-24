@@ -13,7 +13,7 @@ export const PLANS = [
     features: [
       "1 idea validation/month",
       "1 business plan/month",
-      "10 sales letters/month",
+      "1 sales letter/month",
       "Unlimited products, customers & vendors",
       "Unlimited invoices & quotations",
       "1 marketplace listing",
@@ -35,9 +35,9 @@ export const PLANS = [
     features: [
       "5 idea validations/month",
       "5 business plans/month",
-      "5 proposals · 30 sales letters/month",
-      "250 products · 500 customers · 250 vendors",
-      "50 invoices · 50 quotations/month",
+      "10 proposals · 30 sales letters/month",
+      "Unlimited products, customers & vendors",
+      "Unlimited invoices & quotations",
       "2 scenario simulations",
       "Basic Fragility Index",
       "Adaptive Scenario Intelligence",

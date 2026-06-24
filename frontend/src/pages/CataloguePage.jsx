@@ -1572,6 +1572,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
             <SectionCard title="Products & services" subtitle="Pricing, cost of sales, and margin per item.">
               <div className="mt-2">
                 <ReportTable
+                  paginate
                   columns={[
                     { key: "name", label: "Name", bold: true },
                     { key: "category", label: "Category" },
@@ -1589,6 +1590,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <SectionCard title="Customers" subtitle="Revenue earned and outstanding per customer.">
                 <div className="mt-2">
                   <ReportTable
+                    paginate
                     columns={[
                       { key: "name", label: "Name", bold: true },
                       { key: "invoices", label: "Invoices", right: true },
@@ -1605,6 +1607,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <SectionCard title="Vendors" subtitle="Supplier list and total spend from paid expenses.">
                 <div className="mt-2">
                   <ReportTable
+                    paginate
                     columns={[
                       { key: "name", label: "Name", bold: true },
                       { key: "category", label: "Category" },
