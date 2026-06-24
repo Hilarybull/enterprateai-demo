@@ -3,6 +3,22 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+import urllib3.util.retry
+
+# GLOBAL MONKEYPATCH: pytrends uses 'method_whitelist' which was renamed to 'allowed_methods' 
+# in urllib3 >= 2.0.0. This global patch ensures compatibility across all engines.
+# We apply it very aggressively to ensure no imports bypass it.
+try:
+    orig_retry_init = urllib3.util.retry.Retry.__init__
+    def patched_retry_init(self, *args, **kwargs):
+        if 'method_whitelist' in kwargs:
+            # Always map method_whitelist to allowed_methods if the latter is supported
+            # and the former is what's being passed (as in pytrends)
+            kwargs['allowed_methods'] = kwargs.pop('method_whitelist')
+        return orig_retry_init(self, *args, **kwargs)
+    urllib3.util.retry.Retry.__init__ = patched_retry_init
+except Exception as e:
+    logging.getLogger(__name__).warning(f"Failed to apply global urllib3 patch: {e}")
 
 from app.core.config import get_settings
 from app.core.database import connect_to_mongo, close_mongo_connection

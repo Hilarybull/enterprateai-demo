@@ -12,7 +12,7 @@ import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permission
 import { useAuthStore } from "../store/auth";
 import InfoTip from "../components/InfoTip";
 import NumberInput, { parseIntSafe, parseNumber } from "../components/NumberInput";
-import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
+import { CURRENCY_CODES, currencyLabel, getCurrencySymbol } from "../lib/currencies";
 import { imageFileToDataUrl } from "../lib/files";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { generateValidationInsightPdf } from "../lib/reports/index";
@@ -353,7 +353,7 @@ export default function ValidationWizardPage() {
     estimated_price: "" // NEW
   }));
   const [serviceCurrency, setServiceCurrency] = useState("GBP");
-  const serviceCurrencySymbol = useMemo(() => currencyLabel(serviceCurrency), [serviceCurrency]);
+  const serviceCurrencySymbol = useMemo(() => getCurrencySymbol(serviceCurrency), [serviceCurrency]);
   const [profile, setProfile] = useState(() => ({
     company_name: "",
     logo_data_url: "",
@@ -1011,15 +1011,49 @@ export default function ValidationWizardPage() {
     const id = String(entry.id || "").trim();
     if (!id) return null;
 
-    // Prefer specific business/service idea names over generic workspace titles
     const payload = entry.payload || {};
-    let title = "Validation";
+    const result = entry.result || {};
+    let title;
 
-    if (entry.type === "service_validation" || entry.service_name || payload.service_name) {
-      title = entry.service_name || payload.service_name || entry.title || "Service Validation";
+    const isService =
+      entry.type === "service_validation" ||
+      Boolean(entry.service_name || payload.service_name || payload.context?.service_name);
+
+    if (isService) {
+      // Service validation: prefer the explicit service name from every possible location
+      title =
+        String(entry.service_name || "").trim() ||
+        String(payload.service_name || "").trim() ||
+        String(payload.context?.service_name || "").trim() ||
+        String(result?.service_name || "").trim() ||
+        String(entry.title || "").trim() ||
+        "Service Validation";
     } else {
-      // For business validations, prefer business_name from entry (backend) or payload
-      title = entry.business_name || payload.business_name || payload.context?.business_name || entry.title || "Business Validation";
+      // Business idea validation.
+      // Priority mirrors the backend naming logic (service.py):
+      //   business_offering → description → service_type → business_name
+      //
+      // business_name is LAST because buildInitialBusinessForm() pre-fills it from
+      // workspace defaults (loadValidationStageDefaults → defaults.business_name),
+      // meaning it matches the workspace name for most users and is therefore the
+      // least specific identifier of the actual idea being validated.
+      const bo = String(payload.context?.business_offering || result?.business_offering || "").trim();
+      const desc = String(payload.context?.description || "").trim();
+      const st = String(payload.offer?.service_type || result?.service_type || "").trim();
+      const bn = String(payload.context?.business_name || result?.business_name || entry.business_name || "").trim();
+
+      if (bo) {
+        title = bo;
+      } else if (desc) {
+        title = desc.length > 60 ? desc.substring(0, 57) + "..." : desc;
+      } else if (st) {
+        title = st;
+      } else if (bn) {
+        title = bn;
+      } else {
+        // Very last resort — entry.title may be the workspace name for legacy entries
+        title = String(entry.title || "").trim() || "Business Validation";
+      }
     }
 
     return {
@@ -1953,10 +1987,16 @@ export default function ValidationWizardPage() {
               const ws = await apiRequest(`/validation/${wsId}`, "GET");
               const existing = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
               const nextHistoryBase = existing.filter((item) => item?.id !== validationId);
+              const businessTitle = String(
+                payload?.context?.business_offering ||
+                payload?.context?.description ||
+                payload?.context?.business_name ||
+                "Business validation"
+              );
               const nextEntry = {
                 id: validationId,
                 type: "business_validation",
-                title: String(payload?.context?.business_name || "Business validation"),
+                title: businessTitle.length > 100 ? businessTitle.substring(0, 97) + "..." : businessTitle,
                 created_at: createdAt,
                 status: "pending",
                 score: typeof result?.score === "number" ? result.score : null,
@@ -3046,9 +3086,8 @@ export default function ValidationWizardPage() {
                                 {serviceCurrencySymbol}
                               </div>
                               <NumberInput
-                                key={!!serviceForm.estimated_price}
-                                className="pl-7 bg-white dark:bg-slate-900 border-slate-200"
-                                placeholder="0.00"
+                                className="pl-8 bg-white dark:bg-slate-900 border-slate-200"
+                                placeholder="0.0"
                                 value={serviceForm.estimated_price}
                                 onChange={(v) => updateService("estimated_price", v)}
                               />
