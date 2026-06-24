@@ -1,5 +1,11 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useEffect } from "react";
+
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+  return null;
+}
 import { useAuthStore } from "./store/auth";
 import { useWorkspaceStore } from "./store/workspace";
 import Layout from "./components/Layout";
@@ -51,7 +57,9 @@ export default function App() {
   }, [authHydrated, email, resetForUser]);
 
   return (
-    <Routes>
+    <>
+      <ScrollToTop />
+      <Routes>
       <Route path="/" element={<PublicRoot />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -90,5 +98,6 @@ export default function App() {
       <Route path="/marketplace" element={<MarketplacePage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
+    </>
   );
 }

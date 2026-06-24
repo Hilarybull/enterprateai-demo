@@ -3345,6 +3345,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             <SectionCard title="Invoices" subtitle="All active invoices — paid and pending.">
               <div className="mt-2">
                 <ReportTable
+                  paginate
                   columns={[
                     { key: "customer", label: "Customer", bold: true },
                     { key: "items", label: "Items / Services" },
@@ -3362,6 +3363,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               <SectionCard title="Quotation pipeline" subtitle="Active quotes sent or in draft.">
                 <div className="mt-2">
                   <ReportTable
+                    paginate
                     columns={[
                       { key: "customer", label: "Customer", bold: true },
                       { key: "items", label: "Items" },
@@ -3378,6 +3380,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               <SectionCard title="Expenses" subtitle={`Pending payables: ${formatMoney(pendingPayablesTotal)}`}>
                 <div className="mt-2">
                   <ReportTable
+                    paginate
                     columns={[
                       { key: "vendor", label: "Vendor", bold: true },
                       { key: "description", label: "Description" },
@@ -3395,6 +3398,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             <SectionCard title="Contracts" subtitle="Active contracts and their value.">
               <div className="mt-2">
                 <ReportTable
+                  paginate
                   columns={[
                     { key: "counterparty", label: "Counterparty", bold: true },
                     { key: "type", label: "Type" },
