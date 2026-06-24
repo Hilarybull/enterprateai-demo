@@ -902,13 +902,13 @@ async def save_risk_signals(
     for s in signals:
         docs.append(
             dict(
-                risk_signal_id=str(uuid4()),
                 tenant_id=tenant_id,
                 business_id=business_id,
                 state_version=state_version,
                 detected_at=now,
                 created_at=now,
                 **s,
+                risk_signal_id=s.get("risk_signal_id") or str(uuid4()),
             )
         )
     stored = await _safe_insert("scenario_risk_signals", docs)

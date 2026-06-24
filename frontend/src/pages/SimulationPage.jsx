@@ -282,7 +282,6 @@ export default function SimulationPage() {
 
   useEffect(() => {
     let alive = true;
-    let intervalId;
     async function loadWorkspaceData() {
       if (!workspaceId) return;
       try {
@@ -297,9 +296,8 @@ export default function SimulationPage() {
       }
     }
     loadWorkspaceData();
-    intervalId = window.setInterval(loadWorkspaceData, 10000);
 
-    // Immediately refetch when user returns to this tab (e.g. after paying an invoice on Financials)
+    // Refetch when user returns to this tab (e.g. after paying an invoice on Financials)
     function onVisible() {
       if (document.visibilityState === "visible") loadWorkspaceData();
     }
@@ -311,7 +309,6 @@ export default function SimulationPage() {
 
     return () => {
       alive = false;
-      if (intervalId) window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onFocus);
     };
