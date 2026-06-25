@@ -477,7 +477,7 @@ async def _call_claude(prompt: str) -> dict:
     }
     body = {
         "model": settings.claude_model or "claude-3-5-sonnet-20241022",
-        "max_tokens": 5120,
+        "max_tokens": 8192,
         "messages": [{"role": "user", "content": prompt}],
     }
     logger.info("Calling Claude with model: %s", body["model"])

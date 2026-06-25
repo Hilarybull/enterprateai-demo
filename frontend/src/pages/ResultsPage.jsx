@@ -1431,33 +1431,6 @@ export default function ResultsPage() {
             </div>
           ) : null}
 
-          {/* Recommended Simulations */}
-          <SectionCard
-            title="Recommended Simulations"
-            subtitle="Run these what-if scenarios based on your validation results."
-            icon={
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600 shadow-sm">
-                <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-              </div>
-            }
-          >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {bizSimRecs.map((sim) => (
-                <button
-                  key={sim.id}
-                  onClick={() => navigate(`/simulation?template=${sim.id}`)}
-                  className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
-                    <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
-                  </div>
-                  <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
-                </button>
-              ))}
-            </div>
-          </SectionCard>
         </div>
 
         <aside className="lg:col-span-4 flex flex-col gap-4">
@@ -1590,6 +1563,34 @@ export default function ResultsPage() {
           )}
         </aside>
       </div>
+
+      {/* Recommended Simulations — full width below the main grid */}
+      <SectionCard
+        title="Recommended Simulations"
+        subtitle="Run these what-if scenarios based on your validation results."
+        icon={
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600 shadow-sm">
+            <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </div>
+        }
+      >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {bizSimRecs.map((sim) => (
+            <button
+              key={sim.id}
+              onClick={() => navigate(`/simulation?template=${sim.id}`)}
+              className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
+                <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
+              </div>
+              <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          ))}
+        </div>
+      </SectionCard>
 
       {/* ── Detailed mode: Trend Score + Insights + ISD in one aligned 3-col row ── */}
       {viewMode === "detailed" && !isServiceIdea && (
@@ -1888,38 +1889,45 @@ export default function ResultsPage() {
                   )}
                 </div>
                 {validation.market_research.competitor_analysis.top_competitors?.length > 0 ? (
-                  <div className="overflow-x-auto rounded-xl border border-slate-100">
-                    <table className="w-full text-[11px]">
-                      <thead className="bg-slate-50">
-                        <tr>
-                          {[
-                            { h: "Competitor", w: "w-36" },
-                            { h: "Est. Revenue", w: "w-28" },
-                            { h: "Market Share", w: "w-24" },
-                            { h: "Price Range", w: "w-28" },
-                            { h: "Strength", w: "w-48" },
-                            { h: "Weakness", w: "w-48" },
-                          ].map(({ h, w }) => (
-                            <th key={h} className={`px-3 py-2.5 text-left font-black uppercase tracking-wider text-[9px] text-slate-500 ${w}`}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {validation.market_research.competitor_analysis.top_competitors.map((c, i) => (
-                          <tr key={i} className="border-t border-slate-100 hover:bg-slate-50/50">
-                            <td className="px-3 py-3 font-black text-slate-900">
-                              <div className="whitespace-nowrap">{c.name}</div>
-                              {c.description && <div className="mt-0.5 max-w-[160px] text-[10px] font-medium text-slate-400 leading-snug">{c.description}</div>}
-                            </td>
-                            <td className="px-3 py-3 font-bold text-slate-700 whitespace-nowrap">{c.estimated_revenue || null}</td>
-                            <td className="px-3 py-3 font-bold text-slate-700 whitespace-nowrap">{c.market_share || null}</td>
-                            <td className="px-3 py-3 font-black text-emerald-700 whitespace-nowrap">{c.price_range || null}</td>
-                            <td className="px-3 py-3 text-slate-600 max-w-[200px]">{c.strength || null}</td>
-                            <td className="px-3 py-3 text-rose-600 max-w-[200px]">{c.weakness || null}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="space-y-3">
+                    {validation.market_research.competitor_analysis.top_competitors.map((c, i) => (
+                      <div key={i} className="rounded-xl border border-slate-100 bg-white p-4 space-y-2.5">
+                        <div>
+                          <div className="text-sm font-black text-slate-900">{c.name}</div>
+                          {c.description && <div className="mt-0.5 text-xs text-slate-500 leading-snug">{c.description}</div>}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="rounded-lg bg-slate-50 px-3 py-2">
+                            <div className="text-[9px] font-black uppercase tracking-wider text-slate-400 mb-0.5">Est. Revenue</div>
+                            <div className="text-xs font-bold text-slate-700 leading-snug">{c.estimated_revenue || "—"}</div>
+                          </div>
+                          <div className="rounded-lg bg-slate-50 px-3 py-2">
+                            <div className="text-[9px] font-black uppercase tracking-wider text-slate-400 mb-0.5">Market Share</div>
+                            <div className="text-xs font-bold text-slate-700 leading-snug">{c.market_share || "—"}</div>
+                          </div>
+                          <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                            <div className="text-[9px] font-black uppercase tracking-wider text-emerald-600 mb-0.5">Price Range</div>
+                            <div className="text-xs font-black text-emerald-700 leading-snug">{c.price_range || "—"}</div>
+                          </div>
+                        </div>
+                        {(c.strength || c.weakness) && (
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            {c.strength && (
+                              <div className="rounded-lg border border-emerald-100 bg-emerald-50/50 px-3 py-2">
+                                <div className="text-[9px] font-black uppercase tracking-wider text-emerald-600 mb-0.5">Strength</div>
+                                <div className="text-xs text-slate-600 leading-snug">{c.strength}</div>
+                              </div>
+                            )}
+                            {c.weakness && (
+                              <div className="rounded-lg border border-rose-100 bg-rose-50/50 px-3 py-2">
+                                <div className="text-[9px] font-black uppercase tracking-wider text-rose-500 mb-0.5">Weakness</div>
+                                <div className="text-xs text-rose-600 leading-snug">{c.weakness}</div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-xs font-semibold text-slate-400">
