@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Response
+from pydantic import BaseModel
+from typing import Optional
 from app.modules.idea_validation.schemas import (
     CreateValidationWorkspaceRequest,
     CreateWorkspaceResponse,
@@ -22,6 +24,8 @@ from app.modules.idea_validation.service import (
 from app.modules.idea_validation.market_research_service import (
     flatten_fields_from_payload,
     run_market_research,
+    _call_claude,
+    _call_openai,
 )
 from app.shared.auth.deps import get_current_user
 
@@ -115,6 +119,105 @@ async def patch_validation_workspace(
         name=payload.name,
     )
     return WorkspaceResponse.from_doc(ws)
+
+
+class FieldSuggestRequest(BaseModel):
+    field: str
+    description: Optional[str] = ""
+    problem: Optional[str] = ""
+    alternatives: Optional[str] = ""
+    solution: Optional[str] = ""
+    segment: Optional[str] = ""
+    location: Optional[str] = ""
+    industry: Optional[str] = ""
+    sector: Optional[str] = ""
+    country: Optional[str] = ""
+
+
+_FIELD_PROMPTS = {
+    "description": (
+        "You are a startup advisor. Suggest a clear, one-sentence business idea for a founder. "
+        "Segment: {segment}. Location: {location}. "
+        'Respond in JSON only: {{"suggestion": "<your suggestion, max 30 words>"}}'
+    ),
+    "problem": (
+        "Suggest a concise problem statement for this business idea: '{description}'. "
+        "Target segment: {segment}. "
+        'Respond in JSON only: {{"suggestion": "<problem text, max 25 words>"}}'
+    ),
+    "alternatives": (
+        "For the business idea '{description}' solving '{problem}', briefly describe how people currently "
+        "solve this problem without the new solution. "
+        'Respond in JSON only: {{"suggestion": "<alternatives text, max 25 words>"}}'
+    ),
+    "solution": (
+        "For the business idea '{description}' solving '{problem}', where current alternatives are '{alternatives}', "
+        "suggest how this solution is better in one sentence. "
+        'Respond in JSON only: {{"suggestion": "<solution text, max 30 words>"}}'
+    ),
+    # Service / product form fields
+    "service_description": (
+        "You are a startup advisor. Write a clear one-sentence description for a product or service called '{description}'. "
+        "Target segment: {segment}. Industry: {industry}. Country: {country}. "
+        'Respond in JSON only: {{"suggestion": "<description, max 30 words>"}}'
+    ),
+    "service_problem": (
+        "You are a startup advisor. "
+        "Product/service: '{description}'. Industry: {industry}{sector_part}. Target customers: {segment}. Country: {country}. "
+        "Suggest the single most likely pain point this product/service solves for those customers in that industry. "
+        "Base your answer strictly on the product/service and industry above — do not invent an unrelated problem. "
+        'Respond in JSON only: {{"suggestion": "<problem text, max 25 words>"}}'
+    ),
+    "service_alternatives": (
+        "You are a startup advisor. "
+        "Product/service: '{description}'. Industry: {industry}{sector_part}. Target customers: {segment}. Country: {country}. "
+        "Name the actual tools, competitors, or workarounds those customers currently use for this specific need in the {industry} space. "
+        "Base your answer strictly on the product/service and industry — do not suggest tools from an unrelated industry. "
+        'Respond in JSON only: {{"suggestion": "<alternatives text, max 25 words>"}}'
+    ),
+    "service_differentiator": (
+        "You are a startup advisor. "
+        "Product/service: '{description}'. Industry: {industry}{sector_part}. Target customers: {segment}. Country: {country}. "
+        "Current alternatives: '{alternatives}'. "
+        "Suggest the single strongest reason customers in the {industry} space would choose this over those alternatives. "
+        "Base your answer on the product/service and industry context. "
+        'Respond in JSON only: {{"suggestion": "<differentiator text, max 25 words>"}}'
+    ),
+}
+
+
+@router.post("/suggest-field")
+async def suggest_field(
+    payload: FieldSuggestRequest,
+    user=Depends(get_current_user),
+) -> dict:
+    template = _FIELD_PROMPTS.get(payload.field)
+    if not template:
+        return {"suggestion": ""}
+    industry = payload.industry or payload.location or "the relevant industry"
+    sector = payload.sector or ""
+    sector_part = f" / {sector}" if sector else ""
+    prompt = template.format(
+        description=payload.description or "",
+        problem=payload.problem or "",
+        alternatives=payload.alternatives or "",
+        solution=payload.solution or "",
+        segment=payload.segment or "general audience",
+        location=payload.country or payload.location or "the target market",
+        industry=industry,
+        sector_part=sector_part,
+        country=payload.country or payload.location or "their market",
+    )
+    try:
+        result = await _call_claude(prompt)
+        suggestion = result.get("suggestion") or result.get("text") or ""
+    except Exception:
+        try:
+            result = await _call_openai(prompt)
+            suggestion = result.get("suggestion") or result.get("text") or ""
+        except Exception:
+            suggestion = ""
+    return {"suggestion": suggestion.strip()}
 
 
 @router.post("/market-research")

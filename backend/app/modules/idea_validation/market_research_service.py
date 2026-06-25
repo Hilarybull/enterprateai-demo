@@ -266,37 +266,55 @@ def _shopping_items(result: dict, max_items: int = 8) -> list[dict[str, str]]:
 
 # Query builder
 def _build_queries(fields: dict[str, Any]) -> dict[str, tuple[str, str, dict]]:
-    what = _clean_text(fields.get("what_building") or fields.get("service_type") or fields.get("business_name") or "business")
-    industry = _clean_text(fields.get("primary_industry") or fields.get("business_type"))
-    location = _clean_text(fields.get("location") or "United Kingdom")
+    what_long = _clean_text(fields.get("what_building") or fields.get("service_type") or fields.get("business_name") or "business")
+    industry = _clean_text(fields.get("industry") or fields.get("primary_industry") or fields.get("business_type"))
+    sector = _clean_text(fields.get("sector"))
+    location = _clean_text(fields.get("country") or fields.get("location") or "United Kingdom")
     segment = _clean_text(fields.get("customer_segment") or "customers")
     problem = _clean_text(fields.get("problem_short"))
     currency = _clean_text(fields.get("currency") or "GBP")
 
-    category = " ".join(part for part in [what, industry] if part).strip()
+    # For SERP queries, always use the concept/category description (not the business name,
+    # which is invented and returns no market data). Extract the key noun phrase.
+    raw = what_long
+    for splitter in (" for ", " targeting ", " that helps ", " which ", " helping ", " designed for "):
+        if splitter in raw.lower():
+            raw = raw[:raw.lower().find(splitter)]
+            break
+    what = raw[:55].strip() or industry or "business software"
+
+    category = " ".join(part for part in [what, industry or sector] if part).strip()
     category = category or what or "business software"
     audience = f"{segment} {location}".strip()
     location_suffix = f" in {location}" if location else ""
 
     return {
-        "market_opportunity": (f"{category} market size demand growth trends{location_suffix}", "google", {}),
-        "industry_trends": (f"{category} industry trends adoption growth{location_suffix}", "google", {}),
+        "market_opportunity": (f"{category} market size TAM SAM growth{location_suffix}", "google", {}),
+        "industry_trends": (f"{category} industry trends CAGR forecast 2025 2030{location_suffix}", "google", {}),
         "target_customer": (f"{segment} pain points buying behaviour for {category}{location_suffix}", "google", {}),
         "problem_validation": (f"{problem or category} complaints pain points {audience}", "google", {}),
         "demand_signals": (f"{problem or category} search trends forums reddit reviews {audience}", "google", {}),
-        "competitors": (f"top {category} competitors pricing alternatives{location_suffix}", "google", {}),
-        "pricing": (f"{category} pricing plans monthly annual {currency}", "google", {}),
+        "competitors": (f"top {category} competitors revenue market share{location_suffix}", "google", {}),
+        "pricing": (f"{category} pricing plans cost per month annual {currency}", "google", {}),
         "pricing_shop": (f"{category} price {currency}", "google_shopping", {}),
         "news": (f"{category} market news 2025 2026{location_suffix}", "google_news", {}),
+        "tam_sam": (f"{industry or category} total addressable market size billions{location_suffix}", "google", {}),
     }
 
 
 def _build_synthesis_prompt(fields: dict[str, Any], evidence: dict[str, list[str]]) -> str:
-    business_name = _clean_text(fields.get("business_name") or fields.get("what_building"))
-    industry = _clean_text(fields.get("primary_industry"))
+    what_building = _clean_text(fields.get("what_building") or fields.get("business_name") or "")
+    business_name = _clean_text(fields.get("business_name") or what_building)
+    industry = _clean_text(fields.get("industry") or fields.get("primary_industry"))
+    sector = _clean_text(fields.get("sector") or "")
     segment = _clean_text(fields.get("customer_segment"))
     problem = _clean_text(fields.get("problem_short"))
-    location = _clean_text(fields.get("location") or "United Kingdom")
+    country = _clean_text(fields.get("country") or "")
+    location = _clean_text(country or fields.get("location") or "United Kingdom")
+    currency = _clean_text(fields.get("currency") or "GBP")
+    alternatives = _clean_text(fields.get("alternatives") or "")
+    differentiator = _clean_text(fields.get("differentiator") or "")
+    market_scope = _clean_text(fields.get("market_scope") or "")
     
     evidence_text = ""
     for key, snippets in evidence.items():
@@ -312,11 +330,16 @@ def _build_synthesis_prompt(fields: dict[str, Any], evidence: dict[str, list[str
     return f"""Role: Senior Market Research & Venture Strategist
 Task: Synthesize market signals and deterministic data into a high-integrity validation report for {business_name}.
 
-DETREMINISTIC ENGINE DATA (Ground Truth):
-- Concept: {business_name}
-- Industry: {industry}
+DETERMINISTIC ENGINE DATA (Ground Truth):
+- Business Concept: {business_name}
+- Idea / Description: {what_building}
+- Industry: {industry}{f" / {sector}" if sector else ""}
+- Country/Location: {location}{f" ({market_scope} market)" if market_scope else ""}
 - Target Segment: {segment}
 - Problem Solved: {problem}
+- Current Alternatives: {alternatives or "not specified"}
+- Key Differentiator: {differentiator or "not specified"}
+- Currency: {currency}
 - Spoken to: {_clean_text(fields.get('interviews_conducted')) or '0'} people
 - Deterministic Score: {score}/100
 - Classification: {classification}
@@ -371,6 +394,65 @@ REQUIRED JSON STRUCTURE:
     "readiness_summary": "Direct verdict on commercial and operational readiness.",
     "growth_constraints": "Identification of the #1 bottleneck to scaling discovered in research.",
     "health_checks": ["Check 1", "Check 2"]
+  }},
+  "target_customer": {{
+    "profile": "Specific description of the ideal first customer for {business_name} in {location}.",
+    "pain_points": ["Specific pain 1 for {segment}", "Specific pain 2"],
+    "buying_behaviour": "How {segment} typically discovers and purchases this type of product.",
+    "urgency": "One sentence: how pressing is this pain for {segment} right now.",
+    "willingness_to_pay": "One sentence: what {segment} already pays for alternatives or workarounds."
+  }},
+  "positioning": {{
+    "value_proposition": "One sentence: the specific measurable benefit {business_name} delivers to {segment}.",
+    "differentiation": "What makes {business_name} different from the competitors found in research.",
+    "headline_message": "A punchy 5-10 word tagline that would resonate with {segment}."
+  }},
+  "go_to_market": {{
+    "primary_channels": ["Best acquisition channel for {segment}", "Second best channel"],
+    "quick_wins": ["First specific action to get first 10 customers in {location}", "Second quick win"],
+    "timeline": "Realistic launch timeline for {business_name} in {location} (e.g. '60-90 day pilot')."
+  }},
+  "pricing_strategy": {{
+    "recommended_model": "Name of the pricing model best suited for {business_name} (e.g. 'per-seat SaaS subscription', 'transaction commission', 'freemium').",
+    "rationale": "Why this model works for {segment} based on research evidence.",
+    "launch_offer": "A specific launch offer or trial structure to win first customers."
+  }},
+  "market_sizing": {{
+    "total_addressable_market": "Specific {currency} or USD figure for the global/national market. Use evidence numbers. E.g. '£2.4 billion UK SME health market (2025 est.)'.",
+    "tam_basis": "How the TAM figure was derived — source, segment, and year.",
+    "serviceable_addressable_market": "The realistic share of TAM reachable for {business_name} targeting {segment} in {location}. E.g. '£180 million — SMEs with under 250 employees in UK'.",
+    "sam_basis": "How SAM was narrowed from TAM.",
+    "projected_growth_rate": "CAGR or annual % growth from research evidence. E.g. '7.2% CAGR to 2030'.",
+    "projected_market_size_2030": "Projected total market value by 2030 using growth rate. E.g. '£3.4 billion by 2030'.",
+    "growth_drivers": ["Key driver 1 from research", "Key driver 2", "Key driver 3"]
+  }},
+  "competitor_analysis": {{
+    "top_competitors": [
+      {{
+        "name": "Competitor brand name",
+        "description": "One sentence — what they do and who they serve",
+        "estimated_revenue": "Revenue range or funding if found (e.g. '$5M ARR', 'Series A', 'Public')",
+        "market_share": "Estimated share or relative position (e.g. 'Market leader ~30%', 'Niche player')",
+        "pricing": "Pricing model and indicative range using 'to' not hyphens (e.g. '£15 to £45/user/month')",
+        "weakness": "Key gap or vulnerability for {business_name} to exploit"
+      }}
+    ],
+    "market_saturation": "Low / Medium / High — based on number and strength of competitors found",
+    "competitive_moat": "What differentiated advantage {business_name} can build vs the found competitors"
+  }},
+  "price_intelligence": {{
+    "similar_products": [
+      {{
+        "name": "Similar product or service name",
+        "price": "Actual price found (e.g. '£29/month', '£499 one-off')",
+        "source": "Where the price was found (brand, website, search result)"
+      }}
+    ],
+    "recommended_entry_price": "Specific price point for {business_name}'s entry tier in {currency}, justified by competitor data",
+    "recommended_growth_price": "Growth tier price in {currency}",
+    "recommended_premium_price": "Premium tier price in {currency}",
+    "pricing_rationale": "Why these price points work for {segment} — reference what competitors charge",
+    "currency": "{currency}"
   }}
 }}
 
@@ -379,6 +461,7 @@ STRICT CONSTRAINTS:
 2. If research is limited, state: "Market signals for {business_name} are currently sparse..."
 3. Reference real numbers where possible.
 4. JSON ONLY. No preamble.
+5. BE CONCISE — each text field max 2 sentences. Arrays max 3 items. Prioritise specificity over length.
 """
 
 
@@ -393,24 +476,38 @@ async def _call_claude(prompt: str) -> dict:
         "content-type": "application/json",
     }
     body = {
-        "model": settings.claude_model or "claude-3-opus-20240229",
-        "max_tokens": 4096,
+        "model": settings.claude_model or "claude-3-5-sonnet-20241022",
+        "max_tokens": 5120,
         "messages": [{"role": "user", "content": prompt}],
     }
     logger.info("Calling Claude with model: %s", body["model"])
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=180.0, write=15.0, pool=10.0)) as client:
             response = await client.post(CLAUDE_BASE, headers=headers, json=body)
         if response.status_code != 200:
             logger.error("Claude API error: status=%s, body=%s", response.status_code, response.text)
             return {}
         data = response.json()
         text = data["content"][0]["text"].strip()
-        # Clean markdown
+        # Strip markdown fences
         if text.startswith("```"):
             lines = text.splitlines()
-            if lines[0].startswith("```json"): text = "\n".join(lines[1:-1])
-            elif lines[0].startswith("```"): text = "\n".join(lines[1:-1])
+            if lines[0].startswith("```json"):
+                text = "\n".join(lines[1:-1]).strip()
+            elif lines[0].startswith("```"):
+                text = "\n".join(lines[1:-1]).strip()
+        # Extract first complete JSON object by counting braces
+        start = text.find("{")
+        if start != -1:
+            depth = 0
+            for i, ch in enumerate(text[start:], start):
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        text = text[start : i + 1]
+                        break
         result = json.loads(text)
         logger.info("Claude synthesis successful.")
         return result
@@ -454,10 +551,12 @@ async def _call_openai(prompt: str) -> dict:
 
 
 def _fallback_report(fields: dict[str, Any]) -> dict[str, Any]:
-    what = _clean_text(fields.get("what_building") or "your product")
+    what = _clean_text(fields.get("what_building") or fields.get("business_name") or "your product")
     segment = _clean_text(fields.get("customer_segment") or "target customers")
-    location = _clean_text(fields.get("location") or "your market")
+    country = _clean_text(fields.get("country") or "")
+    location = _clean_text(country or fields.get("location") or "your market")
     currency = _clean_text(fields.get("currency") or "GBP")
+    industry = _clean_text(fields.get("industry") or fields.get("primary_industry") or "")
 
     return {
         "executive_summary": (
@@ -532,6 +631,28 @@ def _fallback_report(fields: dict[str, Any]) -> dict[str, Any]:
         "next_actions": [
             {"step": 1, "action": "Interview 10 target customers", "why": "Confirm pain.", "timeframe": "this week"},
         ],
+        "market_sizing": {
+            "total_addressable_market": f"Estimating based on {industry or what} market — research in progress.",
+            "tam_basis": f"Global {industry or what} market estimate.",
+            "serviceable_addressable_market": f"Segment focused on {segment} in {location}.",
+            "sam_basis": f"Narrowed from TAM by segment ({segment}) and geography ({location}).",
+            "projected_growth_rate": "Growth rate data being gathered.",
+            "projected_market_size_2030": "Projection pending research.",
+            "growth_drivers": ["Digital adoption", "Growing demand in segment", "Regulatory tailwinds"],
+        },
+        "competitor_analysis": {
+            "top_competitors": [],
+            "market_saturation": "Medium",
+            "competitive_moat": f"Niche focus on {segment} and superior customer experience.",
+        },
+        "price_intelligence": {
+            "similar_products": [],
+            "recommended_entry_price": f"{currency} entry tier — awaiting research",
+            "recommended_growth_price": f"{currency} growth tier — awaiting research",
+            "recommended_premium_price": f"{currency} premium tier — awaiting research",
+            "pricing_rationale": f"Pricing based on {segment} willingness to pay and competitor benchmarks.",
+            "currency": currency,
+        },
     }
 
 
@@ -594,6 +715,9 @@ def _normalize_report(report: dict[str, Any], *, fields: dict[str, Any], search_
             "source_collection": sources,
             "search_queries": search_queries,
         },
+        "market_sizing": merged.get("market_sizing") or fallback["market_sizing"],
+        "competitor_analysis": merged.get("competitor_analysis") or fallback["competitor_analysis"],
+        "price_intelligence": merged.get("price_intelligence") or fallback["price_intelligence"],
     }
 
 
@@ -624,35 +748,133 @@ async def run_research_data(fields: dict[str, Any]) -> dict[str, Any]:
     return {"evidence": evidence, "sources": sources, "shopping": shopping, "search_queries": search_queries}
 
 
+def _build_market_data_prompt(fields: dict[str, Any], evidence: dict[str, list[str]]) -> str:
+    """Focused prompt for market sizing, competitor metrics, and price intelligence."""
+    what_building = _clean_text(fields.get("what_building") or fields.get("business_name") or "the business")
+    industry = _clean_text(fields.get("industry") or fields.get("primary_industry") or "")
+    sector = _clean_text(fields.get("sector") or "")
+    segment = _clean_text(fields.get("customer_segment") or "customers")
+    location = _clean_text(fields.get("country") or fields.get("location") or "United Kingdom")
+    currency = _clean_text(fields.get("currency") or "GBP")
+    problem = _clean_text(fields.get("problem_short") or "")
+    alternatives = _clean_text(fields.get("alternatives") or "")
+    differentiator = _clean_text(fields.get("differentiator") or "")
+    market_scope = _clean_text(fields.get("market_scope") or "")
+
+    context_lines = [
+        f"- Product/Service: {what_building}",
+        f"- Industry: {industry}{f' / {sector}' if sector else ''}",
+        f"- Target customers: {segment}",
+        f"- Location / Market scope: {location}{f' ({market_scope})' if market_scope else ''}",
+        f"- Currency: {currency}",
+    ]
+    if problem:
+        context_lines.append(f"- Problem solved: {problem}")
+    if alternatives:
+        context_lines.append(f"- Current alternatives customers use: {alternatives}")
+    if differentiator:
+        context_lines.append(f"- Key differentiator: {differentiator}")
+
+    context_block = "\n".join(context_lines)
+
+    evidence_text = ""
+    for key in ("market_opportunity", "industry_trends", "tam_sam", "competitors", "pricing", "pricing_shop", "news"):
+        snippets = evidence.get(key) or []
+        if snippets:
+            evidence_text += f"\n### {key.upper()}\n" + "\n".join(f"- {s}" for s in snippets[:4])
+
+    return f"""You are a senior market research analyst. Based on the business context and live research evidence below, generate PRECISE market sizing, competitor metrics, and pricing data.
+
+BUSINESS CONTEXT:
+{context_block}
+
+LIVE RESEARCH EVIDENCE:
+{evidence_text or "No live evidence retrieved. Use your training knowledge for this industry and location."}
+
+Return ONLY valid JSON (no markdown, no preamble):
+{{
+  "market_sizing": {{
+    "total_addressable_market": "specific figure with currency e.g. $4.5B globally (2024)",
+    "tam_basis": "one sentence: how TAM was scoped — industry + geography",
+    "serviceable_addressable_market": "specific figure e.g. {currency}320M for {segment} in {location}",
+    "sam_basis": "one sentence: how SAM was narrowed from TAM",
+    "projected_growth_rate": "e.g. 12.4% CAGR 2024-2030",
+    "projected_market_size_2030": "projected total market value by 2030",
+    "growth_drivers": ["driver 1 specific to {industry}", "driver 2", "driver 3"]
+  }},
+  "competitor_analysis": {{
+    "top_competitors": [
+      {{
+        "name": "Real competitor brand name",
+        "description": "one-line: what they do and who they serve",
+        "estimated_revenue": "revenue or funding e.g. $10M ARR or Series B",
+        "market_share": "estimated share e.g. ~15% or Market leader",
+        "price_range": "pricing model + range using 'to' not hyphens e.g. {currency}49 to 199/month",
+        "strength": "their main competitive advantage in one sentence",
+        "weakness": "the gap {what_building} can exploit in one sentence"
+      }}
+    ],
+    "market_saturation": "Low|Medium|High",
+    "competitive_moat": "one sentence: best differentiation angle for {what_building}"
+  }},
+  "price_intelligence": {{
+    "similar_products": [
+      {{"name": "similar product/service name", "price": "actual price e.g. {currency}49/month", "source": "brand or website"}}
+    ],
+    "recommended_entry_price": "specific entry tier price in {currency} justified by competitor data",
+    "recommended_growth_price": "growth tier price in {currency}",
+    "recommended_premium_price": "premium tier price in {currency}",
+    "pricing_rationale": "one sentence: why these prices work for {segment} referencing what alternatives charge",
+    "currency": "{currency}"
+  }}
+}}"""
+
+
 async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]], shopping: list[dict[str, Any]] = None) -> dict[str, Any]:
     """
-    Step 2: Take research data and generate the AI narrative.
-    Tries Claude first, falls back to OpenAI if Claude fails.
+    Step 2: Run narrative prompt + market-data prompt concurrently, merge results.
     """
     settings = get_settings()
-    prompt = _build_synthesis_prompt(fields, evidence)
-    report: dict[str, Any] = {}
+    narrative_prompt = _build_synthesis_prompt(fields, evidence)
+    market_prompt = _build_market_data_prompt(fields, evidence)
 
-    # Try Claude
-    if settings.claude_api_key:
-        try:
-            report = await _call_claude(prompt)
-        except Exception as e:
-            logger.warning("Claude narration failed, attempting OpenAI fallback: %s", e)
+    narrative_report: dict[str, Any] = {}
+    market_data: dict[str, Any] = {}
 
-    # Fallback to OpenAI if Claude failed or wasn't attempted
-    if not report and settings.openai_api_key:
-        try:
-            report = await _call_openai(prompt)
-        except Exception as e:
-            logger.error("OpenAI narration fallback failed: %s", e)
+    async def call_narrative():
+        if settings.claude_api_key:
+            try:
+                return await _call_claude(narrative_prompt)
+            except Exception as e:
+                logger.warning("Claude narrative failed: %s", e)
+        if settings.openai_api_key:
+            try:
+                return await _call_openai(narrative_prompt)
+            except Exception as e:
+                logger.error("OpenAI narrative fallback failed: %s", e)
+        return {}
 
-    # Normalize result against fallbacks
+    async def call_market_data():
+        if settings.claude_api_key:
+            try:
+                return await _call_claude(market_prompt)
+            except Exception as e:
+                logger.warning("Claude market-data failed: %s", e)
+        if settings.openai_api_key:
+            try:
+                return await _call_openai(market_prompt)
+            except Exception as e:
+                logger.error("OpenAI market-data fallback failed: %s", e)
+        return {}
+
+    narrative_report, market_data = await asyncio.gather(call_narrative(), call_market_data())
+
+    merged = {**(narrative_report or {}), **(market_data or {})}
     return _normalize_report(
-        report or {}, 
-        fields=fields, 
-        search_queries={}, 
-        evidence=evidence, 
+        merged,
+        fields=fields,
+        search_queries={},
+        evidence=evidence,
         sources={}
     )
 
@@ -661,6 +883,36 @@ async def run_market_research(fields: dict[str, Any]) -> dict[str, Any]:
     res = await run_research_data(fields)
     report = await run_ai_narration(fields, res["evidence"], res["shopping"])
     return report
+
+
+async def run_market_data_only(fields: dict[str, Any]) -> dict[str, Any]:
+    """Lean version for service validation — only runs the market-data Claude call
+    (market_sizing, competitor_analysis, price_intelligence). Skips the full narrative
+    synthesis to keep total latency under 2 minutes."""
+    settings = get_settings()
+    res = await run_research_data(fields)
+    evidence = res["evidence"]
+    market_prompt = _build_market_data_prompt(fields, evidence)
+
+    market_data: dict[str, Any] = {}
+    if settings.claude_api_key:
+        try:
+            market_data = await _call_claude(market_prompt)
+        except Exception as e:
+            logger.warning("Claude market-data failed: %s", e)
+    if not market_data and settings.openai_api_key:
+        try:
+            market_data = await _call_openai(market_prompt)
+        except Exception as e:
+            logger.error("OpenAI market-data fallback failed: %s", e)
+
+    return _normalize_report(
+        market_data,
+        fields=fields,
+        search_queries={key: q for key, (q, _, _) in _build_queries(fields).items()},
+        evidence=evidence,
+        sources=res["sources"],
+    )
 
 
 def extract_research_signals(evidence: dict[str, list[str]], sources: dict[str, list[dict[str, str]]]) -> dict[str, Any]:
@@ -680,22 +932,79 @@ def extract_research_signals(evidence: dict[str, list[str]], sources: dict[str, 
 def flatten_fields_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     # Check for service vs business idea
     if _clean_text(payload.get("service_description")):
+        svc_name = _clean_text(payload.get("service_name")) or ""
+        svc_desc = _clean_text(payload.get("service_description")) or ""
+        industry = _clean_text(payload.get("industry") or payload.get("service_category")) or ""
+        sector = _clean_text(payload.get("sector")) or ""
+        country = _clean_text(payload.get("country") or payload.get("location")) or "United Kingdom"
+        currency = _clean_text(payload.get("currency")) or "GBP"
         return {
-            "business_name": _clean_text(payload.get("service_name")),
-            "primary_industry": _clean_text(payload.get("service_category")),
+            "business_name": svc_name,
+            "what_building": (svc_name + (" — " + svc_desc if svc_desc else "")).strip(" — "),
+            "primary_industry": industry,
+            "industry": industry,
+            "sector": sector,
             "customer_segment": _clean_text(payload.get("target_customer_type")),
-            "location": _clean_text(payload.get("target_market_scope")) or "United Kingdom",
-            "problem_short": _clean_text(payload.get("service_description")),
+            "country": country,
+            "location": country,
+            "currency": currency,
+            "problem_short": _clean_text(payload.get("problem_to_solve")) or svc_desc,
+            "alternatives": _clean_text(payload.get("competitors_alternatives")),
+            "differentiator": _clean_text(payload.get("differentiator")),
+            "market_scope": _clean_text(payload.get("target_market_scope")),
             "interviews_conducted": _clean_text(payload.get("demand_evidence_type") or "0"),
         }
     ctx = payload.get("context") or {}
     problem = payload.get("problem") or {}
     validation = payload.get("validation") or {}
+
+    # The JS builder resolves "Other" values into .industry / .sector / .resolved_country / .resolved_currency
+    # but we also handle the raw _category fields as fallback
+    industry = (
+        _clean_text(ctx.get("industry"))
+        or _clean_text(ctx.get("primary_industry"))
+        or (_clean_text(ctx.get("industry_category")) if ctx.get("industry_category") != "Other" else "")
+        or _clean_text(ctx.get("industry_other"))
+        or ""
+    )
+    sector = (
+        _clean_text(ctx.get("sector"))
+        or (_clean_text(ctx.get("sector_category")) if ctx.get("sector_category") != "Other" else "")
+        or _clean_text(ctx.get("sector_other"))
+        or ""
+    )
+    country = (
+        _clean_text(ctx.get("resolved_country"))
+        or (_clean_text(ctx.get("country")) if ctx.get("country") != "Other" else "")
+        or _clean_text(ctx.get("country_other"))
+        or ""
+    )
+    currency = (
+        _clean_text(ctx.get("resolved_currency"))
+        or (_clean_text(ctx.get("currency")) if ctx.get("currency") not in ("Other", None, "") else "")
+        or _clean_text(ctx.get("currency_other"))
+        or "GBP"
+    )
+    # The business idea description is the most important search context
+    what_building = (
+        _clean_text(ctx.get("what_building"))
+        or _clean_text(ctx.get("business_offering"))
+        or _clean_text(ctx.get("description"))
+        or _clean_text(ctx.get("business_name"))
+        or ""
+    )
+    business_name = _clean_text(ctx.get("business_name")) or what_building[:60]
+
     return {
-        "business_name": _clean_text(ctx.get("business_name")),
-        "primary_industry": _clean_text(ctx.get("primary_industry")),
+        "business_name": business_name,
+        "what_building": what_building,
+        "primary_industry": industry,
+        "industry": industry,
+        "sector": sector,
         "customer_segment": _clean_text(problem.get("customer_segment")),
-        "location": _clean_text(ctx.get("location")) or "United Kingdom",
+        "country": country,
+        "location": country or _clean_text(ctx.get("location")) or "United Kingdom",
+        "currency": currency,
         "problem_short": _clean_text(problem.get("problem_type")),
         "interviews_conducted": _clean_text(validation.get("spoken_count") or "0"),
     }

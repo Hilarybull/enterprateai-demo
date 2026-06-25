@@ -25,7 +25,7 @@ CompanySize = Literal["solo", "2-5", "6-10", "11-50", "51-200", "200+"]
 MonthlyRevenueRange = Literal["0-1k", "1k-5k", "5k-10k", "10k-50k", "50k-100k", "100k+"]
 OperatingStage = Literal["idea", "pre_revenue", "early_revenue", "growing", "established"]
 DeliveryModel = Literal["manual", "hybrid", "automated"]
-TargetCustomerType = Literal["individual", "startup", "SME", "corporate"]
+TargetCustomerType = str  # accepts any audience value
 PrimaryRevenueModel = Literal["one_off", "subscription", "retainer", "project_based", "mixed"]
 
 

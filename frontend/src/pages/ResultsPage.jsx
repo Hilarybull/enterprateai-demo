@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Cell, Tooltip,
+  PieChart, Pie, Legend,
+} from "recharts";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import Badge from "../components/Badge";
@@ -101,6 +106,10 @@ export default function ResultsPage() {
   const [serviceDraft, setServiceDraft] = useState(null);
   const [activeValidationId, setActiveValidationId] = useState(null);
   const [activeServiceValidationId, setActiveServiceValidationId] = useState(null);
+  const [svcMarketResearch, setSvcMarketResearch] = useState(null);
+  const [svcMrLoading, setSvcMrLoading] = useState(false);
+  const [svcMrError, setSvcMrError] = useState(null);
+  const svcMrFiredRef = useRef(false);
   const isServiceIdeaView = Boolean(validation?.scores && validation?.metrics && validation?.outcome);
   const decisionMeta = decisionBadge(decision);
 
@@ -121,6 +130,17 @@ export default function ResultsPage() {
           const activeId = ws?.data?.active_service_validation_id;
           setActiveServiceValidationId(activeId || history[0]?.id || null);
           const active = activeId ? history.find((h) => h?.id === activeId) : history[0];
+
+          // Load market research — from workspace cache first, then from active entry result
+          const wsMr = ws?.data?.service_market_research;
+          const entryMr = active?.result?.market_research || active?.market_research;
+          const mr = (wsMr && typeof wsMr === "object" && Object.keys(wsMr).length > 0) ? wsMr
+                   : (entryMr && typeof entryMr === "object" && Object.keys(entryMr).length > 0) ? entryMr
+                   : null;
+          if (mr) {
+            setSvcMarketResearch(mr);
+            svcMrFiredRef.current = true;
+          }
           const status = active?.decision_status;
           if (status === "accepted" || status === "rejected") {
             setDecision(status);
@@ -156,6 +176,35 @@ export default function ResultsPage() {
     }
     loadDecision();
   }, [isServiceIdeaView, workspaceId, setDecisionStatusStore, setServiceDecisionStatusStore, setWorkspaceName]);
+
+  function runSvcMr() {
+    if (!serviceDraft || svcMrLoading) return;
+    svcMrFiredRef.current = true;
+    setSvcMrLoading(true);
+    setSvcMrError(null);
+    apiRequest("/validation/market-research", "POST", { idea_validation: serviceDraft }, { timeoutMs: 240000 })
+      .then((res) => {
+        if (res && typeof res === "object" && Object.keys(res).length > 0) {
+          setSvcMarketResearch(res);
+          // Cache in workspace so next page load shows results instantly
+          if (workspaceId) {
+            apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { service_market_research: res } }).catch(() => {});
+          }
+        } else {
+          setSvcMrError("No data returned. Try again.");
+        }
+      })
+      .catch(() => { setSvcMrError("Research timed out or failed. Tap retry."); })
+      .finally(() => setSvcMrLoading(false));
+  }
+
+  useEffect(() => {
+    if (!isServiceIdeaView || !serviceDraft || svcMrFiredRef.current) return;
+    const hasContent = serviceDraft.service_description || serviceDraft.service_name;
+    if (!hasContent) return;
+    runSvcMr();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isServiceIdeaView, serviceDraft]);
 
   const mfBusinessName = String(ideaValidation?.context?.business_name || "").trim();
   const mfPrimaryIndustry = String(ideaValidation?.context?.primary_industry || "").trim();
@@ -294,7 +343,11 @@ export default function ResultsPage() {
   if (isServiceIdea) {
     const serviceDecisionLocked = decision === "accepted" || decision === "rejected";
     const viabilityScore = typeof serviceScores?.viability_score === "number" ? serviceScores.viability_score : 0;
-    const serviceCategory = serviceDraft?.service_category ? String(serviceDraft.service_category).replaceAll("_", " ") : "";
+    const serviceCategory = serviceDraft?.industry
+      ? String(serviceDraft.industry)
+      : serviceDraft?.service_category
+        ? String(serviceDraft.service_category).replaceAll("_", " ")
+        : "";
     const targetCustomer = serviceDraft?.target_customer_type || "";
     const marketScope = serviceDraft?.target_market_scope ? String(serviceDraft.target_market_scope).replaceAll("_", " ") : "";
     const serviceDesc = String(serviceDraft?.service_description || "").trim();
@@ -321,242 +374,500 @@ export default function ResultsPage() {
     const capacityUtilisationDisplay =
       typeof serviceMetrics.capacity_utilisation === "number"
         ? formatPercent(serviceMetrics.capacity_utilisation)
-        : "—";
-    return (
-      <div className="space-y-4">
-        <div className="flex flex-col gap-4">
-          <button
-            type="button"
-            onClick={() => navigate("/validation")}
-            className="group flex w-fit items-center gap-2 text-sm font-bold text-slate-500 transition-colors hover:text-brand-600"
-          >
-            <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M19 12H5m7 7l-7-7 7-7" />
-            </svg>
-            Back to Validation
-          </button>
+        : null;
+    const svTone = viabilityScore >= 75 ? "success" : viabilityScore >= 50 ? "warn" : "danger";
+    const svBorder = svTone === "danger" ? "border-rose-100" : svTone === "warn" ? "border-amber-100" : "border-emerald-100";
+    const svAccent = svTone === "danger" ? "bg-gradient-to-b from-rose-400 to-rose-600" : svTone === "warn" ? "bg-gradient-to-b from-amber-400 to-amber-600" : "bg-gradient-to-b from-emerald-400 to-emerald-600";
+    const svText = svTone === "danger" ? "text-rose-600" : svTone === "warn" ? "text-amber-600" : "text-emerald-600";
+    const svBarClass = svTone === "danger" ? "bg-rose-500" : svTone === "warn" ? "bg-amber-500" : "bg-emerald-500";
+    const svPulse = svTone === "danger" ? "bg-rose-500" : svTone === "warn" ? "bg-amber-500" : "bg-emerald-500";
 
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
-                  {isServiceIdea ? (validation?.service_name || "Service idea") : (businessName || validation?.business_name || "Business Concept")}
-                </div>
-                {serviceOutcome ? <Badge>{serviceOutcome}</Badge> : null}
-                <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
-              </div>
-              <div className="mt-1 text-sm text-slate-600">Service idea viability results.</div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="secondary"
-                disabled={!workspaceId}
-                onClick={() =>
-                  navigate(
-                    `/validation?workspace_id=${workspaceId}${activeServiceValidationId ? `&history_id=${encodeURIComponent(activeServiceValidationId)}&history_type=service_validation` : ""}`
-                  )
-                }
-              >
-                Modify
-              </Button>
-              <Button
-                variant="danger"
-                className={serviceDecisionLocked ? "opacity-50" : ""}
-                disabled={decisionSaving || !workspaceId || serviceDecisionLocked}
-                onClick={() => setDecisionStatus("rejected")}
-              >
+    const scoreDimensions = [
+      { key: "margin_score", label: "Margin" },
+      { key: "break_even_score", label: "Break-even" },
+      { key: "demand_score", label: "Demand" },
+      { key: "capacity_score", label: "Capacity" },
+    ];
+
+    const svcSummary = String(validation?.interpretation?.summary || "").trim();
+    const svcKeyDriver = String(validation?.interpretation?.key_driver || "").trim();
+    const svcRecommendation = String(validation?.interpretation?.recommendation || "").trim();
+    const hasInterpretation = svcSummary || svcKeyDriver || svcRecommendation;
+
+    const marginScore = typeof serviceScores.margin_score === "number" ? serviceScores.margin_score : 0;
+    const breakEvenScore = typeof serviceScores.break_even_score === "number" ? serviceScores.break_even_score : 0;
+    const demandScore = typeof serviceScores.demand_score === "number" ? serviceScores.demand_score : 0;
+    const capacityScore = typeof serviceScores.capacity_score === "number" ? serviceScores.capacity_score : 0;
+
+    const svcSimRecs = [];
+    if (marginScore < 50) svcSimRecs.push({ id: "tmpl_price_increase", label: "Price Increase", desc: "Model how raising your price improves margins.", icon: "↑" });
+    if (marginScore < 50 || breakEvenScore < 50) svcSimRecs.push({ id: "tmpl_reduce_fixed_cost", label: "Reduce Fixed Costs", desc: "See the impact of cutting overheads on break-even.", icon: "✂" });
+    if (breakEvenScore < 50) svcSimRecs.push({ id: "tmpl_payment_delay", label: "Payment Delay", desc: "Stress-test cash flow if customers pay late.", icon: "⏱" });
+    if (demandScore < 50) svcSimRecs.push({ id: "tmpl_service_launch", label: "Service Launch", desc: "Model revenue ramp from a new service offering.", icon: "🚀" });
+    if (capacityScore < 70 || workforceKind === "warn") svcSimRecs.push({ id: "tmpl_hire_staff", label: "Hire Staff", desc: "Explore whether hiring expands delivery capacity.", icon: "👥" });
+    if (viabilityScore < 50) svcSimRecs.push({ id: "tmpl_revenue_drop", label: "Revenue Drop", desc: "Stress-test viability if sales fall short of target.", icon: "⚠" });
+    if (viabilityScore < 50) svcSimRecs.push({ id: "tmpl_client_loss", label: "Client Loss", desc: "Model impact of losing a key client or contract.", icon: "⚡" });
+    if (svcSimRecs.length === 0) {
+      svcSimRecs.push({ id: "tmpl_price_increase", label: "Price Increase", desc: "Model how a price move affects profit.", icon: "↑" });
+      svcSimRecs.push({ id: "tmpl_hire_staff", label: "Hire Staff", desc: "Plan capacity for growth.", icon: "👥" });
+      svcSimRecs.push({ id: "tmpl_contractor_addition", label: "Add Contractor", desc: "Flex delivery capacity without a full hire.", icon: "🔧" });
+    }
+
+    return (
+      <div className="w-full max-w-full space-y-4 overflow-x-hidden px-2 sm:px-4">
+
+        {/* ── Back link ── */}
+        <button
+          type="button"
+          onClick={() => navigate("/validation")}
+          className="group flex w-fit items-center gap-1.5 text-sm font-semibold text-slate-400 transition-colors hover:text-brand-600"
+        >
+          <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M19 12H5m7 7l-7-7 7-7" />
+          </svg>
+          Back to Validation
+        </button>
+
+        {/* ── Title + badges ── */}
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+              {validation?.service_name || "Service idea"}
+            </h1>
+            {serviceOutcome ? <Badge tone={svTone === "danger" ? "danger" : svTone === "warn" ? "warn" : "success"}>{serviceOutcome}</Badge> : null}
+            <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
+          </div>
+          <p className="mt-1 text-sm text-slate-500">Product / service viability report and analysis.</p>
+        </div>
+
+        {/* ── Action toolbar ── */}
+        <div className="flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={!workspaceId}
+            onClick={() => navigate(`/validation?workspace_id=${workspaceId}&history_type=service_validation${activeServiceValidationId ? `&history_id=${encodeURIComponent(activeServiceValidationId)}` : ""}`)}
+          >
+            Modify
+          </Button>
+          {!serviceDecisionLocked && (
+            <>
+              <Button size="sm" variant="danger" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("rejected")}>
                 Reject
               </Button>
-              <Button
-                className={serviceDecisionLocked ? "opacity-50" : ""}
-                disabled={decisionSaving || !workspaceId || serviceDecisionLocked}
-                onClick={() => setDecisionStatus("accepted")}
-              >
+              <Button size="sm" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("accepted")}>
                 Accept
               </Button>
-            </div>
-          </div>
+            </>
+          )}
         </div>
 
         {error ? <InlineAlert kind="error" message={error} /> : null}
         {decisionNotice ? <InlineAlert message={decisionNotice} /> : null}
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          <div className="space-y-4 lg:col-span-8">
-            <SectionCard title="Service overview" subtitle="Context for this product / service idea.">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div>
-                  <div className="text-xs font-semibold text-slate-500">Category</div>
-                  <div className="mt-1 text-sm text-slate-700">{serviceCategory || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold text-slate-500">Target customer</div>
-                  <div className="mt-1 text-sm text-slate-700">{targetCustomer || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold text-slate-500">Market scope</div>
-                  <div className="mt-1 text-sm text-slate-700">{marketScope || "—"}</div>
-                </div>
-                <div className="md:col-span-2">
-                  <div className="text-xs font-semibold text-slate-500">Description</div>
-                  <div className="mt-1 text-sm text-slate-700">{serviceDesc || "—"}</div>
-                </div>
-              </div>
-            </SectionCard>
 
-            {suggestedHours ? (
-              <SectionCard title="Workforce check" subtitle="Suggested delivery hours based on your expected demand.">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <StatTile label="Expected sales / month" value={formatNumber(expectedSales)} info="Expected sales volume per month." />
-                  <StatTile label="Hours required / sale" value={formatNumber(hoursPerSale)} info="Hours required to deliver one sale." />
-                  <StatTile label="Suggested hours / month" value={formatNumber(suggestedHours)} info="Expected sales per month × hours required per sale." />
-                  <StatTile label="Available hours / month" value={availableHours == null ? "—" : formatNumber(availableHours)} info="Your available delivery hours per month." />
-                  <StatTile label="Status" value={workforceMessage || "—"} tone={workforceKind} info="Compares available delivery hours with the suggested hours." />
+          {/* ── Main column ── */}
+          <div className="space-y-4 lg:col-span-8">
+
+            {/* Service overview — premium hero card */}
+            <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-brand-50/30 shadow-sm">
+              <div className={`absolute top-0 left-0 w-1 h-full ${svAccent}`} />
+              <div className="px-5 py-5 pl-7">
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">Service Overview</div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+                  {serviceCategory && (
+                    <div>
+                      <div className="text-[9px] font-black uppercase tracking-wider text-slate-400 mb-0.5">Industry</div>
+                      <div className="text-sm font-semibold text-slate-800">{serviceCategory}</div>
+                    </div>
+                  )}
+                  {targetCustomer && (
+                    <div>
+                      <div className="text-[9px] font-black uppercase tracking-wider text-slate-400 mb-0.5">Target customer</div>
+                      <div className="text-sm font-semibold text-slate-800">{targetCustomer}</div>
+                    </div>
+                  )}
+                  {marketScope && (
+                    <div>
+                      <div className="text-[9px] font-black uppercase tracking-wider text-slate-400 mb-0.5">Market scope</div>
+                      <div className="text-sm font-semibold text-slate-800 capitalize">{marketScope}</div>
+                    </div>
+                  )}
                 </div>
-                {workforceKind === "warn" ? (
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                    <div className="font-semibold">Recommendation: run a hiring scenario to test capacity expansion.</div>
-                    <Button size="sm" variant="secondary" onClick={() => navigate("/simulation?template=tmpl_hire_staff")}>
-                      Run hire scenario
-                    </Button>
+                {serviceDesc && (
+                  <div className="mt-4 rounded-xl bg-white/70 border border-slate-100 px-4 py-3">
+                    <div className="text-[9px] font-black uppercase tracking-wider text-slate-400 mb-1">Description</div>
+                    <p className="text-sm text-slate-700 leading-relaxed">{serviceDesc}</p>
                   </div>
-                ) : null}
+                )}
+              </div>
+            </div>
+
+            {/* Viability Synopsis */}
+            {hasInterpretation && (
+              <SectionCard
+                title="Viability Synopsis"
+                subtitle="AI-generated interpretation of your service metrics."
+                icon={
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 shadow-sm">
+                    <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><path d="M9 5a2 2 0 012-2h2a2 2 0 012 2v0a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                    </svg>
+                  </div>
+                }
+                headerRight={
+                  <div className="flex items-center gap-1.5">
+                    <span className="relative flex h-2 w-2">
+                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${svPulse} opacity-75`}></span>
+                      <span className={`relative inline-flex rounded-full h-2 w-2 ${svPulse}`}></span>
+                    </span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-brand-600/80">Validation Intelligence</span>
+                  </div>
+                }
+              >
+                <div className="relative rounded-xl border border-slate-100 bg-slate-50/60 p-5 space-y-3">
+                  <svg className="absolute top-3 left-4 h-6 w-6 text-brand-200 opacity-70" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z"/>
+                  </svg>
+                  {svcSummary && (
+                    <p className="pt-4 text-base leading-[1.75] text-slate-800" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontStyle: 'italic', letterSpacing: '0.01em' }}>
+                      {svcSummary}
+                    </p>
+                  )}
+                  {(svcKeyDriver || svcRecommendation) && (
+                    <div className="flex flex-col gap-2 border-t border-slate-100 pt-3">
+                      {svcKeyDriver && (
+                        <div className="flex items-start gap-2.5">
+                          <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[9px] font-black text-brand-700">K</span>
+                          <div className="text-sm text-slate-700"><span className="font-semibold text-slate-900">Key driver: </span>{svcKeyDriver}</div>
+                        </div>
+                      )}
+                      {svcRecommendation && (
+                        <div className="flex items-start gap-2.5">
+                          <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[9px] font-black text-emerald-700">R</span>
+                          <div className="text-sm text-slate-700"><span className="font-semibold text-slate-900">Recommendation: </span>{svcRecommendation}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {serviceRiskFlags.length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {serviceRiskFlags.map((flag, i) => (
+                      <span key={i} className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-3 py-1 text-[10px] font-bold text-rose-600 ring-1 ring-rose-200">
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                        {String(flag).replace(/_/g, " ")}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </SectionCard>
+            )}
+
+            {/* Workforce check */}
+            {suggestedHours ? (
+              <SectionCard title="Workforce check" subtitle="Delivery hours vs. expected demand.">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+                  <StatTile label="Expected sales / month" value={formatNumber(expectedSales)} info="Expected sales volume per month." />
+                  <StatTile label="Hours / sale" value={formatNumber(hoursPerSale)} info="Hours required to deliver one sale." />
+                  <StatTile label="Suggested hours / month" value={formatNumber(suggestedHours)} info="Expected sales per month × hours required per sale." />
+                  {availableHours != null && (
+                    <StatTile label="Available hours / month" value={formatNumber(availableHours)} info="Your available delivery hours per month." />
+                  )}
+                  {workforceMessage && (
+                    <StatTile label="Workforce status" value={workforceMessage} tone={workforceKind} info="Compares available delivery hours with the suggested hours." />
+                  )}
+                </div>
+                {workforceKind === "warn" && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                    <div className="font-semibold">Run a hiring scenario to model capacity expansion.</div>
+                    <Button size="sm" variant="secondary" onClick={() => navigate("/simulation?template=tmpl_hire_staff")}>Run scenario</Button>
+                  </div>
+                )}
               </SectionCard>
             ) : null}
-            <SectionCard
-              title="Viability metrics"
-              subtitle="Revenue, costs, and delivery feasibility."
-              className="bg-white"
-            >
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <StatTile
-                  label="Monthly revenue"
-                  value={formatCurrency(serviceMetrics.monthly_revenue, currency)}
-                  info="Price per sale × expected sales per month."
-                />
-                <StatTile
-                  label="Monthly variable cost"
-                  value={formatCurrency(serviceMetrics.monthly_variable_cost, currency)}
-                  info="Direct delivery costs × expected sales per month."
-                />
-                <StatTile
-                  label="Monthly fixed cost"
-                  value={formatCurrency(serviceMetrics.monthly_fixed_cost, currency)}
-                  info="Software, marketing, admin, rent, and other fixed costs."
-                />
-                <StatTile
-                  label="Contribution / sale"
-                  value={formatCurrency(serviceMetrics.contribution_per_sale, currency)}
-                  info="Price per sale minus variable cost per sale."
-                />
-                <StatTile
-                  label="Contribution margin"
-                  value={formatPercent(serviceMetrics.contribution_margin)}
-                  info="(Monthly revenue - monthly variable cost) / monthly revenue."
-                />
-                <StatTile
-                  label="Break-even months"
-                  info="Time to cover monthly fixed costs at current assumptions."
-                  value={serviceMetrics.break_even_months == null ? "—" : `${formatNumber(serviceMetrics.break_even_months)} months`}
-                />
-                <StatTile
-                  label="Capacity sales / month"
-                  value={formatNumber(serviceMetrics.capacity_sales_per_month)}
-                  info="Available delivery hours / hours required per sale."
-                />
-                <StatTile
-                  label="Capacity utilisation"
-                  value={capacityUtilisationDisplay}
-                  info="Expected sales / capacity sales per month."
-                />
-                <StatTile
-                  label="Capacity feasible"
-                  value={serviceMetrics.capacity_feasible ? "Yes" : "No"}
-                  info="Whether expected sales can be delivered with current capacity."
-                />
-              </div>
-            </SectionCard>
 
-            <SectionCard title="Interpretation" subtitle="Summary and recommendation.">
-              <div className="space-y-2 text-sm text-slate-700">
-                <div>{validation?.interpretation?.summary || "—"}</div>
-                <div><strong>Key driver:</strong> {validation?.interpretation?.key_driver || "—"}</div>
-                <div><strong>Recommendation:</strong> {validation?.interpretation?.recommendation || "—"}</div>
+            {/* Recommended Simulations */}
+            <SectionCard
+              title="Recommended Simulations"
+              subtitle="Run these what-if scenarios based on your validation results."
+              icon={
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600 shadow-sm">
+                  <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                </div>
+              }
+            >
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {svcSimRecs.slice(0, 2).map((sim) => (
+                  <button
+                    key={sim.id}
+                    onClick={() => navigate(`/simulation?template=${sim.id}`)}
+                    className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
+                      <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
+                    </div>
+                    <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                ))}
               </div>
             </SectionCard>
 
           </div>
 
-          <aside className="space-y-4 lg:col-span-4 lg:sticky lg:top-24">
-            <div className={`relative overflow-hidden rounded-3xl border-2 p-8 shadow-xl transition-all duration-500 ${viabilityScore < 50 ? "border-rose-100 bg-white shadow-rose-100/50" :
-              viabilityScore < 75 ? "border-amber-100 bg-white shadow-amber-100/50" :
-                "border-emerald-100 bg-white shadow-emerald-100/50"
-              }`}>
-              <div className={`absolute top-0 left-0 w-1.5 h-full ${viabilityScore < 50 ? "bg-rose-500" :
-                viabilityScore < 75 ? "bg-amber-500" :
-                  "bg-emerald-500"
-                }`} />
+          {/* ── Sidebar ── */}
+          <aside className="lg:col-span-4 flex flex-col gap-4 lg:self-start lg:sticky lg:top-24">
 
-              <div className="flex flex-col items-center text-center">
-                <CircularScore
-                  score={viabilityScore}
-                  tone={viabilityScore < 50 ? "danger" : viabilityScore < 75 ? "warn" : "success"}
-                  size={140}
-                  strokeWidth={12}
-                />
+            {/* Card 1: Score + Outcome + Engine */}
+            <div className={`relative overflow-hidden rounded-2xl border shadow-sm flex flex-col transition-all duration-700 bg-white ${svBorder}`}>
+              <div className={`absolute top-0 left-0 w-1.5 h-full shrink-0 ${svAccent}`} />
+              <div className="relative px-5 py-6 flex flex-col gap-0">
 
-                <div className="mt-8">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-2">Outcome</div>
-                  <div className={`text-2xl font-black tracking-tight ${viabilityScore < 50 ? "text-rose-600" :
-                    viabilityScore < 75 ? "text-amber-600" :
-                      "text-emerald-600"
-                    }`}>
-                    {serviceOutcome}
+                {/* Score gauge */}
+                <div className="flex flex-col items-center text-center shrink-0">
+                  <div className="relative group">
+                    <div className={`absolute -inset-3 rounded-full blur-xl opacity-15 transition-all duration-700 group-hover:opacity-30 ${svTone === "danger" ? "bg-rose-500" : svTone === "warn" ? "bg-amber-500" : "bg-emerald-500"}`} />
+                    <CircularScore score={viabilityScore} tone={svTone} size={148} strokeWidth={12} />
+                  </div>
+                  <div className="mt-5">
+                    <div className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-1.5">Overall Verdict</div>
+                    <div className={`text-2xl font-black tracking-tight leading-none ${svText}`}>{serviceOutcome}</div>
+                    <p className="mt-2 text-xs font-semibold text-slate-500 max-w-[200px] mx-auto leading-relaxed">
+                      {viabilityScore >= 75 ? "Strong unit economics and delivery capacity." : viabilityScore >= 50 ? "Viable with improvements to key metrics." : "Material risks — review pricing and costs."}
+                    </p>
                   </div>
                 </div>
 
-                <div className="mt-8 w-full pt-6 border-t border-slate-100">
-                  <div className="flex items-center justify-center gap-2 px-4 py-2 rounded-2xl bg-slate-50 text-[11px] font-bold text-slate-500 ring-1 ring-slate-100">
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
+                {/* Engine badge + score bars */}
+                <div className="mt-5 pt-5 border-t border-slate-100 shrink-0">
+                  <div className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-50 text-[10px] font-black text-slate-500 ring-1 ring-slate-100">
+                    <div className={`h-1.5 w-1.5 rounded-full animate-pulse ${svPulse}`} />
                     <span>SERVICE VIABILITY ANALYSIS</span>
                   </div>
+                  <div className="mt-3.5 space-y-1.5">
+                    {scoreDimensions.map(({ key, label }) => {
+                      const v = typeof serviceScores[key] === "number" ? serviceScores[key] : 0;
+                      const t = toneForScore(v);
+                      return (
+                        <div key={key} className="flex items-center gap-2">
+                          <div className="w-24 shrink-0 text-[9px] font-black uppercase tracking-wide text-slate-400 text-right leading-tight">{label}</div>
+                          <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                            <div className={`h-full rounded-full transition-all duration-1000 ${t.barClass}`} style={{ width: pctWidth(v) }} />
+                          </div>
+                          <div className="w-5 shrink-0 text-[10px] font-black text-right text-slate-700">{Math.round(v)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
+
               </div>
             </div>
 
-            <SectionCard title="Score breakdown" subtitle="Weighted viability scores (0-100).">
-              <div className="grid grid-cols-1 gap-3">
-                {[
-                  ["Margin score", serviceScores.margin_score],
-                  ["Break-even score", serviceScores.break_even_score],
-                  ["Demand score", serviceScores.demand_score],
-                  ["Capacity score", serviceScores.capacity_score],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-2xl border border-slate-200 bg-white p-3">
-                    <div className="text-xs font-semibold text-slate-500">{label}</div>
-                    <div className="mt-1 text-lg font-semibold text-slate-900">{formatNumber(value)}/100</div>
-                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                      <div className="h-full bg-indigo-500" style={{ width: pctWidth(value || 0) }} />
+            {/* Card 2: Score breakdown detail */}
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm px-5 py-5">
+              <div className="text-sm font-semibold text-slate-900 mb-0.5">Score breakdown</div>
+              <div className="text-xs text-slate-500 mb-4">Weighted viability scores (0-100).</div>
+              <div className="space-y-3">
+                {scoreDimensions.map(({ key, label }) => {
+                  const v = typeof serviceScores[key] === "number" ? serviceScores[key] : 0;
+                  const color = v >= 70 ? "#10b981" : v >= 45 ? "#f59e0b" : "#ef4444";
+                  return (
+                    <div key={key}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-xs font-semibold text-slate-600">{label} score</div>
+                        <div className="text-xs font-black text-slate-900">{Math.round(v)}<span className="text-slate-400 font-semibold">/100</span></div>
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full transition-all duration-1000" style={{ width: pctWidth(v), backgroundColor: color }} />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
-            </SectionCard>
-
-            <SectionCard title="Risk flags" subtitle="Key issues to watch.">
-              {serviceRiskFlags.length ? (
-                <ul className="list-disc space-y-2 pl-5 text-sm text-slate-700">
-                  {serviceRiskFlags.map((flag) => (
-                    <li key={flag}>{String(flag).replace(/_/g, " ")}</li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="text-sm text-slate-600">No risk flags.</div>
-              )}
-            </SectionCard>
+            </div>
 
           </aside>
         </div>
+
+        {/* ── Market Research (service) ── */}
+        <div className="mt-4 space-y-4">
+          {svcMrLoading && !svcMarketResearch && (
+            <SectionCard title="Market Intelligence" subtitle="Searching TAM, SAM, competitors and pricing…">
+              <div className="flex items-center gap-3 py-4">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand-500 border-t-transparent shrink-0" />
+                <span className="text-sm text-slate-500">This usually takes 1–3 minutes.</span>
+              </div>
+            </SectionCard>
+          )}
+
+          {svcMrError && !svcMrLoading && !svcMarketResearch && (
+            <SectionCard title="Market Intelligence" subtitle="Research could not complete.">
+              <div className="flex items-center justify-between gap-4 py-2">
+                <span className="text-sm text-rose-600">{svcMrError}</span>
+                <button
+                  onClick={runSvcMr}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-700 transition-colors"
+                >
+                  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+                  Retry
+                </button>
+              </div>
+            </SectionCard>
+          )}
+
+          {(svcMarketResearch?.market_sizing || svcMarketResearch?.competitor_analysis || svcMarketResearch?.price_intelligence) && (
+              <>
+                {svcMarketResearch?.market_sizing && (
+                  <SectionCard title="Market Sizing" subtitle="TAM · SAM · Projected Growth Rate · 2030 Market Projection">
+                    <div className="space-y-5">
+                      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                        {[
+                          { label: "Total Market (TAM)", value: svcMarketResearch.market_sizing.total_addressable_market, color: "bg-brand-50 border-brand-200", text: "text-brand-700" },
+                          { label: "Your Segment (SAM)", value: svcMarketResearch.market_sizing.serviceable_addressable_market, color: "bg-emerald-50 border-emerald-200", text: "text-emerald-700" },
+                          { label: "Growth Rate (CAGR)", value: svcMarketResearch.market_sizing.projected_growth_rate, color: "bg-amber-50 border-amber-200", text: "text-amber-700" },
+                          { label: "Projected by 2030", value: svcMarketResearch.market_sizing.projected_market_size_2030, color: "bg-indigo-50 border-indigo-200", text: "text-indigo-700" },
+                        ].filter(t => t.value).map((tile, i) => (
+                          <div key={i} className={`rounded-xl border p-4 ${tile.color}`}>
+                            <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-1">{tile.label}</div>
+                            <div className={`text-sm font-black leading-snug ${tile.text}`}>{tile.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {(svcMarketResearch.market_sizing.tam_basis || svcMarketResearch.market_sizing.sam_basis) && (
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {svcMarketResearch.market_sizing.tam_basis && (
+                            <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                              <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-2">How TAM Was Calculated</div>
+                              <p className="text-xs font-semibold text-slate-600 leading-relaxed">{svcMarketResearch.market_sizing.tam_basis}</p>
+                            </div>
+                          )}
+                          {svcMarketResearch.market_sizing.sam_basis && (
+                            <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                              <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-2">How SAM Was Calculated</div>
+                              <p className="text-xs font-semibold text-slate-600 leading-relaxed">{svcMarketResearch.market_sizing.sam_basis}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {svcMarketResearch.market_sizing.growth_drivers?.length > 0 && (
+                        <div>
+                          <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-2">Growth Drivers</div>
+                          <div className="flex flex-wrap gap-2">
+                            {svcMarketResearch.market_sizing.growth_drivers.map((d, i) => (
+                              <span key={i} className="inline-flex items-center gap-1.5 rounded-full border border-brand-100 bg-brand-50 px-3 py-1 text-[11px] font-semibold text-brand-700">
+                                <svg className="h-3 w-3 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                                {d}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </SectionCard>
+                )}
+
+                {svcMarketResearch?.competitor_analysis && (
+                  <SectionCard title="Competitor Landscape" subtitle="Market saturation · top players · moat analysis">
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        {svcMarketResearch.competitor_analysis.market_saturation && (
+                          <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                            <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-1">Market Saturation</div>
+                            <div className={`text-lg font-black ${
+                              svcMarketResearch.competitor_analysis.market_saturation === "High" ? "text-rose-600" :
+                              svcMarketResearch.competitor_analysis.market_saturation === "Medium" ? "text-amber-600" : "text-emerald-600"
+                            }`}>{svcMarketResearch.competitor_analysis.market_saturation}</div>
+                          </div>
+                        )}
+                        {svcMarketResearch.competitor_analysis.competitive_moat && (
+                          <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 sm:col-span-2">
+                            <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-1">Competitive Moat</div>
+                            <p className="text-xs font-semibold text-slate-700 leading-relaxed">{svcMarketResearch.competitor_analysis.competitive_moat}</p>
+                          </div>
+                        )}
+                      </div>
+                      {svcMarketResearch.competitor_analysis.top_competitors?.length > 0 && (
+                        <div className="space-y-3">
+                          {svcMarketResearch.competitor_analysis.top_competitors.map((c, i) => {
+                            const pricing = (c.pricing || c.price_range || "").replace(/(\w)\s*[-–]\s*(\w)/g, "$1 to $2");
+                            const share = (c.market_share || "").replace(/(\w)\s*[-–]\s*(\w)/g, "$1 to $2");
+                            const revenue = (c.estimated_revenue || "").replace(/(\w)\s*[-–]\s*(\w)/g, "$1 to $2");
+                            return (
+                              <div key={i} className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
+                                <div className="mb-2">
+                                  <div className="font-bold text-slate-900 text-sm">{c.name}</div>
+                                  {c.description && <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">{c.description}</div>}
+                                </div>
+                                <div className="flex flex-wrap gap-1.5 mb-2">
+                                  {pricing && <span className="inline-block rounded-lg bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 border border-emerald-100 leading-snug">{pricing}</span>}
+                                  {share && <span className="inline-block rounded-lg bg-brand-50 px-2.5 py-1 text-[11px] font-semibold text-brand-700 border border-brand-100 leading-snug">{share} share</span>}
+                                  {revenue && <span className="inline-block rounded-lg bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600 border border-slate-200 leading-snug">{revenue}</span>}
+                                </div>
+                                {c.strength && (
+                                  <div className="flex items-start gap-1.5 mt-1">
+                                    <svg className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>
+                                    <p className="text-[11px] text-emerald-700 font-medium leading-relaxed">{c.strength}</p>
+                                  </div>
+                                )}
+                                {c.weakness && (
+                                  <div className="flex items-start gap-1.5 mt-1">
+                                    <svg className="mt-0.5 h-3 w-3 shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                                    <p className="text-[11px] text-amber-700 font-medium leading-relaxed">{c.weakness}</p>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </SectionCard>
+                )}
+
+                {svcMarketResearch?.price_intelligence && (
+                  <SectionCard title="Price Intelligence" subtitle="Similar service pricing · entry price recommendation">
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        {[
+                          { label: "Entry Price", value: svcMarketResearch.price_intelligence.recommended_entry_price, color: "bg-emerald-50 border-emerald-100", text: "text-emerald-700" },
+                          { label: "Growth Price", value: svcMarketResearch.price_intelligence.recommended_growth_price, color: "bg-brand-50 border-brand-100", text: "text-brand-700" },
+                          { label: "Premium Price", value: svcMarketResearch.price_intelligence.recommended_premium_price, color: "bg-amber-50 border-amber-100", text: "text-amber-700" },
+                        ].filter(t => t.value).map((tile, i) => (
+                          <div key={i} className={`rounded-xl border p-4 ${tile.color}`}>
+                            <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-1">{tile.label}</div>
+                            <div className={`text-base font-black ${tile.text}`}>{tile.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {svcMarketResearch.price_intelligence.pricing_rationale && (
+                        <p className="text-xs font-semibold text-slate-600 rounded-xl border border-slate-100 bg-slate-50 p-4 leading-relaxed">{svcMarketResearch.price_intelligence.pricing_rationale}</p>
+                      )}
+                      {svcMarketResearch.price_intelligence.similar_products?.length > 0 && (
+                        <div>
+                          <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-2">Similar Services in the Market</div>
+                          <div className="space-y-2">
+                            {svcMarketResearch.price_intelligence.similar_products.map((p, i) => (
+                              <div key={i} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3">
+                                <div className="text-sm font-semibold text-slate-800">{p.name}</div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-black text-emerald-700">{p.price}</span>
+                                  {p.source && <span className="text-[10px] text-slate-400">{p.source}</span>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </SectionCard>
+                )}
+              </>
+            )}
+          </div>
 
       </div>
     );
@@ -593,6 +904,34 @@ export default function ResultsPage() {
   const reasons = useMemo(() => dedupeText(validation.reasons), [validation.reasons]);
   const actionPlan = useMemo(() => buildActionPlan({ validation, ideaValidation, maxItems: 10 }), [ideaValidation, validation]);
 
+  const bizSimRecs = useMemo(() => {
+    const recs = [];
+    const isRisky = score < 50 || classification === "RISKY" || classification === "WEAK";
+    const isModerate = score >= 50 && score < 75;
+    const isStrong = score >= 75;
+    const lowMargin = margin != null && margin < 0.3;
+    const highBurn = burn != null && burn > 0;
+    const longBreakEven = be != null && be > 12;
+    const capacityStrained = utilization != null && utilization > 0.8;
+
+    if (highBurn || isRisky) recs.push({ id: "tmpl_revenue_drop", label: "Revenue Drop", desc: "Stress-test your model if early sales fall short.", icon: "📉" });
+    if (lowMargin || highBurn) recs.push({ id: "tmpl_price_increase", label: "Price Increase", desc: "Model how a price adjustment improves your margins.", icon: "↑" });
+    if (highBurn || longBreakEven) recs.push({ id: "tmpl_reduce_fixed_cost", label: "Reduce Fixed Costs", desc: "See how cutting overheads shortens your path to profit.", icon: "✂" });
+    if (isRisky || isModerate) recs.push({ id: "tmpl_client_loss", label: "Client Loss", desc: "Assess the impact of losing a major client early on.", icon: "⚡" });
+    if (isRisky || highBurn) recs.push({ id: "tmpl_payment_delay", label: "Payment Delay", desc: "Stress-test cash flow when customers pay late.", icon: "⏱" });
+    if (isModerate || isStrong) recs.push({ id: "tmpl_service_launch", label: "Service Launch", desc: "Model revenue from adding a new service to your offering.", icon: "🚀" });
+    if (capacityStrained || isStrong) recs.push({ id: "tmpl_hire_staff", label: "Hire Staff", desc: "Plan the P&L impact of growing your team.", icon: "👥" });
+    if (isModerate || isStrong) recs.push({ id: "tmpl_contractor_addition", label: "Add Contractor", desc: "Flex capacity with contractors before committing to a hire.", icon: "🔧" });
+    if (longBreakEven) recs.push({ id: "tmpl_cost_increase", label: "Cost Increase", desc: "Model how rising input costs affect your break-even.", icon: "📦" });
+    if (isStrong) recs.push({ id: "tmpl_delay_hiring", label: "Delay Hiring", desc: "Explore the effect of deferring headcount on growth.", icon: "⏳" });
+    if (recs.length === 0) {
+      recs.push({ id: "tmpl_revenue_drop", label: "Revenue Drop", desc: "Stress-test if early revenue misses forecast.", icon: "📉" });
+      recs.push({ id: "tmpl_price_increase", label: "Price Increase", desc: "Model how a price move affects profitability.", icon: "↑" });
+      recs.push({ id: "tmpl_service_launch", label: "Service Launch", desc: "Model a new service line added to your business.", icon: "🚀" });
+    }
+    return recs.slice(0, 2);
+  }, [be, burn, classification, margin, score, utilization]);
+
   const keywordsToTrack = useMemo(() => {
     const out = [];
     if (businessName) out.push(businessName);
@@ -611,9 +950,11 @@ export default function ResultsPage() {
     return [...base, ...rest].slice(0, Math.max(6, base.length));
   }, [dimensionScores]);
 
-  const validationExplanation =
-    String(validation?.validation_explanation || validation?.market_research?.executive_summary || "").trim() ||
-    "Validation summary is being generated based on market signals and research. Your score reflects the deterministic strength of the concept.";
+  const validationExplanation = (() => {
+    const raw = String(validation?.validation_explanation || validation?.market_research?.executive_summary || "").trim();
+    if (!raw) return "Validation summary is being generated based on market signals and research. Your score reflects the deterministic strength of the concept.";
+    return raw.replace(/(?:^|\n)[—–\-]\s*/g, (m) => m.startsWith("\n") ? "\n" : "").trim();
+  })();
 
   const DIMENSION_META = useMemo(
     () => ({
@@ -645,88 +986,90 @@ export default function ResultsPage() {
   }
 
   return (
-    <div className="w-full max-w-full space-y-4 overflow-x-hidden px-1">
-      <div className="flex flex-col gap-4">
-        <button
-          type="button"
-          onClick={() => navigate("/validation")}
-          className="group flex w-fit items-center gap-2 text-sm font-bold text-slate-500 transition-colors hover:text-brand-600"
-        >
-          <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M19 12H5m7 7l-7-7 7-7" />
-          </svg>
-          Back to Validation
-        </button>
+    <div className="w-full max-w-full space-y-4 overflow-x-hidden px-2 sm:px-4">
 
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
-                {validation.pathway === "product_service_idea"
-                  ? (validation?.service_name || "Service Idea")
-                  : (validation?.business_name || "Business Concept Idea")}
-              </div>
-              <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
-              {pathwayLabel ? <Badge>{pathwayLabel}</Badge> : null}
-            </div>
-            <div className="mt-1 text-sm text-slate-600">Validation report and recommended next steps.</div>
-          </div>
+      {/* ── Back link ── */}
+      <button
+        type="button"
+        onClick={() => navigate("/validation")}
+        className="group flex w-fit items-center gap-1.5 text-sm font-semibold text-slate-400 transition-colors hover:text-brand-600"
+      >
+        <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <path d="M19 12H5m7 7l-7-7 7-7" />
+        </svg>
+        Back to Validation
+      </button>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <SegmentedTabs
-              ariaLabel="View mode"
-              value={viewMode}
-              onChange={setViewMode}
-              options={[
-                { value: "simple", label: "Simple" },
-                { value: "detailed", label: "Detailed" }
-              ]}
-            />
-            <Button
-              variant="secondary"
-              disabled={!workspaceId}
-              onClick={() =>
-                navigate(
-                  `/validation?workspace_id=${workspaceId}${activeValidationId ? `&history_id=${encodeURIComponent(activeValidationId)}&history_type=business_validation` : ""}`
-                )
-              }
-            >
-              Modify
-            </Button>
-            {!decision && (
-              <>
-                <Button variant="danger" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("rejected")}>
-                  Reject
-                </Button>
-                <Button disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("accepted")}>
-                  Accept
-                </Button>
-              </>
-            )}
-          </div>
+      {/* ── Title + badges ── */}
+      <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+            {validation.pathway === "product_service_idea"
+              ? (validation?.service_name || "Service Idea")
+              : (validation?.business_name || "Business Concept Idea")}
+          </h1>
+          <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
+          {pathwayLabel ? <Badge>{pathwayLabel}</Badge> : null}
         </div>
+        <p className="mt-1 text-sm text-slate-500">Validation report and recommended next steps.</p>
+      </div>
+
+      {/* ── Action toolbar ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <SegmentedTabs
+          ariaLabel="View mode"
+          value={viewMode}
+          onChange={setViewMode}
+          options={[
+            { value: "simple", label: "Simple" },
+            { value: "detailed", label: "Detailed" }
+          ]}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!workspaceId}
+            onClick={() => navigate(`/validation?workspace_id=${workspaceId}${activeValidationId ? `&history_id=${encodeURIComponent(activeValidationId)}&history_type=business_validation` : ""}`)}
+          >
+            Modify
+          </Button>
+          {!decision && (
+            <>
+              <Button size="sm" variant="danger" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("rejected")}>
+                Reject
+              </Button>
+              <Button size="sm" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("accepted")}>
+                Accept
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Report download tabs ── */}
+      <div className="overflow-x-auto">
+        <ReportDownloadPanel
+          output={assembleOutput({
+            workspaceId,
+            currency: currency || "GBP",
+            ideaValidation,
+            marketResearch: validation?.market_research,
+          })}
+          currency={currency || "GBP"}
+          reportTypes={["business_health_report", "investor_summary", "fragility_report", "stability_report"]}
+          compact
+        />
       </div>
 
       {error ? <InlineAlert kind="error" message={error} /> : null}
       {decisionNotice ? <InlineAlert message={decisionNotice} /> : null}
 
-      <ReportDownloadPanel
-        output={assembleOutput({
-          workspaceId,
-          currency: currency || "GBP",
-          ideaValidation,
-          marketResearch: validation?.market_research,
-        })}
-        currency={currency || "GBP"}
-        reportTypes={["business_health_report", "investor_summary", "fragility_report", "stability_report"]}
-        compact
-      />
-
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <div className="space-y-4 lg:col-span-8">
           {!isServiceIdea && viewMode === "simple" ? (
             <SectionCard title="Market Intelligence" subtitle="AI-driven summary of your validation result.">
-              <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-br from-brand-50 via-white to-brand-100 p-4 sm:p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] ring-1 ring-brand-200/50">
+              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-brand-50 via-white to-brand-100 p-4 sm:p-6 shadow-[0_4px_16px_rgb(0,0,0,0.04)] ring-1 ring-brand-200/50">
                 <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-brand-200/20 blur-3xl" />
                 <div className="absolute -left-20 -bottom-20 h-64 w-64 rounded-full bg-accent-200/20 blur-3xl" />
 
@@ -745,14 +1088,15 @@ export default function ResultsPage() {
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75"></span>
                           <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-500"></span>
                         </span>
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-brand-600/80">Live AI Reasoning</span>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-brand-600/80">Validation Intelligence</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="relative rounded-2xl border border-white bg-white/40 p-6 backdrop-blur-sm">
-                    <p className="text-[15px] leading-relaxed font-semibold text-slate-800 italic">
-                      &ldquo;{validationExplanation}&rdquo;
+                  <div className="relative rounded-xl border border-white bg-white/40 p-5 backdrop-blur-sm">
+                    <svg className="absolute top-3 left-4 h-6 w-6 text-brand-200 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z"/></svg>
+                    <p className="pt-4 text-base leading-[1.75] text-slate-800" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontStyle: 'italic', letterSpacing: '0.01em' }}>
+                      {validationExplanation}
                     </p>
                   </div>
 
@@ -826,11 +1170,13 @@ export default function ResultsPage() {
                     />
                     <StatTile label="Contribution margin" value={formatPercent(margin)} info="(Revenue - costs) / revenue." />
 
-                    <StatTile
-                      label="Break-even"
-                      value={be === null ? "—" : `${formatNumber(be)} months`}
-                      info="How long it takes to cover fixed costs given your current plan."
-                    />
+                    {be !== null && (
+                      <StatTile
+                        label="Break-even"
+                        value={`${formatNumber(be)} months`}
+                        info="How long it takes to cover fixed costs given your current plan."
+                      />
+                    )}
                     <StatTile
                       label="Capacity feasible"
                       value={capacity?.feasible === true ? "Yes" : capacity?.feasible === false ? "No" : "Unknown"}
@@ -845,15 +1191,19 @@ export default function ResultsPage() {
                   </div>
 
                   {viewMode === "detailed" ? (
-                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
                       <StatTile label="Monthly costs" value={formatCurrency(costs, currency)} info="Fixed + variable costs per month." />
-                      <StatTile label="Burn / month" value={burn === null ? "—" : formatCurrency(burn, currency)} info="If costs exceed revenue, burn is the gap you fund with cash." tone={burn && burn > 0 ? "warn" : "default"} />
-                      <StatTile
-                        label="Capacity utilization"
-                        value={utilization === null ? "—" : formatPercent(utilization)}
-                        info="Demand divided by delivery capacity."
-                        tone={utilization !== null && utilization > 1 ? "danger" : utilization !== null && utilization > 0.8 ? "warn" : "default"}
-                      />
+                      {burn !== null && (
+                        <StatTile label="Burn / month" value={formatCurrency(burn, currency)} info="If costs exceed revenue, burn is the gap you fund with cash." tone={burn > 0 ? "warn" : "default"} />
+                      )}
+                      {utilization !== null && (
+                        <StatTile
+                          label="Capacity utilization"
+                          value={formatPercent(utilization)}
+                          info="Demand divided by delivery capacity."
+                          tone={utilization > 1 ? "danger" : utilization > 0.8 ? "warn" : "default"}
+                        />
+                      )}
                     </div>
                   ) : null}
                 </>
@@ -862,37 +1212,36 @@ export default function ResultsPage() {
           )}
 
           {!isServiceIdea ? (
-            <div className="space-y-4">
-              <SectionCard title="Validation Insights" subtitle="Deeper breakdown of market signals.">
+            <SectionCard title="Validation Insights" subtitle="Deeper breakdown of market signals.">
                 <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                  <div className="rounded-2xl sm:rounded-[2.5rem] border border-slate-200 bg-white p-4 sm:p-8 shadow-[0_10px_40px_rgba(0,0,0,0.02)]">
-                    <div className="flex items-center gap-3 mb-6">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-600 shadow-sm">
-                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 9v4" /><path d="M12 17h.01" /><circle cx="12" cy="12" r="10" /></svg>
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 9v4" /><path d="M12 17h.01" /><circle cx="12" cy="12" r="10" /></svg>
                       </div>
                       <div className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">Critical Risks</div>
                     </div>
-                    <ul className="space-y-4">
+                    <ul className="space-y-3">
                       {reasons.length ? reasons.slice(0, 6).map((r, i) => (
-                        <li key={i} className="flex gap-4 text-sm font-medium text-slate-700 leading-relaxed group">
-                          <span className="shrink-0 mt-1 flex h-2 w-2 rounded-full bg-rose-400 group-hover:scale-125 transition-transform" />
+                        <li key={i} className="flex gap-3 text-sm font-medium text-slate-700 leading-relaxed">
+                          <span className="shrink-0 mt-1.5 flex h-1.5 w-1.5 rounded-full bg-rose-400" />
                           {r}
                         </li>
                       )) : <li className="text-sm text-slate-400 italic">No critical risks identified.</li>}
                     </ul>
                   </div>
 
-                  <div className="rounded-2xl sm:rounded-[2.5rem] border border-slate-200 bg-white p-4 sm:p-8 shadow-[0_10px_40px_rgba(0,0,0,0.02)]">
-                    <div className="flex items-center gap-3 mb-6">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600 shadow-sm">
-                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
                       </div>
                       <div className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">Strategic Roadmap</div>
                     </div>
-                    <ul className="space-y-4">
+                    <ul className="space-y-3">
                       {actionPlan.length ? actionPlan.slice(0, 6).map((r, i) => (
-                        <li key={i} className="flex gap-4 text-sm font-medium text-slate-700 leading-relaxed group">
-                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-[10px] font-black text-white shadow-md shadow-brand-100 group-hover: rotate-12 transition-transform">
+                        <li key={i} className="flex gap-3 text-sm font-medium text-slate-700 leading-relaxed">
+                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-brand-600 text-[10px] font-black text-white shadow-sm">
                             {i + 1}
                           </span>
                           {r}
@@ -901,164 +1250,7 @@ export default function ResultsPage() {
                     </ul>
                   </div>
                 </div>
-              </SectionCard>
-
-              {validation?.market_research?.market_opportunity && (
-                <SectionCard title="Market Opportunity" subtitle="Growth trends and TAM/SAM signals.">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="rounded-3xl border border-slate-100 bg-slate-50/50 p-6">
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">Opportunity Summary</div>
-                      <p className="text-sm font-semibold text-slate-700 leading-relaxed">
-                        {validation.market_research.market_opportunity.summary}
-                      </p>
-                      <div className="mt-4 space-y-2">
-                        <div className="flex justify-between text-xs">
-                          <span className="text-slate-400 font-bold uppercase">Market size</span>
-                          <span className="text-slate-700 font-black">{validation.market_research.market_opportunity.market_size}</span>
-                        </div>
-                        <div className="flex justify-between text-xs">
-                          <span className="text-slate-400 font-bold uppercase">Growth rate</span>
-                          <span className="text-slate-700 font-black">{validation.market_research.market_opportunity.growth_rate}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="rounded-3xl border border-slate-100 bg-white p-6">
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">Key trends</div>
-                      <ul className="space-y-2">
-                        {validation.market_research.market_opportunity.key_trends?.map((t, i) => (
-                          <li key={i} className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                            <div className="h-1.5 w-1.5 rounded-full bg-brand-500" />
-                            {t}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                </SectionCard>
-              )}
-
-              {validation?.market_research?.target_customer && (
-                <SectionCard title="Target Customer Profile" subtitle="Pain points and buying behaviour.">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                    <div className="md:col-span-2 rounded-2xl sm:rounded-3xl border border-slate-100 p-4 sm:p-6 bg-white">
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">Customer Profile</div>
-                      <div className="text-lg font-black text-slate-900 mb-4">{validation.market_research.target_customer.profile}</div>
-                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                        <div>
-                          <div className="text-[9px] font-black text-slate-400 uppercase mb-2">Primary Pain Points</div>
-                          <ul className="space-y-2">
-                            {validation.market_research.target_customer.pain_points?.map((p, i) => (
-                              <li key={i} className="text-xs font-bold text-slate-600 flex gap-2">
-                                <span className="text-brand-500">→</span> {p}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                        <div>
-                          <div className="text-[9px] font-black text-slate-400 uppercase mb-2">Buying Behaviour</div>
-                          <p className="text-xs font-semibold text-slate-600 leading-relaxed">
-                            {validation.market_research.target_customer.buying_behaviour}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="rounded-2xl sm:rounded-3xl bg-slate-900 p-4 sm:p-6 text-white">
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-4">Urgency & WTP</div>
-                      <div className="space-y-6">
-                        <div>
-                          <div className="text-[9px] font-black text-slate-500 uppercase mb-1">Pain Urgency</div>
-                          <div className="text-base font-black text-brand-400">{validation.market_research.target_customer.urgency}</div>
-                        </div>
-                        <div>
-                          <div className="text-[9px] font-black text-slate-500 uppercase mb-1">Willingness to Pay</div>
-                          <div className="text-base font-black text-emerald-400">{validation.market_research.target_customer.willingness_to_pay}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </SectionCard>
-              )}
-
-              {validation?.market_research?.pricing_strategy && (
-                <SectionCard title="Monetization & Strategy" subtitle="Pricing models and positioning.">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl sm:rounded-3xl border border-slate-100 bg-white p-4 sm:p-6">
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">Pricing Model</div>
-                      <div className="text-xl font-black text-slate-900 leading-tight mb-2">
-                        {validation.market_research.pricing_strategy.recommended_model}
-                      </div>
-                      <p className="text-xs font-semibold text-slate-500 leading-relaxed">
-                        {validation.market_research.pricing_strategy.rationale}
-                      </p>
-                      <div className="mt-6 flex gap-3">
-                        {validation.market_research.recommended_price_range && (
-                          Object.entries(validation.market_research.recommended_price_range).map(([tier, val]) => (
-                            tier !== "currency" && (
-                              <div key={tier} className="flex-1 p-3 rounded-2xl bg-slate-50 text-center">
-                                <div className="text-[8px] font-black text-slate-400 uppercase mb-1">{tier}</div>
-                                <div className="text-xs font-black text-slate-900">{val}</div>
-                              </div>
-                            )
-                          ))
-                        )}
-                      </div>
-                    </div>
-                    <div className="rounded-3xl border border-slate-100 bg-slate-50/50 p-6">
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">Positioning</div>
-                      <div className="space-y-4">
-                        <div>
-                          <div className="text-[9px] font-black text-slate-400 uppercase mb-1">Value Proposition</div>
-                          <div className="text-sm font-bold text-slate-700">{validation.market_research.positioning?.value_proposition}</div>
-                        </div>
-                        <div>
-                          <div className="text-[9px] font-black text-slate-400 uppercase mb-1">Differentiation</div>
-                          <div className="text-sm font-bold text-slate-700">{validation.market_research.positioning?.differentiation}</div>
-                        </div>
-                        <div className="pt-2">
-                          <div className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-black text-center shadow-lg shadow-brand-200">
-                            "{validation.market_research.positioning?.headline_message}"
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </SectionCard>
-              )}
-
-              {validation?.market_research?.go_to_market && (
-                <SectionCard title="Launch Roadmap" subtitle="Channels and timeline.">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl sm:rounded-3xl border border-slate-100 bg-white p-4 sm:p-6">
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">Primary Channels</div>
-                      <div className="flex flex-wrap gap-2">
-                        {validation.market_research.go_to_market.primary_channels?.map((c, i) => (
-                          <span key={i} className="px-3 py-1.5 rounded-xl bg-slate-100 text-[10px] font-black text-slate-600">
-                            {c}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="mt-6">
-                        <div className="text-[9px] font-black text-slate-400 uppercase mb-2">Quick Wins</div>
-                        <ul className="space-y-2">
-                          {validation.market_research.go_to_market.quick_wins?.map((w, i) => (
-                            <li key={i} className="text-xs font-bold text-emerald-600 flex gap-2 italic">
-                              ✓ {w}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                    <div className="rounded-2xl sm:rounded-3xl bg-brand-50 border border-brand-100 p-4 sm:p-6 flex flex-col justify-center">
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-400 mb-3">Execution Timeline</div>
-                      <div className="text-2xl font-black text-brand-900 leading-tight">
-                        {validation.market_research.go_to_market.timeline}
-                      </div>
-                      <p className="mt-2 text-xs font-bold text-brand-600">Phase 1 Rollout Strategy</p>
-                    </div>
-                  </div>
-                </SectionCard>
-              )}
-            </div>
+            </SectionCard>
           ) : viewMode === "simple" ? (
             <SectionCard title="Insights" subtitle="Key risks and what to do next.">
               <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -1078,71 +1270,6 @@ export default function ResultsPage() {
             </SectionCard>
           ) : null}
 
-          {viewMode === "simple" && !isServiceIdea ? (
-            <SectionCard
-              title="Market Health Signals"
-              subtitle="Real-time validation signals from Google Trends, Companies House, and Local Market."
-              headerRight={<InfoTip text="Signals are derived from live market analysis of your business concept and location." />}
-            >
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <div className="group rounded-3xl bg-white p-6 ring-1 ring-slate-200 shadow-sm transition-all hover:ring-brand-500 hover:shadow-md">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M23 6l-9.5 9.5-5-5L1 18" /><path d="M17 6h6v6" /></svg>
-                    </div>
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Demand Trend</span>
-                  </div>
-                  <div className="text-xl font-black text-slate-900 capitalize tracking-tight">
-                    {validation?.market_fit?.demand?.trend_direction || marketFit?.demand?.trend_direction || "Stable"}
-                  </div>
-                  <div className="mt-3 text-[11px] leading-relaxed font-medium text-slate-500">
-                    {validation?.market_research?.market_health_narration?.demand_trend ||
-                      validation?.market_fit?.demand?.explanation ||
-                      marketFit?.demand?.explanation ||
-                      "Search interest suggests a steady baseline for this category."}
-                  </div>
-                </div>
-
-                <div className="group rounded-3xl bg-white p-6 ring-1 ring-slate-200 shadow-sm transition-all hover:ring-emerald-500 hover:shadow-md">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /></svg>
-                    </div>
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Sector Survival</span>
-                  </div>
-                  <div className="text-xl font-black text-slate-900 tracking-tight">
-                    {validation?.market_fit?.sector?.survival_ratio
-                      ? formatPercent(validation.market_fit.sector.survival_ratio)
-                      : (marketFit?.sector?.survival_ratio ? formatPercent(marketFit.sector.survival_ratio) : "60%")}
-                  </div>
-                  <div className="mt-3 text-[11px] leading-relaxed font-medium text-slate-500">
-                    {validation?.market_research?.market_health_narration?.sector_survival ||
-                      validation?.market_fit?.sector?.explanation ||
-                      marketFit?.sector?.explanation ||
-                      "Average survival rates detected for new incorporations in this SIC category."}
-                  </div>
-                </div>
-
-                <div className="group rounded-3xl bg-white p-6 ring-1 ring-slate-200 shadow-sm transition-all hover:ring-amber-500 hover:shadow-md">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-colors">
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
-                    </div>
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Competition</span>
-                  </div>
-                  <div className="text-xl font-black text-slate-900 capitalize tracking-tight">
-                    {validation?.market_fit?.competition?.competition_level || marketFit?.competition?.competition_level || "Balanced"}
-                  </div>
-                  <div className="mt-3 text-[11px] leading-relaxed font-medium text-slate-500">
-                    {validation?.market_research?.market_health_narration?.competition ||
-                      validation?.market_fit?.competition?.explanation ||
-                      marketFit?.competition?.explanation ||
-                      "Standard level of local competition detected for this keyword and radius."}
-                  </div>
-                </div>
-              </div>
-            </SectionCard>
-          ) : null}
 
           {flags?.length && viewMode === "detailed" ? (
             <SectionCard title="Flags" subtitle="Issues worth addressing early.">
@@ -1154,7 +1281,7 @@ export default function ResultsPage() {
             </SectionCard>
           ) : null}
 
-          {viewMode === "detailed" ? (
+          {false /* Trend score + Insights moved to 3-col row below the main grid */ ? (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <SectionCard
                 title="Trend score"
@@ -1242,7 +1369,7 @@ export default function ResultsPage() {
                 </div>
               </SectionCard>
 
-              <SectionCard title="Insights" subtitle="Breakdown, reasons, and recommendations." className="flex h-[360px] flex-col overflow-hidden">
+              <SectionCard title="Insights" subtitle="Breakdown, reasons, and recommendations." className="flex h-[300px] flex-col overflow-hidden sm:h-[360px]">
                 <SegmentedTabs
                   ariaLabel="Insights tabs"
                   value={sideTab}
@@ -1275,10 +1402,12 @@ export default function ResultsPage() {
                       ))}
                       {dimensionScores?.problem_severity === undefined && (
                         <>
-                          <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
-                            <div className="text-slate-600">Break-even</div>
-                            <div className="font-semibold text-slate-900">{be === null ? "—" : `${formatNumber(be)} months`}</div>
-                          </div>
+                          {be !== null && (
+                            <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
+                              <div className="text-slate-600">Break-even</div>
+                              <div className="font-semibold text-slate-900">{`${formatNumber(be)} months`}</div>
+                            </div>
+                          )}
                           <div className="flex items-center justify-between">
                             <div className="text-slate-600">Runway</div>
                             <div className="font-semibold text-slate-900">{runway === null ? "Infinity" : `${formatNumber(runway)} months`}</div>
@@ -1301,157 +1430,741 @@ export default function ResultsPage() {
               </SectionCard>
             </div>
           ) : null}
+
+          {/* Recommended Simulations */}
+          <SectionCard
+            title="Recommended Simulations"
+            subtitle="Run these what-if scenarios based on your validation results."
+            icon={
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600 shadow-sm">
+                <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              </div>
+            }
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {bizSimRecs.map((sim) => (
+                <button
+                  key={sim.id}
+                  onClick={() => navigate(`/simulation?template=${sim.id}`)}
+                  className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
+                    <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
+                  </div>
+                  <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+                </button>
+              ))}
+            </div>
+          </SectionCard>
         </div>
 
-        <aside className="space-y-6 lg:col-span-4 lg:sticky lg:top-24">
-          <div className={`relative overflow-hidden rounded-2xl sm:rounded-[2.5rem] border p-6 sm:p-10 shadow-[0_20px_50px_rgba(0,0,0,0.04)] transition-all duration-700 ${risk.tone === "danger" ? "border-rose-100 bg-white ring-8 ring-rose-50/50" :
-            risk.tone === "warn" ? "border-amber-100 bg-white ring-8 ring-amber-50/50" :
-              "border-emerald-100 bg-white ring-8 ring-emerald-50/50"
-            }`}>
-            <div className={`absolute top-0 left-0 w-2 h-full ${risk.tone === "danger" ? "bg-gradient-to-b from-rose-400 to-rose-600" :
-              risk.tone === "warn" ? "bg-gradient-to-b from-amber-400 to-amber-600" :
-                "bg-gradient-to-b from-emerald-400 to-emerald-600"
-              }`} />
+        <aside className="lg:col-span-4 flex flex-col gap-4">
+          {/* Card 1: Score + Engine */}
+          <div className={`relative overflow-hidden rounded-2xl border shadow-sm flex flex-col transition-all duration-700 ${
+            risk.tone === "danger" ? "border-rose-100 bg-white" :
+            risk.tone === "warn"   ? "border-amber-100 bg-white" :
+                                     "border-emerald-100 bg-white"
+          }`}>
+            {/* Accent bar */}
+            <div className={`absolute top-0 left-0 w-1.5 h-full shrink-0 ${
+              risk.tone === "danger" ? "bg-gradient-to-b from-rose-400 to-rose-600" :
+              risk.tone === "warn"   ? "bg-gradient-to-b from-amber-400 to-amber-600" :
+                                       "bg-gradient-to-b from-emerald-400 to-emerald-600"
+            }`} />
 
-            <div className="flex flex-col items-center text-center">
-              <div className="relative group">
-                <div className={`absolute -inset-4 rounded-full blur-2xl opacity-20 transition-all duration-700 group-hover:opacity-40 ${risk.tone === "danger" ? "bg-rose-500" : risk.tone === "warn" ? "bg-amber-500" : "bg-emerald-500"}`} />
-                <CircularScore score={score} tone={risk.tone} size={160} strokeWidth={14} />
-              </div>
+            {/* Inner */}
+            <div className="relative flex flex-col px-5 py-6 gap-0">
 
-              <div className="mt-10">
-                <div className="text-[11px] font-black uppercase tracking-[0.3em] text-slate-400 mb-3">Overall Verdict</div>
-                <div className={`text-3xl font-black tracking-tight leading-none ${risk.tone === "danger" ? "text-rose-600" :
-                  risk.tone === "warn" ? "text-amber-600" :
-                    "text-emerald-600"
-                  }`}>
-                  {classification}
+              {/* ── Score section ── */}
+              <div className="flex flex-col items-center text-center shrink-0">
+                <div className="relative group">
+                  <div className={`absolute -inset-3 rounded-full blur-xl opacity-15 transition-all duration-700 group-hover:opacity-30 ${
+                    risk.tone === "danger" ? "bg-rose-500" : risk.tone === "warn" ? "bg-amber-500" : "bg-emerald-500"
+                  }`} />
+                  <CircularScore score={score} tone={risk.tone} size={148} strokeWidth={12} />
                 </div>
-                <p className="mt-3 text-xs font-semibold text-slate-500 max-w-[200px] mx-auto leading-relaxed">
-                  {validation?.market_research?.viability_score?.summary || risk.subtitle}
-                </p>
+                <div className="mt-5">
+                  <div className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-1.5">Overall Verdict</div>
+                  <div className={`text-2xl font-black tracking-tight leading-none ${
+                    risk.tone === "danger" ? "text-rose-600" :
+                    risk.tone === "warn"   ? "text-amber-600" : "text-emerald-600"
+                  }`}>{classification}</div>
+                  <p className="mt-2 text-xs font-semibold text-slate-500 max-w-[200px] mx-auto leading-relaxed">
+                    {validation?.market_research?.viability_score?.summary || risk.subtitle}
+                  </p>
+                </div>
               </div>
 
-              <div className="mt-10 w-full pt-8 border-t border-slate-100/80">
-                <div className="flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-2xl bg-slate-50 text-[10px] font-black text-slate-500 ring-1 ring-slate-100">
-                  <div className={`h-1.5 w-1.5 rounded-full animate-pulse ${risk.tone === "danger" ? "bg-rose-500" : risk.tone === "warn" ? "bg-amber-500" : "bg-emerald-500"}`} />
+              {/* ── Engine badge + inline dimension bars ── */}
+              <div className="mt-5 pt-5 border-t border-slate-100 shrink-0">
+                <div className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-50 text-[10px] font-black text-slate-500 ring-1 ring-slate-100">
+                  <div className={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                    risk.tone === "danger" ? "bg-rose-500" : risk.tone === "warn" ? "bg-amber-500" : "bg-emerald-500"
+                  }`} />
                   <span>DETERMINISTIC ENGINE 3.0</span>
                 </div>
+                {dimensionScores && (
+                  <div className="mt-3.5 space-y-1.5">
+                    {orderedDimensions.map((k) => {
+                      const v = typeof dimensionScores?.[k] === "number" ? dimensionScores[k] : 0;
+                      const t = toneForScore(v);
+                      return (
+                        <div key={k} className="flex items-center gap-2">
+                          <div className="w-24 shrink-0 text-[9px] font-black uppercase tracking-wide text-slate-400 text-right leading-tight">{dimLabel(k)}</div>
+                          <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                            <div className={`h-full rounded-full transition-all duration-1000 ${t.barClass}`} style={{ width: pctWidth(v) }} />
+                          </div>
+                          <div className="w-5 shrink-0 text-[10px] font-black text-right text-slate-700">{Math.round(v)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
+
             </div>
           </div>
 
-          <SectionCard title={!isServiceIdea ? "Idea Strength Dimensions" : "Validation scores"} subtitle={!isServiceIdea ? "Breakdown of the evaluation engine logic." : "Quick view by dimension."} headerRight={<InfoTip text={validationExplanation} />}>
-            {dimensionScores ? (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {orderedDimensions.map((k) => {
-                  const v = typeof dimensionScores?.[k] === "number" ? dimensionScores[k] : 0;
-                  const label = dimLabel(k);
-                  const help = dimHelp(k);
-                  const tone = toneForScore(v);
-                  return (
-                    <div key={k} className={`group relative rounded-2xl border bg-white p-4 transition-all hover:shadow-md ${tone.borderClass}`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs font-bold uppercase tracking-wider text-slate-400 group-hover:text-slate-600 transition-colors">{label}</div>
-                        <InfoTip text={help} />
-                      </div>
-                      <div className="mt-2 flex items-baseline gap-1">
-                        <div className="text-2xl font-black text-slate-900">{formatNumber(v)}</div>
-                        <div className="text-sm font-bold text-slate-400">/100</div>
-                      </div>
-                      <div className={`mt-3 h-2 w-full overflow-hidden rounded-full ${tone.trackClass}`}>
-                        <div className={`h-full transition-all duration-1000 ${tone.barClass}`} style={{ width: pctWidth(v) }} />
-                      </div>
-                      <div className="mt-3 text-[11px] font-medium leading-relaxed text-slate-500">
-                        {shortExplanation(help, 140)}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="text-sm text-slate-600">No score breakdown available yet.</div>
-            )}
-          </SectionCard>
-
-          {viewMode === "detailed" ? (
-            <SectionCard
-              title="Market fit"
-              subtitle="Demand trend, sector survival, and local competition."
-              className="flex h-[360px] flex-col overflow-hidden"
-              headerRight={mfKeyword ? <InfoTip text={`Signals for: ${mfKeyword}`} /> : null}
-            >
-              {!mfKeyword ? (
-                <div className="text-sm text-slate-600">Add a business name and industry to load market fit.</div>
-              ) : mfLoading ? (
-                <div className="flex items-center gap-2 text-sm text-slate-700">
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                  Fetching signals…
-                </div>
-              ) : mfError ? (
-                <div className="space-y-2">
-                  <InlineAlert tone="danger" title="Market fit unavailable" message={mfError} />
-                  <Button variant="secondary" onClick={fetchMarketFit}>
-                    Retry
-                  </Button>
-                </div>
-              ) : marketFit?.market_fit_score == null ? (
-                <div className="text-sm text-slate-600">No market fit data yet.</div>
-              ) : (
-                <div className="flex-1 min-h-0 overflow-hidden">
-                  <div className="mb-3">
-                    <SegmentedTabs
-                      ariaLabel="Market fit tabs"
-                      value={marketFitTab}
-                      onChange={setMarketFitTab}
-                      size="sm"
-                      options={[
-                        { value: "score", label: "Market fit score" },
-                        { value: "demand", label: "Demand trend" },
-                        { value: "survival", label: "Sector survival" },
-                        { value: "competition", label: "Local competition" }
-                      ]}
-                    />
+          {/* Card 2: Idea Strength Dimensions (simple mode only — detailed mode shows 3-col row below) */}
+          {viewMode !== "detailed" && (
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm px-5 py-5">
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">
+                    {!isServiceIdea ? "Idea Strength Dimensions" : "Validation Scores"}
                   </div>
-
-                  {marketFitTab === "score" ? (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Market fit score</div>
-                      <div className="mt-1 text-2xl font-semibold text-slate-900">{formatNumber(marketFit.market_fit_score)}/100</div>
-                      <div className="mt-1 text-sm font-semibold text-slate-700">{String(marketFit.market_fit_classification || "—")}</div>
-                      <div className="mt-3 text-xs text-slate-600">
-                        {shortExplanation(String(marketFit.market_fit_explanation || ""), 180)}
-                      </div>
-                    </div>
-                  ) : (
-                    (() => {
-                      const map = {
-                        demand: ["market_demand", "Demand trend"],
-                        survival: ["sector_survival", "Sector survival"],
-                        competition: ["local_competition", "Local competition"]
-                      };
-                      const [key, label] = map[marketFitTab] || map.demand;
-                      const v = typeof marketFit?.dimension_scores?.[key] === "number" ? marketFit.dimension_scores[key] : 0;
-                      const help = String(marketFit?.dimension_explanations?.[key] || "");
-                      return (
-                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-                          <div className="mt-1 text-2xl font-semibold text-slate-900">{formatNumber(v)}/100</div>
-                          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                            <div className="h-full bg-indigo-500" style={{ width: pctWidth(v) }} />
-                          </div>
-                          <div className="mt-3 text-xs text-slate-600">{help || "—"}</div>
-                        </div>
-                      );
-                    })()
-                  )}
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    {!isServiceIdea ? "Radar · bar view · scored /100" : "Quick view by dimension."}
+                  </div>
                 </div>
-              )}
-            </SectionCard>
-          ) : null}
+                <InfoTip text={validationExplanation} />
+              </div>
 
+              {dimensionScores ? (
+                <>
+                  <div style={{ height: 210 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RadarChart data={orderedDimensions.map(k => ({
+                        subject: dimLabel(k).split(' ')[0],
+                        score: Math.round(typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0),
+                        fullMark: 100,
+                      }))}>
+                        <PolarGrid stroke="#e2e8f0" />
+                        <PolarAngleAxis dataKey="subject" tick={{ fontSize: 9, fontWeight: 700, fill: "#94a3b8" }} />
+                        <Radar dataKey="score"
+                          stroke={risk.tone === "danger" ? "#f43f5e" : risk.tone === "warn" ? "#f59e0b" : "#10b981"}
+                          fill={risk.tone === "danger" ? "#f43f5e" : risk.tone === "warn" ? "#f59e0b" : "#10b981"}
+                          fillOpacity={0.18} strokeWidth={2} />
+                      </RadarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div style={{ height: 170 }} className="mt-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart layout="vertical" data={orderedDimensions.map(k => ({
+                        name: dimLabel(k),
+                        score: Math.round(typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0),
+                      }))} margin={{ top: 0, right: 20, bottom: 0, left: 0 }}>
+                        <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 8, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                        <YAxis type="category" dataKey="name" width={88} tick={{ fontSize: 9, fontWeight: 700, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                        <Tooltip cursor={{ fill: "#f8fafc" }} content={({ active, payload }) => active && payload?.length ? (
+                          <div className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white shadow-xl">
+                            {payload[0].payload.name}: <span className="text-emerald-400">{payload[0].value}/100</span>
+                          </div>
+                        ) : null} />
+                        <Bar dataKey="score" radius={[0, 4, 4, 0]} maxBarSize={9}>
+                          {orderedDimensions.map((k) => {
+                            const v = typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0;
+                            return <Cell key={k} fill={v >= 80 ? "#10b981" : v >= 50 ? "#f59e0b" : "#f43f5e"} />;
+                          })}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-slate-500">No score breakdown available yet.</p>
+              )}
+            </div>
+          )}
         </aside>
       </div>
+
+      {/* ── Detailed mode: Trend Score + Insights + ISD in one aligned 3-col row ── */}
+      {viewMode === "detailed" && !isServiceIdea && (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          {/* Trend Score */}
+          <SectionCard
+            title="Trend score"
+            subtitle="Keyword trend and community signals."
+            className="flex flex-col"
+            headerRight={
+              <div className="w-full max-w-[220px]">
+                <SegmentedTabs
+                  ariaLabel="Trend score tabs"
+                  value={signalsTab}
+                  onChange={setSignalsTab}
+                  size="sm"
+                  options={[
+                    { value: "trend", label: "Keyword trend" },
+                    { value: "community", label: "Community" }
+                  ]}
+                />
+              </div>
+            }
+          >
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1">
+              {signalsTab === "trend" ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Keyword trend</div>
+                    <InfoTip text="We build the keyword set from your Business name + Industry + Offer. Trend data appears when connected." />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Keywords to track</div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {(keywordsToTrack.length ? keywordsToTrack : ["Add business name and industry to generate keywords."]).map((k) => (
+                          <span key={k} className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">{k}</span>
+                        ))}
+                      </div>
+                      <div className="mt-3 text-xs text-slate-500">We will track demand signals and query growth for these terms.</div>
+                    </div>
+                    <div className="rounded-2xl border border-dashed border-slate-300 bg-gradient-to-br from-brand-50 via-white to-accent-50 p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trend preview</div>
+                        <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">Market signals</span>
+                      </div>
+                      <div className="mt-3 rounded-xl bg-white/70 p-3 text-sm text-slate-600 ring-1 ring-slate-200">
+                        {keywordsToTrack.length ? "Keyword trend insights will appear here when demand data is connected." : "Add business name and industry details to generate keywords and prepare the trend preview."}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Community signals</div>
+                    <InfoTip text="Mentions and discussions related to your space. Signals appear when connected." />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3">
+                    {[["Mentions", "Across tracked communities"], ["Momentum", "Week-over-week change"], ["Top spaces", "Where people discuss it"]].map(([label, sub]) => (
+                      <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+                        <div className="mt-1 text-lg font-semibold text-slate-900">-</div>
+                        <div className="mt-1 text-xs text-slate-500">{sub}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">No community signals yet.</div>
+                </div>
+              )}
+            </div>
+          </SectionCard>
+
+          {/* Insights */}
+          <SectionCard title="Insights" subtitle="Breakdown, reasons, and recommendations." className="flex flex-col">
+            <SegmentedTabs
+              ariaLabel="Insights tabs"
+              value={sideTab}
+              onChange={setSideTab}
+              options={[
+                { value: "breakdown", label: "Score" },
+                { value: "reasons", label: "Reasons" },
+                { value: "recommendations", label: "Actions" }
+              ]}
+            />
+            <div className="mt-4 flex-1 min-h-0 overflow-auto pr-1">
+              {sideTab === "breakdown" ? (
+                <div className="space-y-3 pt-2">
+                  {orderedDimensions.map(key => (
+                    <div key={key} className="flex items-center justify-between group">
+                      <div className="text-slate-600 text-[13px] font-medium">{dimLabel(key)}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 w-24 bg-slate-100 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full transition-all duration-1000 ${(dimensionScores[key] || 0) >= 80 ? 'bg-emerald-500' : (dimensionScores[key] || 0) >= 50 ? 'bg-amber-500' : 'bg-rose-500'}`} style={{ width: `${dimensionScores[key] || 0}%` }} />
+                        </div>
+                        <div className="font-bold text-slate-900 text-xs w-6 text-right">{Math.round(dimensionScores[key] || 0)}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {dimensionScores?.problem_severity === undefined && (
+                    <>
+                      {be !== null && (
+                        <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
+                          <div className="text-slate-600">Break-even</div>
+                          <div className="font-semibold text-slate-900">{`${formatNumber(be)} months`}</div>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <div className="text-slate-600">Runway</div>
+                        <div className="font-semibold text-slate-900">{runway === null ? "Infinity" : `${formatNumber(runway)} months`}</div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : sideTab === "reasons" ? (
+                <ul className="list-disc space-y-2 pl-5 text-sm text-slate-700">
+                  {reasons.slice(0, 999).map((r) => <li key={r}>{r}</li>)}
+                </ul>
+              ) : (
+                <ul className="list-disc space-y-2 pl-5 text-sm text-slate-700">
+                  {actionPlan.length ? actionPlan.slice(0, 999).map((r) => <li key={r}>{r}</li>) : <li>Update inputs to generate actions.</li>}
+                </ul>
+              )}
+            </div>
+          </SectionCard>
+
+          {/* Idea Strength Dimensions */}
+          <SectionCard title="Idea Strength Dimensions" subtitle="Radar · bar view · scored /100" className="flex flex-col">
+            {dimensionScores ? (
+              <div className="flex-1 flex flex-col gap-2">
+                <div style={{ height: 220 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RadarChart data={orderedDimensions.map(k => ({ subject: dimLabel(k).split(' ')[0], score: Math.round(typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0), fullMark: 100 }))}>
+                      <PolarGrid stroke="#e2e8f0" />
+                      <PolarAngleAxis dataKey="subject" tick={{ fontSize: 9, fontWeight: 700, fill: "#94a3b8" }} />
+                      <Radar dataKey="score"
+                        stroke={risk.tone === "danger" ? "#f43f5e" : risk.tone === "warn" ? "#f59e0b" : "#10b981"}
+                        fill={risk.tone === "danger" ? "#f43f5e" : risk.tone === "warn" ? "#f59e0b" : "#10b981"}
+                        fillOpacity={0.18} strokeWidth={2} />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div style={{ height: 185 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart layout="vertical" data={orderedDimensions.map(k => ({ name: dimLabel(k), score: Math.round(typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0) }))} margin={{ top: 0, right: 20, bottom: 0, left: 0 }}>
+                      <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 8, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" width={88} tick={{ fontSize: 9, fontWeight: 700, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                      <Tooltip cursor={{ fill: "#f8fafc" }} content={({ active, payload }) => active && payload?.length ? (
+                        <div className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white shadow-xl">
+                          {payload[0].payload.name}: <span className="text-emerald-400">{payload[0].value}/100</span>
+                        </div>
+                      ) : null} />
+                      <Bar dataKey="score" radius={[0, 4, 4, 0]} maxBarSize={9}>
+                        {orderedDimensions.map((k) => {
+                          const v = typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0;
+                          return <Cell key={k} fill={v >= 80 ? "#10b981" : v >= 50 ? "#f59e0b" : "#f43f5e"} />;
+                        })}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-500">No score breakdown available yet.</p>
+            )}
+          </SectionCard>
+        </div>
+      )}
+
+      {/* Market Sizing, Competitor Intelligence, Price Intelligence — shown for all idea types */}
+      {(validation?.market_research?.market_sizing || validation?.market_research?.competitor_analysis || validation?.market_research?.price_intelligence) && (
+        <div className="grid grid-cols-1 gap-4">
+
+          {validation?.market_research?.market_sizing && (
+            <SectionCard title="Market Sizing" subtitle="TAM · SAM · Projected Growth Rate · 2030 Market Projection">
+              <div className="space-y-4">
+                {[
+                  { label: "Total Market (TAM)", value: validation.market_research.market_sizing.total_addressable_market, color: "bg-brand-50 border-brand-200", text: "text-brand-700" },
+                  { label: "Your Segment (SAM)", value: validation.market_research.market_sizing.serviceable_addressable_market, color: "bg-emerald-50 border-emerald-200", text: "text-emerald-700" },
+                  { label: "Growth Rate (CAGR)", value: validation.market_research.market_sizing.projected_growth_rate, color: "bg-amber-50 border-amber-200", text: "text-amber-700" },
+                  { label: "Projected by 2030", value: validation.market_research.market_sizing.projected_market_size_2030, color: "bg-indigo-50 border-indigo-200", text: "text-indigo-700" },
+                ].filter(m => m.value).length > 0 && (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {[
+                      { label: "Total Market (TAM)", value: validation.market_research.market_sizing.total_addressable_market, color: "bg-brand-50 border-brand-200", text: "text-brand-700" },
+                      { label: "Your Segment (SAM)", value: validation.market_research.market_sizing.serviceable_addressable_market, color: "bg-emerald-50 border-emerald-200", text: "text-emerald-700" },
+                      { label: "Growth Rate (CAGR)", value: validation.market_research.market_sizing.projected_growth_rate, color: "bg-amber-50 border-amber-200", text: "text-amber-700" },
+                      { label: "Projected by 2030", value: validation.market_research.market_sizing.projected_market_size_2030, color: "bg-indigo-50 border-indigo-200", text: "text-indigo-700" },
+                    ].filter(m => m.value).map(({ label, value, color, text }) => (
+                      <div key={label} className={`rounded-xl border p-4 ${color}`}>
+                        <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500 mb-2">{label}</div>
+                        <div className={`text-sm font-black leading-snug ${text}`}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {(validation.market_research.market_sizing.tam_basis || validation.market_research.market_sizing.sam_basis) && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {validation.market_research.market_sizing.tam_basis && (
+                      <div className="rounded-xl border border-slate-100 bg-white p-4">
+                        <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-2">How TAM Was Calculated</div>
+                        <p className="text-xs font-semibold text-slate-600 leading-relaxed">{validation.market_research.market_sizing.tam_basis}</p>
+                      </div>
+                    )}
+                    {validation.market_research.market_sizing.sam_basis && (
+                      <div className="rounded-xl border border-slate-100 bg-white p-4">
+                        <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-2">How SAM Was Scoped</div>
+                        <p className="text-xs font-semibold text-slate-600 leading-relaxed">{validation.market_research.market_sizing.sam_basis}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* TAM vs SAM donut chart */}
+                {(validation.market_research.market_sizing.total_addressable_market || validation.market_research.market_sizing.serviceable_addressable_market) && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="h-48 flex flex-col">
+                      <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-2">TAM vs SAM</div>
+                      <div className="flex-1">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie data={[
+                              { name: "TAM", value: 60 },
+                              { name: "SAM", value: 25 },
+                              { name: "Rest", value: 15 },
+                            ]} cx="50%" cy="50%" innerRadius="50%" outerRadius="70%" paddingAngle={3} dataKey="value" startAngle={90} endAngle={-270}>
+                              <Cell fill="#6366f1" />
+                              <Cell fill="#10b981" />
+                              <Cell fill="#e2e8f0" />
+                            </Pie>
+                            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: "10px", fontWeight: 700 }}
+                              formatter={(name) => name === "TAM"
+                                ? <span style={{ color: "#6366f1" }}>{`TAM · ${validation.market_research.market_sizing.total_addressable_market || ""}`}</span>
+                                : name === "SAM"
+                                  ? <span style={{ color: "#10b981" }}>{`SAM · ${validation.market_research.market_sizing.serviceable_addressable_market || ""}`}</span>
+                                  : ""}
+                            />
+                            <Tooltip content={({ active, payload }) => active && payload?.length && payload[0].name !== "Rest" ? (
+                              <div className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white shadow-xl">
+                                {payload[0].name === "TAM" ? validation.market_research.market_sizing.total_addressable_market : validation.market_research.market_sizing.serviceable_addressable_market}
+                              </div>
+                            ) : null} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                    {validation.market_research.market_sizing.growth_drivers?.length > 0 && (
+                      <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+                        <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-3">Key Growth Drivers</div>
+                        <ul className="space-y-2">
+                          {validation.market_research.market_sizing.growth_drivers.map((d, i) => (
+                            <li key={i} className="flex items-start gap-2.5 text-xs font-semibold text-slate-600">
+                              <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[9px] font-black text-brand-700">{i + 1}</span>
+                              {d}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!validation.market_research.market_sizing.total_addressable_market && !validation.market_research.market_sizing.serviceable_addressable_market && validation.market_research.market_sizing.growth_drivers?.length > 0 && (
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+                    <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-3">Key Growth Drivers</div>
+                    <ul className="space-y-2">
+                      {validation.market_research.market_sizing.growth_drivers.map((d, i) => (
+                        <li key={i} className="flex items-start gap-2.5 text-xs font-semibold text-slate-600">
+                          <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[9px] font-black text-brand-700">{i + 1}</span>
+                          {d}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </SectionCard>
+          )}
+
+          {validation?.market_research?.competitor_analysis && (
+            <SectionCard title="Competitor Intelligence" subtitle="Market saturation · Competitor metrics · Your positioning opportunity">
+              <div className="space-y-4">
+                <div className={`grid grid-cols-1 gap-3 ${validation.market_research.competitor_analysis.competitive_moat ? "sm:grid-cols-3" : ""}`}>
+                  {validation.market_research.competitor_analysis.market_saturation && (
+                    <div className="flex flex-col items-center justify-center rounded-xl border border-slate-100 bg-slate-50 p-4 text-center">
+                      <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-2">Market Saturation</div>
+                      <div className={`text-xl font-black ${
+                        validation.market_research.competitor_analysis.market_saturation === "High" ? "text-rose-600" :
+                        validation.market_research.competitor_analysis.market_saturation === "Medium" ? "text-amber-600" : "text-emerald-600"
+                      }`}>{validation.market_research.competitor_analysis.market_saturation}</div>
+                    </div>
+                  )}
+                  {validation.market_research.competitor_analysis.competitive_moat && (
+                    <div className={`rounded-xl border border-slate-100 bg-white p-4 ${validation.market_research.competitor_analysis.market_saturation ? "sm:col-span-2" : ""}`}>
+                      <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-2">Your Competitive Moat</div>
+                      <p className="text-xs font-semibold text-slate-700 leading-relaxed">{validation.market_research.competitor_analysis.competitive_moat}</p>
+                    </div>
+                  )}
+                </div>
+                {validation.market_research.competitor_analysis.top_competitors?.length > 0 ? (
+                  <div className="overflow-x-auto rounded-xl border border-slate-100">
+                    <table className="w-full text-[11px]">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          {[
+                            { h: "Competitor", w: "w-36" },
+                            { h: "Est. Revenue", w: "w-28" },
+                            { h: "Market Share", w: "w-24" },
+                            { h: "Price Range", w: "w-28" },
+                            { h: "Strength", w: "w-48" },
+                            { h: "Weakness", w: "w-48" },
+                          ].map(({ h, w }) => (
+                            <th key={h} className={`px-3 py-2.5 text-left font-black uppercase tracking-wider text-[9px] text-slate-500 ${w}`}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {validation.market_research.competitor_analysis.top_competitors.map((c, i) => (
+                          <tr key={i} className="border-t border-slate-100 hover:bg-slate-50/50">
+                            <td className="px-3 py-3 font-black text-slate-900">
+                              <div className="whitespace-nowrap">{c.name}</div>
+                              {c.description && <div className="mt-0.5 max-w-[160px] text-[10px] font-medium text-slate-400 leading-snug">{c.description}</div>}
+                            </td>
+                            <td className="px-3 py-3 font-bold text-slate-700 whitespace-nowrap">{c.estimated_revenue || null}</td>
+                            <td className="px-3 py-3 font-bold text-slate-700 whitespace-nowrap">{c.market_share || null}</td>
+                            <td className="px-3 py-3 font-black text-emerald-700 whitespace-nowrap">{c.price_range || null}</td>
+                            <td className="px-3 py-3 text-slate-600 max-w-[200px]">{c.strength || null}</td>
+                            <td className="px-3 py-3 text-rose-600 max-w-[200px]">{c.weakness || null}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-xs font-semibold text-slate-400">
+                    No specific competitors identified — market may be emerging or niche.
+                  </div>
+                )}
+              </div>
+            </SectionCard>
+          )}
+
+          {validation?.market_research?.price_intelligence && (
+            <SectionCard title="Price Intelligence" subtitle="What similar products charge · Your recommended pricing tiers">
+              <div className="space-y-4">
+                {[
+                  { label: "Entry / Launch Price", value: validation.market_research.price_intelligence.recommended_entry_price, color: "bg-emerald-50 border-emerald-200", text: "text-emerald-700", badge: "Start here" },
+                  { label: "Growth Price", value: validation.market_research.price_intelligence.recommended_growth_price, color: "bg-brand-50 border-brand-200", text: "text-brand-700", badge: "Main tier" },
+                  { label: "Premium Price", value: validation.market_research.price_intelligence.recommended_premium_price, color: "bg-amber-50 border-amber-200", text: "text-amber-800", badge: "Enterprise" },
+                ].filter(p => p.value).length > 0 && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    {[
+                      { label: "Entry / Launch Price", value: validation.market_research.price_intelligence.recommended_entry_price, color: "bg-emerald-50 border-emerald-200", text: "text-emerald-700", badge: "Start here" },
+                      { label: "Growth Price", value: validation.market_research.price_intelligence.recommended_growth_price, color: "bg-brand-50 border-brand-200", text: "text-brand-700", badge: "Main tier" },
+                      { label: "Premium Price", value: validation.market_research.price_intelligence.recommended_premium_price, color: "bg-amber-50 border-amber-200", text: "text-amber-800", badge: "Enterprise" },
+                    ].filter(p => p.value).map(({ label, value, color, text, badge }) => (
+                      <div key={label} className={`rounded-xl border p-4 flex flex-col gap-2 ${color}`}>
+                        <div className="flex items-center justify-between">
+                          <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</div>
+                          <span className={`rounded-full px-1.5 py-0.5 text-[8px] font-black uppercase ${text} bg-white/70`}>{badge}</span>
+                        </div>
+                        <div className={`text-base font-black leading-tight ${text}`}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {validation.market_research.price_intelligence.pricing_rationale && (
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+                    <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-1.5">Why These Prices Work</div>
+                    <p className="text-xs font-semibold text-slate-600 leading-relaxed">{validation.market_research.price_intelligence.pricing_rationale}</p>
+                  </div>
+                )}
+                {validation.market_research.price_intelligence.similar_products?.length > 0 && (
+                  <div className="rounded-xl border border-slate-100 bg-white p-4">
+                    <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400 mb-3">Similar Products Found in Market</div>
+                    <div className="space-y-2">
+                      {validation.market_research.price_intelligence.similar_products.map((p, i) => (
+                        <div key={i} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                          <span className="text-xs font-bold text-slate-700">{p.name}</span>
+                          <div className="flex items-center gap-2">
+                            {p.tier && <span className="text-[9px] font-black uppercase text-slate-400">{p.tier}</span>}
+                            <span className="rounded-lg bg-emerald-100 px-2 py-0.5 text-[11px] font-black text-emerald-700">{p.price}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </SectionCard>
+          )}
+
+        </div>
+      )}
+
+      {!isServiceIdea ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+
+          {validation?.market_research?.target_customer && (
+            <SectionCard title="Target Customer Profile" subtitle="Pain points and buying behaviour." className="flex flex-col">
+              <div className="flex-1 flex flex-col gap-3">
+                <div className="rounded-xl border border-slate-100 p-4 bg-white">
+                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Customer Profile</div>
+                  <div className="text-base font-black text-slate-900 mb-3">{validation.market_research.target_customer.profile}</div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <div className="text-[9px] font-black text-slate-400 uppercase mb-1.5">Primary Pain Points</div>
+                      <ul className="space-y-1.5">
+                        {validation.market_research.target_customer.pain_points?.map((p, i) => (
+                          <li key={i} className="text-xs font-bold text-slate-600 flex gap-2">
+                            <span className="text-brand-500">→</span> {String(p).replace(/^[—–\-]\s*/, "")}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-black text-slate-400 uppercase mb-1.5">Buying Behaviour</div>
+                      <p className="text-xs font-semibold text-slate-600 leading-relaxed">
+                        {validation.market_research.target_customer.buying_behaviour}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-xl bg-slate-900 p-4 text-white">
+                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">Urgency & WTP</div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <div className="text-[9px] font-black text-slate-500 uppercase mb-1">Pain Urgency</div>
+                      <div className="text-sm font-black text-brand-400">{validation.market_research.target_customer.urgency}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-black text-slate-500 uppercase mb-1">Willingness to Pay</div>
+                      <div className="text-sm font-black text-emerald-400">{validation.market_research.target_customer.willingness_to_pay}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          )}
+
+          {validation?.market_research?.pricing_strategy && (
+            <SectionCard title="Monetization & Strategy" subtitle="Pricing models and positioning." className="flex flex-col">
+              <div className="flex-1 flex flex-col gap-3">
+                <div className="rounded-xl border border-slate-100 bg-white p-4">
+                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Pricing Model</div>
+                  <div className="text-lg font-black text-slate-900 leading-tight mb-1">
+                    {validation.market_research.pricing_strategy.recommended_model}
+                  </div>
+                  <p className="text-xs font-semibold text-slate-500 leading-relaxed">
+                    {validation.market_research.pricing_strategy.rationale}
+                  </p>
+                  {validation.market_research.recommended_price_range && (
+                    <div className="mt-3 flex gap-2">
+                      {Object.entries(validation.market_research.recommended_price_range).map(([tier, val]) =>
+                        tier !== "currency" && (
+                          <div key={tier} className="flex-1 p-2 rounded-xl bg-slate-50 text-center">
+                            <div className="text-[8px] font-black text-slate-400 uppercase mb-0.5">{tier}</div>
+                            <div className="text-xs font-black text-slate-900">{val}</div>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Positioning</div>
+                  <div className="space-y-2">
+                    <div>
+                      <div className="text-[9px] font-black text-slate-400 uppercase mb-0.5">Value Proposition</div>
+                      <div className="text-sm font-bold text-slate-700">{validation.market_research.positioning?.value_proposition}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-black text-slate-400 uppercase mb-0.5">Differentiation</div>
+                      <div className="text-sm font-bold text-slate-700">{validation.market_research.positioning?.differentiation}</div>
+                    </div>
+                    <div className="pt-1">
+                      <div className="px-3 py-2 rounded-xl bg-brand-600 text-white text-xs font-black text-center">
+                        "{validation.market_research.positioning?.headline_message}"
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          )}
+
+          {validation?.market_research?.go_to_market && (
+            <SectionCard title="Launch Roadmap" subtitle="Channels and timeline." className="md:col-span-2">
+              <div className="space-y-3">
+                <div className="rounded-xl border border-slate-100 bg-white p-4">
+                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Primary Channels</div>
+                  <div className="flex flex-wrap gap-2">
+                    {validation.market_research.go_to_market.primary_channels?.map((c, i) => (
+                      <span key={i} className="px-2.5 py-1 rounded-lg bg-slate-100 text-[10px] font-black text-slate-600">
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="mt-3">
+                    <div className="text-[9px] font-black text-slate-400 uppercase mb-1.5">Quick Wins</div>
+                    <ul className="space-y-1.5">
+                      {validation.market_research.go_to_market.quick_wins?.map((w, i) => (
+                        <li key={i} className="text-xs font-bold text-emerald-600 flex gap-2 italic">
+                          ✓ {w}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+                <div className="rounded-xl bg-brand-50 border border-brand-100 p-4 flex items-center gap-4">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-400 mb-1">Execution Timeline</div>
+                    <div className="text-xl font-black text-brand-900 leading-tight">
+                      {validation.market_research.go_to_market.timeline}
+                    </div>
+                    <p className="mt-1 text-xs font-bold text-brand-600">Phase 1 Rollout Strategy</p>
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          )}
+
+          {validation?.market_fit || marketFit ? (
+            <SectionCard
+              title="Market Health Signals"
+              subtitle="Real-time validation signals from Google Trends, Companies House, and Local Market."
+              headerRight={<InfoTip text="Signals are derived from live market analysis of your business concept and location." />}
+              className="md:col-span-2"
+            >
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="group rounded-xl bg-white p-4 ring-1 ring-slate-200 shadow-sm transition-all hover:ring-brand-500 hover:shadow-md">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M23 6l-9.5 9.5-5-5L1 18" /><path d="M17 6h6v6" /></svg>
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Demand Trend</span>
+                  </div>
+                  <div className="text-base font-black text-slate-900 capitalize">
+                    {validation?.market_fit?.demand?.trend_direction || marketFit?.demand?.trend_direction || "Stable"}
+                  </div>
+                  <div className="mt-2 text-[11px] leading-relaxed font-medium text-slate-500">
+                    {validation?.market_research?.market_health_narration?.demand_trend || validation?.market_fit?.demand?.explanation || marketFit?.demand?.explanation || "Search interest suggests a steady baseline."}
+                  </div>
+                </div>
+                <div className="group rounded-xl bg-white p-4 ring-1 ring-slate-200 shadow-sm transition-all hover:ring-emerald-500 hover:shadow-md">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /></svg>
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Sector Survival</span>
+                  </div>
+                  <div className="text-base font-black text-slate-900">
+                    {validation?.market_fit?.sector?.survival_ratio ? formatPercent(validation.market_fit.sector.survival_ratio) : (marketFit?.sector?.survival_ratio ? formatPercent(marketFit.sector.survival_ratio) : "60%")}
+                  </div>
+                  <div className="mt-2 text-[11px] leading-relaxed font-medium text-slate-500">
+                    {validation?.market_research?.market_health_narration?.sector_survival || validation?.market_fit?.sector?.explanation || marketFit?.sector?.explanation || "Average survival rates detected for this SIC category."}
+                  </div>
+                </div>
+                <div className="group rounded-xl bg-white p-4 ring-1 ring-slate-200 shadow-sm transition-all hover:ring-amber-500 hover:shadow-md">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-colors">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Competition</span>
+                  </div>
+                  <div className="text-base font-black text-slate-900 capitalize">
+                    {validation?.market_fit?.competition?.competition_level || marketFit?.competition?.competition_level || "Balanced"}
+                  </div>
+                  <div className="mt-2 text-[11px] leading-relaxed font-medium text-slate-500">
+                    {validation?.market_research?.market_health_narration?.competition || validation?.market_fit?.competition?.explanation || marketFit?.competition?.explanation || "Standard local competition detected."}
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

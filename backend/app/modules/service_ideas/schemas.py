@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
 ServiceCategory = Literal["consulting", "training", "agency", "freelance", "technical_service", "other"]
-TargetCustomerType = Literal["individual", "startup", "SME", "corporate"]
+TargetCustomerType = str  # accepts any audience: SME, Enterprise, Consumers (B2C), etc.
 TargetMarketScope = Literal["local", "regional", "national", "global"]
 DemandEvidenceType = Literal[
     "assumption_only",

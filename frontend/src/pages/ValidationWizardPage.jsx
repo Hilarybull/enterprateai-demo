@@ -108,6 +108,12 @@ function buildInitialBusinessForm() {
       primary_industry_other: defaults.primary_industry_other || "",
       location: defaults.location || "",
       currency: defaults.currency || "GBP",
+      industry_category: defaults.industry_category || "",
+      industry_other: defaults.industry_other || "",
+      sector_category: defaults.sector_category || "",
+      sector_other: defaults.sector_other || "",
+      country: defaults.country || "",
+      country_other: defaults.country_other || "",
       founder_hours_per_week: "40",
       stage: "idea",
       description: "" // NEW: for the large textarea idea
@@ -156,6 +162,12 @@ function mergeStageDefaultsIntoBusinessForm(source) {
   next.context.primary_industry_other ||= defaults.primary_industry_other || "";
   next.context.location ||= defaults.location || "";
   next.context.currency ||= defaults.currency || "GBP";
+  next.context.industry_category ||= defaults.industry_category || "";
+  next.context.industry_other ||= defaults.industry_other || "";
+  next.context.sector_category ||= defaults.sector_category || "";
+  next.context.sector_other ||= defaults.sector_other || "";
+  next.context.country ||= defaults.country || "";
+  next.context.country_other ||= defaults.country_other || "";
 
   next.problem.customer_segment_category ||= defaults.customer_segment_category || "SMEs";
   next.problem.customer_segment_other ||= defaults.customer_segment_other || "";
@@ -179,6 +191,68 @@ function formatEnumLabel(value) {
   return raw
     .replaceAll("_", " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function AISuggest({ onAccept, context }) {
+  const [suggestion, setSuggestion] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  async function fetchSuggestion() {
+    setLoading(true);
+    setSuggestion(null);
+    try {
+      const res = await apiRequest("/validation/suggest-field", "POST", context);
+      if (res?.suggestion) setSuggestion(res.suggestion);
+    } catch (_) {
+      // silently fail
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5">
+      <button
+        type="button"
+        onClick={fetchSuggestion}
+        disabled={loading}
+        className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-[11px] font-semibold text-brand-700 transition hover:bg-brand-100 disabled:opacity-50 dark:border-brand-800 dark:bg-brand-950/40 dark:text-brand-300"
+      >
+        {loading ? (
+          <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48 2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48 2.83-2.83"/>
+          </svg>
+        ) : (
+          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/>
+          </svg>
+        )}
+        {loading ? "Thinking…" : "AI Suggest"}
+      </button>
+
+      {suggestion && (
+        <div className="flex items-start gap-2 rounded-xl border border-brand-200 bg-brand-50/60 px-3 py-2 dark:border-brand-800 dark:bg-brand-950/30">
+          <p className="flex-1 text-xs leading-relaxed text-slate-700 dark:text-slate-300">{suggestion}</p>
+          <div className="flex shrink-0 gap-1.5">
+            <button
+              type="button"
+              onClick={() => { onAccept(suggestion); setSuggestion(null); }}
+              className="rounded-lg bg-brand-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-brand-700"
+            >
+              Use
+            </button>
+            <button
+              type="button"
+              onClick={() => setSuggestion(null)}
+              className="rounded-lg border border-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-500 hover:bg-slate-50"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function ValidationWizardPage() {
@@ -230,6 +304,7 @@ export default function ValidationWizardPage() {
   const [editingHistoryEntry, setEditingHistoryEntry] = useState(null);
   const [serviceSelection, setServiceSelection] = useState("");
   const [hasAppliedDrafts, setHasAppliedDrafts] = useState(false);
+  const [serviceFormDirty, setServiceFormDirty] = useState(false);
   const [contentTab, setContentTab] = useState("builder");
   const [lastEvaluationId, setLastEvaluationId] = useState(null);
   const [showBuilderMarketInsight, setShowBuilderMarketInsight] = useState(false);
@@ -256,6 +331,9 @@ export default function ValidationWizardPage() {
 
   const BUSINESS_TYPE_OPTIONS = useMemo(() => ["SaaS", "Service / Consulting", "E-commerce", "Agency", "Marketplace", "Physical Product", "Other"], []);
   const PRIMARY_INDUSTRY_OPTIONS = useMemo(() => ["IT", "Marketing", "Consulting", "Accounting", "Legal", "HR", "Design", "Sales", "Operations", "Customer Support", "Healthcare", "Education", "Construction", "Other"], []);
+  const INDUSTRY_OPTIONS = useMemo(() => ["Technology", "Healthcare", "Finance & Banking", "Education", "Retail & E-commerce", "Manufacturing", "Real Estate", "Food & Beverage", "Media & Entertainment", "Transportation & Logistics", "Agriculture", "Energy & Utilities", "Construction", "Professional Services", "Legal & Compliance", "Non-Profit", "Government & Public Sector", "Other"], []);
+  const SECTOR_OPTIONS = useMemo(() => ["Public Sector", "Private Sector", "Fintech", "EdTech", "HealthTech", "PropTech", "AgriTech", "CleanTech", "LegalTech", "InsurTech", "MarTech", "SaaS", "E-commerce", "Consulting & Advisory", "Media & Publishing", "Logistics & Supply Chain", "Creative & Design", "Other"], []);
+  const COUNTRY_OPTIONS = useMemo(() => ["United Kingdom", "United States", "Canada", "Australia", "Ireland", "Germany", "France", "Spain", "Italy", "Netherlands", "Sweden", "Norway", "Denmark", "Finland", "Switzerland", "Belgium", "Austria", "Portugal", "Poland", "Nigeria", "Ghana", "Kenya", "South Africa", "Egypt", "India", "Pakistan", "Bangladesh", "Singapore", "Malaysia", "Indonesia", "Philippines", "Thailand", "Vietnam", "Hong Kong", "Japan", "South Korea", "China", "Taiwan", "UAE", "Saudi Arabia", "Qatar", "Brazil", "Mexico", "Argentina", "Colombia", "New Zealand", "Other"], []);
   const CUSTOMER_SEGMENT_OPTIONS = useMemo(() => ["SMEs", "Freelancers", "Households", "Other"], []);
   const DELIVERABLE_UNIT_OPTIONS = useMemo(() => ["unit", "job", "session", "project", "month", "hour", "subscription", "Other"], []);
   const PRICING_MODEL_OPTIONS = useMemo(() => [{ value: "hourly", label: "Hourly" }, { value: "fixed_job", label: "Fixed job" }, { value: "retainer", label: "Retainer" }], []);
@@ -346,11 +424,13 @@ export default function ValidationWizardPage() {
     hours_required_per_sale: "",
     available_delivery_hours_per_month: "",
     demand_evidence_type: "assumption_only",
-    customer_need_frequency: "Monthly", // NEW
-    differentiator: "", // NEW
-    demand_validation_proof: [], // NEW
-    differentiation_level: "medium", // NEW
-    estimated_price: "" // NEW
+    customer_need_frequency: "Monthly",
+    problem_to_solve: "",
+    competitors_alternatives: "",
+    differentiator: "",
+    demand_validation_proof: [],
+    differentiation_level: "medium",
+    estimated_price: ""
   }));
   const [serviceCurrency, setServiceCurrency] = useState("GBP");
   const serviceCurrencySymbol = useMemo(() => getCurrencySymbol(serviceCurrency), [serviceCurrency]);
@@ -429,11 +509,15 @@ export default function ValidationWizardPage() {
   );
   const filteredValidationHistory = useMemo(() => {
     const q = historySearch.trim().toLowerCase();
+    const seen = new Set();
     return validationHistory.filter((entry) => {
       if (historyFilter !== "all" && entry.status !== historyFilter) return false;
       if (historyTypeFilter === "business" && entry.type !== "business_validation") return false;
       if (historyTypeFilter === "service" && entry.type !== "service_validation") return false;
       if (q && !String(entry.title || "").toLowerCase().includes(q)) return false;
+      const dedupeKey = `${String(entry.title || "").toLowerCase().trim()}__${entry.type}`;
+      if (seen.has(dedupeKey)) return false;
+      seen.add(dedupeKey);
       return true;
     });
   }, [historyFilter, historyTypeFilter, historySearch, validationHistory]);
@@ -601,16 +685,33 @@ export default function ValidationWizardPage() {
   }, [derivedWorkspaceName, workspaceNameTouched]);
 
   useEffect(() => {
-    if (!requestedHistoryId || !requestedHistoryType) return;
+    if (!requestedHistoryType) return;
     if (!activeWorkspaceId || historyRequestHandled || isPrefilling) return;
     setHistoryRequestHandled(true);
     setContentTab("builder");
     setMode("fill");
-    editHistoryEntry({
-      id: requestedHistoryId,
-      type: requestedHistoryType,
-      status: "pending",
-    }, true);
+    if (requestedHistoryId) {
+      editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, true);
+    } else if (requestedHistoryType === "service_validation") {
+      // history_type present but no specific history_id — find the active service entry
+      (async () => {
+        try {
+          const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+          const data = ws?.data || {};
+          const sHistory = Array.isArray(data.service_validation_history) ? data.service_validation_history : [];
+          const activeId = data.active_service_validation_id;
+          const entry = sHistory.find((e) => e?.id === activeId) || sHistory[0] || null;
+          if (entry) {
+            editHistoryEntry({ id: entry.id, type: "service_validation", status: entry.decision_status || "pending", payload: entry.payload }, true);
+          } else {
+            // No history yet — just open the service form blank
+            setForm((prev) => ({ ...prev, pathway: "product_service_idea" }));
+          }
+        } catch {
+          setForm((prev) => ({ ...prev, pathway: "product_service_idea" }));
+        }
+      })();
+    }
   }, [
     activeWorkspaceId,
     historyRequestHandled,
@@ -765,7 +866,13 @@ export default function ValidationWizardPage() {
           {
             data: {
               draft_idea_validation: isProductPath ? null : form,
-              draft_service_idea: isProductPath ? serviceForm : null
+              draft_service_idea: isProductPath ? {
+                ...serviceForm,
+                // Persist context fields alongside serviceForm so they survive page reloads
+                industry: (form?.context?.industry_category === "Other" ? (form?.context?.industry_other || "") : (form?.context?.industry_category || "")) || serviceForm.industry || "",
+                sector: (form?.context?.sector_category === "Other" ? (form?.context?.sector_other || "") : (form?.context?.sector_category || "")) || serviceForm.sector || "",
+                country: (form?.context?.country === "Other" ? (form?.context?.country_other || "") : (form?.context?.country || "")) || serviceForm.country || "",
+              } : null
             }
           },
           { timeoutMs: 120000 }
@@ -844,6 +951,17 @@ export default function ValidationWizardPage() {
           const serviceDraft = ws?.data?.draft_service_idea || ws?.data?.service_idea_validation;
           if (serviceDraft && typeof serviceDraft === "object") {
             setServiceForm((prev) => ({ ...prev, ...serviceDraft }));
+            if (serviceDraft.industry || serviceDraft.sector || serviceDraft.country) {
+              setForm((prev) => ({
+                ...prev,
+                context: {
+                  ...prev.context,
+                  ...(serviceDraft.industry ? { industry_category: serviceDraft.industry, industry: serviceDraft.industry } : {}),
+                  ...(serviceDraft.sector ? { sector_category: serviceDraft.sector, sector: serviceDraft.sector } : {}),
+                  ...(serviceDraft.country ? { country: serviceDraft.country } : {}),
+                },
+              }));
+            }
           }
           if (ws?.data?.market_research && typeof ws.data.market_research === "object") {
             setBusinessMarketResearch(ws.data.market_research);
@@ -866,7 +984,8 @@ export default function ValidationWizardPage() {
         setWorkspaceNameTouched(true);
         const wp = ws?.data?.workspace_profile;
         const next = mergeStageDefaultsIntoBusinessForm(structuredClone(iv));
-        next.pathway = form.pathway || next.pathway || "business_idea";
+        // If navigating from a service Modify/Resume URL, don't force business pathway
+        next.pathway = requestedHistoryType === "service_validation" ? "product_service_idea" : (form.pathway || next.pathway || "business_idea");
         if (wp && typeof wp === "object") {
           setWorkspaceLogoStore(wp.logo_data_url || null);
           setProfile((prev) => ({
@@ -894,6 +1013,14 @@ export default function ValidationWizardPage() {
         const serviceDraft = ws?.data?.draft_service_idea || ws?.data?.service_idea_validation;
         if (serviceDraft && typeof serviceDraft === "object") {
           setServiceForm((prev) => ({ ...prev, ...serviceDraft }));
+          if (serviceDraft.industry || serviceDraft.sector || serviceDraft.country) {
+            next.context = {
+              ...next.context,
+              ...(serviceDraft.industry ? { industry_category: serviceDraft.industry, industry: serviceDraft.industry } : {}),
+              ...(serviceDraft.sector ? { sector_category: serviceDraft.sector, sector: serviceDraft.sector } : {}),
+              ...(serviceDraft.country ? { country: serviceDraft.country } : {}),
+            };
+          }
         } else if (wp && Array.isArray(wp.services) && wp.services.length) {
           const primary = wp.services[0];
           if (primary?.service_name) updateService("service_name", primary.service_name);
@@ -955,6 +1082,7 @@ export default function ValidationWizardPage() {
   function update(path, value) {
     setMrError(null);
     setError(null);
+    if (isProductPath) setServiceFormDirty(true);
     setForm((prev) => {
       const next = structuredClone(prev);
       const keys = path.split(".");
@@ -968,6 +1096,7 @@ export default function ValidationWizardPage() {
   function updateService(path, value) {
     setMrError(null);
     setError(null);
+    setServiceFormDirty(true);
     setServiceForm((prev) => {
       const next = structuredClone(prev);
       const keys = path.split(".");
@@ -1118,6 +1247,7 @@ export default function ValidationWizardPage() {
     next.capacity ||= {};
     next.cash ||= {};
     next.go_to_market ||= {};
+    next.validation ||= { spoken_count: "No", demand_proof: [] };
 
     const bt = String(next?.context?.business_type ?? "").trim();
     next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : bt ? "Other" : "Technology";
@@ -1153,6 +1283,31 @@ export default function ValidationWizardPage() {
     next.capacity.capacity_units_per_person_per_month = String(next.capacity?.capacity_units_per_person_per_month ?? "");
     next.cash.starting_cash = String(next.cash?.starting_cash ?? "");
     next.cash.upfront_costs = String(next.cash?.upfront_costs ?? "");
+
+    // Reconstruct Section 5 category fields from resolved values when blank
+    // (older payloads or payloads that didn't set these fields)
+    if (!next.context.industry_category) {
+      const ind = String(next.context.industry || "").trim();
+      if (ind) {
+        next.context.industry_category = INDUSTRY_OPTIONS.includes(ind) ? ind : "Other";
+        if (!INDUSTRY_OPTIONS.includes(ind)) next.context.industry_other = ind;
+      }
+    }
+    if (!next.context.sector_category) {
+      const sec = String(next.context.sector || "").trim();
+      if (sec) {
+        next.context.sector_category = SECTOR_OPTIONS.includes(sec) ? sec : "Other";
+        if (!SECTOR_OPTIONS.includes(sec)) next.context.sector_other = sec;
+      }
+    }
+    if (!next.context.country) {
+      const co = String(next.context.resolved_country || "").trim();
+      if (co) {
+        next.context.country = COUNTRY_OPTIONS.includes(co) ? co : "Other";
+        if (!COUNTRY_OPTIONS.includes(co)) next.context.country_other = co;
+      }
+    }
+
     return next;
   }
 
@@ -1172,13 +1327,33 @@ export default function ValidationWizardPage() {
       if (entry.type === "service_validation") {
         const serviceHistory = Array.isArray(data.service_validation_history) ? data.service_validation_history : [];
         const serviceEntry = serviceHistory.find((item) => item?.id === entry.id);
+        const hasResult = Boolean(serviceEntry?.result || entry.result);
         const payload = serviceEntry?.payload || entry.payload || data.draft_service_idea;
         if (!payload || typeof payload !== "object") {
           setError("We could not find the saved service inputs for this history item.");
           return;
         }
-        setForm((prev) => ({ ...prev, pathway: "product_service_idea" }));
-        setServiceForm((prev) => ({ ...prev, ...payload }));
+        setForm((prev) => ({
+          ...prev,
+          pathway: "product_service_idea",
+          context: {
+            ...prev.context,
+            ...(payload.industry ? { industry_category: payload.industry, industry: payload.industry } : {}),
+            ...(payload.sector ? { sector_category: payload.sector, sector: payload.sector } : {}),
+            ...(payload.country ? { country: payload.country } : {}),
+          },
+        }));
+        setServiceForm((prev) => ({
+          ...prev,
+          ...payload,
+          // Guard newer fields that may be absent in older saved payloads
+          problem_to_solve: String(payload?.problem_to_solve ?? prev.problem_to_solve ?? ""),
+          competitors_alternatives: String(payload?.competitors_alternatives ?? prev.competitors_alternatives ?? ""),
+          differentiator: String(payload?.differentiator ?? prev.differentiator ?? ""),
+          demand_validation_proof: Array.isArray(payload?.demand_validation_proof) ? payload.demand_validation_proof : (prev.demand_validation_proof || []),
+          customer_need_frequency: String(payload?.customer_need_frequency ?? prev.customer_need_frequency ?? "Monthly"),
+          estimated_price: String(payload?.estimated_price ?? prev.estimated_price ?? ""),
+        }));
         setServiceCurrency(serviceEntry?.currency || data.currency || serviceCurrency || "GBP");
         setDraftServiceIdea(payload);
         setValidation(serviceEntry?.result || entry.result || null);
@@ -1195,12 +1370,27 @@ export default function ValidationWizardPage() {
           setServiceMarketResearch(mr);
         }
 
+        // Enrich draft with context fields so results page gets correct industry even for old entries
+        const ctxIndustry = String(form?.context?.industry_category === "Other" ? (form?.context?.industry_other || "") : (form?.context?.industry_category || "")).trim();
+        const ctxSector = String(form?.context?.sector_category === "Other" ? (form?.context?.sector_other || "") : (form?.context?.sector_category || "")).trim();
+        const ctxCountry = String(form?.context?.country === "Other" ? (form?.context?.country_other || "") : (form?.context?.country || "")).trim();
+        const enrichedPayload = {
+          ...payload,
+          ...(ctxIndustry && !payload.industry ? { industry: ctxIndustry } : {}),
+          ...(ctxSector && !payload.sector ? { sector: ctxSector } : {}),
+          ...(ctxCountry && !payload.country ? { country: ctxCountry } : {}),
+        };
         await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
           data: {
             active_service_validation_id: entry.id,
-            draft_service_idea: payload,
+            draft_service_idea: enrichedPayload,
           }
         });
+
+        if (!skipNavigation && (isViewing || hasResult)) {
+          navigate("/results");
+          return;
+        }
       } else {
         const payload = entry.payload || data.draft_idea_validation || data.idea_validation;
         if (!payload || typeof payload !== "object") {
@@ -1230,19 +1420,20 @@ export default function ValidationWizardPage() {
             draft_idea_validation: payload,
           }
         });
+
+        const bizHasResult = Boolean(entry.result);
+        if (!skipNavigation && (isViewing || bizHasResult)) {
+          navigate("/results");
+          return;
+        }
       }
 
       setMrError(null);
       setContentTab("builder");
       setMode("fill");
+      setServiceFormDirty(false);
 
-      // Always navigate to results for viewed/resumed history items as requested
-      // UNLESS we are specifically skipping navigation (e.g. from a deep link 'Modify' action)
-      if (!skipNavigation) {
-        setBusinessMarketResearch(null);
-        setBusinessResearchHash(null);
-        setServiceMarketResearch(null);
-        setServiceResearchHash(null);
+      if (!skipNavigation && isViewing) {
         navigate("/results");
       }
     } catch (e) {
@@ -1443,6 +1634,17 @@ export default function ValidationWizardPage() {
 
     // Map simplified fields for backend/AI consumption
     payload.context.business_offering = payload.context.description || payload.context.business_offering;
+    payload.context.what_building = payload.context.description || payload.context.business_offering || payload.context.business_name || "";
+
+    // Resolve "Other" custom values for industry/sector/country/currency
+    const _ic = payload.context.industry_category;
+    payload.context.industry = _ic === "Other" ? (payload.context.industry_other || "") : (_ic || "");
+    const _sc = payload.context.sector_category;
+    payload.context.sector = _sc === "Other" ? (payload.context.sector_other || "") : (_sc || "");
+    const _co = payload.context.country;
+    payload.context.resolved_country = _co === "Other" ? (payload.context.country_other || "") : (_co || "");
+    const _cu = payload.context.currency;
+    payload.context.resolved_currency = _cu === "Other" ? (payload.context.currency_other || "GBP") : (_cu || "GBP");
     if (!payload.problem.problem_type && payload.problem.description) {
       payload.problem.problem_type = payload.problem.description;
     }
@@ -1512,9 +1714,19 @@ export default function ValidationWizardPage() {
       high: "high — clearly differentiated from alternatives",
     };
     const raw = structuredClone(serviceForm);
+    // Resolve industry/sector/country from form.context (shared across both flows)
+    const ctx = form?.context || {};
+    const industryVal = ctx.industry_category === "Other" ? (ctx.industry_other || "") : (ctx.industry_category || "");
+    const sectorVal = ctx.sector_category === "Other" ? (ctx.sector_other || "") : (ctx.sector_category || "");
+    const countryVal = ctx.country === "Other" ? (ctx.country_other || "") : (ctx.country || "");
+    const currencyVal = ctx.currency === "Other" ? (ctx.currency_other || serviceCurrency || "GBP") : (ctx.currency || serviceCurrency || "GBP");
     return {
       ...raw,
-      currency: serviceCurrency || "GBP",
+      currency: currencyVal,
+      industry: industryVal,
+      sector: sectorVal,
+      country: countryVal,
+      location: countryVal || ctx.location || "United Kingdom",
       demand_evidence_type:
         DEMAND_EVIDENCE_LABELS[raw.demand_evidence_type] || raw.demand_evidence_type || "",
       differentiation_level:
@@ -1830,6 +2042,15 @@ export default function ValidationWizardPage() {
       }
       if (shouldEvaluate) {
         if (isProductPath) {
+          // If nothing changed and we already have a result, just go show it
+          const _activeEntry = editingHistoryEntry?.id
+            ? savedServiceIdeas.find((e) => e.id === editingHistoryEntry.id)
+            : savedServiceIdeas[0];
+          if (!serviceFormDirty && _activeEntry?.result) {
+            navigate("/results");
+            setIsLoading(false);
+            return;
+          }
           const serviceName = String(serviceForm?.service_name || "").trim();
           const serviceDescription = String(serviceForm?.service_description || "").trim();
           if (!serviceName) {
@@ -1847,6 +2068,9 @@ export default function ValidationWizardPage() {
               service_name: serviceName,
               service_category: String(serviceForm?.service_category || "").trim().toLowerCase() || "consulting",
               service_description: serviceDescription,
+              industry: String(form?.context?.industry_category === "Other" ? (form?.context?.industry_other || "") : (form?.context?.industry_category || "")).trim(),
+              sector: String(form?.context?.sector_category === "Other" ? (form?.context?.sector_other || "") : (form?.context?.sector_category || "")).trim(),
+              country: String(form?.context?.country === "Other" ? (form?.context?.country_other || "") : (form?.context?.country || "")).trim() || null,
               target_customer_type: String(serviceForm?.target_customer_type || "").trim(),
               target_market_scope: String(serviceForm?.target_market_scope || "").trim().toLowerCase(),
               price_per_sale: parseNumber(serviceForm?.price_per_sale, 0),
@@ -1869,13 +2093,18 @@ export default function ValidationWizardPage() {
               competitor_price_low: parseNumber(serviceForm?.competitor_price_low, 0),
               competitor_price_high: parseNumber(serviceForm?.competitor_price_high, 0),
               differentiation_level: String(serviceForm?.differentiation_level || "").trim().toLowerCase(),
-              country: String(serviceForm?.country || "").trim() || null
+              problem_to_solve: String(serviceForm?.problem_to_solve || "").trim(),
+              competitors_alternatives: String(serviceForm?.competitors_alternatives || "").trim(),
+              differentiator: String(serviceForm?.differentiator || "").trim(),
+              demand_validation_proof: Array.isArray(serviceForm?.demand_validation_proof) ? serviceForm.demand_validation_proof : [],
+              customer_need_frequency: String(serviceForm?.customer_need_frequency || "Monthly").trim(),
+              estimated_price: String(serviceForm?.estimated_price || "").trim(),
             };
             const result = await apiRequest(
               "/service-ideas/validate",
               "POST",
               payloadService,
-              { timeoutMs: 120000 }
+              { timeoutMs: 240000 }
             );
             setValidation(result);
             setServiceDecisionStatus(null);
@@ -1923,7 +2152,8 @@ export default function ValidationWizardPage() {
                       ],
                       service_validation_history: [entry, ...nextServiceHistoryBase],
                       active_service_validation_id: validationId,
-                      draft_service_idea: { ...serviceForm, ...payloadService }
+                      draft_service_idea: { ...serviceForm, ...payloadService },
+                      service_market_research: (result?.market_research && Object.keys(result.market_research).length > 0) ? result.market_research : null
                     }
                   },
                   { timeoutMs: 120000 }
@@ -2083,7 +2313,7 @@ export default function ValidationWizardPage() {
       const body = wsId
         ? { workspace_id: wsId, idea_validation: payload }
         : { idea_validation: payload };
-      const result = await apiRequest("/validation/market-research", "POST", body, { timeoutMs: 120000 });
+      const result = await apiRequest("/validation/market-research", "POST", body, { timeoutMs: 210000 });
       if (researchSource === "service") {
         setServiceMarketResearch(result);
         setServiceResearchHash(currentHash);
@@ -2818,6 +3048,10 @@ export default function ValidationWizardPage() {
                               value={form.context.description}
                               onChange={(e) => update("context.description", e.target.value)}
                             />
+                            <AISuggest
+                              context={{ field: "description", segment: form.problem?.customer_segment_category, location: form.context?.location }}
+                              onAccept={(v) => update("context.description", v)}
+                            />
                           </div>
                         </div>
                       </div>
@@ -2836,6 +3070,10 @@ export default function ValidationWizardPage() {
                               placeholder="Describe the pain point..."
                               value={form.problem.problem_type}
                               onChange={(e) => update("problem.problem_type", e.target.value)}
+                            />
+                            <AISuggest
+                              context={{ field: "problem", description: form.context?.description, segment: form.problem?.customer_segment_category }}
+                              onAccept={(v) => update("problem.problem_type", v)}
                             />
                           </div>
                           <div>
@@ -2871,6 +3109,10 @@ export default function ValidationWizardPage() {
                             value={form.problem.alternatives}
                             onChange={(e) => update("problem.alternatives", e.target.value)}
                           />
+                          <AISuggest
+                            context={{ field: "alternatives", description: form.context?.description, problem: form.problem?.problem_type }}
+                            onAccept={(v) => update("problem.alternatives", v)}
+                          />
                         </div>
                       </div>
 
@@ -2888,6 +3130,10 @@ export default function ValidationWizardPage() {
                             value={form.offer.service_type}
                             onChange={(e) => update("offer.service_type", e.target.value)}
                           />
+                          <AISuggest
+                            context={{ field: "solution", description: form.context?.description, problem: form.problem?.problem_type, alternatives: form.problem?.alternatives }}
+                            onAccept={(v) => update("offer.service_type", v)}
+                          />
                         </div>
                       </div>
 
@@ -2904,6 +3150,48 @@ export default function ValidationWizardPage() {
                               <option key={o} value={o}>{o}</option>
                             ))}
                           </select>
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <div>
+                            <FieldLabel info="The broad industry your business operates in.">Industry</FieldLabel>
+                            <select className="ea-input" value={form.context.industry_category} onChange={(e) => update("context.industry_category", e.target.value)}>
+                              <option value="">Select industry...</option>
+                              {INDUSTRY_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                            {form.context.industry_category === "Other" && (
+                              <input className="ea-input mt-2" placeholder="Describe your industry..." value={form.context.industry_other} onChange={(e) => update("context.industry_other", e.target.value)} />
+                            )}
+                          </div>
+                          <div>
+                            <FieldLabel info="The specific sector or niche your business targets.">Sector</FieldLabel>
+                            <select className="ea-input" value={form.context.sector_category} onChange={(e) => update("context.sector_category", e.target.value)}>
+                              <option value="">Select sector...</option>
+                              {SECTOR_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                            {form.context.sector_category === "Other" && (
+                              <input className="ea-input mt-2" placeholder="Describe your sector..." value={form.context.sector_other} onChange={(e) => update("context.sector_other", e.target.value)} />
+                            )}
+                          </div>
+                          <div>
+                            <FieldLabel info="The country where your business is based or primarily operates.">Country</FieldLabel>
+                            <select className="ea-input" value={form.context.country} onChange={(e) => update("context.country", e.target.value)}>
+                              <option value="">Select country...</option>
+                              {COUNTRY_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                            {form.context.country === "Other" && (
+                              <input className="ea-input mt-2" placeholder="Enter your country..." value={form.context.country_other} onChange={(e) => update("context.country_other", e.target.value)} />
+                            )}
+                          </div>
+                          <div>
+                            <FieldLabel info="The currency used for pricing and financials.">Currency</FieldLabel>
+                            <select className="ea-input" value={form.context.currency} onChange={(e) => update("context.currency", e.target.value)}>
+                              {CURRENCY_CODES.map(c => <option key={c} value={c}>{currencyLabel(c)}</option>)}
+                              <option value="Other">Other</option>
+                            </select>
+                            {form.context.currency === "Other" && (
+                              <input className="ea-input mt-2" placeholder="e.g. XYZ" value={form.context.currency_other || ""} onChange={(e) => update("context.currency_other", e.target.value)} />
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -2977,6 +3265,10 @@ export default function ValidationWizardPage() {
                               value={serviceForm.service_description}
                               onChange={(e) => updateService("service_description", e.target.value)}
                             />
+                            <AISuggest
+                              context={{ field: "service_description", description: serviceForm.service_name, segment: serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
+                              onAccept={(v) => updateService("service_description", v)}
+                            />
                           </div>
                         </div>
                       </div>
@@ -2988,21 +3280,58 @@ export default function ValidationWizardPage() {
                           <h3 className="text-sm font-bold uppercase tracking-wider text-slate-600">Section 2 — Problem & Audience</h3>
                         </div>
                         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                          <div className="md:col-span-2">
+                          <div>
                             <FieldLabel info="Target customers.">3. Who is it for?</FieldLabel>
-                            <Input placeholder="Describe your customers..." value={serviceForm.target_customer_type} onChange={(e) => updateService("target_customer_type", e.target.value)} />
+                            {(() => {
+                              const TARGET_OPTIONS = ["SME", "Enterprise", "Startups", "Freelancers", "Consumers (B2C)", "Non-profits", "Government / Public sector", "Students", "Healthcare professionals", "Retailers"];
+                              const isKnown = TARGET_OPTIONS.includes(serviceForm.target_customer_type);
+                              const dropdownVal = isKnown ? serviceForm.target_customer_type : serviceForm.target_customer_type ? "Other" : "";
+                              return (
+                                <>
+                                  <select
+                                    className="ea-input"
+                                    value={dropdownVal}
+                                    onChange={(e) => updateService("target_customer_type", e.target.value === "Other" ? "" : e.target.value)}
+                                  >
+                                    <option value="">Select target audience…</option>
+                                    {TARGET_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                                    <option value="Other">Other…</option>
+                                  </select>
+                                  {dropdownVal === "Other" && (
+                                    <Input className="mt-2" placeholder="Describe your target audience…" value={serviceForm.target_customer_type} onChange={(e) => updateService("target_customer_type", e.target.value)} />
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                          <div>
+                            <FieldLabel info="Geographic reach for the service.">4. What is your market scope?</FieldLabel>
+                            <select
+                              className="ea-input"
+                              value={serviceForm.target_market_scope}
+                              onChange={(e) => updateService("target_market_scope", e.target.value)}
+                            >
+                              <option value="">Select market scope…</option>
+                              {["Local", "Regional", "National", "Global"].map((o) => (
+                                <option key={o} value={o.toLowerCase()}>{o}</option>
+                              ))}
+                            </select>
                           </div>
                           <div className="md:col-span-2">
-                            <FieldLabel info="The pain point.">4. What problem does it solve?</FieldLabel>
+                            <FieldLabel info="The pain point.">5. What problem does it solve?</FieldLabel>
                             <textarea
                               className="ea-input min-h-[80px] py-3 text-sm"
                               placeholder="Describe the problem..."
                               value={serviceForm.problem_to_solve}
                               onChange={(e) => updateService("problem_to_solve", e.target.value)}
                             />
+                            <AISuggest
+                              context={{ field: "service_problem", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(" — "), segment: serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
+                              onAccept={(v) => updateService("problem_to_solve", v)}
+                            />
                           </div>
                           <div className="md:col-span-2">
-                            <FieldLabel info="Usage frequency.">5. How often would customers need it?</FieldLabel>
+                            <FieldLabel info="Usage frequency.">6. How often would customers need it?</FieldLabel>
                             <div className="flex flex-wrap gap-2">
                               {["Daily", "Weekly", "Monthly", "Occasionally"].map((label) => (
                                 <button
@@ -3027,21 +3356,29 @@ export default function ValidationWizardPage() {
                         </div>
                         <div className="grid grid-cols-1 gap-6">
                           <div>
-                            <FieldLabel info="Current habits.">6. What do customers currently use instead?</FieldLabel>
+                            <FieldLabel info="Current habits.">7. What do customers currently use instead?</FieldLabel>
                             <textarea
                               className="ea-input min-h-[80px] py-3 text-sm"
                               placeholder="e.g. Existing manual habits, competitors, spreadsheets..."
                               value={serviceForm.competitors_alternatives}
                               onChange={(e) => updateService("competitors_alternatives", e.target.value)}
                             />
+                            <AISuggest
+                              context={{ field: "service_alternatives", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(" — "), problem: serviceForm.problem_to_solve, segment: serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
+                              onAccept={(v) => updateService("competitors_alternatives", v)}
+                            />
                           </div>
                           <div>
-                            <FieldLabel info="Primary differentiator.">7. Why would they choose yours?</FieldLabel>
+                            <FieldLabel info="Primary differentiator.">8. Why would they choose yours?</FieldLabel>
                             <textarea
                               className="ea-input min-h-[80px] py-3 text-sm"
                               placeholder="Lower cost, better quality, faster speed, etc."
                               value={serviceForm.differentiator}
                               onChange={(e) => updateService("differentiator", e.target.value)}
+                            />
+                            <AISuggest
+                              context={{ field: "service_differentiator", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(" — "), alternatives: serviceForm.competitors_alternatives, segment: serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
+                              onAccept={(v) => updateService("differentiator", v)}
                             />
                           </div>
                         </div>
@@ -3055,7 +3392,7 @@ export default function ValidationWizardPage() {
                         </div>
                         <div className="space-y-6">
                           <div>
-                            <FieldLabel info="Validated demand signals.">8. Have you validated demand?</FieldLabel>
+                            <FieldLabel info="Validated demand signals.">9. Have you validated demand?</FieldLabel>
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                               {["Interviews", "Surveys", "Waitlist", "Sales", "Social engagement", "None"].map((item) => {
                                 const isSelected = (serviceForm.demand_validation_proof || []).includes(item);
@@ -3080,7 +3417,7 @@ export default function ValidationWizardPage() {
                             </div>
                           </div>
                           <div>
-                            <FieldLabel info="Pricing strategy.">9. Estimated selling price (Optional)</FieldLabel>
+                            <FieldLabel info="Pricing strategy.">10. Estimated selling price (Optional)</FieldLabel>
                             <div className="relative max-w-[200px]">
                               <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">
                                 {serviceCurrencySymbol}
@@ -3092,6 +3429,56 @@ export default function ValidationWizardPage() {
                                 onChange={(v) => updateService("estimated_price", v)}
                               />
                             </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Section 5 — Context */}
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 border-b border-slate-100 pb-2 pt-4">
+                          <div className="h-2 w-2 rounded-full bg-brand-500" />
+                          <h3 className="text-sm font-bold uppercase tracking-wider text-slate-600">Section 5 — Context</h3>
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <div>
+                            <FieldLabel info="The broad industry your business operates in.">Industry</FieldLabel>
+                            <select className="ea-input" value={form.context.industry_category} onChange={(e) => update("context.industry_category", e.target.value)}>
+                              <option value="">Select industry...</option>
+                              {INDUSTRY_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                            {form.context.industry_category === "Other" && (
+                              <input className="ea-input mt-2" placeholder="Describe your industry..." value={form.context.industry_other} onChange={(e) => update("context.industry_other", e.target.value)} />
+                            )}
+                          </div>
+                          <div>
+                            <FieldLabel info="The specific sector or niche your business targets.">Sector</FieldLabel>
+                            <select className="ea-input" value={form.context.sector_category} onChange={(e) => update("context.sector_category", e.target.value)}>
+                              <option value="">Select sector...</option>
+                              {SECTOR_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                            {form.context.sector_category === "Other" && (
+                              <input className="ea-input mt-2" placeholder="Describe your sector..." value={form.context.sector_other} onChange={(e) => update("context.sector_other", e.target.value)} />
+                            )}
+                          </div>
+                          <div>
+                            <FieldLabel info="The country where your business is based or primarily operates.">Country</FieldLabel>
+                            <select className="ea-input" value={form.context.country} onChange={(e) => update("context.country", e.target.value)}>
+                              <option value="">Select country...</option>
+                              {COUNTRY_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                            {form.context.country === "Other" && (
+                              <input className="ea-input mt-2" placeholder="Enter your country..." value={form.context.country_other} onChange={(e) => update("context.country_other", e.target.value)} />
+                            )}
+                          </div>
+                          <div>
+                            <FieldLabel info="The currency used for pricing and financials.">Currency</FieldLabel>
+                            <select className="ea-input" value={form.context.currency} onChange={(e) => update("context.currency", e.target.value)}>
+                              {CURRENCY_CODES.map(c => <option key={c} value={c}>{currencyLabel(c)}</option>)}
+                              <option value="Other">Other</option>
+                            </select>
+                            {form.context.currency === "Other" && (
+                              <input className="ea-input mt-2" placeholder="e.g. XYZ" value={form.context.currency_other || ""} onChange={(e) => update("context.currency_other", e.target.value)} />
+                            )}
                           </div>
                         </div>
                       </div>
