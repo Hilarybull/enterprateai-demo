@@ -1387,7 +1387,7 @@ export default function ValidationWizardPage() {
           }
         });
 
-        if (!skipNavigation && (isViewing || hasResult)) {
+        if (!skipNavigation && isViewing) {
           navigate("/results");
           return;
         }
@@ -1421,8 +1421,7 @@ export default function ValidationWizardPage() {
           }
         });
 
-        const bizHasResult = Boolean(entry.result);
-        if (!skipNavigation && (isViewing || bizHasResult)) {
+        if (!skipNavigation && isViewing) {
           navigate("/results");
           return;
         }
@@ -2203,7 +2202,7 @@ export default function ValidationWizardPage() {
             "/validation/evaluate",
             "POST",
             { idea_validation: payload },
-            { timeoutMs: 120000 }
+            { timeoutMs: 300000 }
           );
           setValidation(result);
           let validationId = null;
