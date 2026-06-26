@@ -15,7 +15,7 @@ import StatTile from "../components/StatTile";
 import InfoTip from "../components/InfoTip";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
-import { planAllowsScenario, normalisePlanKey } from "../lib/plans";
+import { planAllowsScenario } from "../lib/plans";
 import { formatCurrency, formatNumber, formatPercent } from "../lib/format";
 import { buildActionPlan, dedupeText } from "../lib/insights";
 import { pctWidth, shortExplanation, toneForScore } from "../lib/score";

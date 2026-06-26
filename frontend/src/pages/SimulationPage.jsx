@@ -15,7 +15,7 @@ import InfoTip from "../components/InfoTip";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
-import { planAllowsScenario, normalisePlanKey, STARTER_ALLOWED_SCENARIOS } from "../lib/plans";
+import { planAllowsScenario } from "../lib/plans";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
