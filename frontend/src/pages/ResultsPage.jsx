@@ -14,6 +14,8 @@ import SegmentedTabs from "../components/SegmentedTabs";
 import StatTile from "../components/StatTile";
 import InfoTip from "../components/InfoTip";
 import { useWorkspaceStore } from "../store/workspace";
+import { useAuthStore } from "../store/auth";
+import { planAllowsScenario, normalisePlanKey } from "../lib/plans";
 import { formatCurrency, formatNumber, formatPercent } from "../lib/format";
 import { buildActionPlan, dedupeText } from "../lib/insights";
 import { pctWidth, shortExplanation, toneForScore } from "../lib/score";
@@ -91,6 +93,19 @@ export default function ResultsPage() {
   const location = useWorkspaceStore((s) => s.inputs?.location || s.inputs?.country || "United Kingdom");
   const currency = useWorkspaceStore((s) => s.currency);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
+
+  const subscription = useAuthStore((s) => s.subscription);
+  const planKey = subscription?.plan_key ?? "free_trial";
+  const planStatus = subscription?.status ?? "trial";
+  const simulationEnabled = planStatus === "grandfathered" || planStatus === "active";
+
+  function simCardClick(templateId) {
+    if (!simulationEnabled || !planAllowsScenario(planKey, templateId, planStatus)) {
+      navigate("/pricing");
+    } else {
+      navigate(`/simulation?template=${templateId}`);
+    }
+  }
 
   const [error, setError] = useState(null);
   const [decision, setDecision] = useState(null); // accepted | rejected | null
@@ -589,7 +604,7 @@ export default function ResultsPage() {
                 {workforceKind === "warn" && (
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-800">
                     <div className="font-semibold">Run a hiring scenario to model capacity expansion.</div>
-                    <Button size="sm" variant="secondary" onClick={() => navigate("/simulation?template=tmpl_hire_staff")}>Run scenario</Button>
+                    <Button size="sm" variant="secondary" onClick={() => simCardClick("tmpl_hire_staff")}>Run scenario</Button>
                   </div>
                 )}
               </SectionCard>
@@ -686,7 +701,7 @@ export default function ResultsPage() {
             {svcSimRecs.slice(0, 2).map((sim) => (
               <button
                 key={sim.id}
-                onClick={() => navigate(`/simulation?template=${sim.id}`)}
+                onClick={() => simCardClick(sim.id)}
                 className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
               >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
@@ -1585,7 +1600,7 @@ export default function ResultsPage() {
           {bizSimRecs.map((sim) => (
             <button
               key={sim.id}
-              onClick={() => navigate(`/simulation?template=${sim.id}`)}
+              onClick={() => simCardClick(sim.id)}
               className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
             >
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>

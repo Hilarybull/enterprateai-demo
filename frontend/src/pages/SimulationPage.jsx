@@ -922,21 +922,34 @@ export default function SimulationPage() {
               >
                 <div className="space-y-3">
                   {recommendations.length ? (
-                    recommendations.map((rec, i) => (
-                      <div key={rec.scenario_template_id || i} className="rounded-xl border border-slate-200 bg-white p-3">
-                        <div className="text-sm font-semibold text-slate-900">{rec.title}</div>
-                        <div className="mt-2">
-                          <Button
-                            size="sm"
-                            onClick={() => openManualScenario(rec.scenario_template_id, rec.title)}
-                            disabled={actionLoading || !canRun}
-                          >
-                            {actionLoading && scenarioRunningId === rec.scenario_template_id ? <Spinner size={14} /> : null}
-                            Run scenario
-                          </Button>
+                    recommendations.map((rec, i) => {
+                      const recAllowed = planAllowsScenario(planKey, rec.scenario_template_id, planStatus);
+                      return (
+                        <div key={rec.scenario_template_id || i} className="rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="text-sm font-semibold text-slate-900">{rec.title}</div>
+                          <div className="mt-2">
+                            {recAllowed ? (
+                              <Button
+                                size="sm"
+                                onClick={() => openManualScenario(rec.scenario_template_id, rec.title)}
+                                disabled={actionLoading || !canRun}
+                              >
+                                {actionLoading && scenarioRunningId === rec.scenario_template_id ? <Spinner size={14} /> : null}
+                                Run scenario
+                              </Button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="text-xs font-semibold text-amber-700 underline"
+                                onClick={handleUpgradeClick}
+                              >
+                                Upgrade to run
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="text-sm text-slate-600">No recommendations yet.</div>
                   )}
