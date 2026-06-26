@@ -172,6 +172,12 @@ async def run_full_engine_suite(
     )
 
     # --- Master Aggregator ---
+    def _risk_texts(flags) -> list:
+        return [f.explanation for f in (flags or []) if hasattr(f, "explanation")]
+
+    def _rec_texts(recs) -> list:
+        return [r.text for r in (recs or []) if hasattr(r, "text")]
+
     ma_input = MasterAggregatorInput(
         business_id=business_id,
         viability_score=viability_score,
@@ -180,13 +186,13 @@ async def run_full_engine_suite(
         growth_score=growth_score,
         fragility_index=fragility_index,
         viability_risks=[],
-        survival_risks=survival_output.risk_flags,
-        stability_risks=stability_output.risk_flags,
-        growth_risks=growth_output.risk_flags,
-        fragility_risks=fragility_output.risk_flags,
-        survival_recommendations=survival_output.recommendations,
-        stability_recommendations=stability_output.recommendations,
-        growth_recommendations=growth_output.recommendations,
+        survival_risks=_risk_texts(survival_output.risk_flags),
+        stability_risks=_risk_texts(stability_output.risk_flags),
+        growth_risks=_risk_texts(growth_output.risk_flags),
+        fragility_risks=_risk_texts(fragility_output.risk_flags),
+        survival_recommendations=_rec_texts(survival_output.recommendations),
+        stability_recommendations=_rec_texts(stability_output.recommendations),
+        growth_recommendations=_rec_texts(growth_output.recommendations),
         viability_recommendations=[],
         source="orchestration",
     )
