@@ -200,6 +200,13 @@ export default function ResultsPage() {
 
   useEffect(() => {
     if (!isServiceIdeaView || !serviceDraft || svcMrFiredRef.current) return;
+    // If the validation result already carries market research, use it and skip the re-run
+    const embeddedMr = validation?.market_research;
+    if (embeddedMr && typeof embeddedMr === "object" && Object.keys(embeddedMr).length > 0) {
+      setSvcMarketResearch(embeddedMr);
+      svcMrFiredRef.current = true;
+      return;
+    }
     const hasContent = serviceDraft.service_description || serviceDraft.service_name;
     if (!hasContent) return;
     runSvcMr();
@@ -588,34 +595,6 @@ export default function ResultsPage() {
               </SectionCard>
             ) : null}
 
-            {/* Recommended Simulations */}
-            <SectionCard
-              title="Recommended Simulations"
-              subtitle="Run these what-if scenarios based on your validation results."
-              icon={
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600 shadow-sm">
-                  <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                </div>
-              }
-            >
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {svcSimRecs.slice(0, 2).map((sim) => (
-                  <button
-                    key={sim.id}
-                    onClick={() => navigate(`/simulation?template=${sim.id}`)}
-                    className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
-                  >
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
-                      <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
-                    </div>
-                    <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
-                  </button>
-                ))}
-              </div>
-            </SectionCard>
-
           </div>
 
           {/* ── Sidebar ── */}
@@ -692,6 +671,34 @@ export default function ResultsPage() {
 
           </aside>
         </div>
+
+        {/* Recommended Simulations — full width */}
+        <SectionCard
+          title="Recommended Simulations"
+          subtitle="Run these what-if scenarios based on your validation results."
+          icon={
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600 shadow-sm">
+              <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
+          }
+        >
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {svcSimRecs.slice(0, 2).map((sim) => (
+              <button
+                key={sim.id}
+                onClick={() => navigate(`/simulation?template=${sim.id}`)}
+                className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
+                  <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
+                </div>
+                <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+              </button>
+            ))}
+          </div>
+        </SectionCard>
 
         {/* ── Market Research (service) ── */}
         <div className="mt-4 space-y-4">
@@ -1431,33 +1438,6 @@ export default function ResultsPage() {
             </div>
           ) : null}
 
-          {/* Recommended Simulations */}
-          <SectionCard
-            title="Recommended Simulations"
-            subtitle="Run these what-if scenarios based on your validation results."
-            icon={
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600 shadow-sm">
-                <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-              </div>
-            }
-          >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {bizSimRecs.map((sim) => (
-                <button
-                  key={sim.id}
-                  onClick={() => navigate(`/simulation?template=${sim.id}`)}
-                  className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
-                    <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
-                  </div>
-                  <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
-                </button>
-              ))}
-            </div>
-          </SectionCard>
         </div>
 
         <aside className="lg:col-span-4 flex flex-col gap-4">
@@ -1590,6 +1570,34 @@ export default function ResultsPage() {
           )}
         </aside>
       </div>
+
+      {/* Recommended Simulations — full width */}
+      <SectionCard
+        title="Recommended Simulations"
+        subtitle="Run these what-if scenarios based on your validation results."
+        icon={
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600 shadow-sm">
+            <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </div>
+        }
+      >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {bizSimRecs.map((sim) => (
+            <button
+              key={sim.id}
+              onClick={() => navigate(`/simulation?template=${sim.id}`)}
+              className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
+                <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
+              </div>
+              <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          ))}
+        </div>
+      </SectionCard>
 
       {/* ── Detailed mode: Trend Score + Insights + ISD in one aligned 3-col row ── */}
       {viewMode === "detailed" && !isServiceIdea && (

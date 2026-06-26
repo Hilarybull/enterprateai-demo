@@ -144,6 +144,27 @@ export const MODULE_MIN_PLAN = {
   simulation: "explorer",
 };
 
+// Scenario templates available for manual runs on the Starter plan.
+// All other paid plans get every template.
+export const STARTER_ALLOWED_SCENARIOS = ["tmpl_client_loss", "tmpl_payment_delay"];
+
+/**
+ * Returns true if the plan can run this scenario template manually.
+ * The baseline projection ("do_nothing_projection") is always allowed.
+ */
+export function planAllowsScenario(planKey, scenarioTemplateId, status) {
+  if (status === "grandfathered") return true;
+  if (!scenarioTemplateId || scenarioTemplateId === "do_nothing_projection") return true;
+  const normalised = normalisePlanKey(planKey);
+  if (normalised === "explorer") {
+    // During the trial window: offer a Starter-level preview so users can actually try the feature
+    if (status === "trial") return STARTER_ALLOWED_SCENARIOS.includes(scenarioTemplateId);
+    return false; // expired — upgrade required
+  }
+  // All active paid plans currently get every template (Starter is the only tier live right now)
+  return true;
+}
+
 const PLAN_ORDER = ["explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os"];
 
 export function planRank(planKey) {

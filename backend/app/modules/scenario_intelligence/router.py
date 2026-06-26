@@ -163,6 +163,9 @@ async def scenario_runs_timeline(
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario run not found")
     timeline = await get_scenario_timeline(scenario_run_id)
+    for row in timeline:
+        if isinstance(row.get("state_label"), str):
+            row["state_label"] = row["state_label"].replace(" ", "_")
     return ScenarioTimelineResponse(scenario_run_id=scenario_run_id, timeline=timeline)
 
 

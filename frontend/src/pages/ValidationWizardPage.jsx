@@ -312,7 +312,9 @@ export default function ValidationWizardPage() {
   const [historyFilter, setHistoryFilter] = useState("all");
   const [historyTypeFilter, setHistoryTypeFilter] = useState("all");
   const [historySearch, setHistorySearch] = useState("");
+  const [historyPage, setHistoryPage] = useState(1);
   const [bulkSelected, setBulkSelected] = useState(new Set());
+  const HISTORY_PAGE_SIZE = 10;
   const [historyRequestHandled, setHistoryRequestHandled] = useState(false);
   const [businessMarketResearch, setBusinessMarketResearch] = useState(null);
   const [businessResearchHash, setBusinessResearchHash] = useState(null);
@@ -508,6 +510,7 @@ export default function ValidationWizardPage() {
     [validationHistory]
   );
   const filteredValidationHistory = useMemo(() => {
+    setHistoryPage(1);
     const q = historySearch.trim().toLowerCase();
     const seen = new Set();
     return validationHistory.filter((entry) => {
@@ -521,6 +524,8 @@ export default function ValidationWizardPage() {
       return true;
     });
   }, [historyFilter, historyTypeFilter, historySearch, validationHistory]);
+  const historyTotalPages = Math.max(1, Math.ceil(filteredValidationHistory.length / HISTORY_PAGE_SIZE));
+  const pagedHistory = filteredValidationHistory.slice((historyPage - 1) * HISTORY_PAGE_SIZE, historyPage * HISTORY_PAGE_SIZE);
   const activeWorkspaceId = editingWorkspaceId || storedWorkspaceId;
 
   const isProductPath = form.pathway === "product_service_idea";
@@ -1421,7 +1426,11 @@ export default function ValidationWizardPage() {
           }
         });
 
-        const bizHasResult = Boolean(entry.result);
+        const vHistory = Array.isArray(data.validation_history) ? data.validation_history : [];
+        const apiHistEntry = vHistory.find((e) => String(e?.id) === String(entry.id));
+        const bizResult = entry.result || apiHistEntry?.result || null;
+        if (bizResult) setValidation(bizResult);
+        const bizHasResult = Boolean(bizResult);
         if (!skipNavigation && (isViewing || bizHasResult)) {
           navigate("/results");
           return;
@@ -2203,7 +2212,7 @@ export default function ValidationWizardPage() {
             "/validation/evaluate",
             "POST",
             { idea_validation: payload },
-            { timeoutMs: 120000 }
+            { timeoutMs: 300000 }
           );
           setValidation(result);
           let validationId = null;
@@ -2384,7 +2393,6 @@ export default function ValidationWizardPage() {
                     size="sm"
                     options={[
                       { value: "builder", label: "Builder" },
-                      { value: "market_research", label: "Market research" },
                       { value: "history", label: "History" }
                     ]}
                   />
@@ -2414,7 +2422,7 @@ export default function ValidationWizardPage() {
             </div>
           ) : null}
 
-          {contentTab === "market_research" && !isCreateWorkspace ? (
+          {false && !isCreateWorkspace ? (
             <div className="space-y-4">
               <SectionCard
                 title="Market research"
@@ -2836,6 +2844,117 @@ export default function ValidationWizardPage() {
                   </div>
                 ) : null}
 
+                {/* History list */}
+                <div className="space-y-3">
+                  {filteredValidationHistory.length ? (
+                    pagedHistory.map((entry) => {
+                      const badgeClass =
+                        entry.status === "accepted"
+                          ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                          : entry.status === "rejected"
+                            ? "bg-rose-50 text-rose-700 ring-rose-200"
+                            : "bg-amber-50 text-amber-700 ring-amber-200";
+                      const isChecked = bulkSelected.has(entry.id);
+                      const hasOutput = Boolean(entry.result);
+                      return (
+                        <div
+                          key={entry.id}
+                          onClick={() => editHistoryEntry(entry)}
+                          className={`flex w-full cursor-pointer flex-wrap items-start justify-between gap-3 rounded-2xl border bg-white p-4 shadow-sm text-left transition hover:border-brand-300 hover:shadow-md ${isChecked ? "border-brand-300 bg-brand-50/40" : "border-slate-200"}`}
+                        >
+                          <div className="flex items-start gap-3 min-w-0 flex-1">
+                            <div onClick={(e) => e.stopPropagation()} className="mt-0.5 shrink-0">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  const next = new Set(bulkSelected);
+                                  if (e.target.checked) next.add(entry.id); else next.delete(entry.id);
+                                  setBulkSelected(next);
+                                }}
+                                className="h-4 w-4 rounded border-slate-300 accent-brand-600"
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="text-sm font-semibold text-slate-900">{entry.title}</div>
+                                <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ring-1 ${badgeClass}`}>
+                                  {String(entry.status || "pending").toUpperCase()}
+                                </span>
+                                <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">
+                                  {entry.type === "service_validation" ? "Service" : "Business"}
+                                </span>
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {new Date(entry.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                            <Button size="sm" variant="secondary" onClick={() => editHistoryEntry(entry)}>
+                              {entry.status === "accepted" || entry.status === "rejected" ? "View" : "Resume"}
+                            </Button>
+                            <Button variant="ghost" onClick={() => deleteHistoryEntry(entry.id)}>
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5 text-sm text-slate-500">
+                      {validationHistory.length
+                        ? "No items match this filter."
+                        : "No validation history yet. Run a validation and it will appear here."}
+                    </div>
+                  )}
+                </div>
+
+                {/* Pagination */}
+                {historyTotalPages > 1 ? (
+                  <div className="flex items-center justify-between gap-3 pt-1">
+                    <span className="text-xs text-slate-500">
+                      Page {historyPage} of {historyTotalPages} · {filteredValidationHistory.length} items
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={historyPage === 1}
+                        onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      {Array.from({ length: historyTotalPages }, (_, i) => i + 1).filter((p) => p === 1 || p === historyTotalPages || Math.abs(p - historyPage) <= 1).reduce((acc, p, idx, arr) => {
+                        if (idx > 0 && p - arr[idx - 1] > 1) acc.push("…");
+                        acc.push(p);
+                        return acc;
+                      }, []).map((p, i) =>
+                        p === "…" ? (
+                          <span key={`ellipsis-${i}`} className="px-1 text-xs text-slate-400">…</span>
+                        ) : (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setHistoryPage(p)}
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${p === historyPage ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                          >
+                            {p}
+                          </button>
+                        )
+                      )}
+                      <button
+                        type="button"
+                        disabled={historyPage === historyTotalPages}
+                        onClick={() => setHistoryPage((p) => Math.min(historyTotalPages, p + 1))}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
               </div>
             </SectionCard>
           ) : mode === "select" && !isCreateWorkspace ? (
@@ -2940,12 +3059,20 @@ export default function ValidationWizardPage() {
                   <SectionCard
                     title="Validation history"
                     subtitle="Resume or view your previous analysis items."
-                    badge={filteredValidationHistory.length ? String(filteredValidationHistory.length) : null}
+                    badge={validationHistory.length ? String(validationHistory.length) : null}
+                    headerRight={validationHistory.length > 5 ? (
+                      <button
+                        type="button"
+                        onClick={() => setContentTab("history")}
+                        className="text-xs font-semibold text-brand-600 hover:text-brand-700"
+                      >
+                        View all →
+                      </button>
+                    ) : null}
                   >
                     <div className="space-y-3">
-                      {/* Reuse the history list JSX logic here, but move the actual definition to a separate fragment/variable to avoid duplication */}
                       {filteredValidationHistory.length ? (
-                        filteredValidationHistory.map((entry) => {
+                        filteredValidationHistory.slice(0, 5).map((entry) => {
                           const badgeClass =
                             entry.status === "accepted"
                               ? "bg-emerald-50 text-emerald-700 ring-emerald-200"

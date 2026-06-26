@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Iterable
 
 import anyio
@@ -28,17 +29,36 @@ def get_supabase_client(reset: bool = False) -> Client:
     return _client
 
 
-def _run_with_retry(fn):
-    """Execute fn() and retry once with a fresh client on connection errors."""
+_RETRIABLE = frozenset({"RemoteProtocolError", "ConnectionError", "ConnectError", "ConnectionClosed", "RemoteDisconnected", "ProtocolError"})
+
+
+def _is_retriable(exc: BaseException) -> bool:
+    seen = set()
+    node: BaseException | None = exc
+    while node is not None and id(node) not in seen:
+        seen.add(id(node))
+        if type(node).__name__ in _RETRIABLE:
+            return True
+        node = getattr(node, "__cause__", None) or getattr(node, "__context__", None)
+    return False
+
+
+def _run_with_retry(fn, *, max_attempts: int = 3, base_delay: float = 0.4):
+    """Execute fn() retrying up to max_attempts times on transient connection errors."""
     global _client
-    try:
-        return fn()
-    except Exception as exc:
-        exc_chain = str(type(exc).__name__) + str(type(getattr(exc, "__cause__", None)).__name__)
-        if "RemoteProtocolError" in exc_chain or "ConnectionError" in exc_chain or "ConnectError" in exc_chain:
-            _client = None
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
             return fn()
-        raise
+        except Exception as exc:
+            if _is_retriable(exc):
+                last_exc = exc
+                _client = None
+                if attempt < max_attempts - 1:
+                    time.sleep(base_delay * (attempt + 1))
+                continue
+            raise
+    raise last_exc  # type: ignore[misc]
 
 
 async def sb_select(

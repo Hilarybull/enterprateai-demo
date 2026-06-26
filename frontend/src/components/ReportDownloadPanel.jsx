@@ -7,7 +7,7 @@ import Spinner from "./Spinner";
 const REPORT_DEFS = {
   business_health_report: {
     label: "Business Health Report",
-    description: "Full assessment — scores, risks, recommendations, and next actions.",
+    description: "Full assessment: scores, risks, recommendations, and next actions.",
     sections: ["Executive Summary", "Intelligence Scores", "Top Risks", "Recommendations", "Confidence & Data Quality", "Disclaimer"],
   },
   investor_summary: {

@@ -15,6 +15,7 @@ import InfoTip from "../components/InfoTip";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
+import { planAllowsScenario, normalisePlanKey, STARTER_ALLOWED_SCENARIOS } from "../lib/plans";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
@@ -91,7 +92,6 @@ function biBandLabel(band) {
 }
 
 export default function SimulationPage() {
-  const simulationEnabled = true;
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
@@ -104,6 +104,13 @@ export default function SimulationPage() {
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
+  const subscription = useAuthStore((s) => s.subscription);
+  const planKey = subscription?.plan_key ?? "free_trial";
+  const planStatus = subscription?.status ?? "trial";
+
+  // Simulation is accessible during trial and on any active paid plan.
+  // Expired free-trial users see the upgrade gate.
+  const simulationEnabled = planStatus !== "expired";
 
   function canSimFeature(featureKey) {
     if (isPlatformFeatureRestricted("simulation", featureKey, platformRestrictions)) return false;
@@ -119,8 +126,6 @@ export default function SimulationPage() {
   const [catalogueData, setCatalogueData] = useState({ products: [], customers: [], vendors: [] });
   const [financialsData, setFinancialsData] = useState({ invoices: [], expenses: [], contracts: [] });
   const [acceptedValidation, setAcceptedValidation] = useState(null);
-  const [upgradeNotice, setUpgradeNotice] = useState(null);
-  const [upgradeLoading, setUpgradeLoading] = useState(false);
 
   const acceptedIdeaValidation = decisionStatus === "accepted" ? ideaValidation : null;
   const acceptedModuleValidation = {
@@ -128,17 +133,8 @@ export default function SimulationPage() {
     serviceValidation: acceptedValidation?.serviceValidation || (serviceDecisionStatus === "accepted" ? validation : null),
   };
 
-  async function handleUpgradeClick() {
-    setUpgradeLoading(true);
-    setUpgradeNotice(null);
-    try {
-      await apiRequest("/upgrade/click", "POST", { feature: "simulation", source: "simulation_page" });
-      setUpgradeNotice("Upgrade request sent. We will reach out shortly.");
-    } catch {
-      setUpgradeNotice("Unable to send upgrade request. Please try again.");
-    } finally {
-      setUpgradeLoading(false);
-    }
+  function handleUpgradeClick() {
+    window.location.href = "/pricing";
   }
 
   const financialInsights = useMemo(
@@ -202,6 +198,7 @@ export default function SimulationPage() {
   const [projectionTimeline, setProjectionTimeline] = useState([]);
   const [decisionSaving, setDecisionSaving] = useState(false);
   const [decisionNotice, setDecisionNotice] = useState(null);
+  const [showHowRun, setShowHowRun] = useState(false);
   const [autoProjectionDone, setAutoProjectionDone] = useState(false);
   const [autoSignalsDone, setAutoSignalsDone] = useState(false);
   const [biIntelligence, setBiIntelligence] = useState(null);
@@ -720,14 +717,10 @@ export default function SimulationPage() {
               Unlock scenario planning, forecasting, and sensitivity analysis.
             </div>
             <div className="mt-4 flex items-center gap-3">
-              <Button onClick={handleUpgradeClick} disabled={upgradeLoading}>
-                {upgradeLoading ? <Spinner size={16} /> : null}
-                {upgradeLoading ? "Sending..." : "Upgrade"}
+              <Button onClick={handleUpgradeClick}>
+                View pricing plans
               </Button>
             </div>
-            {upgradeNotice ? (
-              <div className="mt-3 text-sm text-slate-600">{upgradeNotice}</div>
-            ) : null}
           </div>
         </SectionCard>
       </div>
@@ -782,30 +775,6 @@ export default function SimulationPage() {
                 const structClass = master.structural_classification ?? {};
                 const risks = Array.isArray(master.consolidated_risks) ? master.consolidated_risks : [];
                 const recs = Array.isArray(master.priority_recommendations) ? master.priority_recommendations : [];
-
-                // Extract clean readable text from risk/recommendation items.
-                // Handles plain strings, JS objects with .explanation / .text,
-                // and backend Python repr strings like: RiskFlag(code='X', explanation='...', ...)
-                function extractRiskText(item) {
-                  if (!item) return null;
-                  if (typeof item === "string") {
-                    // Try to pull explanation= or text= out of a Python repr string
-                    const explMatch = item.match(/explanation='([^']+)'/);
-                    if (explMatch) return explMatch[1];
-                    const textMatch = item.match(/text='([^']+)'/);
-                    if (textMatch) return textMatch[1];
-                    // If it looks like a Python object repr, skip it entirely
-                    if (item.startsWith("RiskFlag(") || item.startsWith("Recommendation(")) return null;
-                    return item;
-                  }
-                  if (typeof item === "object") {
-                    return item.explanation || item.text || item.message || item.description || null;
-                  }
-                  return null;
-                }
-
-                const cleanRisks = risks.map(extractRiskText).filter(Boolean);
-                const cleanRecs = recs.map(extractRiskText).filter(Boolean);
                 const engines = [
                   { key: "viability", label: "Viability", score: summary.viability?.score ?? 0, band: summary.viability?.band },
                   { key: "survival", label: "Survival", score: summary.survival?.score ?? 0, band: summary.survival?.band },
@@ -856,24 +825,24 @@ export default function SimulationPage() {
                       </div>
                       {fragBand && <div className="mt-0.5 text-xs text-slate-400">{biBandLabel(fragBand)}</div>}
                     </div>
-                    {cleanRisks.length > 0 && (
+                    {risks.length > 0 && (
                       <div>
                         <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Key Risks</div>
                         <ul className="space-y-1">
-                          {cleanRisks.slice(0, 4).map((r, i) => (
-                            <li key={`risk-${i}`} className="flex items-start gap-1.5 text-xs text-slate-700">
+                          {risks.slice(0, 4).map((r, i) => (
+                            <li key={i} className="flex items-start gap-1.5 text-xs text-slate-700">
                               <span className="mt-0.5 shrink-0 text-amber-500">▲</span>{r}
                             </li>
                           ))}
                         </ul>
                       </div>
                     )}
-                    {cleanRecs.length > 0 && (
+                    {recs.length > 0 && (
                       <div>
                         <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Priority Actions</div>
                         <ul className="space-y-1">
-                          {cleanRecs.slice(0, 3).map((r, i) => (
-                            <li key={`rec-${i}`} className="flex items-start gap-1.5 text-xs text-slate-700">
+                          {recs.slice(0, 3).map((r, i) => (
+                            <li key={i} className="flex items-start gap-1.5 text-xs text-slate-700">
                               <span className="mt-0.5 shrink-0 text-emerald-500">&#8594;</span>{r}
                             </li>
                           ))}
@@ -925,8 +894,8 @@ export default function SimulationPage() {
               >
                 <div className="space-y-2">
                   {riskSignals.length ? (
-                    riskSignals.map((r) => (
-                      <div key={r.risk_signal_id} className="rounded-xl border border-slate-200 bg-white p-3">
+                    riskSignals.map((r, i) => (
+                      <div key={r.risk_signal_id || i} className="rounded-xl border border-slate-200 bg-white p-3">
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                           {describeRisk(r).title}
                         </div>
@@ -953,8 +922,8 @@ export default function SimulationPage() {
               >
                 <div className="space-y-3">
                   {recommendations.length ? (
-                    recommendations.map((rec) => (
-                      <div key={rec.scenario_template_id} className="rounded-xl border border-slate-200 bg-white p-3">
+                    recommendations.map((rec, i) => (
+                      <div key={rec.scenario_template_id || i} className="rounded-xl border border-slate-200 bg-white p-3">
                         <div className="text-sm font-semibold text-slate-900">{rec.title}</div>
                         <div className="mt-2">
                           <Button
@@ -986,9 +955,9 @@ export default function SimulationPage() {
             >
               <div className="space-y-2">
                 {history.length ? (
-                  history.slice(0, 2).map((h) => (
+                  history.slice(0, 2).map((h, i) => (
                     <div
-                      key={h.scenario_run_id}
+                      key={h.scenario_run_id || i}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3"
                     >
                       <div>
@@ -1019,8 +988,9 @@ export default function SimulationPage() {
       ) : null}
 
       {workspaceId && tab === "manual" && canSimFeature("run_simulation") ? (
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <SectionCard title="Manual scenario" subtitle="Build a custom simulation." className="self-start lg:sticky lg:top-4">
+        <div className="mt-4 space-y-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <SectionCard title="Manual scenario" subtitle="Build a custom simulation.">
             <div className="space-y-4">
               <div className="space-y-3">
                 <div>
@@ -1029,11 +999,14 @@ export default function SimulationPage() {
                     <option value="do_nothing_projection">Baseline Continuity Projection</option>
                     {templates
                       .filter((t) => t.mode !== "adaptive")
-                      .map((t) => (
-                        <option key={t.scenario_template_id} value={t.scenario_template_id}>
-                          {t.title}
-                        </option>
-                      ))}
+                      .map((t) => {
+                        const allowed = planAllowsScenario(planKey, t.scenario_template_id, planStatus);
+                        return (
+                          <option key={t.scenario_template_id} value={t.scenario_template_id} disabled={!allowed}>
+                            {t.title}{!allowed ? " — upgrade required" : ""}
+                          </option>
+                        );
+                      })}
                   </select>
                 </div>
                 <div>
@@ -1105,9 +1078,17 @@ export default function SimulationPage() {
               </div>
 
               <div>
+                {manualTemplateId !== "do_nothing_projection" && !planAllowsScenario(planKey, manualTemplateId, planStatus) ? (
+                  <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+                    This scenario is not available on your current plan.{" "}
+                    <button type="button" className="font-semibold underline" onClick={handleUpgradeClick}>
+                      View pricing plans
+                    </button>
+                  </div>
+                ) : null}
                 <div className="flex justify-end">
                   <Button
-                    disabled={actionLoading || !canRun}
+                    disabled={actionLoading || !canRun || !planAllowsScenario(planKey, manualTemplateId, planStatus)}
                     onClick={() => {
                       if (manualTemplateId === "do_nothing_projection") {
                         runDoNothing(parseNumber(manualTimelineMonths, 6), true);
@@ -1178,28 +1159,14 @@ export default function SimulationPage() {
                   </div>
                 </div>
 
-                <details className="rounded-xl border border-slate-200 bg-white">
-                  <summary className="cursor-pointer select-none px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-50 rounded-xl list-none flex items-center justify-between">
-                    <span>How this run works</span>
-                    <svg viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5 text-slate-400"><path fillRule="evenodd" d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z" clipRule="evenodd" /></svg>
-                  </summary>
-                  <div className="border-t border-slate-100 p-3 space-y-2 text-xs leading-5 text-slate-600">
-                    {buildScenarioExecutionBreakdown(
-                      activeRun,
-                      timeline,
-                      currency || "GBP",
-                      manualTemplateId,
-                      templates,
-                      largestClient,
-                      manualParams,
-                      parseNumber(manualTimelineMonths, 6)
-                    ).map((line, index) => (
-                      <div key={`${manualTemplateId || activeRun?.scenario_template_id || "scenario"}-${index}`} className="rounded-lg bg-slate-50 px-2 py-2">
-                        {line}
-                      </div>
-                    ))}
-                  </div>
-                </details>
+                <button
+                  type="button"
+                  onClick={() => setShowHowRun(true)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-50 flex items-center justify-between"
+                >
+                  <span>How this run works</span>
+                  <svg viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5 text-slate-400"><path fillRule="evenodd" d="M8.22 5.22a.75.75 0 011.06 0l3.25 3.25a.75.75 0 01-1.06 1.06L8 6.81 4.53 9.53a.75.75 0 01-1.06-1.06l3.75-3.25z" clipRule="evenodd" /></svg>
+                </button>
               </div>
 
             </div>
@@ -1217,6 +1184,7 @@ export default function SimulationPage() {
               maxTimelineRows={6}
               showRisks={canSimFeature("risk_detection")}
               showRecommendations={canSimFeature("recommendations")}
+              hideTimelineAndMeaning
               reportOutput={activeRun ? assembleOutput({
                 workspaceId,
                 currency: currency || "GBP",
@@ -1231,6 +1199,85 @@ export default function SimulationPage() {
               }) : null}
             />
           </SectionCard>
+        </div>
+
+        {activeRun && timeline?.length ? (
+          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+            <div className="px-4 pt-4 pb-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Timeline</div>
+            </div>
+            <div className="overflow-x-auto border-t border-slate-100">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-slate-500">
+                  <tr>
+                    {["Month","Revenue","Accruals","Expenses","Cost of sales","Total costs","Gross Profit","Gross Margin %","Net Profit","Cum. Profit","Cash balance","Status"].map((h) => (
+                      <th key={h} className="px-3 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {timeline.map((row) => {
+                    const profit = Number(row.profit || 0);
+                    const baseDate = activeRun?.executed_at || activeRun?.created_at ? new Date(activeRun.executed_at || activeRun.created_at) : new Date();
+                    const d = new Date(baseDate); d.setDate(1); d.setHours(0,0,0,0); d.setMonth(d.getMonth() + (Number(row.month_index) - 1));
+                    const label = d.toLocaleString(undefined, { month: "short", year: "numeric" });
+                    const stateLabel = String(row.state_label || "").toLowerCase();
+                    return (
+                      <tr key={row.month_index} className="border-t border-slate-100 hover:bg-slate-50/50">
+                        <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{label}</td>
+                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.revenue, currency)}</td>
+                        <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row.accruals, currency)}</td>
+                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.expenses, currency)}</td>
+                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.cost_of_sales, currency)}</td>
+                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.costs, currency)}</td>
+                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.gross_profit, currency)}</td>
+                        <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{row.gross_margin_pct != null ? `${row.gross_margin_pct}%` : "—"}</td>
+                        <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${profit > 0 ? "text-emerald-600" : profit < 0 ? "text-rose-600" : "text-slate-700"}`}>{formatCurrency(profit, currency)}</td>
+                        <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row.cumulative_profit, currency)}</td>
+                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.cash_balance, currency)}</td>
+                        <td className="px-3 py-2 text-left whitespace-nowrap">
+                          {row.state_label ? (
+                            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${stateLabel.includes("stable") ? "bg-emerald-50 text-emerald-700" : stateLabel.includes("risk") || stateLabel.includes("stress") ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>
+                              {row.state_label}
+                            </span>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+
+        {activeRun ? (
+          <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-brand-700">What This Means</div>
+            <div className="mt-2 text-sm leading-6 text-slate-700 break-words">
+              {buildScenarioMeaning(activeRun, timeline, currency)}
+            </div>
+          </div>
+        ) : null}
+        </div>
+      ) : null}
+      {showHowRun ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setShowHowRun(false)}>
+          <div className="relative max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <div className="text-sm font-semibold text-slate-900">How this run works</div>
+              <button type="button" onClick={() => setShowHowRun(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                <svg viewBox="0 0 16 16" fill="currentColor" className="h-4 w-4"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z" /></svg>
+              </button>
+            </div>
+            <div className="space-y-2 text-xs leading-5 text-slate-600">
+              {buildScenarioExecutionBreakdown(
+                activeRun, timeline, currency || "GBP", manualTemplateId, templates, largestClient, manualParams, parseNumber(manualTimelineMonths, 6)
+              ).map((line, i) => (
+                <div key={i} className="rounded-lg bg-slate-50 px-2 py-2">{line}</div>
+              ))}
+            </div>
+          </div>
         </div>
       ) : null}
       {confirmDialog ? (
@@ -1711,6 +1758,7 @@ function ScenarioOutput({
   maxTimelineRows,
   showRisks = true,
   showRecommendations = true,
+  hideTimelineAndMeaning = false,
   reportOutput = null,
 }) {
   if (!activeRun) {
@@ -2001,7 +2049,7 @@ function ScenarioOutput({
         </div>
       ) : null}
 
-      {timeline?.length ? (
+      {!hideTimelineAndMeaning && timeline?.length ? (
         <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
           <div className="px-4 pt-4 pb-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Timeline</div>
@@ -2124,12 +2172,14 @@ function ScenarioOutput({
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-brand-700">What This Means</div>
-        <div className="mt-2 text-sm leading-6 text-slate-700 break-words">
-          {scenarioMeaning}
+      {!hideTimelineAndMeaning ? (
+        <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-brand-700">What This Means</div>
+          <div className="mt-2 text-sm leading-6 text-slate-700 break-words">
+            {scenarioMeaning}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {!hideDecision ? (
         <div className="flex flex-wrap items-center gap-2">
