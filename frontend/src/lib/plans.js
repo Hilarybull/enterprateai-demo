@@ -156,12 +156,8 @@ export function planAllowsScenario(planKey, scenarioTemplateId, status) {
   if (status === "grandfathered") return true;
   if (!scenarioTemplateId || scenarioTemplateId === "do_nothing_projection") return true;
   const normalised = normalisePlanKey(planKey);
-  if (normalised === "explorer") {
-    // During the trial window: offer a Starter-level preview so users can actually try the feature
-    if (status === "trial") return STARTER_ALLOWED_SCENARIOS.includes(scenarioTemplateId);
-    return false; // expired — upgrade required
-  }
-  // All active paid plans currently get every template (Starter is the only tier live right now)
+  if (normalised === "explorer") return false; // trial and expired — no manual scenarios
+  if (normalised === "starter_insight") return STARTER_ALLOWED_SCENARIOS.includes(scenarioTemplateId);
   return true;
 }
 

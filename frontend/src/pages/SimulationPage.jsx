@@ -108,9 +108,9 @@ export default function SimulationPage() {
   const planKey = subscription?.plan_key ?? "free_trial";
   const planStatus = subscription?.status ?? "trial";
 
-  // Simulation is accessible during trial and on any active paid plan.
-  // Expired free-trial users see the upgrade gate.
-  const simulationEnabled = planStatus !== "expired";
+  // Simulation requires an active paid plan or grandfathered status.
+  // Trial and expired users see the upgrade gate.
+  const simulationEnabled = planStatus === "grandfathered" || planStatus === "active";
 
   function canSimFeature(featureKey) {
     if (isPlatformFeatureRestricted("simulation", featureKey, platformRestrictions)) return false;
