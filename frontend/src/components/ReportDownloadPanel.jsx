@@ -203,6 +203,7 @@ export default function ReportDownloadPanel({
   currency = "GBP",
   reportTypes,
   compact = false,
+  spread = false,
   className = "",
 }) {
   const [preview, setPreview] = useState(null); // report type id
@@ -213,7 +214,9 @@ export default function ReportDownloadPanel({
   if (compact) {
     return (
       <>
-        <div className={`flex flex-wrap gap-2 ${className}`}>
+        <div className={spread ? `grid gap-2 ${className}` : `flex flex-wrap gap-2 ${className}`}
+          style={spread ? { gridTemplateColumns: `repeat(${types.length}, minmax(0, 1fr))` } : undefined}
+        >
           {types.map((id) => {
             const def = REPORT_DEFS[id];
             if (!def) return null;
@@ -223,7 +226,7 @@ export default function ReportDownloadPanel({
                 type="button"
                 disabled={!hasOutput}
                 onClick={() => setPreview(id)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 disabled:opacity-40 disabled:cursor-not-allowed dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 transition"
+                className={`${spread ? "flex w-full justify-center" : "inline-flex"} items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition`}
               >
                 <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />

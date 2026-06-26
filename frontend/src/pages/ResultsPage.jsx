@@ -1037,40 +1037,38 @@ export default function ResultsPage() {
       </div>
 
       {/* ── Action toolbar ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-        <SegmentedTabs
-          ariaLabel="View mode"
-          value={viewMode}
-          onChange={setViewMode}
-          options={[
-            { value: "simple", label: "Simple" },
-            { value: "detailed", label: "Detailed" }
-          ]}
-        />
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!workspaceId}
-            onClick={() => navigate(`/validation?workspace_id=${workspaceId}${activeValidationId ? `&history_id=${encodeURIComponent(activeValidationId)}&history_type=business_validation` : ""}`)}
-          >
-            Modify
-          </Button>
-          {!decision && (
-            <>
-              <Button size="sm" variant="danger" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("rejected")}>
-                Reject
-              </Button>
-              <Button size="sm" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("accepted")}>
-                Accept
-              </Button>
-            </>
-          )}
+      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <SegmentedTabs
+            ariaLabel="View mode"
+            value={viewMode}
+            onChange={setViewMode}
+            options={[
+              { value: "simple", label: "Simple" },
+              { value: "detailed", label: "Detailed" }
+            ]}
+          />
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!workspaceId}
+              onClick={() => navigate(`/validation?workspace_id=${workspaceId}${activeValidationId ? `&history_id=${encodeURIComponent(activeValidationId)}&history_type=business_validation` : ""}`)}
+            >
+              Modify
+            </Button>
+            {!decision && (
+              <>
+                <Button size="sm" variant="danger" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("rejected")}>
+                  Reject
+                </Button>
+                <Button size="sm" disabled={decisionSaving || !workspaceId} onClick={() => setDecisionStatus("accepted")}>
+                  Accept
+                </Button>
+              </>
+            )}
+          </div>
         </div>
-      </div>
-
-      {/* ── Report download tabs ── */}
-      <div className="overflow-x-auto">
         <ReportDownloadPanel
           output={assembleOutput({
             workspaceId,
@@ -1081,84 +1079,86 @@ export default function ResultsPage() {
           currency={currency || "GBP"}
           reportTypes={["business_health_report", "investor_summary", "fragility_report", "stability_report"]}
           compact
+          spread
         />
       </div>
 
       {error ? <InlineAlert kind="error" message={error} /> : null}
       {decisionNotice ? <InlineAlert message={decisionNotice} /> : null}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <div className="space-y-4 lg:col-span-8">
-          {!isServiceIdea && viewMode === "simple" ? (
-            <SectionCard title="Market Intelligence" subtitle="AI-driven summary of your validation result.">
-              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-brand-50 via-white to-brand-100 p-4 sm:p-6 shadow-[0_4px_16px_rgb(0,0,0,0.04)] ring-1 ring-brand-200/50">
-                <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-brand-200/20 blur-3xl" />
-                <div className="absolute -left-20 -bottom-20 h-64 w-64 rounded-full bg-accent-200/20 blur-3xl" />
-
-                <div className="relative">
-                  <div className="flex items-center gap-4 mb-6">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-lg shadow-brand-200 ring-4 ring-brand-50">
-                      <svg className="w-6 h-6 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                        <path d="M8 9h8" /><path d="M8 13h6" />
-                      </svg>
-                    </div>
-                    <div>
-                      <h4 className="text-lg font-black tracking-tight text-slate-900">Executive Synthesis</h4>
-                      <div className="mt-0.5 flex items-center gap-1.5">
-                        <span className="relative flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-500"></span>
-                        </span>
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-brand-600/80">Validation Intelligence</span>
-                      </div>
-                    </div>
+      {/* Biz intro cards — full width, outside the aside grid so Score card aligns with Validation Insights */}
+      {!isServiceIdea && viewMode === "simple" && (
+        <SectionCard title="Market Intelligence" subtitle="AI-driven summary of your validation result.">
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-brand-50 via-white to-brand-100 p-4 sm:p-6 shadow-[0_4px_16px_rgb(0,0,0,0.04)] ring-1 ring-brand-200/50">
+            <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-brand-200/20 blur-3xl" />
+            <div className="absolute -left-20 -bottom-20 h-64 w-64 rounded-full bg-accent-200/20 blur-3xl" />
+            <div className="relative">
+              <div className="flex items-center gap-4 mb-6">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-lg shadow-brand-200 ring-4 ring-brand-50">
+                  <svg className="w-6 h-6 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    <path d="M8 9h8" /><path d="M8 13h6" />
+                  </svg>
+                </div>
+                <div>
+                  <h4 className="text-lg font-black tracking-tight text-slate-900">Executive Synthesis</h4>
+                  <div className="mt-0.5 flex items-center gap-1.5">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-500"></span>
+                    </span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-brand-600/80">Validation Intelligence</span>
                   </div>
-
-                  <div className="relative rounded-xl border border-white bg-white/40 p-5 backdrop-blur-sm">
-                    <svg className="absolute top-3 left-4 h-6 w-6 text-brand-200 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z"/></svg>
-                    <p className="pt-4 text-base leading-[1.75] text-slate-800" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontStyle: 'italic', letterSpacing: '0.01em' }}>
-                      {validationExplanation}
-                    </p>
-                  </div>
-
-                  {validation?.market_research?.risks?.length > 0 && (
-                    <div className="mt-6 flex flex-wrap gap-2">
-                      {validation.market_research.risks.slice(0, 3).map((risk, idx) => (
-                        <span key={idx} className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-3 py-1 text-[10px] font-bold text-rose-600 ring-1 ring-rose-200">
-                          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 9v4" /><path d="M12 17h.01" /></svg>
-                          {risk}
-                        </span>
-                      ))}
-                    </div>
-                  )}
                 </div>
               </div>
-            </SectionCard>
-          ) : !isServiceIdea && viewMode === "detailed" ? (
-            <SectionCard title="Validation Engine Data" subtitle="Underlying deterministic metrics for this idea.">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <StatTile
-                  label="Calculated Score"
-                  value={`${Math.round(score)}/100`}
-                  info="Weighted average based on problem severity, demand proof, and research signals."
-                  className="bg-white shadow-sm ring-1 ring-slate-200"
-                />
-                <StatTile
-                  label="Classification"
-                  value={classification}
-                  info="Overall market fit category."
-                  className="bg-white shadow-sm ring-1 ring-slate-200"
-                />
-                <StatTile
-                  label="Currency"
-                  value={currency || "GBP"}
-                  info="Currency used for any estimates."
-                  className="bg-white shadow-sm ring-1 ring-slate-200"
-                />
+              <div className="relative rounded-xl border border-white bg-white/40 p-5 backdrop-blur-sm">
+                <svg className="absolute top-3 left-4 h-6 w-6 text-brand-200 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z"/></svg>
+                <p className="pt-4 text-base leading-[1.75] text-slate-800" style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontStyle: 'italic', letterSpacing: '0.01em' }}>
+                  {validationExplanation}
+                </p>
               </div>
-            </SectionCard>
-          ) : (
+              {validation?.market_research?.risks?.length > 0 && (
+                <div className="mt-6 flex flex-wrap gap-2">
+                  {validation.market_research.risks.slice(0, 3).map((risk, idx) => (
+                    <span key={idx} className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-3 py-1 text-[10px] font-bold text-rose-600 ring-1 ring-rose-200">
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 9v4" /><path d="M12 17h.01" /></svg>
+                      {risk}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </SectionCard>
+      )}
+      {!isServiceIdea && viewMode === "detailed" && (
+        <SectionCard title="Validation Engine Data" subtitle="Underlying deterministic metrics for this idea.">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <StatTile
+              label="Calculated Score"
+              value={`${Math.round(score)}/100`}
+              info="Weighted average based on problem severity, demand proof, and research signals."
+              className="bg-white shadow-sm ring-1 ring-slate-200"
+            />
+            <StatTile
+              label="Classification"
+              value={classification}
+              info="Overall market fit category."
+              className="bg-white shadow-sm ring-1 ring-slate-200"
+            />
+            <StatTile
+              label="Currency"
+              value={currency || "GBP"}
+              info="Currency used for any estimates."
+              className="bg-white shadow-sm ring-1 ring-slate-200"
+            />
+          </div>
+        </SectionCard>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        <div className={`lg:col-span-8 ${!isServiceIdea ? "flex flex-col gap-4" : "space-y-4"}`}>
+          {isServiceIdea && (
             <SectionCard
               title={dimensionScores?.problem_severity !== undefined ? "Validation strength" : "Deterministic baseline model"}
               subtitle={dimensionScores?.problem_severity !== undefined ? "Performance across core validation dimensions." : "Unit economics and feasibility from your structured inputs."}
@@ -1191,7 +1191,6 @@ export default function ResultsPage() {
                       info="Monthly surplus (positive) or deficit (negative)."
                     />
                     <StatTile label="Contribution margin" value={formatPercent(margin)} info="(Revenue - costs) / revenue." />
-
                     {be !== null && (
                       <StatTile
                         label="Break-even"
@@ -1211,7 +1210,6 @@ export default function ResultsPage() {
                       info="How many months your cash can cover your burn. Infinity means cashflow-positive."
                     />
                   </div>
-
                   {viewMode === "detailed" ? (
                     <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
                       <StatTile label="Monthly costs" value={formatCurrency(costs, currency)} info="Fixed + variable costs per month." />
@@ -1233,8 +1231,35 @@ export default function ResultsPage() {
             </SectionCard>
           )}
 
+          {!isServiceIdea && viewMode !== "detailed" && bizSimRecs.length > 0 && (
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600">
+                  <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Recommended Simulations</div>
+                  <div className="text-xs text-slate-500">Run these what-if scenarios based on your results.</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {bizSimRecs.map((sim) => (
+                  <button key={sim.id} onClick={() => simCardClick(sim.id)}
+                    className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-brand-300 hover:bg-brand-50">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-sm">{sim.icon}</div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
+                      <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
+                    </div>
+                    <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {!isServiceIdea ? (
-            <SectionCard title="Validation Insights" subtitle="Deeper breakdown of market signals.">
+            <SectionCard title="Validation Insights" subtitle="Deeper breakdown of market signals." className={viewMode !== "detailed" ? "flex-1" : ""}>
                 <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                   <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
                     <div className="flex items-center gap-3 mb-4">
@@ -1524,7 +1549,7 @@ export default function ResultsPage() {
 
           {/* Card 2: Idea Strength Dimensions (simple mode only — detailed mode shows 3-col row below) */}
           {viewMode !== "detailed" && (
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm px-5 py-5">
+            <div className="flex-1 rounded-2xl border border-slate-200 bg-white shadow-sm px-5 py-5">
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <div className="text-sm font-semibold text-slate-900">
@@ -1586,33 +1611,38 @@ export default function ResultsPage() {
         </aside>
       </div>
 
-      {/* Recommended Simulations — full width */}
-      <SectionCard
-        title="Recommended Simulations"
-        subtitle="Run these what-if scenarios based on your validation results."
-        icon={
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600 shadow-sm">
-            <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      {/* Recommended Simulations — full width, detailed mode only */}
+      {viewMode === "detailed" && !isServiceIdea && bizSimRecs.length > 0 && (
+        <SectionCard
+          title="Recommended Simulations"
+          subtitle="Run these what-if scenarios based on your validation results."
+          icon={
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-brand-600 shadow-sm">
+              <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
+          }
+        >
+          <div
+            className="grid gap-3"
+            style={{ gridTemplateColumns: `repeat(${Math.min(bizSimRecs.length, 4)}, minmax(0, 1fr))` }}
+          >
+            {bizSimRecs.map((sim) => (
+              <button
+                key={sim.id}
+                onClick={() => simCardClick(sim.id)}
+                className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
+                  <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
+                </div>
+                <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+              </button>
+            ))}
           </div>
-        }
-      >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {bizSimRecs.map((sim) => (
-            <button
-              key={sim.id}
-              onClick={() => simCardClick(sim.id)}
-              className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow-md"
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-base">{sim.icon}</div>
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-slate-900 group-hover:text-brand-700">{sim.label}</div>
-                <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sim.desc}</div>
-              </div>
-              <svg className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-brand-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
-            </button>
-          ))}
-        </div>
-      </SectionCard>
+        </SectionCard>
+      )}
 
       {/* ── Detailed mode: Trend Score + Insights + ISD in one aligned 3-col row ── */}
       {viewMode === "detailed" && !isServiceIdea && (
@@ -1911,19 +1941,20 @@ export default function ResultsPage() {
                   )}
                 </div>
                 {validation.market_research.competitor_analysis.top_competitors?.length > 0 ? (
-                  <div className="overflow-x-auto rounded-xl border border-slate-100">
-                    <table className="w-full text-[11px]">
+                  <div className="rounded-xl border border-slate-100">
+                    <table className="w-full table-fixed text-[11px]">
+                      <colgroup>
+                        <col className="w-[18%]" />
+                        <col className="w-[13%]" />
+                        <col className="w-[11%]" />
+                        <col className="w-[13%]" />
+                        <col className="w-[22%]" />
+                        <col className="w-[23%]" />
+                      </colgroup>
                       <thead className="bg-slate-50">
                         <tr>
-                          {[
-                            { h: "Competitor", w: "w-36" },
-                            { h: "Est. Revenue", w: "w-28" },
-                            { h: "Market Share", w: "w-24" },
-                            { h: "Price Range", w: "w-28" },
-                            { h: "Strength", w: "w-48" },
-                            { h: "Weakness", w: "w-48" },
-                          ].map(({ h, w }) => (
-                            <th key={h} className={`px-3 py-2.5 text-left font-black uppercase tracking-wider text-[9px] text-slate-500 ${w}`}>{h}</th>
+                          {["Competitor", "Est. Revenue", "Market Share", "Price Range", "Strength", "Weakness"].map((h) => (
+                            <th key={h} className="px-3 py-2.5 text-left font-black uppercase tracking-wider text-[9px] text-slate-500">{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -1931,14 +1962,14 @@ export default function ResultsPage() {
                         {validation.market_research.competitor_analysis.top_competitors.map((c, i) => (
                           <tr key={i} className="border-t border-slate-100 hover:bg-slate-50/50">
                             <td className="px-3 py-3 font-black text-slate-900">
-                              <div className="whitespace-nowrap">{c.name}</div>
-                              {c.description && <div className="mt-0.5 max-w-[160px] text-[10px] font-medium text-slate-400 leading-snug">{c.description}</div>}
+                              <div className="truncate">{c.name}</div>
+                              {c.description && <div className="mt-0.5 text-[10px] font-medium text-slate-400 leading-snug line-clamp-2">{c.description}</div>}
                             </td>
-                            <td className="px-3 py-3 font-bold text-slate-700 whitespace-nowrap">{c.estimated_revenue || null}</td>
-                            <td className="px-3 py-3 font-bold text-slate-700 whitespace-nowrap">{c.market_share || null}</td>
-                            <td className="px-3 py-3 font-black text-emerald-700 whitespace-nowrap">{c.price_range || null}</td>
-                            <td className="px-3 py-3 text-slate-600 max-w-[200px]">{c.strength || null}</td>
-                            <td className="px-3 py-3 text-rose-600 max-w-[200px]">{c.weakness || null}</td>
+                            <td className="px-3 py-3 font-bold text-slate-700 truncate">{c.estimated_revenue || null}</td>
+                            <td className="px-3 py-3 font-bold text-slate-700 truncate">{c.market_share || null}</td>
+                            <td className="px-3 py-3 font-black text-emerald-700 truncate">{c.price_range || null}</td>
+                            <td className="px-3 py-3 text-slate-600 leading-snug">{c.strength || null}</td>
+                            <td className="px-3 py-3 text-rose-600 leading-snug">{c.weakness || null}</td>
                           </tr>
                         ))}
                       </tbody>

@@ -285,6 +285,8 @@ export default function Layout() {
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
   const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
+  const setWorkspaceCompanyName = useWorkspaceStore((s) => s.setWorkspaceCompanyName);
+  const workspaceCompanyName = useWorkspaceStore((s) => s.workspaceCompanyName);
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
   const setServiceDecisionStatus = useWorkspaceStore((s) => s.setServiceDecisionStatus);
   const setWorkspaceLoadedAt = useWorkspaceStore((s) => s.setWorkspaceLoadedAt);
@@ -302,7 +304,7 @@ export default function Layout() {
   const rejectedAny = decisionStatus === "rejected" || serviceDecisionStatus === "rejected";
   const workspaceDisplayName = isMemberMode
     ? (memberWorkspaceName || "Shared workspace")
-    : (acceptedAny && workspaceName ? workspaceName : workspaceName || "My workspace");
+    : (workspaceCompanyName || workspaceName || "My workspace");
   const email = useAuthStore((s) => s.email);
   const userName = useAuthStore((s) => s.name);
   const userPicture = useAuthStore((s) => s.picture);
@@ -479,6 +481,7 @@ export default function Layout() {
         setWorkspaceId(ws.id || null);
         setWorkspaceName(ws.name || null);
         setWorkspaceLogo(ws?.data?.workspace_profile?.logo_data_url || null);
+        setWorkspaceCompanyName(ws?.data?.workspace_profile?.company_name || null);
         setWorkspaceLoadedAt(new Date().toISOString());
         const rfqList = ws?.data?.financials?.rfq_requests;
         if (Array.isArray(rfqList)) setNotifications(rfqList.filter((r) => r.status === "pending"));
@@ -493,9 +496,9 @@ export default function Layout() {
         } else {
           setServiceDecisionStatus(null);
         }
-        if (ws?.data?.idea_validation) setIdeaValidation(ws.data.idea_validation);
-        if (ws?.data?.draft_idea_validation) setDraftIdeaValidation(ws.data.draft_idea_validation);
-        if (ws?.data?.draft_service_idea && !acceptedServiceEntry?.payload) setDraftServiceIdea(ws.data.draft_service_idea);
+        setIdeaValidation(ws?.data?.idea_validation ?? null);
+        setDraftIdeaValidation(ws?.data?.draft_idea_validation ?? null);
+        if (!acceptedServiceEntry?.payload) setDraftServiceIdea(ws?.data?.draft_service_idea ?? null);
         if (ws?.data?.inputs || ws?.data?.assumptions) setInputs(ws.data.inputs || ws.data.assumptions);
         const currency =
           ws?.data?.idea_validation?.context?.currency ||

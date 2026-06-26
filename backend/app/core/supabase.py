@@ -4,7 +4,7 @@ import time
 from typing import Any, Iterable
 
 import anyio
-from supabase import Client, ClientOptions, create_client
+from supabase import Client, create_client
 
 from app.core.config import get_settings
 
@@ -15,11 +15,7 @@ def _make_client() -> Client:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
         raise RuntimeError("Supabase URL / service role key not configured")
-    try:
-        options = ClientOptions(http2=False)
-    except TypeError:
-        options = ClientOptions()
-    return create_client(settings.supabase_url, settings.supabase_service_role_key, options=options)
+    return create_client(settings.supabase_url, settings.supabase_service_role_key)
 
 
 def get_supabase_client(reset: bool = False) -> Client:
@@ -29,7 +25,11 @@ def get_supabase_client(reset: bool = False) -> Client:
     return _client
 
 
-_RETRIABLE = frozenset({"RemoteProtocolError", "ConnectionError", "ConnectError", "ConnectionClosed", "RemoteDisconnected", "ProtocolError"})
+_RETRIABLE = frozenset({
+    "RemoteProtocolError", "ConnectionError", "ConnectError",
+    "ConnectionClosed", "RemoteDisconnected", "ProtocolError",
+    "WriteError", "ReadError",  # httpx/httpcore SSL EOF on stale HTTP/2 connections
+})
 
 
 def _is_retriable(exc: BaseException) -> bool:

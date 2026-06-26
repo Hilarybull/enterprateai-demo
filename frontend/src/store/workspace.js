@@ -7,6 +7,7 @@ export const useWorkspaceStore = create(
       workspaceId: null,
       workspaceName: null,
       workspaceLogo: null,
+      workspaceCompanyName: null,
       workspaceOwnerEmail: null,
       decisionStatus: null, // accepted | rejected | null
       serviceDecisionStatus: null, // accepted | rejected | null
@@ -28,6 +29,7 @@ export const useWorkspaceStore = create(
       setWorkspaceId: (workspaceId) => set({ workspaceId: workspaceId ?? null }),
       setWorkspaceName: (workspaceName) => set({ workspaceName: workspaceName || null }),
       setWorkspaceLogo: (workspaceLogo) => set({ workspaceLogo: workspaceLogo || null }),
+      setWorkspaceCompanyName: (workspaceCompanyName) => set({ workspaceCompanyName: workspaceCompanyName || null }),
       setWorkspaceOwnerEmail: (workspaceOwnerEmail) => set({ workspaceOwnerEmail: workspaceOwnerEmail || null }),
       setDecisionStatus: (decisionStatus) => set({ decisionStatus: decisionStatus || null }),
       setServiceDecisionStatus: (serviceDecisionStatus) => set({ serviceDecisionStatus: serviceDecisionStatus || null }),
@@ -64,6 +66,7 @@ export const useWorkspaceStore = create(
               workspaceId: null,
               workspaceName: null,
               workspaceLogo: null,
+              workspaceCompanyName: null,
               workspaceOwnerEmail: null,
               decisionStatus: null,
               serviceDecisionStatus: null,
@@ -112,6 +115,7 @@ export const useWorkspaceStore = create(
         workspaceId: state.workspaceId,
         workspaceName: state.workspaceName,
         workspaceLogo: state.workspaceLogo,
+        workspaceCompanyName: state.workspaceCompanyName,
         workspaceOwnerEmail: state.workspaceOwnerEmail,
         decisionStatus: state.decisionStatus,
         serviceDecisionStatus: state.serviceDecisionStatus,

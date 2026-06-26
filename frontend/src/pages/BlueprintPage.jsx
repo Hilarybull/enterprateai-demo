@@ -266,6 +266,8 @@ export default function BlueprintPage() {
   const setWorkspaceLogoStored = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
+  const serviceDecisionStatus = useWorkspaceStore((s) => s.serviceDecisionStatus);
+  const draftServiceIdea = useWorkspaceStore((s) => s.draftServiceIdea);
   const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
@@ -353,6 +355,7 @@ export default function BlueprintPage() {
   const [savedDocs, setSavedDocs] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [catalogueServices, setCatalogueServices] = useState([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [customClientName, setCustomClientName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -550,6 +553,10 @@ export default function BlueprintPage() {
     if (!dirtyFields.targetMarket && !targetMarket && prob.customer_segment) setTargetMarket(prob.customer_segment);
     if (!dirtyFields.problem && !problem && prob.problem_type) setProblem(prob.problem_type);
     if (!dirtyFields.solution && !solution && offer.service_type) setSolution(offer.service_type);
+    if (!dirtyFields.valueProp && !valueProp) {
+      const vp = String(ctx.business_offering || ctx.description || offer.service_type || "").trim();
+      if (vp) setValueProp(vp);
+    }
 
     const pm = String(offer.pricing_model || "").toLowerCase();
     if (pm && (pricingModel === "Subscription" || !pricingModel)) {
@@ -557,7 +564,35 @@ export default function BlueprintPage() {
       else if (pm === "retainer") setPricingModel("Retainer");
       else if (pm === "fixed_job") setPricingModel("One-time");
     }
-  }, [acceptedIdeaValidation, companyName, dirtyFields, industry, pricingModel, problem, solution, targetMarket]);
+  }, [acceptedIdeaValidation, companyName, dirtyFields, industry, pricingModel, problem, solution, targetMarket, valueProp]);
+
+  useEffect(() => {
+    if (serviceDecisionStatus !== "accepted" || !draftServiceIdea) return;
+    const svc = draftServiceIdea;
+    if (!dirtyFields.industry && !industry) {
+      const ind = String(svc.industry || svc.sector || "").trim();
+      if (ind) setIndustry(ind);
+    }
+    if (!dirtyFields.targetMarket && !targetMarket) {
+      const tm = String(svc.target_customer_type || "").trim();
+      if (tm) setTargetMarket(tm);
+    }
+    if (!dirtyFields.problem && !problem) {
+      const pr = String(svc.problem_to_solve || "").trim();
+      if (pr) setProblem(pr);
+    }
+    if (!dirtyFields.solution && !solution) {
+      const sl = String(svc.service_name || svc.service_description || "").trim();
+      if (sl) setSolution(sl);
+    }
+    if (!dirtyFields.valueProp && !valueProp) {
+      const vp = String(svc.differentiator || svc.service_description || "").trim();
+      if (vp) setValueProp(vp);
+    }
+    if (!dirtyFields.selectedServices && !selectedServices.length && svc.service_name) {
+      setSelectedServices([svc.service_name]);
+    }
+  }, [serviceDecisionStatus, draftServiceIdea, dirtyFields, industry, targetMarket, problem, solution, valueProp, selectedServices]);
 
   useEffect(() => {
     let alive = true;
@@ -640,6 +675,11 @@ export default function BlueprintPage() {
         const cat = ws?.data?.catalogue || {};
         setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
         setVendors(Array.isArray(cat.vendors) ? cat.vendors : []);
+        const svcProducts = (Array.isArray(cat.products) ? cat.products : [])
+          .filter((p) => !p.archived && (p.type === "service" || p.type === "Service"))
+          .map((p) => ({ service_name: String(p.name || "").trim(), service_category: "service", service_description: "" }))
+          .filter((s) => s.service_name);
+        setCatalogueServices(svcProducts);
       } catch {
         // ignore
       }
@@ -2371,7 +2411,15 @@ export default function BlueprintPage() {
                           <div>
                             <div className="ea-label">Services to focus on (optional)</div>
                             <ServicesDropdown
-                              workspaceServices={workspaceProfile?.services || []}
+                              workspaceServices={(() => {
+                                const profileSvcs = Array.isArray(workspaceProfile?.services) ? workspaceProfile.services : [];
+                                const seen = new Set(profileSvcs.map((s) => String(s?.service_name || "").toLowerCase()));
+                                const merged = [...profileSvcs];
+                                for (const s of catalogueServices) {
+                                  if (!seen.has(s.service_name.toLowerCase())) merged.push(s);
+                                }
+                                return merged;
+                              })()}
                               selectedServices={selectedServices}
                               setSelectedServices={setSelectedServices}
                               setDirtyFields={setDirtyFields}

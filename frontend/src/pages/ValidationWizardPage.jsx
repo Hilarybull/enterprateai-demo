@@ -255,6 +255,28 @@ function AISuggest({ onAccept, context }) {
   );
 }
 
+function ResumeButton({ entry, onEdit }) {
+  const [loading, setLoading] = useState(false);
+  const label = entry.status === "accepted" || entry.status === "rejected" ? "View" : "Resume";
+
+  async function handleClick(e) {
+    e.stopPropagation();
+    if (loading) return;
+    setLoading(true);
+    try {
+      await onEdit(entry);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Button size="sm" variant="secondary" disabled={loading} onClick={handleClick}>
+      {loading ? <><Spinner size={12} /> Loading…</> : label}
+    </Button>
+  );
+}
+
 export default function ValidationWizardPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -2891,9 +2913,7 @@ export default function ValidationWizardPage() {
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                            <Button size="sm" variant="secondary" onClick={() => editHistoryEntry(entry)}>
-                              {entry.status === "accepted" || entry.status === "rejected" ? "View" : "Resume"}
-                            </Button>
+                            <ResumeButton entry={entry} onEdit={editHistoryEntry} />
                             <Button variant="ghost" onClick={() => deleteHistoryEntry(entry.id)}>
                               Delete
                             </Button>
