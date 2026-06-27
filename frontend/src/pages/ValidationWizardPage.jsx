@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
@@ -31,6 +31,50 @@ function humanizeValidationError(e) {
     return detail ? `Validation error: ${detail}` : "Please check the required fields and try again.";
   }
   return msg;
+}
+
+function CheckboxDropdown({ options, selected, onChange, placeholder = "Select..." }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    function handle(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [open]);
+  const label = selected.length === 0 ? placeholder : selected.join(", ");
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="ea-input flex w-full items-center justify-between gap-2 text-left"
+      >
+        <span className={"flex-1 truncate text-sm " + (selected.length === 0 ? "text-slate-400" : "text-slate-800")}>{label}</span>
+        <svg className={"h-4 w-4 shrink-0 text-slate-400 transition-transform " + (open ? "rotate-180" : "")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg>
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full min-w-[220px] rounded-xl border border-slate-200 bg-white shadow-lg">
+          <div className="max-h-56 overflow-y-auto p-2 space-y-0.5">
+            {options.map((opt) => {
+              const checked = selected.includes(opt);
+              return (
+                <label key={opt} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onChange(checked ? selected.filter((o) => o !== opt) : [...selected, opt])}
+                    className="accent-brand-600 h-3.5 w-3.5"
+                  />
+                  <span className="text-sm text-slate-700">{opt}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function FieldLabel({ children, info }) {
@@ -431,7 +475,7 @@ export default function ValidationWizardPage() {
     service_name: "",
     service_category: "consulting",
     service_description: "",
-    target_customer_type: "SME",
+    target_customer_type: ["SME"],
     target_market_scope: "local",
     price_per_sale: "",
     expected_sales_per_month: "",
@@ -454,7 +498,9 @@ export default function ValidationWizardPage() {
     differentiator: "",
     demand_validation_proof: [],
     differentiation_level: "medium",
-    estimated_price: ""
+    estimated_price: "",
+    assumed_cost_per_unit: "",
+    required_capacity: "",
   }));
   const [serviceCurrency, setServiceCurrency] = useState("GBP");
   const serviceCurrencySymbol = useMemo(() => getCurrencySymbol(serviceCurrency), [serviceCurrency]);
@@ -764,7 +810,7 @@ export default function ValidationWizardPage() {
           service_name: draft.service_name ?? "",
           service_category: draft.service_category ?? "consulting",
           service_description: draft.service_description ?? "",
-          target_customer_type: draft.target_customer_type ?? "SME",
+          target_customer_type: Array.isArray(draft.target_customer_type) ? draft.target_customer_type : draft.target_customer_type ? String(draft.target_customer_type).split(",").map(s => s.trim()).filter(Boolean) : ["SME"],
           target_market_scope: draft.target_market_scope ?? "local",
           price_per_sale: draft.price_per_sale ?? "",
           expected_sales_per_month: draft.expected_sales_per_month ?? "",
@@ -786,7 +832,9 @@ export default function ValidationWizardPage() {
           competitor_price_low: draft.competitor_price_low ?? "",
           competitor_price_high: draft.competitor_price_high ?? "",
           differentiation_level: draft.differentiation_level ?? "medium",
-          country: draft.country ?? ""
+          country: draft.country ?? "",
+          assumed_cost_per_unit: draft.assumed_cost_per_unit ?? "",
+          required_capacity: draft.required_capacity ?? "",
         };
         setServiceForm((prev) => ({ ...prev, ...safeServiceDraft }));
       } else {
@@ -1374,12 +1422,15 @@ export default function ValidationWizardPage() {
           ...prev,
           ...payload,
           // Guard newer fields that may be absent in older saved payloads
+          target_customer_type: Array.isArray(payload?.target_customer_type) ? payload.target_customer_type : payload?.target_customer_type ? String(payload.target_customer_type).split(",").map(s => s.trim()).filter(Boolean) : (prev.target_customer_type || []),
           problem_to_solve: String(payload?.problem_to_solve ?? prev.problem_to_solve ?? ""),
           competitors_alternatives: String(payload?.competitors_alternatives ?? prev.competitors_alternatives ?? ""),
           differentiator: String(payload?.differentiator ?? prev.differentiator ?? ""),
           demand_validation_proof: Array.isArray(payload?.demand_validation_proof) ? payload.demand_validation_proof : (prev.demand_validation_proof || []),
           customer_need_frequency: String(payload?.customer_need_frequency ?? prev.customer_need_frequency ?? "Monthly"),
           estimated_price: String(payload?.estimated_price ?? prev.estimated_price ?? ""),
+          assumed_cost_per_unit: String(payload?.assumed_cost_per_unit ?? prev.assumed_cost_per_unit ?? ""),
+          required_capacity: String(payload?.required_capacity ?? prev.required_capacity ?? ""),
         }));
         setServiceCurrency(serviceEntry?.currency || data.currency || serviceCurrency || "GBP");
         setDraftServiceIdea(payload);
@@ -1489,11 +1540,30 @@ export default function ValidationWizardPage() {
         e?.id === entryId ? { ...e, decision_status: status, decided_at: now } : e
       );
 
+      // When rejecting a service validation, remove it from the catalogue
+      let cataloguePatch = {};
+      if (status === "rejected") {
+        const rejectedSEntry = sHistory.find(e => e?.id === entryId);
+        const rejectedVEntry = vHistory.find(e => e?.id === entryId && e?.type === "service_validation");
+        const rejectedEntry = rejectedSEntry || rejectedVEntry;
+        const serviceName = String(rejectedEntry?.service_name || rejectedEntry?.payload?.service_name || rejectedEntry?.title || "").trim();
+        if (serviceName) {
+          const existingCat = data.catalogue || { products: [], customers: [], vendors: [] };
+          const updatedProducts = (existingCat.products || []).filter(
+            p => String(p?.name || "").trim().toLowerCase() !== serviceName.toLowerCase()
+          );
+          if (updatedProducts.length !== (existingCat.products || []).length) {
+            cataloguePatch = { catalogue: { ...existingCat, products: updatedProducts } };
+          }
+        }
+      }
+
       await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
         data: {
           validation_history: nextVHistory,
           service_validation_history: nextSHistory,
           ...(status === "accepted" ? { active_validation_id: entryId } : {}),
+          ...cataloguePatch,
         }
       });
 
@@ -1592,7 +1662,7 @@ export default function ValidationWizardPage() {
       const required = [
         String(serviceForm.service_name || "").trim().length >= 2,
         String(serviceForm.service_description || "").trim().length >= 5,
-        String(serviceForm.target_customer_type || "").trim(),
+        (Array.isArray(serviceForm.target_customer_type) ? serviceForm.target_customer_type : []).length > 0,
         String(serviceForm.target_market_scope || "").trim(),
         // Use estimated_price and demand_validation_proof which are what's actually in the form
         parseNumber(serviceForm.estimated_price, 0) >= 0,
@@ -1778,7 +1848,7 @@ export default function ValidationWizardPage() {
       if (!String(serviceForm.service_description || "").trim()) return "Service description is required.";
       if (String(serviceForm.service_description || "").trim().length < 10) return "Service description should be at least 10 characters.";
       if (!String(serviceForm.service_category || "").trim()) return "Service category is required.";
-      if (!String(serviceForm.target_customer_type || "").trim()) return "Target customer type is required.";
+      if (!(Array.isArray(serviceForm.target_customer_type) ? serviceForm.target_customer_type : []).length) return "Target customer type is required.";
       if (!String(serviceForm.target_market_scope || "").trim()) return "Target market scope is required.";
       return null;
     }
@@ -2102,7 +2172,7 @@ export default function ValidationWizardPage() {
               industry: String(form?.context?.industry_category === "Other" ? (form?.context?.industry_other || "") : (form?.context?.industry_category || "")).trim(),
               sector: String(form?.context?.sector_category === "Other" ? (form?.context?.sector_other || "") : (form?.context?.sector_category || "")).trim(),
               country: String(form?.context?.country === "Other" ? (form?.context?.country_other || "") : (form?.context?.country || "")).trim() || null,
-              target_customer_type: String(serviceForm?.target_customer_type || "").trim(),
+              target_customer_type: Array.isArray(serviceForm?.target_customer_type) ? serviceForm.target_customer_type.join(", ") : String(serviceForm?.target_customer_type || "").trim(),
               target_market_scope: String(serviceForm?.target_market_scope || "").trim().toLowerCase(),
               price_per_sale: parseNumber(serviceForm?.price_per_sale, 0),
               expected_sales_per_month: parseNumber(serviceForm?.expected_sales_per_month, 0),
@@ -2130,6 +2200,8 @@ export default function ValidationWizardPage() {
               demand_validation_proof: Array.isArray(serviceForm?.demand_validation_proof) ? serviceForm.demand_validation_proof : [],
               customer_need_frequency: String(serviceForm?.customer_need_frequency || "Monthly").trim(),
               estimated_price: String(serviceForm?.estimated_price || "").trim(),
+              assumed_cost_per_unit: parseNumber(serviceForm?.assumed_cost_per_unit, 0),
+              required_capacity: parseNumber(serviceForm?.required_capacity, 0),
             };
             const result = await apiRequest(
               "/service-ideas/validate",
@@ -3413,7 +3485,7 @@ export default function ValidationWizardPage() {
                               onChange={(e) => updateService("service_description", e.target.value)}
                             />
                             <AISuggest
-                              context={{ field: "service_description", description: serviceForm.service_name, segment: serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
+                              context={{ field: "service_description", description: serviceForm.service_name, segment: Array.isArray(serviceForm.target_customer_type) ? serviceForm.target_customer_type.join(", ") : serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
                               onAccept={(v) => updateService("service_description", v)}
                             />
                           </div>
@@ -3428,28 +3500,13 @@ export default function ValidationWizardPage() {
                         </div>
                         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                           <div>
-                            <FieldLabel info="Target customers.">3. Who is it for?</FieldLabel>
-                            {(() => {
-                              const TARGET_OPTIONS = ["SME", "Enterprise", "Startups", "Freelancers", "Consumers (B2C)", "Non-profits", "Government / Public sector", "Students", "Healthcare professionals", "Retailers"];
-                              const isKnown = TARGET_OPTIONS.includes(serviceForm.target_customer_type);
-                              const dropdownVal = isKnown ? serviceForm.target_customer_type : serviceForm.target_customer_type ? "Other" : "";
-                              return (
-                                <>
-                                  <select
-                                    className="ea-input"
-                                    value={dropdownVal}
-                                    onChange={(e) => updateService("target_customer_type", e.target.value === "Other" ? "" : e.target.value)}
-                                  >
-                                    <option value="">Select target audience…</option>
-                                    {TARGET_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-                                    <option value="Other">Other…</option>
-                                  </select>
-                                  {dropdownVal === "Other" && (
-                                    <Input className="mt-2" placeholder="Describe your target audience…" value={serviceForm.target_customer_type} onChange={(e) => updateService("target_customer_type", e.target.value)} />
-                                  )}
-                                </>
-                              );
-                            })()}
+                            <FieldLabel info="Select all audience types that apply.">3. Who is it for?</FieldLabel>
+                            <CheckboxDropdown
+                              options={["SME", "Enterprise", "Startups", "Freelancers", "Consumers (B2C)", "Non-profits", "Government / Public sector", "Students", "Healthcare professionals", "Retailers", "Other"]}
+                              selected={Array.isArray(serviceForm.target_customer_type) ? serviceForm.target_customer_type : []}
+                              onChange={(next) => updateService("target_customer_type", next)}
+                              placeholder="Select audience types..."
+                            />
                           </div>
                           <div>
                             <FieldLabel info="Geographic reach for the service.">4. What is your market scope?</FieldLabel>
@@ -3473,7 +3530,7 @@ export default function ValidationWizardPage() {
                               onChange={(e) => updateService("problem_to_solve", e.target.value)}
                             />
                             <AISuggest
-                              context={{ field: "service_problem", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(" — "), segment: serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
+                              context={{ field: "service_problem", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(" — "), segment: Array.isArray(serviceForm.target_customer_type) ? serviceForm.target_customer_type.join(", ") : serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
                               onAccept={(v) => updateService("problem_to_solve", v)}
                             />
                           </div>
@@ -3511,7 +3568,7 @@ export default function ValidationWizardPage() {
                               onChange={(e) => updateService("competitors_alternatives", e.target.value)}
                             />
                             <AISuggest
-                              context={{ field: "service_alternatives", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(" — "), problem: serviceForm.problem_to_solve, segment: serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
+                              context={{ field: "service_alternatives", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(" — "), problem: serviceForm.problem_to_solve, segment: Array.isArray(serviceForm.target_customer_type) ? serviceForm.target_customer_type.join(", ") : serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
                               onAccept={(v) => updateService("competitors_alternatives", v)}
                             />
                           </div>
@@ -3524,7 +3581,7 @@ export default function ValidationWizardPage() {
                               onChange={(e) => updateService("differentiator", e.target.value)}
                             />
                             <AISuggest
-                              context={{ field: "service_differentiator", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(" — "), alternatives: serviceForm.competitors_alternatives, segment: serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
+                              context={{ field: "service_differentiator", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(" — "), alternatives: serviceForm.competitors_alternatives, segment: Array.isArray(serviceForm.target_customer_type) ? serviceForm.target_customer_type.join(", ") : serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
                               onAccept={(v) => updateService("differentiator", v)}
                             />
                           </div>
@@ -3563,18 +3620,26 @@ export default function ValidationWizardPage() {
                               })}
                             </div>
                           </div>
-                          <div>
-                            <FieldLabel info="Pricing strategy.">10. Estimated selling price (Optional)</FieldLabel>
-                            <div className="relative max-w-[200px]">
-                              <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">
-                                {serviceCurrencySymbol}
+                          <div className="md:col-span-2">
+                            <div className="flex flex-wrap gap-6 items-start">
+                              <div className="flex-1 min-w-[160px]">
+                                <FieldLabel info="Pricing strategy.">10. Estimated selling price (Optional)</FieldLabel>
+                                <div className="relative">
+                                  <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">{serviceCurrencySymbol}</div>
+                                  <NumberInput className="pl-8 bg-white dark:bg-slate-900 border-slate-200" placeholder="0.0" value={serviceForm.estimated_price} onChange={(v) => updateService("estimated_price", v)} />
+                                </div>
                               </div>
-                              <NumberInput
-                                className="pl-8 bg-white dark:bg-slate-900 border-slate-200"
-                                placeholder="0.0"
-                                value={serviceForm.estimated_price}
-                                onChange={(v) => updateService("estimated_price", v)}
-                              />
+                              <div className="flex-1 min-w-[160px]">
+                                <FieldLabel info="The assumed cost to deliver one unit of this service (materials, labour, etc.).">11. Assumed cost per unit (Optional)</FieldLabel>
+                                <div className="relative">
+                                  <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">{serviceCurrencySymbol}</div>
+                                  <NumberInput className="pl-8 bg-white dark:bg-slate-900 border-slate-200" placeholder="0.0" value={serviceForm.assumed_cost_per_unit} onChange={(v) => updateService("assumed_cost_per_unit", v)} />
+                                </div>
+                              </div>
+                              <div className="flex-1 min-w-[160px]">
+                                <FieldLabel info="How many units of this service can you deliver per month (your capacity)?">12. Required delivery capacity / month (Optional)</FieldLabel>
+                                <NumberInput className="bg-white dark:bg-slate-900 border-slate-200" placeholder="e.g. 20" value={serviceForm.required_capacity} onChange={(v) => updateService("required_capacity", v)} />
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -3979,7 +4044,8 @@ export default function ValidationWizardPage() {
                             </div>
                             <div>
                               <FieldLabel info="Who this service is for.">Target customer type *</FieldLabel>
-                              <select value={serviceForm.target_customer_type} onChange={(e) => updateService("target_customer_type", e.target.value)} className="ea-input">
+                              <select value={Array.isArray(serviceForm.target_customer_type) ? (serviceForm.target_customer_type[0] || "") : (serviceForm.target_customer_type || "")} onChange={(e) => updateService("target_customer_type", e.target.value ? [e.target.value] : [])} className="ea-input">
+                                <option value="">Select…</option>
                                 {TARGET_CUSTOMER_OPTIONS.map((o) => (<option key={o} value={o}>{formatEnumLabel(o)}</option>))}
                               </select>
                             </div>

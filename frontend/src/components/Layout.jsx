@@ -610,6 +610,7 @@ export default function Layout() {
             <a href="/" className="cursor-pointer">
               <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto object-contain sm:h-8" />
             </a>
+            <span className="rounded-md bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-700">Beta</span>
           </div>
         </div>
         <button className="md:hidden rounded-xl p-2 text-slate-600 hover:bg-slate-100" onClick={() => setMobileOpen(false)}>

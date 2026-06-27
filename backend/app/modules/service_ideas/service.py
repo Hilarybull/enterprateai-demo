@@ -9,14 +9,15 @@ def evaluate_service_idea(payload: ServiceIdeaValidateRequest) -> dict:
     # Revenue
     monthly_revenue = payload.price_per_sale * payload.expected_sales_per_month
 
-    # Variable costs
-    variable_cost_per_sale = (
+    # Variable costs — use assumed_cost_per_unit as fallback when detailed breakdown is all zero
+    detailed_variable_cost = (
         payload.direct_labour_cost_per_sale
         + payload.contractor_cost_per_sale
         + payload.materials_cost_per_sale
         + payload.travel_cost_per_sale
         + payload.other_direct_cost_per_sale
     )
+    variable_cost_per_sale = detailed_variable_cost if detailed_variable_cost > 0 else payload.assumed_cost_per_unit
     monthly_variable_cost = variable_cost_per_sale * payload.expected_sales_per_month
 
     # Fixed costs
@@ -46,16 +47,18 @@ def evaluate_service_idea(payload: ServiceIdeaValidateRequest) -> dict:
         else:
             break_even_months = break_even_sales / payload.expected_sales_per_month
 
-    # Capacity
+    # Capacity — use required_capacity as fallback when hours-based capacity is unknown
     if payload.hours_required_per_sale > 0:
         capacity_sales_per_month = payload.available_delivery_hours_per_month / payload.hours_required_per_sale
+    elif payload.required_capacity > 0:
+        capacity_sales_per_month = payload.required_capacity
     else:
         capacity_sales_per_month = 0
 
     capacity_utilisation = (
         payload.expected_sales_per_month / capacity_sales_per_month if capacity_sales_per_month > 0 else 0
     )
-    capacity_feasible = payload.expected_sales_per_month <= capacity_sales_per_month
+    capacity_feasible = capacity_sales_per_month == 0 or payload.expected_sales_per_month <= capacity_sales_per_month
 
     # Scores
     if contribution_margin > 0.5:
@@ -156,6 +159,7 @@ def evaluate_service_idea(payload: ServiceIdeaValidateRequest) -> dict:
         "capacity_sales_per_month": capacity_sales_per_month,
         "capacity_utilisation": capacity_utilisation,
         "capacity_feasible": capacity_feasible,
+        "effective_cost_per_unit": variable_cost_per_sale,
     }
 
     scores = {

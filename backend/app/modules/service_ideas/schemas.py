@@ -53,6 +53,10 @@ class ServiceIdeaValidateRequest(BaseModel):
     differentiation_level: DifferentiationLevel = "medium"
     country: Optional[str] = None
 
+    # Simplified cost / capacity fields (optional; used when detailed breakdown is not filled)
+    assumed_cost_per_unit: float = Field(ge=0, default=0)
+    required_capacity: float = Field(ge=0, default=0)
+
     @model_validator(mode="after")
     def validate_competitor_prices(self):
         if self.competitor_price_high and self.competitor_price_low and self.competitor_price_high < self.competitor_price_low:

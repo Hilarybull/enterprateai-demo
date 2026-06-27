@@ -49,8 +49,9 @@ export default function LoginPage() {
 
       <div className="relative w-full max-w-[520px] pb-10">
         <div className="text-center">
-          <div className="mx-auto inline-flex items-center justify-center">
+          <div className="mx-auto inline-flex items-center gap-2">
             <img src={logoUrl} alt="EnterprateAI" className="h-10 w-auto object-contain sm:h-12" />
+            <span className="rounded-md bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-700">Beta</span>
           </div>
           <div className="mt-3 text-[28px] font-semibold tracking-tight text-brand-700 sm:text-3xl [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:text-2xl">
             Welcome to EnterprateAI
