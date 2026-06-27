@@ -1540,19 +1540,45 @@ export default function ValidationWizardPage() {
         e?.id === entryId ? { ...e, decision_status: status, decided_at: now } : e
       );
 
-      // When rejecting a service validation, remove it from the catalogue
+      // Sync catalogue when accepting or rejecting a service validation
       let cataloguePatch = {};
-      if (status === "rejected") {
-        const rejectedSEntry = sHistory.find(e => e?.id === entryId);
-        const rejectedVEntry = vHistory.find(e => e?.id === entryId && e?.type === "service_validation");
-        const rejectedEntry = rejectedSEntry || rejectedVEntry;
-        const serviceName = String(rejectedEntry?.service_name || rejectedEntry?.payload?.service_name || rejectedEntry?.title || "").trim();
-        if (serviceName) {
-          const existingCat = data.catalogue || { products: [], customers: [], vendors: [] };
-          const updatedProducts = (existingCat.products || []).filter(
+      const targetSEntry = sHistory.find(e => e?.id === entryId);
+      const targetVEntry = vHistory.find(e => e?.id === entryId && e?.type === "service_validation");
+      const targetEntry = targetSEntry || targetVEntry;
+      const serviceName = String(targetEntry?.service_name || targetEntry?.payload?.service_name || targetEntry?.title || "").trim();
+
+      if (serviceName) {
+        const existingCat = data.catalogue || { products: [], customers: [], vendors: [] };
+        const existingProducts = Array.isArray(existingCat.products) ? existingCat.products : [];
+
+        if (status === "accepted") {
+          // Add to catalogue if not already present
+          const alreadyIn = existingProducts.some(
+            p => String(p?.name || "").trim().toLowerCase() === serviceName.toLowerCase()
+          );
+          if (!alreadyIn) {
+            const payload = targetEntry?.payload || {};
+            const newProduct = {
+              id: crypto.randomUUID(),
+              name: serviceName,
+              type: "service",
+              base_price: Number(payload.price_per_sale ?? payload.estimated_price ?? 0) || 0,
+              cost_of_sales: Number(payload.direct_labour_cost_per_sale ?? payload.assumed_cost_per_unit ?? 0) || 0,
+              discount: 0,
+              freight_cost: 0,
+              archived: false,
+              created_at: now,
+              updated_at: now,
+              source: "validation",
+            };
+            cataloguePatch = { catalogue: { ...existingCat, products: [newProduct, ...existingProducts] } };
+          }
+        } else if (status === "rejected") {
+          // Remove from catalogue if present
+          const updatedProducts = existingProducts.filter(
             p => String(p?.name || "").trim().toLowerCase() !== serviceName.toLowerCase()
           );
-          if (updatedProducts.length !== (existingCat.products || []).length) {
+          if (updatedProducts.length !== existingProducts.length) {
             cataloguePatch = { catalogue: { ...existingCat, products: updatedProducts } };
           }
         }
