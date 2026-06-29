@@ -31,6 +31,7 @@ class SubscribeResponse(BaseModel):
 class CheckoutRequest(BaseModel):
     plan_key: VALID_PLAN_KEYS
     billing_period: Optional[VALID_BILLING] = "monthly"
+    promo_code: Optional[str] = None
 
 
 class CheckoutResponse(BaseModel):

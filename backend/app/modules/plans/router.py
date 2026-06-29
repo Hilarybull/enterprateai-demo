@@ -180,7 +180,7 @@ async def create_subscription(
         })
         customer_id = customer.id
 
-    subscription = client.subscriptions.create({
+    sub_params: dict = {
         "customer": customer_id,
         "items": [{"price": price_id}],
         "payment_behavior": "default_incomplete",
@@ -190,7 +190,16 @@ async def create_subscription(
             "plan_key": payload.plan_key,
             "billing_period": payload.billing_period,
         },
-    })
+    }
+    if payload.promo_code:
+        try:
+            codes = client.promotion_codes.list(code=payload.promo_code, active=True, limit=1)
+            if codes.data:
+                sub_params["promotion_code"] = codes.data[0].id
+        except Exception:
+            pass
+
+    subscription = client.subscriptions.create(sub_params)
 
     pi = subscription.latest_invoice.payment_intent  # type: ignore[union-attr]
     return {
@@ -210,7 +219,7 @@ async def create_checkout_session(
     price_id = _get_price_id(payload.plan_key, payload.billing_period)
     base = _frontend_url()
 
-    session = client.checkout.sessions.create({
+    session_params: dict = {
         "mode": "subscription",
         "line_items": [{"price": price_id, "quantity": 1}],
         "customer_email": user["email"],
@@ -221,7 +230,18 @@ async def create_checkout_session(
         },
         "success_url": f"{base}/pricing/success?session_id={{CHECKOUT_SESSION_ID}}",
         "cancel_url": f"{base}/pricing",
-    })
+        "allow_promotion_codes": True,
+    }
+    if payload.promo_code:
+        try:
+            codes = client.promotion_codes.list(code=payload.promo_code, active=True, limit=1)
+            if codes.data:
+                session_params["discounts"] = [{"promotion_code": codes.data[0].id}]
+                session_params.pop("allow_promotion_codes", None)
+        except Exception:
+            pass
+
+    session = client.checkout.sessions.create(session_params)
     return CheckoutResponse(checkout_url=session.url)
 
 

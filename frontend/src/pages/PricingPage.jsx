@@ -105,6 +105,7 @@ function StripeCardForm({ plan, billing, onSwitchToBank, onNetworkError }) {
   const [brand, setBrand] = useState("unknown");
   const [isVerve, setIsVerve] = useState(false);
   const [nameOnCard, setNameOnCard] = useState("");
+  const [promoCode, setPromoCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [elemReady, setElemReady] = useState(false);
@@ -133,7 +134,7 @@ function StripeCardForm({ plan, billing, onSwitchToBank, onNetworkError }) {
       const { client_secret } = await apiRequest(
         "/plans/create-subscription",
         "POST",
-        { plan_key: plan.key, billing_period: billing }
+        { plan_key: plan.key, billing_period: billing, promo_code: promoCode.trim() || undefined }
       );
 
       const cardElement = elements.getElement(CardNumberElement);
@@ -263,6 +264,20 @@ function StripeCardForm({ plan, billing, onSwitchToBank, onNetworkError }) {
               value={nameOnCard}
               onChange={(e) => setNameOnCard(e.target.value)}
               className="ea-input"
+            />
+          </div>
+
+          {/* Promo code */}
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              Promo Code <span className="normal-case font-normal text-slate-400">(optional)</span>
+            </label>
+            <input
+              type="text"
+              placeholder="Enter code"
+              value={promoCode}
+              onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+              className="ea-input font-mono tracking-widest"
             />
           </div>
 
