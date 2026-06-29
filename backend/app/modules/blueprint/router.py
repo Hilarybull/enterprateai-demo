@@ -392,10 +392,10 @@ async def suggest_blueprint_field(
     payload: FieldSuggestRequest,
     user=Depends(get_current_user),
 ) -> dict:
-    from app.shared.llm.openai_client import AutoLLMClient
+    from app.shared.llm.openai_client import AnthropicMessagesClient
     from app.modules.blueprint.service import SYSTEM_POLICY
 
-    llm = AutoLLMClient()
+    llm = AnthropicMessagesClient()
 
     svc_text = ", ".join(payload.selected_services) if payload.selected_services else ""
     ctx = (

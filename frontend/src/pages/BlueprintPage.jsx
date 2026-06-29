@@ -86,25 +86,31 @@ const SALES_LETTER_SECTIONS = [
 
 function AiFillButton({ context, onFill }) {
   const [loading, setLoading] = useState(false);
-  const [errored, setErrored] = useState(false);
+  const [tip, setTip] = useState("");
   async function handle() {
     setLoading(true);
-    setErrored(false);
+    setTip("");
     try {
       const res = await apiRequest("/blueprint/suggest-field", "POST", context);
-      if (res?.value) onFill(res.value);
-      else setErrored(true);
+      if (res?.value) {
+        onFill(res.value);
+      } else {
+        setTip("Couldn't generate a suggestion. Try again.");
+      }
     } catch {
-      setErrored(true);
+      setTip("Couldn't generate a suggestion. Try again.");
     } finally {
       setLoading(false);
     }
   }
   return (
-    <button type="button" onClick={handle} disabled={loading}
-      className={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-semibold border disabled:opacity-50 transition-colors ${errored ? "text-rose-600 border-rose-200 hover:bg-rose-50" : "text-brand-600 border-brand-200 hover:bg-brand-50"}`}>
-      {loading ? "..." : errored ? "Retry" : "✦ AI Fill"}
-    </button>
+    <div className="relative inline-flex flex-col items-end gap-0.5">
+      <button type="button" onClick={handle} disabled={loading}
+        className={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-semibold border disabled:opacity-50 transition-colors ${tip ? "text-amber-600 border-amber-200 hover:bg-amber-50" : "text-brand-600 border-brand-200 hover:bg-brand-50"}`}>
+        {loading ? "Thinking..." : tip ? "Try again" : "✦ AI Fill"}
+      </button>
+      {tip ? <span className="text-[10px] text-amber-600 whitespace-nowrap">{tip}</span> : null}
+    </div>
   );
 }
 
@@ -847,6 +853,22 @@ export default function BlueprintPage() {
       }));
       setSectionTabByDoc((prev) => ({ ...prev, [type]: null }));
     } catch (e) {
+      // If 404, the document was deleted server-side — purge it from local state and cache
+      const is404 = String(e?.message || "").includes("404") || String(e?.message || "").toLowerCase().includes("not found");
+      if (is404) {
+        const missingType = docItem?.type;
+        const missingId = docItem?.id;
+        setSavedDocs((prev) => prev.filter((d) => d.id !== missingId && d.type !== missingType));
+        if (missingType) setDocByType((prev) => ({ ...prev, [missingType]: null }));
+        if (authEmail) {
+          writeBlueprintCache(authEmail, readBlueprintCache(authEmail).filter(
+            (d) => d.id !== missingId && d.type !== missingType
+          ));
+        }
+        setError(null);
+        setIsLoading(false);
+        return;
+      }
       const cached = readBlueprintCache(authEmail).find((item) => item.id === docItem?.id || item.type === docItem?.type);
       if (cached?.type && cached?.document_markdown) {
         const type = cached.type;
@@ -1868,7 +1890,14 @@ export default function BlueprintPage() {
         setIsSaving(true);
     setError(null);
     try {
-      await apiRequest(`/blueprint/documents/${docId}`, "DELETE");
+      try {
+        await apiRequest(`/blueprint/documents/${docId}`, "DELETE");
+      } catch (e) {
+        // 404 means document is already gone — treat as success
+        if (!String(e?.message || "").includes("404") && !String(e?.message || "").includes("not found")) {
+          throw e;
+        }
+      }
       if (workspaceIdStored) {
         try {
           const ws = await apiRequest("/validation/me", "GET");
@@ -1883,6 +1912,13 @@ export default function BlueprintPage() {
         }
       }
       setSavedDocs((prev) => prev.filter((d) => d.id !== docId));
+      // Remove from localStorage cache so stale data doesn't reappear
+      if (authEmail) {
+        const cached = readBlueprintCache(authEmail).filter(
+          (d) => d.id !== docId && d.type !== typeHint
+        );
+        writeBlueprintCache(authEmail, cached);
+      }
       if (typeHint) {
         setDocByType((prev) => ({ ...prev, [typeHint]: null }));
         setDocIdByType((prev) => {
