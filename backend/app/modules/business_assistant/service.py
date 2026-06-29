@@ -10,7 +10,7 @@ from fastapi import HTTPException, status
 from app.core.supabase import sb_select
 from app.modules.idea_validation.service import get_user_workspace
 from app.modules.business_assistant.schemas import BusinessAssistantChatRequest, BusinessAssistantChatResponse
-from app.shared.llm.openai_client import AutoLLMClient, NoopLLMClient
+from app.shared.llm.openai_client import AutoLLMClient, NoopLLMClient, pick_llm_for_user
 
 
 def _distinct_month_count(items: list[dict]) -> int:
@@ -106,7 +106,7 @@ def _clean_assistant_answer(text: str) -> str:
 
 
 async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatRequest) -> BusinessAssistantChatResponse:
-    llm = AutoLLMClient()
+    llm = await pick_llm_for_user(user_id)
     if isinstance(llm, NoopLLMClient):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

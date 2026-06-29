@@ -218,3 +218,16 @@ class AutoLLMClient(LLMClient):
         if last_err:
             raise last_err
         return await NoopLLMClient().generate_text(system=system, prompt=prompt)
+
+
+_FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
+
+
+async def pick_llm_for_user(user_id: str) -> LLMClient:
+    """Return AnthropicMessagesClient for paid plans, OpenAIResponsesClient for free/trial."""
+    from app.core.supabase import sb_select
+    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+    plan_key = (sub or {}).get("plan_key") or ""
+    status = (sub or {}).get("status") or ""
+    is_free = plan_key in _FREE_PLAN_KEYS or status in {"trial", "expired"}
+    return OpenAIResponsesClient() if is_free else AnthropicMessagesClient()

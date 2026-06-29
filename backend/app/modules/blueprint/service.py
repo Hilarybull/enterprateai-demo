@@ -32,7 +32,7 @@ from app.modules.idea_validation.service import evaluate as evaluate_validation
 from app.modules.idea_validation.service import get_workspace as get_validation_workspace
 from app.modules.idea_validation.schemas import IdeaValidationPayload
 from app.core.config import get_settings
-from app.shared.llm.openai_client import AutoLLMClient, LLMClient, NoopLLMClient
+from app.shared.llm.openai_client import AutoLLMClient, LLMClient, NoopLLMClient, pick_llm_for_user
 
 
 def _safe_text(s: str | None) -> str:
@@ -1636,7 +1636,10 @@ async def generate_blueprint(
     warnings: list[str] = []
     llm: LLMClient
     try:
-        llm = AutoLLMClient()
+        if user_id:
+            llm = await pick_llm_for_user(user_id)
+        else:
+            llm = AutoLLMClient()
         s = get_settings()
         if not (s.claude_api_key or s.gemini_api_key or s.openai_api_key):
             warnings.append("Text enhancement is unavailable; returned template-only document.")

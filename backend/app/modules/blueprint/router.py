@@ -392,16 +392,10 @@ async def suggest_blueprint_field(
     payload: FieldSuggestRequest,
     user=Depends(get_current_user),
 ) -> dict:
-    from app.shared.llm.openai_client import AnthropicMessagesClient, OpenAIResponsesClient
+    from app.shared.llm.openai_client import pick_llm_for_user
     from app.modules.blueprint.service import SYSTEM_POLICY
-    from app.core.supabase import sb_select
 
-    FREE_PLANS = {"free_trial", "explorer", "expired", ""}
-    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user["id"])], single=True)
-    plan_key = (sub or {}).get("plan_key") or ""
-    is_free = plan_key in FREE_PLANS or (sub or {}).get("status") in {"trial", "expired", None}
-
-    llm = OpenAIResponsesClient() if is_free else AnthropicMessagesClient()
+    llm = await pick_llm_for_user(user["id"])
 
     svc_text = ", ".join(payload.selected_services) if payload.selected_services else ""
     ctx = (
