@@ -86,6 +86,40 @@ function FieldLabel({ children, info }) {
   );
 }
 
+function WorkspaceAiFill({ field, profile, onFill }) {
+  const [busy, setBusy] = useState(false);
+  async function fill() {
+    setBusy(true);
+    try {
+      const res = await apiRequest("/blueprint/suggest-field", "POST", {
+        field,
+        company_name: profile?.company_name || "",
+        industry: profile?.primary_industry || "",
+        target_market: "",
+        problem: "",
+        solution: "",
+        value_proposition: profile?.about_company || "",
+        selected_services: (profile?.services || []).map((s) => s.service_name).filter(Boolean),
+      });
+      if (res?.value) onFill(res.value);
+    } catch {
+      // silent fail
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={fill}
+      disabled={busy}
+      className="ml-auto flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-brand-600 hover:bg-brand-50 disabled:opacity-50 transition-colors"
+    >
+      {busy ? "..." : "✦ AI Fill"}
+    </button>
+  );
+}
+
 function FormSection({ title, children, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -368,6 +402,7 @@ export default function ValidationWizardPage() {
   const [savedServiceIdeas, setSavedServiceIdeas] = useState([]);
   const [validationHistory, setValidationHistory] = useState([]);
   const [editingHistoryEntry, setEditingHistoryEntry] = useState(null);
+  const [isRejectedReedit, setIsRejectedReedit] = useState(false);
   const [serviceSelection, setServiceSelection] = useState("");
   const [hasAppliedDrafts, setHasAppliedDrafts] = useState(false);
   const [serviceFormDirty, setServiceFormDirty] = useState(false);
@@ -1397,7 +1432,8 @@ export default function ValidationWizardPage() {
       setWorkspaceName(ws?.name || "");
       setWorkspaceNameTouched(true);
 
-      const isViewing = entry.status === "accepted" || entry.status === "rejected";
+      const isViewing = entry.status === "accepted";
+      const isRejected = entry.status === "rejected";
 
       if (entry.type === "service_validation") {
         const serviceHistory = Array.isArray(data.service_validation_history) ? data.service_validation_history : [];
@@ -1435,8 +1471,10 @@ export default function ValidationWizardPage() {
         setServiceCurrency(serviceEntry?.currency || data.currency || serviceCurrency || "GBP");
         setDraftServiceIdea(payload);
         setValidation(serviceEntry?.result || entry.result || null);
-        setServiceDecisionStatus(entry.status || null);
+        // For rejected entries, clear decision status so the form is editable
+        setServiceDecisionStatus(isRejected ? null : (entry.status || null));
         setDecisionStatus(null);
+        setIsRejectedReedit(isRejected);
         setEditingHistoryEntry({
           id: entry.id,
           type: "service_validation",
@@ -1480,8 +1518,10 @@ export default function ValidationWizardPage() {
         setDraftIdeaValidation(payload);
         setValidation(entry.result || null);
         setIdeaValidation(payload);
-        setDecisionStatus(entry.status || null);
+        // For rejected entries, clear decision status so the form is editable
+        setDecisionStatus(isRejected ? null : (entry.status || null));
         setServiceDecisionStatus(null);
+        setIsRejectedReedit(isRejected);
         setEditingHistoryEntry({
           id: entry.id,
           type: "business_validation",
@@ -2539,6 +2579,11 @@ export default function ValidationWizardPage() {
           {savedNotice ? (
             <div className="mb-4">
               <InlineAlert message={savedNotice} />
+            </div>
+          ) : null}
+          {isRejectedReedit ? (
+            <div className="mb-4 rounded-xl border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+              This validation was previously rejected. Modify the inputs and run again.
             </div>
           ) : null}
 
@@ -3805,11 +3850,17 @@ export default function ValidationWizardPage() {
                           </select>
                         </div>
                         <div className="md:col-span-2 xl:col-span-3">
-                          <FieldLabel info="Short overview of what you do.">About company *</FieldLabel>
+                          <div className="flex items-center justify-between">
+                            <FieldLabel info="Short overview of what you do.">About company *</FieldLabel>
+                            <WorkspaceAiFill field="about_company" profile={profile} onFill={(v) => updateProfile("about_company", v)} />
+                          </div>
                           <textarea value={profile.about_company} onChange={(e) => updateProfile("about_company", e.target.value)} className="min-h-20 ea-input" />
                         </div>
                         <div className="md:col-span-2 xl:col-span-3">
-                          <FieldLabel>Tagline</FieldLabel>
+                          <div className="flex items-center justify-between">
+                            <FieldLabel>Tagline</FieldLabel>
+                            <WorkspaceAiFill field="tagline" profile={profile} onFill={(v) => updateProfile("tagline", v)} />
+                          </div>
                           <Input value={profile.tagline} onChange={(e) => updateProfile("tagline", e.target.value)} />
                         </div>
                         <div>
@@ -3881,15 +3932,24 @@ export default function ValidationWizardPage() {
                         </div>
 
                         <div>
-                          <FieldLabel>Vision</FieldLabel>
+                          <div className="flex items-center justify-between">
+                            <FieldLabel>Vision</FieldLabel>
+                            <WorkspaceAiFill field="vision" profile={profile} onFill={(v) => updateProfile("vision", v)} />
+                          </div>
                           <Input value={profile.vision} onChange={(e) => updateProfile("vision", e.target.value)} />
                         </div>
                         <div>
-                          <FieldLabel>Mission</FieldLabel>
+                          <div className="flex items-center justify-between">
+                            <FieldLabel>Mission</FieldLabel>
+                            <WorkspaceAiFill field="mission" profile={profile} onFill={(v) => updateProfile("mission", v)} />
+                          </div>
                           <Input value={profile.mission} onChange={(e) => updateProfile("mission", e.target.value)} />
                         </div>
                         <div className="md:col-span-2 xl:col-span-3">
-                          <FieldLabel>Core values (comma separated)</FieldLabel>
+                          <div className="flex items-center justify-between">
+                            <FieldLabel>Core values (comma separated)</FieldLabel>
+                            <WorkspaceAiFill field="core_values" profile={profile} onFill={(v) => updateProfile("core_values", v)} />
+                          </div>
                           <Input value={profile.core_values} onChange={(e) => updateProfile("core_values", e.target.value)} />
                         </div>
 

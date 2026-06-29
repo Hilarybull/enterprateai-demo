@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import DocumentEditor from "../components/DocumentEditor";
 import DocumentShareModal from "../components/DocumentShareModal";
 import Input from "../components/Input";
@@ -83,13 +84,49 @@ const SALES_LETTER_SECTIONS = [
   { id: "followup", label: "Follow-up summary" }
 ];
 
-const BUSINESS_PLAN_OBJECTIVES = ["Standard"];
+function AiFillButton({ context, onFill }) {
+  const [loading, setLoading] = useState(false);
+  const [errored, setErrored] = useState(false);
+  async function handle() {
+    setLoading(true);
+    setErrored(false);
+    try {
+      const res = await apiRequest("/blueprint/suggest-field", "POST", context);
+      if (res?.value) onFill(res.value);
+      else setErrored(true);
+    } catch {
+      setErrored(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+  return (
+    <button type="button" onClick={handle} disabled={loading}
+      className={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-semibold border disabled:opacity-50 transition-colors ${errored ? "text-rose-600 border-rose-200 hover:bg-rose-50" : "text-brand-600 border-brand-200 hover:bg-brand-50"}`}>
+      {loading ? "..." : errored ? "Retry" : "✦ AI Fill"}
+    </button>
+  );
+}
+
+const BUSINESS_PLAN_OBJECTIVES = [
+  "Standard",
+  "Investor-ready (seeking funding)",
+  "Internal strategy document",
+  "Bank / lender submission",
+  "Grant application",
+  "Partnership proposal",
+  "Other"
+];
 
 const CLIENT_PROPOSAL_OBJECTIVES = ["Sales Proposal"];
 
 const SALES_LETTER_OBJECTIVES = [
-  "Reduce rework and keep delivery on track",
-  "Build trust with predictable service quality",
+  "Generate new leads",
+  "Convert warm prospects",
+  "Re-engage dormant customers",
+  "Promote a new offer or service",
+  "Invite to event or webinar",
+  "Win back lost clients",
   "Other"
 ];
 
@@ -273,10 +310,18 @@ export default function BlueprintPage() {
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
   const authEmail = useAuthStore((s) => s.email);
+  const subscription = useAuthStore((s) => s.subscription);
+
+  const isFreeOrTrial = !subscription ||
+    ["free_trial", "explorer", "expired"].includes(subscription?.plan_key) ||
+    subscription?.status === "trial" ||
+    subscription?.status === "expired";
 
   function canBlueprintDoc(docId) {
     const featureKey = DOC_FEATURE_KEY[docId];
     if (!featureKey) return true;
+    // Free/trial plans cannot access Business Proposal at all
+    if (docId === "client_proposal" && isFreeOrTrial) return false;
     if (isPlatformFeatureRestricted("blueprint", featureKey, platformRestrictions)) return false;
     return !isMemberMode || hasFeatureAccess("blueprint", featureKey, memberPermissionType, memberPermissions);
   }
@@ -298,6 +343,7 @@ export default function BlueprintPage() {
   const [items, setItems] = useState("");
   const [terms, setTerms] = useState("");
   const [extraNotes, setExtraNotes] = useState("");
+  const [proposalLength, setProposalLength] = useState("full");
   const itemsRef = useRef(null);
 
   // Document-specific (optional) inputs
@@ -643,6 +689,14 @@ export default function BlueprintPage() {
             setSelectedServices(wpServices.map((s) => String(s?.service_name || "").trim()).filter(Boolean));
           }
         }
+        if (workspaceProfile.primary_revenue_model && pricingModel === "Subscription") {
+          const rm = String(workspaceProfile.primary_revenue_model).toLowerCase();
+          if (rm.includes("hourly")) setPricingModel("Hourly");
+          else if (rm.includes("retainer")) setPricingModel("Retainer");
+          else if (rm.includes("subscription")) setPricingModel("Subscription");
+          else if (rm.includes("fixed") || rm.includes("one")) setPricingModel("One-time");
+          else if (rm.includes("usage")) setPricingModel("Usage-based");
+        }
       } catch {
         // ignore
       }
@@ -656,6 +710,7 @@ export default function BlueprintPage() {
     companyName,
     dirtyFields,
     industry,
+    pricingModel,
     selectedServices.length,
     solution,
     targetMarket,
@@ -691,9 +746,9 @@ export default function BlueprintPage() {
   }, [workspaceIdStored]);
 
   useEffect(() => {
-    if (!workspaceProfile || !workspaceCompanyMatches()) return;
+    if (!workspaceProfile) return;
     const defaultContact = getWorkspaceContactDetails();
-    if (!dirtyFields.contactDetails && !contactDetails && defaultContact) setContactDetails(defaultContact);
+    if (!dirtyFields.contactDetails && !contactDetails && defaultContact && workspaceCompanyMatches()) setContactDetails(defaultContact);
     if (!dirtyFields.senderEmail && !senderEmail && workspaceProfile.email) setSenderEmail(String(workspaceProfile.email));
     if (!dirtyFields.senderPhone && !senderPhone && workspaceProfile.phone_number) setSenderPhone(String(workspaceProfile.phone_number));
     if (!dirtyFields.senderWebsite && !senderWebsite && workspaceProfile.website) setSenderWebsite(String(workspaceProfile.website));
@@ -1284,6 +1339,14 @@ export default function BlueprintPage() {
       setShowInputs(true);
       return;
     }
+    if (isFreeOrTrial && selectedDoc === "business_plan") {
+      const existingBizPlans = savedDocs.filter(d => d.type === "business_plan" && !String(d.id || "").startsWith("local:"));
+      if (existingBizPlans.length >= 1 && !docIdByType["business_plan"]) {
+        setError("Free plan allows 1 Business Plan. Delete the existing one or upgrade to generate more.");
+        setShowInputs(true);
+        return;
+      }
+    }
 
 	    // Sections behavior:
 	    // - For narrative docs (business plan / proposal): allow section-scoped generation.
@@ -1347,7 +1410,8 @@ export default function BlueprintPage() {
         subject_lines: getObjectiveValue("sales_letter"),
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
         sections: sectionsPayload,
-        word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
+        word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null,
+        proposal_length: selectedDoc === "client_proposal" ? proposalLength : null,
       };
       const res = await apiRequestWithRetry("/blueprint/generate", "POST", generateBody, { timeoutMs: 900000 });
       let resolvedDocumentId = res?.document_id || null;
@@ -1850,6 +1914,7 @@ export default function BlueprintPage() {
       if (selectedDoc && docIdByType[selectedDoc] === docId) {
         closeModal();
       }
+      refreshSavedDocs();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to delete document");
       } finally {
@@ -1866,6 +1931,19 @@ export default function BlueprintPage() {
     } catch {
       return "";
     }
+  }
+
+  function buildAiContext(fieldOverride) {
+    return {
+      field: fieldOverride || "problem",
+      company_name: companyName || workspaceProfile?.company_name || "",
+      industry,
+      target_market: targetMarket,
+      problem,
+      solution,
+      value_proposition: valueProp,
+      selected_services: resolveSelectedServices(),
+    };
   }
 
   if (!workspaceIdStored) {
@@ -1892,7 +1970,7 @@ export default function BlueprintPage() {
           <BlueprintIllustration />
         </IllustrationCard>
         <SectionCard title="Documents" subtitle="Click a document to generate it.">
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {DOCUMENTS.filter((d) => canBlueprintDoc(d.id)).map((d) => (
               <button
                 key={d.id}
@@ -2090,14 +2168,22 @@ export default function BlueprintPage() {
                   </div>
                 ) : selectedDocResult?.document_markdown ? (
                   <div className="flex h-full min-h-0 flex-col gap-3">
+                    {isFreeOrTrial && selectedDoc === "business_plan" ? (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                        Free plan — read only.{" "}
+                        <Link to="/pricing" className="font-semibold underline hover:text-amber-900">Upgrade</Link>
+                        {" "}to copy, share, or download.
+                      </div>
+                    ) : null}
                     <div className="flex-1 min-h-0">
                       <DocumentEditor
                         title={selectedMeta.title}
                         markdown={selectedDocResult.document_markdown}
                         initialHtml={selectedDocResult.document_html || ""}
                         onHtmlChange={(h) => setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: h }))}
-                        onDownload={downloadExport}
-                        onSave={saveEdits}
+                        onDownload={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : downloadExport}
+                        onSave={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : saveEdits}
+                        hideShare={isFreeOrTrial && selectedDoc === "business_plan"}
                         defaultMode="preview"
                         compactPreview
                         shareMenuItems={[
@@ -2358,7 +2444,10 @@ export default function BlueprintPage() {
                       {showCoreNarrative ? (
                         <>
                           <div>
-                            <div className="ea-label">Problem</div>
+                            <div className="flex items-center justify-between">
+                              <div className="ea-label">Problem</div>
+                              <AiFillButton context={buildAiContext("problem")} onFill={(v) => { setDirtyFields((p) => ({ ...p, problem: true })); setProblem(v); }} />
+                            </div>
                             <textarea
                               value={problem}
                               onChange={(e) => {
@@ -2371,7 +2460,10 @@ export default function BlueprintPage() {
                           </div>
 
                           <div>
-                            <div className="ea-label">Solution</div>
+                            <div className="flex items-center justify-between">
+                              <div className="ea-label">Solution</div>
+                              <AiFillButton context={buildAiContext("solution")} onFill={(v) => { setDirtyFields((p) => ({ ...p, solution: true })); setSolution(v); }} />
+                            </div>
                             <textarea
                               value={solution}
                               onChange={(e) => {
@@ -2396,13 +2488,17 @@ export default function BlueprintPage() {
                           </div>
 
                           <div>
-                            <div className="ea-label">Value proposition</div>
-                            <Input
+                            <div className="flex items-center justify-between">
+                              <div className="ea-label">Value proposition</div>
+                              <AiFillButton context={buildAiContext("value_proposition")} onFill={(v) => { setDirtyFields((p) => ({ ...p, valueProp: true })); setValueProp(v); }} />
+                            </div>
+                            <textarea
                               value={valueProp}
                               onChange={(e) => {
                                 setDirtyFields((p) => ({ ...p, valueProp: true }));
                                 setValueProp(e.target.value);
                               }}
+                              className="min-h-16 ea-input"
                               placeholder="Why will they choose you?"
                             />
                           </div>
@@ -2492,7 +2588,23 @@ export default function BlueprintPage() {
                       {showProposalExtras ? (
                         <>
                           <div>
-                            <div className="ea-label">Proposal title (optional)</div>
+                            <div className="ea-label">Proposal length</div>
+                            <div className="flex gap-3">
+                              {["brief", "full"].map(opt => (
+                                <label key={opt} className="flex items-center gap-1.5 cursor-pointer text-sm">
+                                  <input type="radio" name="proposalLength" value={opt} checked={proposalLength === opt}
+                                    onChange={() => setProposalLength(opt)} className="accent-brand-600" />
+                                  <span className="capitalize">{opt}</span>
+                                </label>
+                              ))}
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-500">Brief: 4-6 sections. Full: complete proposal.</div>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between">
+                              <div className="ea-label">Proposal title (optional)</div>
+                              <AiFillButton context={buildAiContext("proposal_title")} onFill={(v) => setProposalTitle(v)} />
+                            </div>
                             <Input value={proposalTitle} onChange={(e) => setProposalTitle(e.target.value)} placeholder="e.g., Business Proposal" />
                           </div>
                           <div>
@@ -2507,11 +2619,17 @@ export default function BlueprintPage() {
                             />
                           </div>
                           <div>
-                            <div className="ea-label">Timeline / plan (optional)</div>
+                            <div className="flex items-center justify-between">
+                              <div className="ea-label">Timeline / plan (optional)</div>
+                              <AiFillButton context={buildAiContext("timeline")} onFill={(v) => setTimeline(v)} />
+                            </div>
                             <textarea value={timeline} onChange={(e) => setTimeline(e.target.value)} className="min-h-16 ea-input" placeholder="Phases and milestones in words" />
                           </div>
                           <div>
-                            <div className="ea-label">Assumptions (optional)</div>
+                            <div className="flex items-center justify-between">
+                              <div className="ea-label">Assumptions (optional)</div>
+                              <AiFillButton context={buildAiContext("assumptions")} onFill={(v) => setAssumptions(v)} />
+                            </div>
                             <textarea value={assumptions} onChange={(e) => setAssumptions(e.target.value)} className="min-h-16 ea-input" placeholder="Key assumptions" />
                           </div>
                           <div>
@@ -2570,19 +2688,31 @@ export default function BlueprintPage() {
                             />
                           </div>
                           <div>
-                            <div className="ea-label">Offer (optional)</div>
+                            <div className="flex items-center justify-between">
+                              <div className="ea-label">Offer (optional)</div>
+                              <AiFillButton context={buildAiContext("offer")} onFill={(v) => setOffer(v)} />
+                            </div>
                             <Input value={offer} onChange={(e) => setOffer(e.target.value)} placeholder="What the reader gets (no prices)" />
                           </div>
                           <div>
-                            <div className="ea-label">Call to action (optional)</div>
+                            <div className="flex items-center justify-between">
+                              <div className="ea-label">Call to action (optional)</div>
+                              <AiFillButton context={buildAiContext("cta")} onFill={(v) => setCta(v)} />
+                            </div>
                             <Input value={cta} onChange={(e) => setCta(e.target.value)} placeholder="What should they do next?" />
                           </div>
                           <div>
-                            <div className="ea-label">Proof / credibility (optional)</div>
+                            <div className="flex items-center justify-between">
+                              <div className="ea-label">Proof / credibility (optional)</div>
+                              <AiFillButton context={buildAiContext("proof")} onFill={(v) => setProof(v)} />
+                            </div>
                             <textarea value={proof} onChange={(e) => setProof(e.target.value)} className="min-h-16 ea-input" placeholder="Experience, results, case study narrative (no numbers)" />
                           </div>
                           <div>
-                            <div className="ea-label">Urgency / scarcity (optional)</div>
+                            <div className="flex items-center justify-between">
+                              <div className="ea-label">Urgency / scarcity (optional)</div>
+                              <AiFillButton context={buildAiContext("urgency")} onFill={(v) => setUrgency(v)} />
+                            </div>
                             <Input value={urgency} onChange={(e) => setUrgency(e.target.value)} placeholder="Reason to act soon (no dates)" />
                           </div>
                           <div>

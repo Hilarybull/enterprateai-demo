@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import asyncio
 import re
 from html import escape
 from datetime import datetime
@@ -1243,14 +1244,15 @@ async def _ensure_section_bodies(
 ) -> str:
     """
     Ensure all requested H2 sections exist and are substantive.
-    If the full-document LLM output omitted sections (or returned very short ones),
-    generate only the missing bodies and rebuild deterministically.
+    Generates all missing/thin sections in parallel for speed.
     """
     inputs_text = format_inputs_for_prompt(raw_inputs)
     preamble, section_map = _extract_section_map(doc)
+
+    # Find all sections that need generation
+    missing = []
     for heading in wanted_headings:
         body = (section_map.get(heading) or "").strip()
-        # If body is missing or extremely short, regenerate the section body.
         if len(body.split()) >= 160:
             continue
         title = heading.replace("## ", "").strip()
@@ -1260,14 +1262,29 @@ async def _ensure_section_bodies(
             inputs_text=inputs_text,
             target_words=target_words,
         )
-        text, _, _ = await _generate_section_required(
-            llm,
-            prompt=prompt,
-            label=f"{doc_type}_{title}",
-            warnings=warnings,
-            error_label=f"{doc_type} section '{title}'",
+        missing.append((heading, title, prompt))
+
+    if missing:
+        async def gen_one(heading: str, title: str, prompt: str):
+            text, _, _ = await _generate_section_required(
+                llm,
+                prompt=prompt,
+                label=f"{doc_type}_{title}",
+                warnings=warnings,
+                error_label=f"{doc_type} section '{title}'",
+            )
+            return heading, text.strip()
+
+        results = await asyncio.gather(
+            *[gen_one(h, t, p) for h, t, p in missing],
+            return_exceptions=True,
         )
-        section_map[heading] = text.strip()
+        for result in results:
+            if isinstance(result, Exception):
+                continue  # warning already added in _generate_section_required
+            heading, text = result
+            section_map[heading] = text
+
     return _rebuild_with_headings(preamble=preamble, headings=wanted_headings, primary=section_map, fallback={})
 
 

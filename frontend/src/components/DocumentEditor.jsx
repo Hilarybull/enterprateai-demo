@@ -228,6 +228,7 @@ export default function DocumentEditor({
   toolbarRightSlot = null,
   toolbarBeforeDownloadSlot = null,
   shareMenuItems = null,
+  hideShare = false,
   showSaveButton = true,
   saveLabel = "Save changes",
   saveDisabled = false,
@@ -408,6 +409,7 @@ export default function DocumentEditor({
 
   const isCompactPreview = Boolean(compactPreview && showPaginated);
   const shareItems = useMemo(() => {
+    if (hideShare) return [];
     const extractText = () => {
       const container = document.createElement("div");
       container.innerHTML = getBodyHtml();
@@ -434,7 +436,7 @@ export default function DocumentEditor({
       merged.push(it);
     }
     return merged;
-  }, [shareMenuItems]);
+  }, [shareMenuItems, hideShare]);
 
   return (
     <Card className="h-full min-h-0 flex flex-col">

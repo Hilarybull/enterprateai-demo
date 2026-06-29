@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.core.supabase import sb_select
@@ -373,3 +374,70 @@ async def blueprint_documents_export(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}.pdf"'},
     )
+
+
+class FieldSuggestRequest(BaseModel):
+    field: str
+    company_name: str = ""
+    industry: str = ""
+    target_market: str = ""
+    problem: str = ""
+    solution: str = ""
+    value_proposition: str = ""
+    selected_services: list[str] = []
+
+
+@router.post("/suggest-field")
+async def suggest_blueprint_field(
+    payload: FieldSuggestRequest,
+    user=Depends(get_current_user),
+) -> dict:
+    from app.shared.llm.openai_client import AutoLLMClient
+    from app.modules.blueprint.service import SYSTEM_POLICY
+
+    llm = AutoLLMClient()
+
+    svc_text = ", ".join(payload.selected_services) if payload.selected_services else ""
+    ctx = (
+        f"Business: {payload.company_name or 'unknown'}, "
+        f"Industry: {payload.industry or 'unknown'}, "
+        f"Market: {payload.target_market or 'unknown'}"
+    )
+    if svc_text:
+        ctx += f", Services: {svc_text}"
+    if payload.problem:
+        ctx += f", Problem: {payload.problem}"
+    if payload.solution:
+        ctx += f", Solution: {payload.solution}"
+    if payload.value_proposition:
+        ctx += f", Value Prop: {payload.value_proposition}"
+
+    prompts = {
+        "problem": f"Write 1-2 concise sentences describing the core business problem being solved. Context: {ctx}. Return only the text, no labels.",
+        "solution": f"Write 1-2 concise sentences describing the business solution/offering. Context: {ctx}. Return only the text, no labels.",
+        "value_proposition": f"Write a single concise value proposition sentence (why customers choose this). Context: {ctx}. Return only the text, no labels.",
+        "timeline": f"Write a brief 3-phase project timeline (Discovery, Delivery, Review) for a business proposal. Context: {ctx}. Return only the text, no labels.",
+        "assumptions": f"List 3-4 key assumptions for this business proposal in plain text. Context: {ctx}. Return only the text, no labels.",
+        "offer": f"Describe a compelling offer for a sales letter in 1 sentence. Context: {ctx}. Return only the text, no labels.",
+        "cta": f"Write a clear call-to-action for a sales letter in 1 sentence. Context: {ctx}. Return only the text, no labels.",
+        "proof": f"Write 1-2 sentences of social proof / credibility for a sales letter. Context: {ctx}. Return only the text, no labels.",
+        "urgency": f"Write a concise urgency/scarcity line for a sales letter. Context: {ctx}. Return only the text, no labels.",
+        "proposal_title": f"Suggest a professional business proposal title. Context: {ctx}. Return only the title, no labels.",
+        "about_company": f"Write a 2-3 sentence company overview describing what it does, who it serves, and its edge. Context: {ctx}. Return only the text, no labels.",
+        "tagline": f"Write a punchy one-line business tagline (max 10 words). Context: {ctx}. Return only the tagline, no labels.",
+        "vision": f"Write a one-sentence company vision statement describing the future the company wants to create. Context: {ctx}. Return only the text, no labels.",
+        "mission": f"Write a one-sentence company mission statement describing how it achieves its vision. Context: {ctx}. Return only the text, no labels.",
+        "core_values": f"List 4-5 short company core values as comma-separated words or short phrases. Context: {ctx}. Return only the comma-separated list, no labels.",
+    }
+
+    prompt = prompts.get(
+        payload.field,
+        f"Provide a short, professional text for the '{payload.field}' field. Context: {ctx}. Return only the text, no labels.",
+    )
+
+    try:
+        res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt)
+        text = (res.text or "").strip()
+        return {"value": text}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI suggestion failed: {e}")
