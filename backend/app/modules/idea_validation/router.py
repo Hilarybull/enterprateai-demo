@@ -234,4 +234,4 @@ async def market_research_endpoint(
         fields = flatten_fields_from_payload(iv)
     else:
         fields = {}
-    return await run_market_research(fields)
+    return await run_market_research(fields, user_id=user["id"])

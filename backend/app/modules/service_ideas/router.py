@@ -37,7 +37,7 @@ async def validate_service_idea(
     # Deterministic eval is pure math (instant); market research is the slow part
     eval_result = evaluate_service_idea(payload)
     try:
-        market_research = await run_market_data_only(fields)
+        market_research = await run_market_data_only(fields, user_id=_user["id"])
     except Exception:
         market_research = {}
     return {**eval_result, "market_research": market_research}

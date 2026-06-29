@@ -498,7 +498,7 @@ async def evaluate(
                 "deterministic_evaluation": eval_result,
                 "market_fit_analysis": market_fit_res # Pass market fit to Claude for better summary
             }
-            narrative_report = await run_ai_narration(narration_fields, research_res["evidence"], research_res["shopping"])
+            narrative_report = await run_ai_narration(narration_fields, research_res["evidence"], research_res["shopping"], user_id=user_id)
             # CRITICAL: LOG THE RESPONSE FOR VERIFICATION
             logger.info("AI Narration Response: %s", json.dumps(narrative_report, indent=2))
         except Exception as e:

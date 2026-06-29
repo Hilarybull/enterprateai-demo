@@ -36,6 +36,21 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+_FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
+
+
+async def _pick_llm_caller(user_id: str):
+    """Return _call_claude for paid plans, _call_openai for free/trial."""
+    try:
+        from app.core.supabase import sb_select
+        sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+        plan_key = (sub or {}).get("plan_key") or ""
+        status = (sub or {}).get("status") or ""
+        is_free = plan_key in _FREE_PLAN_KEYS or status in {"trial", "expired"}
+        return _call_openai if is_free else _call_claude
+    except Exception:
+        return _call_openai
+
 SERP_BASE = "https://serpapi.com/search"
 SERPER_BASE = "https://google.serper.dev/search"
 OPENAI_BASE = "https://api.openai.com/v1/chat/completions"
@@ -830,41 +845,30 @@ Return ONLY valid JSON (no markdown, no preamble):
 }}"""
 
 
-async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]], shopping: list[dict[str, Any]] = None) -> dict[str, Any]:
+async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]], shopping: list[dict[str, Any]] = None, *, user_id: str = "") -> dict[str, Any]:
     """
     Step 2: Run narrative prompt + market-data prompt concurrently, merge results.
     """
-    settings = get_settings()
     narrative_prompt = _build_synthesis_prompt(fields, evidence)
     market_prompt = _build_market_data_prompt(fields, evidence)
+
+    call_llm = await _pick_llm_caller(user_id)
 
     narrative_report: dict[str, Any] = {}
     market_data: dict[str, Any] = {}
 
     async def call_narrative():
-        if settings.claude_api_key:
-            try:
-                return await _call_claude(narrative_prompt)
-            except Exception as e:
-                logger.warning("Claude narrative failed: %s", e)
-        if settings.openai_api_key:
-            try:
-                return await _call_openai(narrative_prompt)
-            except Exception as e:
-                logger.error("OpenAI narrative fallback failed: %s", e)
+        try:
+            return await call_llm(narrative_prompt)
+        except Exception as e:
+            logger.error("AI narrative failed: %s", e)
         return {}
 
     async def call_market_data():
-        if settings.claude_api_key:
-            try:
-                return await _call_claude(market_prompt)
-            except Exception as e:
-                logger.warning("Claude market-data failed: %s", e)
-        if settings.openai_api_key:
-            try:
-                return await _call_openai(market_prompt)
-            except Exception as e:
-                logger.error("OpenAI market-data fallback failed: %s", e)
+        try:
+            return await call_llm(market_prompt)
+        except Exception as e:
+            logger.error("AI market-data failed: %s", e)
         return {}
 
     narrative_report, market_data = await asyncio.gather(call_narrative(), call_market_data())
@@ -879,32 +883,26 @@ async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]
     )
 
 
-async def run_market_research(fields: dict[str, Any]) -> dict[str, Any]:
+async def run_market_research(fields: dict[str, Any], *, user_id: str = "") -> dict[str, Any]:
     res = await run_research_data(fields)
-    report = await run_ai_narration(fields, res["evidence"], res["shopping"])
+    report = await run_ai_narration(fields, res["evidence"], res["shopping"], user_id=user_id)
     return report
 
 
-async def run_market_data_only(fields: dict[str, Any]) -> dict[str, Any]:
-    """Lean version for service validation — only runs the market-data Claude call
+async def run_market_data_only(fields: dict[str, Any], *, user_id: str = "") -> dict[str, Any]:
+    """Lean version for service validation — only runs the market-data LLM call
     (market_sizing, competitor_analysis, price_intelligence). Skips the full narrative
     synthesis to keep total latency under 2 minutes."""
-    settings = get_settings()
     res = await run_research_data(fields)
     evidence = res["evidence"]
     market_prompt = _build_market_data_prompt(fields, evidence)
 
+    call_llm = await _pick_llm_caller(user_id)
     market_data: dict[str, Any] = {}
-    if settings.claude_api_key:
-        try:
-            market_data = await _call_claude(market_prompt)
-        except Exception as e:
-            logger.warning("Claude market-data failed: %s", e)
-    if not market_data and settings.openai_api_key:
-        try:
-            market_data = await _call_openai(market_prompt)
-        except Exception as e:
-            logger.error("OpenAI market-data fallback failed: %s", e)
+    try:
+        market_data = await call_llm(market_prompt)
+    except Exception as e:
+        logger.error("AI market-data failed: %s", e)
 
     return _normalize_report(
         market_data,
