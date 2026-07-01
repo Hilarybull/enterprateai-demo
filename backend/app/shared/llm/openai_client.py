@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import httpx
 
 from app.core.config import get_settings
+from app.shared.llm.usage import record_ai_usage
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +16,13 @@ class LLMTextResult:
     text: str
     provider: str
     model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
 
 
 class LLMClient:
-    async def generate_text(self, *, system: str, prompt: str) -> LLMTextResult:  # pragma: no cover
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -28,10 +32,11 @@ class OpenAIResponsesClient(LLMClient):
     This client is used ONLY for narrative generation and explanations.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, user_id: str | None = None) -> None:
         self._settings = get_settings()
+        self._user_id = user_id
 
-    async def generate_text(self, *, system: str, prompt: str) -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:
         if not self._settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY not configured")
 
@@ -76,11 +81,32 @@ class OpenAIResponsesClient(LLMClient):
         text = text.strip()
         if not text:
             logger.warning("OpenAI response did not include output text; returning empty string")
-        return LLMTextResult(text=text, provider="openai", model=self._settings.openai_model)
+        usage = data.get("usage") if isinstance(data, dict) and isinstance(data.get("usage"), dict) else {}
+        input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+        total_tokens = int(usage.get("total_tokens") or (input_tokens + output_tokens))
+        await record_ai_usage(
+            user_id=self._user_id,
+            feature=feature,
+            provider="openai",
+            model=self._settings.openai_model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            request_id=data.get("id") if isinstance(data, dict) else None,
+        )
+        return LLMTextResult(
+            text=text,
+            provider="openai",
+            model=self._settings.openai_model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )
 
 
 class NoopLLMClient(LLMClient):
-    async def generate_text(self, *, system: str, prompt: str) -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:
         return LLMTextResult(text="", provider="noop", model="none")
 
 
@@ -90,10 +116,11 @@ class AnthropicMessagesClient(LLMClient):
     Used ONLY for narrative generation and explanations.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, user_id: str | None = None) -> None:
         self._settings = get_settings()
+        self._user_id = user_id
 
-    async def generate_text(self, *, system: str, prompt: str) -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:
         if not self._settings.claude_api_key:
             raise RuntimeError("CLAUDE_API_KEY not configured")
 
@@ -126,7 +153,28 @@ class AnthropicMessagesClient(LLMClient):
                 if isinstance(c, dict) and c.get("type") == "text" and isinstance(c.get("text"), str):
                     chunks.append(c["text"])
             text = "\n".join(chunks).strip()
-        return LLMTextResult(text=text, provider="anthropic", model=self._settings.claude_model)
+        usage = data.get("usage") if isinstance(data, dict) and isinstance(data.get("usage"), dict) else {}
+        input_tokens = int(usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or 0)
+        total_tokens = input_tokens + output_tokens
+        await record_ai_usage(
+            user_id=self._user_id,
+            feature=feature,
+            provider="anthropic",
+            model=self._settings.claude_model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            request_id=data.get("id") if isinstance(data, dict) else None,
+        )
+        return LLMTextResult(
+            text=text,
+            provider="anthropic",
+            model=self._settings.claude_model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )
 
 
 class GeminiGenerateClient(LLMClient):
@@ -135,10 +183,11 @@ class GeminiGenerateClient(LLMClient):
     Used ONLY for narrative generation and explanations.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, user_id: str | None = None) -> None:
         self._settings = get_settings()
+        self._user_id = user_id
 
-    async def generate_text(self, *, system: str, prompt: str) -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:
         if not self._settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY not configured")
 
@@ -175,7 +224,27 @@ class GeminiGenerateClient(LLMClient):
                         if isinstance(p, dict) and isinstance(p.get("text"), str):
                             chunks.append(p["text"])
                     text = "\n".join(chunks).strip()
-        return LLMTextResult(text=text, provider="gemini", model=model)
+        usage = data.get("usageMetadata") if isinstance(data, dict) and isinstance(data.get("usageMetadata"), dict) else {}
+        input_tokens = int(usage.get("promptTokenCount") or 0)
+        output_tokens = int(usage.get("candidatesTokenCount") or 0)
+        total_tokens = int(usage.get("totalTokenCount") or (input_tokens + output_tokens))
+        await record_ai_usage(
+            user_id=self._user_id,
+            feature=feature,
+            provider="gemini",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )
+        return LLMTextResult(
+            text=text,
+            provider="gemini",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )
 
 
 class AutoLLMClient(LLMClient):
@@ -187,26 +256,26 @@ class AutoLLMClient(LLMClient):
     it falls back to the next configured provider.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, user_id: str | None = None) -> None:
         self._settings = get_settings()
         self._clients: list[LLMClient] = []
         has_primary = False
         if self._settings.claude_api_key:
-            self._clients.append(AnthropicMessagesClient())
+            self._clients.append(AnthropicMessagesClient(user_id=user_id))
             has_primary = True
         if self._settings.openai_api_key:
-            self._clients.append(OpenAIResponsesClient())
+            self._clients.append(OpenAIResponsesClient(user_id=user_id))
             has_primary = True
         if self._settings.gemini_api_key and (not has_primary or self._settings.allow_gemini_fallback):
-            self._clients.append(GeminiGenerateClient())
+            self._clients.append(GeminiGenerateClient(user_id=user_id))
         if not self._clients:
             self._clients.append(NoopLLMClient())
 
-    async def generate_text(self, *, system: str, prompt: str) -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:
         last_err: Exception | None = None
         for c in self._clients:
             try:
-                res = await c.generate_text(system=system, prompt=prompt)
+                res = await c.generate_text(system=system, prompt=prompt, feature=feature)
                 # Some providers can return an HTTP 200 but our parsing yields empty text.
                 # Treat that as a failure so we can fall back to the next configured provider.
                 if not (res.text or "").strip() and not isinstance(c, NoopLLMClient):
@@ -217,7 +286,7 @@ class AutoLLMClient(LLMClient):
                 continue
         if last_err:
             raise last_err
-        return await NoopLLMClient().generate_text(system=system, prompt=prompt)
+        return await NoopLLMClient().generate_text(system=system, prompt=prompt, feature=feature)
 
 
 _FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
@@ -230,4 +299,4 @@ async def pick_llm_for_user(user_id: str) -> LLMClient:
     plan_key = (sub or {}).get("plan_key") or ""
     status = (sub or {}).get("status") or ""
     is_free = plan_key in _FREE_PLAN_KEYS or status in {"trial", "expired"}
-    return OpenAIResponsesClient() if is_free else AnthropicMessagesClient()
+    return OpenAIResponsesClient(user_id=user_id) if is_free else AnthropicMessagesClient(user_id=user_id)

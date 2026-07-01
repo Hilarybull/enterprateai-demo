@@ -33,6 +33,7 @@ from typing import Any
 import httpx
 
 from app.core.config import get_settings
+from app.shared.llm.usage import record_ai_usage
 
 logger = logging.getLogger(__name__)
 
@@ -480,7 +481,7 @@ STRICT CONSTRAINTS:
 """
 
 
-async def _call_claude(prompt: str) -> dict:
+async def _call_claude(prompt: str, *, user_id: str = "", feature: str = "idea_validation.market_research") -> dict:
     settings = get_settings()
     if not settings.claude_api_key:
         logger.warning("Claude API key missing in settings.")
@@ -503,6 +504,17 @@ async def _call_claude(prompt: str) -> dict:
             logger.error("Claude API error: status=%s, body=%s", response.status_code, response.text)
             return {}
         data = response.json()
+        usage = data.get("usage") if isinstance(data, dict) and isinstance(data.get("usage"), dict) else {}
+        await record_ai_usage(
+            user_id=user_id or None,
+            feature=feature,
+            provider="anthropic",
+            model=body["model"],
+            input_tokens=int(usage.get("input_tokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or 0),
+            total_tokens=int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0),
+            request_id=data.get("id") if isinstance(data, dict) else None,
+        )
         text = data["content"][0]["text"].strip()
         # Strip markdown fences
         if text.startswith("```"):
@@ -531,7 +543,7 @@ async def _call_claude(prompt: str) -> dict:
     return {}
 
 
-async def _call_openai(prompt: str) -> dict:
+async def _call_openai(prompt: str, *, user_id: str = "", feature: str = "idea_validation.market_research") -> dict:
     settings = get_settings()
     if not settings.openai_api_key:
         logger.warning("OpenAI API key missing in settings.")
@@ -556,6 +568,19 @@ async def _call_openai(prompt: str) -> dict:
             logger.error("OpenAI API error: status=%s, body=%s", response.status_code, response.text)
             return {}
         data = response.json()
+        usage = data.get("usage") if isinstance(data, dict) and isinstance(data.get("usage"), dict) else {}
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        await record_ai_usage(
+            user_id=user_id or None,
+            feature=feature,
+            provider="openai",
+            model=body["model"],
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            total_tokens=int(usage.get("total_tokens") or (prompt_tokens + completion_tokens)),
+            request_id=data.get("id") if isinstance(data, dict) else None,
+        )
         text = data["choices"][0]["message"]["content"].strip()
         result = json.loads(text)
         logger.info("OpenAI synthesis successful.")
@@ -859,14 +884,14 @@ async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]
 
     async def call_narrative():
         try:
-            return await call_llm(narrative_prompt)
+            return await call_llm(narrative_prompt, user_id=user_id, feature="idea_validation.narration")
         except Exception as e:
             logger.error("AI narrative failed: %s", e)
         return {}
 
     async def call_market_data():
         try:
-            return await call_llm(market_prompt)
+            return await call_llm(market_prompt, user_id=user_id, feature="idea_validation.market_data")
         except Exception as e:
             logger.error("AI market-data failed: %s", e)
         return {}
@@ -900,7 +925,7 @@ async def run_market_data_only(fields: dict[str, Any], *, user_id: str = "") -> 
     call_llm = await _pick_llm_caller(user_id)
     market_data: dict[str, Any] = {}
     try:
-        market_data = await call_llm(market_prompt)
+        market_data = await call_llm(market_prompt, user_id=user_id, feature="idea_validation.market_data_only")
     except Exception as e:
         logger.error("AI market-data failed: %s", e)
 

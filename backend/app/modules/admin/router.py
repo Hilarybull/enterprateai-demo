@@ -50,6 +50,88 @@ async def _select_users_with_block(columns: str = "id,email,created_at,is_blocke
 
 # ── Read endpoints ────────────────────────────────────────────────────────────
 
+async def _select_ai_usage_events() -> list:
+    try:
+        return await sb_select(
+            "ai_usage_events",
+            columns="id,user_id,feature,provider,model,input_tokens,output_tokens,total_tokens,estimated_cost_usd,created_at",
+            order="created_at",
+            desc=True,
+            limit=1000,
+        )
+    except Exception:
+        return []
+
+
+def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
+    def amount(value) -> float:
+        try:
+            return float(value or 0)
+        except Exception:
+            return 0.0
+
+    total_cost = sum(amount(r.get("estimated_cost_usd")) for r in rows)
+    total_tokens = sum(int(r.get("total_tokens") or 0) for r in rows)
+    input_tokens = sum(int(r.get("input_tokens") or 0) for r in rows)
+    output_tokens = sum(int(r.get("output_tokens") or 0) for r in rows)
+
+    def grouped(key: str, label_key: str | None = None, limit: int = 8) -> list[dict]:
+        acc: dict[str, dict] = {}
+        for row in rows:
+            label = str(row.get(key) or "unknown")
+            if label_key:
+                label = f"{row.get(key) or 'unknown'} / {row.get(label_key) or 'unknown'}"
+            item = acc.setdefault(label, {"label": label, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0})
+            item["calls"] += 1
+            item["tokens"] += int(row.get("total_tokens") or 0)
+            item["estimated_cost_usd"] += amount(row.get("estimated_cost_usd"))
+        out = sorted(acc.values(), key=lambda x: (x["estimated_cost_usd"], x["tokens"], x["calls"]), reverse=True)
+        for item in out:
+            item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
+        return out[:limit]
+
+    user_acc: dict[str, dict] = {}
+    for row in rows:
+        user_id = str(row.get("user_id") or "")
+        label = user_email_map.get(user_id, user_id or "unknown")
+        item = user_acc.setdefault(label, {"user_id": user_id, "email": label, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0})
+        item["calls"] += 1
+        item["tokens"] += int(row.get("total_tokens") or 0)
+        item["estimated_cost_usd"] += amount(row.get("estimated_cost_usd"))
+    top_users = sorted(user_acc.values(), key=lambda x: (x["estimated_cost_usd"], x["tokens"], x["calls"]), reverse=True)[:8]
+    for item in top_users:
+        item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
+
+    recent = []
+    for row in rows[:25]:
+        user_id = str(row.get("user_id") or "")
+        recent.append({
+            "id": row.get("id"),
+            "user_id": user_id,
+            "user_email": user_email_map.get(user_id, user_id or "unknown"),
+            "feature": row.get("feature") or "unknown",
+            "provider": row.get("provider") or "unknown",
+            "model": row.get("model") or "unknown",
+            "input_tokens": int(row.get("input_tokens") or 0),
+            "output_tokens": int(row.get("output_tokens") or 0),
+            "total_tokens": int(row.get("total_tokens") or 0),
+            "estimated_cost_usd": round(amount(row.get("estimated_cost_usd")), 6),
+            "created_at": row.get("created_at"),
+        })
+
+    return {
+        "total_calls": len(rows),
+        "total_tokens": total_tokens,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": round(total_cost, 6),
+        "by_feature": grouped("feature"),
+        "by_model": grouped("provider", "model"),
+        "by_user": top_users,
+        "recent": recent,
+    }
+
+
 @router.get("/stats")
 async def get_system_stats(user=Depends(require_admin)) -> dict:
     workspaces = await sb_select("workspaces", columns="id,name,user_id,created_at")
@@ -60,6 +142,8 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
 
     user_email_map = {u["id"]: u["email"] for u in users}
     workspace_name_map = {ws["id"]: (ws.get("name") or "Unnamed") for ws in workspaces}
+    ai_usage_events = await _select_ai_usage_events()
+    ai_usage = _rollup_ai_usage(ai_usage_events, user_email_map)
 
     sim_count = 0
     blueprint_count = 0
@@ -86,6 +170,10 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
         "total_blueprints": blueprint_count,
         "total_validated_workspaces": validation_count,
         "total_upgrade_clicks": len(upgrade_clicks),
+        "total_ai_calls": ai_usage["total_calls"],
+        "total_ai_tokens": ai_usage["total_tokens"],
+        "total_ai_cost_usd": ai_usage["estimated_cost_usd"],
+        "ai_usage": ai_usage,
         "workspaces": [
             {
                 "id": ws["id"],

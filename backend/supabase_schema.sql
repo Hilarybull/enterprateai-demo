@@ -112,6 +112,25 @@ alter table blueprint_document_shares add column if not exists expires_at timest
 create index if not exists blueprint_document_shares_token_idx on blueprint_document_shares(token);
 create index if not exists blueprint_document_shares_document_idx on blueprint_document_shares(document_id);
 
+create table if not exists ai_usage_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id text references users(id) on delete set null,
+  feature text not null,
+  provider text not null,
+  model text not null,
+  input_tokens integer not null default 0,
+  output_tokens integer not null default 0,
+  total_tokens integer not null default 0,
+  estimated_cost_usd numeric(12, 8),
+  request_id text,
+  metadata jsonb not null default '{}',
+  created_at timestamptz default now()
+);
+
+create index if not exists ai_usage_events_created_at_idx on ai_usage_events(created_at desc);
+create index if not exists ai_usage_events_user_id_idx on ai_usage_events(user_id);
+create index if not exists ai_usage_events_feature_idx on ai_usage_events(feature);
+
 -- Workspace invitations: pending/accepted/revoked invites with granular permissions
 create table if not exists workspace_invitations (
   id uuid primary key default gen_random_uuid(),

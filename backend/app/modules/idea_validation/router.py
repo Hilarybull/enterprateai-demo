@@ -209,11 +209,11 @@ async def suggest_field(
         country=payload.country or payload.location or "their market",
     )
     try:
-        result = await _call_claude(prompt)
+        result = await _call_claude(prompt, user_id=user["id"], feature="validation.suggest_field")
         suggestion = result.get("suggestion") or result.get("text") or ""
     except Exception:
         try:
-            result = await _call_openai(prompt)
+            result = await _call_openai(prompt, user_id=user["id"], feature="validation.suggest_field")
             suggestion = result.get("suggestion") or result.get("text") or ""
         except Exception:
             suggestion = ""

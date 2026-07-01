@@ -436,7 +436,7 @@ async def suggest_blueprint_field(
     )
 
     try:
-        res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt)
+        res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt, feature="blueprint.suggest_field")
         text = (res.text or "").strip()
         return {"value": text}
     except Exception as e:

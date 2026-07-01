@@ -1310,6 +1310,7 @@ function StatTile({ config, value, onClick }) {
 
 const TABS = [
   { key: "overview", label: "Overview" },
+  { key: "ai-usage", label: "AI Usage" },
   { key: "workspaces", label: "Workspaces" },
   { key: "users", label: "Users" },
   { key: "members", label: "Members" },
@@ -1841,7 +1842,55 @@ export default function AdminPage() {
               </div>
             </section>
 
-            {/* 3 — Recent workspaces + users (compact reference) */}
+            {/* 3 — AI usage snapshot */}
+            {stats?.ai_usage && (
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-slate-800">AI usage snapshot</h2>
+                  <button type="button" onClick={() => goToTab("ai-usage")} className="text-xs font-medium text-brand-600 hover:text-brand-700">Full report →</button>
+                </div>
+                <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {[
+                    { label: "Total calls", value: (stats.ai_usage.total_calls ?? 0).toLocaleString() },
+                    { label: "Total tokens", value: (stats.ai_usage.total_tokens ?? 0).toLocaleString() },
+                    { label: "Input tokens", value: (stats.ai_usage.input_tokens ?? 0).toLocaleString() },
+                    { label: "Est. cost (USD)", value: stats.ai_usage.estimated_cost_usd != null ? `$${Number(stats.ai_usage.estimated_cost_usd).toFixed(4)}` : "—" },
+                  ].map((m) => (
+                    <div key={m.label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
+                      <div className="text-xl font-bold tabular-nums text-slate-900">{m.value}</div>
+                      <div className="mt-0.5 text-[11px] font-semibold text-slate-500">{m.label}</div>
+                    </div>
+                  ))}
+                </div>
+                {(stats.ai_usage.by_feature || []).length > 0 && (
+                  <div className="divide-y divide-slate-50">
+                    <div className="flex items-center justify-between pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      <span>Feature</span>
+                      <span className="flex gap-6">
+                        <span>Calls</span>
+                        <span>Tokens</span>
+                        <span>Cost (USD)</span>
+                      </span>
+                    </div>
+                    {(stats.ai_usage.by_feature || []).slice(0, 8).map((row) => (
+                      <div key={row.label} className="flex items-center justify-between gap-3 py-1.5 text-[12px]">
+                        <span className="truncate text-slate-700">{row.label}</span>
+                        <span className="flex shrink-0 gap-6 tabular-nums text-slate-500">
+                          <span className="w-10 text-right">{row.calls}</span>
+                          <span className="w-16 text-right">{(row.tokens || 0).toLocaleString()}</span>
+                          <span className="w-20 text-right">${Number(row.estimated_cost_usd || 0).toFixed(5)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {!(stats.ai_usage.by_feature || []).length && (
+                  <p className="text-xs text-slate-400">No AI usage recorded yet. Create the <code className="font-mono text-[11px]">ai_usage_events</code> table to start tracking.</p>
+                )}
+              </section>
+            )}
+
+            {/* 4 — Recent workspaces + users (compact reference) */}
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
               <section className="rounded-2xl border border-slate-200 bg-white p-4">
                 <div className="mb-3 flex items-center justify-between">
@@ -1888,7 +1937,7 @@ export default function AdminPage() {
               </section>
             </div>
 
-            {/* 4 — Data exports + Bulk ops */}
+            {/* 5 — Data exports + Bulk ops */}
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
               <section className="rounded-2xl border border-slate-200 bg-white p-5">
                 <h2 className="mb-1 text-sm font-semibold text-slate-800">Data exports</h2>
@@ -1974,6 +2023,190 @@ export default function AdminPage() {
                 </div>
               </section>
             </div>
+
+          </div>
+        )}
+
+        {/* ── AI Usage ── */}
+        {tab === "ai-usage" && (
+          <div className="space-y-5">
+            {/* Summary metrics */}
+            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h2 className="mb-4 text-sm font-semibold text-slate-800">AI usage summary</h2>
+              {stats?.ai_usage ? (
+                <>
+                  <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {[
+                      { label: "Total calls", value: (stats.ai_usage.total_calls ?? 0).toLocaleString() },
+                      { label: "Total tokens", value: (stats.ai_usage.total_tokens ?? 0).toLocaleString() },
+                      { label: "Input tokens", value: (stats.ai_usage.input_tokens ?? 0).toLocaleString() },
+                      { label: "Output tokens", value: (stats.ai_usage.output_tokens ?? 0).toLocaleString() },
+                    ].map((m) => (
+                      <div key={m.label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
+                        <div className="text-xl font-bold tabular-nums text-slate-900">{m.value}</div>
+                        <div className="mt-0.5 text-[11px] font-semibold text-slate-500">{m.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 inline-flex items-baseline gap-2">
+                    <span className="text-2xl font-bold tabular-nums text-emerald-800">
+                      {stats.ai_usage.estimated_cost_usd != null ? `$${Number(stats.ai_usage.estimated_cost_usd).toFixed(4)}` : "—"}
+                    </span>
+                    <span className="text-xs font-semibold text-emerald-600">estimated total cost (USD)</span>
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-400">Prices based on published OpenAI / Anthropic / Gemini rates. Actual invoices may differ.</p>
+                </>
+              ) : (
+                <p className="text-sm text-slate-400">No AI usage data yet. Run any AI feature to start tracking.</p>
+              )}
+            </section>
+
+            {/* By feature + By model side by side */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-slate-800">By feature</h2>
+                {(stats?.ai_usage?.by_feature || []).length ? (
+                  <div className="divide-y divide-slate-50">
+                    <div className="flex items-center justify-between pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      <span>Feature</span>
+                      <span className="flex gap-5 pr-1">
+                        <span>Calls</span>
+                        <span>Tokens</span>
+                        <span>Cost</span>
+                      </span>
+                    </div>
+                    {(stats.ai_usage.by_feature || []).map((row) => (
+                      <div key={row.label} className="flex items-center justify-between gap-2 py-1.5 text-[12px]">
+                        <span className="truncate text-slate-700 font-mono text-[11px]">{row.label}</span>
+                        <span className="flex shrink-0 gap-5 tabular-nums text-slate-500">
+                          <span className="w-8 text-right">{row.calls}</span>
+                          <span className="w-16 text-right">{(row.tokens || 0).toLocaleString()}</span>
+                          <span className="w-16 text-right">${Number(row.estimated_cost_usd || 0).toFixed(5)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400">No data yet.</p>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-slate-800">By provider / model</h2>
+                {(stats?.ai_usage?.by_model || []).length ? (
+                  <div className="divide-y divide-slate-50">
+                    <div className="flex items-center justify-between pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      <span>Provider / Model</span>
+                      <span className="flex gap-5 pr-1">
+                        <span>Calls</span>
+                        <span>Tokens</span>
+                        <span>Cost</span>
+                      </span>
+                    </div>
+                    {(stats.ai_usage.by_model || []).map((row) => (
+                      <div key={row.label} className="flex items-center justify-between gap-2 py-1.5 text-[12px]">
+                        <span className="truncate font-mono text-[11px] text-slate-700">{row.label}</span>
+                        <span className="flex shrink-0 gap-5 tabular-nums text-slate-500">
+                          <span className="w-8 text-right">{row.calls}</span>
+                          <span className="w-16 text-right">{(row.tokens || 0).toLocaleString()}</span>
+                          <span className="w-16 text-right">${Number(row.estimated_cost_usd || 0).toFixed(5)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400">No data yet.</p>
+                )}
+              </section>
+            </div>
+
+            {/* Top users by cost */}
+            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h2 className="mb-3 text-sm font-semibold text-slate-800">Top users by AI cost</h2>
+              {(stats?.ai_usage?.by_user || []).length ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-max text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                        <th className="pb-2 pr-4">User</th>
+                        <th className="pb-2 pr-4 text-right">Calls</th>
+                        <th className="pb-2 pr-4 text-right">Tokens</th>
+                        <th className="pb-2 text-right">Est. Cost (USD)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {(stats.ai_usage.by_user || []).map((row) => (
+                        <tr key={row.user_id || row.email}>
+                          <td className="py-2 pr-4 text-[12px] text-slate-700 font-mono">{row.email}</td>
+                          <td className="py-2 pr-4 text-right text-[12px] tabular-nums text-slate-500">{row.calls}</td>
+                          <td className="py-2 pr-4 text-right text-[12px] tabular-nums text-slate-500">{(row.tokens || 0).toLocaleString()}</td>
+                          <td className="py-2 text-right text-[12px] tabular-nums text-slate-700 font-semibold">${Number(row.estimated_cost_usd || 0).toFixed(5)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">No data yet.</p>
+              )}
+            </section>
+
+            {/* Recent events */}
+            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-slate-800">Recent AI calls</h2>
+                <button
+                  type="button"
+                  onClick={() => downloadCSV(stats?.ai_usage?.recent || [], [
+                    { key: "created_at", label: "Time" },
+                    { key: "user_email", label: "User" },
+                    { key: "feature", label: "Feature" },
+                    { key: "provider", label: "Provider" },
+                    { key: "model", label: "Model" },
+                    { key: "input_tokens", label: "Input Tokens" },
+                    { key: "output_tokens", label: "Output Tokens" },
+                    { key: "total_tokens", label: "Total Tokens" },
+                    { key: "estimated_cost_usd", label: "Cost (USD)" },
+                  ], "ai-usage-recent.csv")}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[12px] font-medium text-slate-600 transition hover:bg-slate-50"
+                >
+                  <DownloadIcon />
+                  Export
+                </button>
+              </div>
+              {(stats?.ai_usage?.recent || []).length ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-max text-[12px]">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        <th className="pb-2 pr-3">Time</th>
+                        <th className="pb-2 pr-3">User</th>
+                        <th className="pb-2 pr-3">Feature</th>
+                        <th className="pb-2 pr-3">Provider</th>
+                        <th className="pb-2 pr-3 text-right">In</th>
+                        <th className="pb-2 pr-3 text-right">Out</th>
+                        <th className="pb-2 text-right">Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {(stats.ai_usage.recent || []).map((row) => (
+                        <tr key={row.id}>
+                          <td className="py-1.5 pr-3 whitespace-nowrap text-slate-400">{formatDateTime(row.created_at)}</td>
+                          <td className="py-1.5 pr-3 truncate max-w-[160px] font-mono text-slate-600">{row.user_email || row.user_id || "—"}</td>
+                          <td className="py-1.5 pr-3 font-mono text-slate-700">{row.feature}</td>
+                          <td className="py-1.5 pr-3 text-slate-500">{row.provider} / {row.model}</td>
+                          <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{(row.input_tokens || 0).toLocaleString()}</td>
+                          <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{(row.output_tokens || 0).toLocaleString()}</td>
+                          <td className="py-1.5 text-right tabular-nums font-semibold text-slate-700">${Number(row.estimated_cost_usd || 0).toFixed(5)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">No AI calls recorded yet. Run any AI feature to see events here.</p>
+              )}
+            </section>
 
           </div>
         )}

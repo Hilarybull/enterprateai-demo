@@ -1186,9 +1186,10 @@ async def _generate_section(
     prompt: str,
     label: str,
     warnings: list[str],
+    feature: str | None = None,
 ) -> tuple[str, str, str]:
     try:
-        res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt)
+        res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt, feature=feature or f"blueprint.{label}")
         text = res.text.strip()
         if not text:
             warnings.append(f"AI returned empty text for: {label}")
@@ -1206,8 +1207,9 @@ async def _generate_section_required(
     label: str,
     warnings: list[str],
     error_label: str,
+    feature: str | None = None,
 ) -> tuple[str, str, str]:
-    text, provider, model = await _generate_section(llm, prompt=prompt, label=label, warnings=warnings)
+    text, provider, model = await _generate_section(llm, prompt=prompt, label=label, warnings=warnings, feature=feature)
     if not text:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1272,6 +1274,7 @@ async def _ensure_section_bodies(
                 label=f"{doc_type}_{title}",
                 warnings=warnings,
                 error_label=f"{doc_type} section '{title}'",
+                feature=f"blueprint.{doc_type.lower().replace(' ', '_')}.section",
             )
             return heading, text.strip()
 
@@ -1795,7 +1798,13 @@ async def generate_blueprint(
                 enriched[key] = fallback_fn(key) if fill_missing else ""
 
         doc_prompt    = build_prompt_fn(enriched)
-        doc, prov, mdl = await _generate_section(llm, prompt=doc_prompt, label=f"{doc_type}_full", warnings=warnings)
+        doc, prov, mdl = await _generate_section(
+            llm,
+            prompt=doc_prompt,
+            label=f"{doc_type}_full",
+            warnings=warnings,
+            feature=f"blueprint.{doc_type.lower().replace(' ', '_')}.full",
+        )
 
         # Readable fallback — never return an empty skeleton
         if not doc:

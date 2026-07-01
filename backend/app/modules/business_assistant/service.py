@@ -206,7 +206,7 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
         f"Conversation:\n" + "\n".join(conversation)
     )
 
-    result = await llm.generate_text(system=system, prompt=prompt)
+    result = await llm.generate_text(system=system, prompt=prompt, feature="business_assistant.chat")
     answer = _clean_assistant_answer(result.text or "")
     if not answer:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Business assistant returned an empty response.")
