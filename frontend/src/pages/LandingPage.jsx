@@ -12,7 +12,8 @@ const STEPS = [
 
 const EXAMPLES = [
   {
-    tag: "👤 Hiring Decision",
+    tagLabel: "Hiring Decision",
+    tagIcon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z",
     title: "Should you hire a new team member?",
     impacts: [
       { type: "neg", text: "Cash runway reduces: 8 → 5 months" },
@@ -23,7 +24,8 @@ const EXAMPLES = [
     rec: "Delay hiring by 2 months or use a contractor to preserve cashflow stability. Safe to hire from Month 3.",
   },
   {
-    tag: "💰 Pricing Decision",
+    tagLabel: "Pricing Decision",
+    tagIcon: "M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z",
     title: "Planning to raise your prices?",
     impacts: [
       { type: "pos", text: "Revenue increases by +12%" },
@@ -34,7 +36,8 @@ const EXAMPLES = [
     rec: "Increase pricing by 15%. Revenue remains positive even under moderate churn. Implement with a 30 day notice period.",
   },
   {
-    tag: "✂️ Cost Reduction",
+    tagLabel: "Cost Reduction",
+    tagIcon: "M13 17h8m0 0v-8m0 8l-8-8-4 4-6-6",
     title: "Thinking of cutting marketing spend?",
     impacts: [
       { type: "pos", text: "Immediate cashflow improves by £2,100/mo" },
@@ -126,6 +129,17 @@ const FAQS = [
   { q: "How quickly can I run my first simulation?", a: "Most users run their first decision simulation within 15 minutes of signing up. Our onboarding flow guides you through connecting your data and building your first business model step by step." },
   { q: "Can I cancel anytime?", a: "Yes. No lock-in contracts, no cancellation fees. Cancel from your account settings in 30 seconds. Your data remains accessible for 30 days after cancellation." },
 ];
+
+function BrandIcon({ d, d2 }) {
+  return (
+    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+      <svg className="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <path d={d} />
+        {d2 && <path d={d2} />}
+      </svg>
+    </div>
+  );
+}
 
 function FAQItem({ q, a }) {
   const [open, setOpen] = useState(false);
@@ -413,21 +427,21 @@ export default function LandingPage() {
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {[
               {
-                icon: "📋",
+                icon: <BrandIcon d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />,
                 name: "Create your business plan with one click",
                 tag: "Available now",
                 tagColor: "bg-emerald-100 text-emerald-700",
                 desc: "Generate a structured business plan using your business information, idea, target market, services, financial assumptions, and growth goals.",
               },
               {
-                icon: "📄",
+                icon: <BrandIcon d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />,
                 name: "Create business proposals with one click",
                 tag: "Available now",
                 tagColor: "bg-emerald-100 text-emerald-700",
                 desc: "Turn your products, services, customer needs, and business details into professional proposals faster.",
               },
               {
-                icon: "🏪",
+                icon: <BrandIcon d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />,
                 name: "Launch your products and services on the marketplace with one click",
                 tag: "Available now",
                 tagColor: "bg-emerald-100 text-emerald-700",
@@ -435,21 +449,21 @@ export default function LandingPage() {
                 isMarketplace: true,
               },
               {
-                icon: "💡",
+                icon: <BrandIcon d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />,
                 name: "Validate business ideas before investing",
                 tag: "Coming soon",
                 tagColor: "bg-amber-100 text-amber-700",
                 desc: "Assess whether an idea makes commercial sense before spending time, money, and resources.",
               },
               {
-                icon: "⚡",
+                icon: <BrandIcon d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />,
                 name: "Simulate business decisions before taking action",
                 tag: "Coming soon",
                 tagColor: "bg-amber-100 text-amber-700",
                 desc: "Test how pricing, cost, demand, capacity, customer dependency, and growth decisions may affect your business before you act. See how one decision from one business activity propagates across other business areas - from revenue and cashflow to operations, customer behaviour, risk exposure, profitability, and growth readiness.",
               },
               {
-                icon: "💷",
+                icon: <BrandIcon d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />,
                 name: "Create quick invoices and quotations",
                 tag: "Available now",
                 tagColor: "bg-emerald-100 text-emerald-700",
@@ -458,7 +472,7 @@ export default function LandingPage() {
             ].map((m) => (
               <div key={m.name} className="rounded-2xl border border-slate-200 bg-white p-6 transition hover:border-brand-200 hover:shadow-md">
                 <div className="flex items-start justify-between gap-3">
-                  <span className="text-3xl">{m.icon}</span>
+                  {m.icon}
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${m.tagColor}`}>{m.tag}</span>
                 </div>
                 <h3 className="mt-3 font-bold text-slate-900">{m.name}</h3>
@@ -502,13 +516,13 @@ export default function LandingPage() {
           </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { emoji: "📥", title: "Input once", body: "Add your business, product, customer, vendor, financial, and marketplace information once. No more repeating the same data across disconnected tools." },
-              { emoji: "⚙️", title: "Generate everywhere", body: "Use the same data to create plans, proposals, sales letters, invoices, quotations, contracts, listings, and reports without repeating manual work." },
-              { emoji: "🔬", title: "Simulate before acting", body: "Understand the likely impact of business decisions before making costly moves. A pricing change, new hire, cost increase, customer loss, product launch, or expansion decision can affect multiple areas of your business. EnterprateAI helps you see those connections before you act." },
-              { emoji: "📈", title: "Grow with intelligence", body: "Discover risks, uncover opportunities, and make better decisions using Fragility Index and Adaptive Scenario Intelligence." },
+              { icon: <BrandIcon d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />, title: "Input once", body: "Add your business, product, customer, vendor, financial, and marketplace information once. No more repeating the same data across disconnected tools." },
+              { icon: <BrandIcon d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />, title: "Generate everywhere", body: "Use the same data to create plans, proposals, sales letters, invoices, quotations, contracts, listings, and reports without repeating manual work." },
+              { icon: <BrandIcon d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />, title: "Simulate before acting", body: "Understand the likely impact of business decisions before making costly moves. A pricing change, new hire, cost increase, customer loss, product launch, or expansion decision can affect multiple areas of your business. EnterprateAI helps you see those connections before you act." },
+              { icon: <BrandIcon d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />, title: "Grow with intelligence", body: "Discover risks, uncover opportunities, and make better decisions using Fragility Index and Adaptive Scenario Intelligence." },
             ].map((c) => (
               <div key={c.title} className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                <div className="mb-3 text-3xl">{c.emoji}</div>
+                <div className="mb-3">{c.icon}</div>
                 <h3 className="mb-2 font-semibold">{c.title}</h3>
                 <p className="text-sm leading-relaxed text-slate-400">{c.body}</p>
               </div>
@@ -645,9 +659,14 @@ export default function LandingPage() {
           </div>
           <div className="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
             {EXAMPLES.map((ex) => (
-              <div key={ex.tag} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div key={ex.tagLabel} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <div className="border-b border-slate-100 bg-slate-50/80 px-5 py-4">
-                  <span className="text-xs font-semibold text-slate-500">{ex.tag}</span>
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-brand-600">
+                    <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d={ex.tagIcon} />
+                    </svg>
+                    {ex.tagLabel}
+                  </span>
                   <h3 className="mt-1 font-semibold text-slate-900">{ex.title}</h3>
                 </div>
                 <div className="px-5 py-4 space-y-3">
@@ -693,15 +712,15 @@ export default function LandingPage() {
           </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {[
-              { icon: "⏱️", title: "Save time", body: "Stop repeating the same information across different tools." },
-              { icon: "💰", title: "Reduce cost", body: "Use one connected workspace instead of relying on multiple disconnected systems." },
-              { icon: "🚀", title: "Move faster", body: "Create plans, proposals, quotations, invoices, and listings in less time." },
-              { icon: "🧠", title: "Make better decisions", body: "Simulate decisions before acting and understand how one activity affects other areas of the business." },
-              { icon: "🛡️", title: "Discover risks", body: "Identify weak points before they become serious business problems." },
-              { icon: "📈", title: "Uncover opportunities", body: "Use your business data to spot growth potential and improve strategic direction." },
+              { icon: <BrandIcon d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />, title: "Save time", body: "Stop repeating the same information across different tools." },
+              { icon: <BrandIcon d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />, title: "Reduce cost", body: "Use one connected workspace instead of relying on multiple disconnected systems." },
+              { icon: <BrandIcon d="M17 8l4 4m0 0l-4 4m4-4H3" />, title: "Move faster", body: "Create plans, proposals, quotations, invoices, and listings in less time." },
+              { icon: <BrandIcon d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />, title: "Make better decisions", body: "Simulate decisions before acting and understand how one activity affects other areas of the business." },
+              { icon: <BrandIcon d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />, title: "Discover risks", body: "Identify weak points before they become serious business problems." },
+              { icon: <BrandIcon d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />, title: "Uncover opportunities", body: "Use your business data to spot growth potential and improve strategic direction." },
             ].map((c) => (
               <div key={c.title} className="rounded-2xl border border-slate-200 bg-white p-5 hover:border-brand-200 hover:shadow-sm transition">
-                <div className="mb-3 text-2xl">{c.icon}</div>
+                <div className="mb-3">{c.icon}</div>
                 <h3 className="font-semibold text-slate-900">{c.title}</h3>
                 <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{c.body}</p>
               </div>

@@ -2777,6 +2777,15 @@ export default function ValidationWizardPage() {
                 </SectionCard>
               ) : tabMarketResearch ? (
                 <>
+                  <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                    <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                    </svg>
+                    <span>
+                      These results are based on the information you provided and are intended to support your thinking. They should not be treated as financial, legal or professional advice. Always conduct your own research before making business decisions.
+                    </span>
+                  </div>
+
                   {tabMarketResearch.idea_validation_result || tabMarketResearch.executive_summary ? (
                     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_0.8fr]">
                       {tabMarketResearch.executive_summary ? (
