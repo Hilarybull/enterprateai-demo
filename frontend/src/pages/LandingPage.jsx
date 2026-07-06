@@ -451,15 +451,15 @@ export default function LandingPage() {
               {
                 icon: <BrandIcon d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />,
                 name: "Validate business ideas before investing",
-                tag: "Coming soon",
-                tagColor: "bg-amber-100 text-amber-700",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
                 desc: "Assess whether an idea makes commercial sense before spending time, money, and resources.",
               },
               {
                 icon: <BrandIcon d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />,
                 name: "Simulate business decisions before taking action",
-                tag: "Coming soon",
-                tagColor: "bg-amber-100 text-amber-700",
+                tag: "Available now",
+                tagColor: "bg-emerald-100 text-emerald-700",
                 desc: "Test how pricing, cost, demand, capacity, customer dependency, and growth decisions may affect your business before you act. See how one decision from one business activity propagates across other business areas - from revenue and cashflow to operations, customer behaviour, risk exposure, profitability, and growth readiness.",
               },
               {
