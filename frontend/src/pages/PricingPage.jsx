@@ -106,6 +106,7 @@ function StripeCardForm({ plan, billing, onSwitchToBank, onNetworkError }) {
   const [isVerve, setIsVerve] = useState(false);
   const [nameOnCard, setNameOnCard] = useState("");
   const [promoCode, setPromoCode] = useState("");
+  const [promoApplied, setPromoApplied] = useState(null); // { pct, amt } | null
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [elemReady, setElemReady] = useState(false);
@@ -131,15 +132,18 @@ function StripeCardForm({ plan, billing, onSwitchToBank, onNetworkError }) {
     setError("");
 
     try {
-      const { client_secret } = await apiRequest(
+      const res = await apiRequest(
         "/plans/create-subscription",
         "POST",
         { plan_key: plan.key, billing_period: billing, promo_code: promoCode.trim() || undefined }
       );
+      if (res.discount_pct || res.discount_amt) {
+        setPromoApplied({ pct: res.discount_pct, amt: res.discount_amt });
+      }
 
       const cardElement = elements.getElement(CardNumberElement);
       const { error: confirmError } = await stripe.confirmCardPayment(
-        client_secret,
+        res.client_secret,
         {
           payment_method: {
             card: cardElement,
@@ -276,9 +280,14 @@ function StripeCardForm({ plan, billing, onSwitchToBank, onNetworkError }) {
               type="text"
               placeholder="Enter code"
               value={promoCode}
-              onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+              onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoApplied(null); }}
               className="ea-input font-mono tracking-widest"
             />
+            {promoApplied && (
+              <p className="mt-1 text-[11px] font-semibold text-emerald-600">
+                {promoApplied.pct ? `${promoApplied.pct}% discount applied` : promoApplied.amt ? `£${(promoApplied.amt / 100).toFixed(2)} off applied` : "Promo code applied"}
+              </p>
+            )}
           </div>
 
           {error && (

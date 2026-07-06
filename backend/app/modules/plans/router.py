@@ -193,18 +193,36 @@ async def create_subscription(
     }
     if payload.promo_code:
         try:
-            codes = client.promotion_codes.list(code=payload.promo_code, active=True, limit=1)
-            if codes.data:
-                sub_params["promotion_code"] = codes.data[0].id
-        except Exception:
-            pass
+            codes = client.promotion_codes.list({"code": payload.promo_code, "active": True, "limit": 1})
+            if not codes.data:
+                raise HTTPException(status_code=400, detail="Invalid or expired promo code.")
+            sub_params["promotion_code"] = codes.data[0].id
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Promo code lookup failed: %s", e)
+            raise HTTPException(status_code=400, detail="Could not validate promo code. Please try again.")
 
     subscription = client.subscriptions.create(sub_params)
 
     pi = subscription.latest_invoice.payment_intent  # type: ignore[union-attr]
+    invoice = subscription.latest_invoice  # type: ignore[union-attr]
+    discount_pct: int | None = None
+    discount_amt: int | None = None
+    try:
+        disc = getattr(invoice, "discount", None) or getattr(subscription, "discount", None)
+        if disc:
+            coupon = getattr(disc, "coupon", None)
+            if coupon:
+                discount_pct = getattr(coupon, "percent_off", None)
+                discount_amt = getattr(coupon, "amount_off", None)
+    except Exception:
+        pass
     return {
         "client_secret": pi.client_secret,
         "subscription_id": subscription.id,
+        "discount_pct": discount_pct,
+        "discount_amt": discount_amt,
     }
 
 
@@ -234,12 +252,16 @@ async def create_checkout_session(
     }
     if payload.promo_code:
         try:
-            codes = client.promotion_codes.list(code=payload.promo_code, active=True, limit=1)
-            if codes.data:
-                session_params["discounts"] = [{"promotion_code": codes.data[0].id}]
-                session_params.pop("allow_promotion_codes", None)
-        except Exception:
-            pass
+            codes = client.promotion_codes.list({"code": payload.promo_code, "active": True, "limit": 1})
+            if not codes.data:
+                raise HTTPException(status_code=400, detail="Invalid or expired promo code.")
+            session_params["discounts"] = [{"promotion_code": codes.data[0].id}]
+            session_params.pop("allow_promotion_codes", None)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Promo code lookup failed: %s", e)
+            raise HTTPException(status_code=400, detail="Could not validate promo code. Please try again.")
 
     session = client.checkout.sessions.create(session_params)
     return CheckoutResponse(checkout_url=session.url)
