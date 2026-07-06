@@ -3,8 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { apiRequest } from "../api/client";
 import { MODULES, FEATURES } from "../lib/permissions";
+import { getPlan, normalisePlanKey } from "../lib/plans";
 import logoUrl from "../enterprate-logo.png";
 import ConfirmDialog from "../components/ConfirmDialog";
+
+function fmtAdminDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
 
 const ADMIN_EMAIL = "tech.support@enterprateai.com";
 
@@ -883,9 +891,8 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                 const isTrial = subscription.status === "trial";
                 const isActive = subscription.status === "active";
                 const isGrandfathered = subscription.status === "grandfathered";
-                const endDate = subscription.current_period_end
-                  ? new Date(subscription.current_period_end).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
-                  : null;
+                const startDate = fmtAdminDate(subscription.current_period_start);
+                const endDate = fmtAdminDate(subscription.current_period_end);
                 const statusColor = isExpired
                   ? "border-rose-200 bg-rose-50"
                   : isActive
@@ -893,23 +900,45 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                   : "border-brand-100 bg-brand-50";
                 const dotColor = isExpired ? "bg-rose-500" : isActive ? "bg-emerald-500" : "bg-brand-500";
                 const statusLabel = isExpired ? "Trial expired" : isTrial ? "Free trial" : isActive ? "Paid plan" : "Grandfathered";
-                const planLabel = { explorer: "Explorer", starter_insight: "Starter", free_trial: "Explorer" }[subscription.plan_key] ?? subscription.plan_key;
+                const plan = getPlan(normalisePlanKey(subscription.plan_key ?? "explorer"));
+                const planName = plan?.label ?? subscription.plan_key ?? "Explorer";
+                const billingPeriod = subscription.billing_period === "annual" ? "Annual" : "Monthly";
                 return (
                   <div className={`rounded-xl border p-4 ${statusColor}`}>
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className={`h-2 w-2 rounded-full ${dotColor}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
                           <span className="text-sm font-semibold text-slate-800">{statusLabel}</span>
-                          <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{planLabel}</span>
+                          <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{planName}</span>
+                          {isActive && (
+                            <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{billingPeriod}</span>
+                          )}
                         </div>
-                        {endDate && (
+                        {isActive && startDate && endDate && (
+                          <p className="mt-1 text-[11px] text-slate-600">
+                            Paid: {startDate} → {endDate}
+                          </p>
+                        )}
+                        {!isActive && endDate && (
                           <p className="mt-1 text-[11px] text-slate-500">
                             {isExpired ? "Expired" : "Expires"}: {endDate}
                           </p>
                         )}
                         {isActive && subscription.stripe_subscription_id && (
                           <p className="mt-1 text-[11px] text-slate-400">Stripe: {subscription.stripe_subscription_id}</p>
+                        )}
+                        {isActive && plan?.features?.length > 0 && (
+                          <ul className="mt-2.5 space-y-1">
+                            {plan.features.map(f => (
+                              <li key={f} className="flex items-start gap-1.5 text-[11px] text-slate-600">
+                                <svg className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                  <path d="M20 6L9 17l-5-5" />
+                                </svg>
+                                {f}
+                              </li>
+                            ))}
+                          </ul>
                         )}
                       </div>
                       {!isActive && !isGrandfathered && (
