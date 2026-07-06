@@ -969,6 +969,13 @@ function PlanCard({ plan, billing, onAction, currentPlanKey }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+function fmtPeriodDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  return d.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+}
+
 export default function PricingPage() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
@@ -1066,6 +1073,57 @@ export default function PricingPage() {
             ))}
           </div>
         </div>
+
+        {/* Active paid subscription summary */}
+        {token && subscription?.status === "active" && subscription.plan_key !== "free_trial" && (() => {
+          const activePlan = PLANS.find(p => p.key === normalisePlanKey(subscription.plan_key));
+          if (!activePlan) return null;
+          const periodStart = fmtPeriodDate(subscription.current_period_start);
+          const periodEnd = fmtPeriodDate(subscription.current_period_end);
+          const isAnnual = subscription.billing_period === "annual";
+          return (
+            <div className="mt-10 rounded-2xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-800 dark:bg-emerald-900/10">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                    <span className="text-[11px] font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-400">Active Subscription</span>
+                  </div>
+                  <h3 className="mt-1 text-xl font-extrabold text-slate-900 dark:text-slate-100">
+                    {activePlan.label}{activePlan.tier ? ` · ${activePlan.tier}` : ""}
+                  </h3>
+                  <p className="mt-0.5 text-[13px] text-slate-500 dark:text-slate-400">{activePlan.tagline}</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-extrabold text-slate-900 dark:text-slate-100">
+                    {isAnnual ? `£${activePlan.annualTotal}/yr` : `£${activePlan.monthlyPrice}/mo`}
+                  </div>
+                  <div className="mt-0.5 text-[12px] font-medium text-slate-500 dark:text-slate-400">
+                    {isAnnual ? "Billed annually" : "Billed monthly"}
+                  </div>
+                  {periodStart && periodEnd && (
+                    <div className="mt-1 text-[12px] text-emerald-700 dark:text-emerald-400">
+                      {periodStart} → {periodEnd}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="mt-5 border-t border-emerald-200 pt-4 dark:border-emerald-800">
+                <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Included features</p>
+                <ul className="grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2">
+                  {activePlan.features.map(f => (
+                    <li key={f} className="flex items-start gap-2 text-[13px] text-slate-700 dark:text-slate-300">
+                      <svg className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M20 6L9 17l-5-5" />
+                      </svg>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 mx-auto max-w-2xl sm:max-w-none">
           {PLANS.map((plan) => (

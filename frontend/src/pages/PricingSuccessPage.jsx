@@ -1,8 +1,15 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
-import { planLabel } from "../lib/plans";
+import { planLabel, getPlan, normalisePlanKey } from "../lib/plans";
 import logoUrl from "../enterprate-logo.png";
+
+function fmtDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+}
 
 export default function PricingSuccessPage() {
   const navigate = useNavigate();
@@ -50,10 +57,44 @@ export default function PricingSuccessPage() {
             </h1>
 
             {sub && sub.plan_key !== "free_trial" ? (
-              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                Your <strong className="text-slate-800 dark:text-slate-200">{planLabel(sub.plan_key, sub.status)}</strong> subscription is now active.
-                All features for your plan are unlocked.
-              </p>
+              <>
+                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                  Your <strong className="text-slate-800 dark:text-slate-200">{planLabel(sub.plan_key, sub.status)}</strong> plan is now active.
+                  All features are unlocked.
+                </p>
+                {(() => {
+                  const plan = getPlan(normalisePlanKey(sub.plan_key));
+                  const start = fmtDate(sub.current_period_start);
+                  const end = fmtDate(sub.current_period_end);
+                  return (
+                    <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-4 text-left dark:border-slate-800 dark:bg-slate-800/50">
+                      <div className="mb-3 flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+                        <span>Plan details</span>
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+                          {sub.billing_period === "annual" ? "Annual" : "Monthly"}
+                        </span>
+                      </div>
+                      {start && end && (
+                        <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+                          Paid for: <strong className="text-slate-700 dark:text-slate-300">{start}</strong> to <strong className="text-slate-700 dark:text-slate-300">{end}</strong>
+                        </p>
+                      )}
+                      {plan?.features?.length > 0 && (
+                        <ul className="space-y-1.5">
+                          {plan.features.map(f => (
+                            <li key={f} className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300">
+                              <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <path d="M20 6L9 17l-5-5" />
+                              </svg>
+                              {f}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })()}
+              </>
             ) : (
               <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                 Your payment was processed successfully. Your plan will be activated shortly.

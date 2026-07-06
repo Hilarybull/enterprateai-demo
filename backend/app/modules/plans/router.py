@@ -299,7 +299,21 @@ async def stripe_webhook(request: Request):
             sub_id = session.get("subscription") if isinstance(session, dict) else session.subscription
             customer_id = session.get("customer") if isinstance(session, dict) else session.customer
             now = datetime.now(timezone.utc)
-            end = now + timedelta(days=30 if billing_period == "monthly" else 365)
+            period_start: str = now.isoformat()
+            period_end: str = (now + timedelta(days=30 if billing_period == "monthly" else 365)).isoformat()
+            # Prefer Stripe's actual billing period from the subscription object
+            if sub_id:
+                try:
+                    stripe_client = _stripe_client()
+                    stripe_sub = stripe_client.subscriptions.retrieve(sub_id)
+                    ps = getattr(stripe_sub, "current_period_start", None)
+                    pe = getattr(stripe_sub, "current_period_end", None)
+                    if ps:
+                        period_start = datetime.fromtimestamp(ps, tz=timezone.utc).isoformat()
+                    if pe:
+                        period_end = datetime.fromtimestamp(pe, tz=timezone.utc).isoformat()
+                except Exception:
+                    pass
             await sb_upsert(
                 "user_subscriptions",
                 payload={
@@ -309,8 +323,8 @@ async def stripe_webhook(request: Request):
                     "status": "active",
                     "stripe_subscription_id": sub_id,
                     "stripe_customer_id": customer_id,
-                    "current_period_start": now.isoformat(),
-                    "current_period_end": end.isoformat(),
+                    "current_period_start": period_start,
+                    "current_period_end": period_end,
                     "updated_at": now.isoformat(),
                 },
                 on_conflict="user_id",
@@ -337,6 +351,13 @@ async def stripe_webhook(request: Request):
             }
             if cancel_at:
                 updates["cancelled_at"] = datetime.fromtimestamp(cancel_at, tz=timezone.utc).isoformat()
+            # Sync billing period on renewal / update
+            ps = sub_obj.get("current_period_start") if isinstance(sub_obj, dict) else getattr(sub_obj, "current_period_start", None)
+            pe = sub_obj.get("current_period_end") if isinstance(sub_obj, dict) else getattr(sub_obj, "current_period_end", None)
+            if ps:
+                updates["current_period_start"] = datetime.fromtimestamp(ps, tz=timezone.utc).isoformat()
+            if pe:
+                updates["current_period_end"] = datetime.fromtimestamp(pe, tz=timezone.utc).isoformat()
             await sb_update(
                 "user_subscriptions",
                 payload=updates,
@@ -346,7 +367,11 @@ async def stripe_webhook(request: Request):
             # New subscription activated via embedded card form — upsert the row
             billing_period = meta.get("billing_period", "monthly")
             now = datetime.now(timezone.utc)
-            end = now + timedelta(days=30 if billing_period == "monthly" else 365)
+            # Use Stripe's actual billing period timestamps from the subscription event object
+            ps = sub_obj.get("current_period_start") if isinstance(sub_obj, dict) else getattr(sub_obj, "current_period_start", None)
+            pe = sub_obj.get("current_period_end") if isinstance(sub_obj, dict) else getattr(sub_obj, "current_period_end", None)
+            period_start = datetime.fromtimestamp(ps, tz=timezone.utc).isoformat() if ps else now.isoformat()
+            period_end = datetime.fromtimestamp(pe, tz=timezone.utc).isoformat() if pe else (now + timedelta(days=30 if billing_period == "monthly" else 365)).isoformat()
             await sb_upsert(
                 "user_subscriptions",
                 payload={
@@ -356,8 +381,8 @@ async def stripe_webhook(request: Request):
                     "status": "active",
                     "stripe_subscription_id": sub_id,
                     "stripe_customer_id": customer_id,
-                    "current_period_start": now.isoformat(),
-                    "current_period_end": end.isoformat(),
+                    "current_period_start": period_start,
+                    "current_period_end": period_end,
                     "updated_at": now.isoformat(),
                 },
                 on_conflict="user_id",
@@ -384,6 +409,7 @@ async def get_my_subscription(user=Depends(get_current_user)) -> SubscriptionOut
             plan_key=sub["plan_key"],
             billing_period=sub.get("billing_period", "monthly"),
             status=sub["status"],
+            current_period_start=sub.get("current_period_start"),
             current_period_end=sub.get("current_period_end"),
             trial_started_at=sub.get("trial_started_at"),
             stripe_subscription_id=sub.get("stripe_subscription_id"),

@@ -42,6 +42,7 @@ class SubscriptionOut(BaseModel):
     plan_key: str
     billing_period: str
     status: str
+    current_period_start: Optional[str] = None
     current_period_end: Optional[str] = None
     trial_started_at: Optional[str] = None
     stripe_subscription_id: Optional[str] = None
