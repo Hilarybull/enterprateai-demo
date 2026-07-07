@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { planLabel, getPlan, normalisePlanKey } from "../lib/plans";
+import { apiRequest } from "../api/client";
 import logoUrl from "../enterprate-logo.png";
 
 function fmtDate(iso) {
@@ -17,19 +18,25 @@ export default function PricingSuccessPage() {
   const refreshSubscription = useAuthStore((s) => s.refreshSubscription);
   const [sub, setSub] = useState(null);
   const [loading, setLoading] = useState(true);
+  const sessionId = params.get("session_id");
 
   useEffect(() => {
     async function load() {
-      // Give Stripe webhook a moment to process, then fetch updated sub
-      await new Promise((r) => setTimeout(r, 1500));
+      // Eagerly activate the subscription without waiting for the Stripe webhook,
+      // which may be slow or misconfigured and leave the user stuck on trial status.
+      if (sessionId) {
+        try {
+          await apiRequest("/plans/activate-subscription", "POST", { session_id: sessionId });
+        } catch (_) {
+          // Non-fatal — fall through and refresh anyway
+        }
+      }
       const updated = await refreshSubscription();
       setSub(updated);
       setLoading(false);
     }
     load();
-  }, [refreshSubscription]);
-
-  const sessionId = params.get("session_id");
+  }, [refreshSubscription, sessionId]);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 dark:bg-slate-950">

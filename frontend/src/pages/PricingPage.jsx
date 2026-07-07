@@ -158,6 +158,12 @@ function StripeCardForm({ plan, billing, onSwitchToBank, onNetworkError }) {
             "Payment failed. Please check your card details."
         );
       } else {
+        // Eagerly activate the subscription in our DB without waiting for the webhook
+        try {
+          await apiRequest("/plans/activate-subscription", "POST", { subscription_id: res.subscription_id });
+        } catch (_) {
+          // Non-fatal — webhook will handle it if this fails
+        }
         window.location.href = "/pricing/success";
       }
     } catch (err) {

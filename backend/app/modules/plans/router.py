@@ -226,6 +226,88 @@ async def create_subscription(
     }
 
 
+# ── Authenticated: eagerly activate subscription after payment ───────────────
+
+@router.post("/activate-subscription")
+async def activate_subscription(
+    payload: dict,
+    user=Depends(get_current_user),
+):
+    """Called by the frontend right after confirmCardPayment or on the Stripe
+    Checkout success page.  Reads the subscription/session from Stripe and
+    immediately writes the active row to Supabase so the user doesn't have to
+    wait for the webhook."""
+    client = _stripe_client()
+    subscription_id: str | None = payload.get("subscription_id")
+    session_id: str | None = payload.get("session_id")
+
+    stripe_sub = None
+    plan_key: str | None = None
+    billing_period: str = "monthly"
+    customer_id: str | None = None
+
+    if subscription_id:
+        try:
+            stripe_sub = client.subscriptions.retrieve(subscription_id)
+            meta = getattr(stripe_sub, "metadata", {}) or {}
+            plan_key = meta.get("plan_key")
+            billing_period = meta.get("billing_period", "monthly")
+            customer_id = getattr(stripe_sub, "customer", None)
+        except Exception as e:
+            logger.error("activate_subscription: retrieve sub failed: %s", e)
+            raise HTTPException(status_code=400, detail="Could not verify subscription with Stripe.")
+
+    elif session_id:
+        try:
+            session = client.checkout.sessions.retrieve(session_id)
+            meta = getattr(session, "metadata", {}) or {}
+            plan_key = meta.get("plan_key")
+            billing_period = meta.get("billing_period", "monthly")
+            customer_id = getattr(session, "customer", None)
+            sub_id = getattr(session, "subscription", None)
+            if sub_id:
+                stripe_sub = client.subscriptions.retrieve(sub_id)
+                subscription_id = sub_id
+        except Exception as e:
+            logger.error("activate_subscription: retrieve session failed: %s", e)
+            raise HTTPException(status_code=400, detail="Could not verify checkout session with Stripe.")
+    else:
+        raise HTTPException(status_code=400, detail="subscription_id or session_id required.")
+
+    if not stripe_sub:
+        raise HTTPException(status_code=400, detail="Subscription not found.")
+
+    sub_status = getattr(stripe_sub, "status", None)
+    if sub_status not in ("active", "trialing"):
+        raise HTTPException(status_code=402, detail=f"Subscription not yet active (status: {sub_status}).")
+
+    if not plan_key:
+        raise HTTPException(status_code=400, detail="Plan key missing from subscription metadata.")
+
+    now = datetime.now(timezone.utc)
+    ps = getattr(stripe_sub, "current_period_start", None)
+    pe = getattr(stripe_sub, "current_period_end", None)
+    period_start = datetime.fromtimestamp(ps, tz=timezone.utc).isoformat() if ps else now.isoformat()
+    period_end = datetime.fromtimestamp(pe, tz=timezone.utc).isoformat() if pe else (now + timedelta(days=30 if billing_period == "monthly" else 365)).isoformat()
+
+    await sb_upsert(
+        "user_subscriptions",
+        payload={
+            "user_id": user["id"],
+            "plan_key": plan_key,
+            "billing_period": billing_period,
+            "status": "active",
+            "stripe_subscription_id": subscription_id,
+            "stripe_customer_id": customer_id,
+            "current_period_start": period_start,
+            "current_period_end": period_end,
+            "updated_at": now.isoformat(),
+        },
+        on_conflict="user_id",
+    )
+    return {"activated": True, "plan_key": plan_key, "billing_period": billing_period, "period_end": period_end}
+
+
 # ── Authenticated: Stripe checkout ───────────────────────────────────────────
 
 @router.post("/checkout", response_model=CheckoutResponse)
