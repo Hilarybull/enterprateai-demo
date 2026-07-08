@@ -30,11 +30,9 @@ PROVIDERS: dict[str, dict] = {
 
 def _backend_url() -> str:
     settings = get_settings()
-    url = settings.frontend_url
-    if isinstance(url, list):
-        url = url[0]
-    # The backend callback must use the backend host, not the frontend.
-    # We derive it from the app host/port settings.
+    # Prefer explicit BACKEND_URL (set in production on Render/etc.)
+    if settings.backend_url:
+        return str(settings.backend_url).rstrip("/")
     host = settings.api_host if settings.api_host != "0.0.0.0" else "localhost"
     port = settings.api_port
     return f"http://{host}:{port}"

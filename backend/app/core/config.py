@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    backend_url: str | None = Field(default=None, validation_alias=AliasChoices("BACKEND_URL", "API_URL"))
 
     cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:5173"], validation_alias=AliasChoices("CORS_ORIGINS", "FRONTEND_URL"))
 
