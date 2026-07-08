@@ -25,15 +25,8 @@ class Settings(BaseSettings):
     app_name: str = "EnterprateAI"
     environment: str = "development"
     api_host: str = "0.0.0.0"
-    api_port: int = Field(default=8000, validation_alias=AliasChoices("API_PORT", "PORT"))
+    api_port: int = 8000
     backend_url: str | None = Field(default=None, validation_alias=AliasChoices("BACKEND_URL", "API_URL"))
-
-    @field_validator("api_port", mode="before")
-    @classmethod
-    def _coerce_api_port(cls, v: object) -> object:
-        if v == "" or v is None:
-            return 8000
-        return v
 
     cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:5173"], validation_alias=AliasChoices("CORS_ORIGINS", "FRONTEND_URL"))
 
