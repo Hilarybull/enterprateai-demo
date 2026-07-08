@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     google_client_id: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_ID",))
     google_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_SECRET",))
 
+    # Third-party integrations — OAuth credentials
+    qb_client_id: str | None = Field(default=None, validation_alias=AliasChoices("QB_CLIENT_ID", "QUICKBOOKS_CLIENT_ID"))
+    qb_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("QB_CLIENT_SECRET", "QUICKBOOKS_CLIENT_SECRET"))
+    xero_client_id: str | None = Field(default=None, validation_alias=AliasChoices("XERO_CLIENT_ID",))
+    xero_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("XERO_CLIENT_SECRET",))
+    zoho_client_id: str | None = Field(default=None, validation_alias=AliasChoices("ZOHO_CLIENT_ID",))
+    zoho_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("ZOHO_CLIENT_SECRET",))
+
     # Stripe
     stripe_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_SECRET_KEY", "STRIPE_LIVE_KEY"))
     stripe_webhook_secret: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_WEBHOOK_SECRET",))

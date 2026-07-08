@@ -37,6 +37,7 @@ from app.modules.plans.router import router as plans_router
 from app.modules.marketplace.router import router as marketplace_router
 from app.modules.support.router import router as support_router
 from app.modules.reports.router import router as reports_router
+from app.modules.integrations.router import router as integrations_router
 from app.shared.auth.router import router as auth_router
 from app.shared.utils.logging import configure_logging
 from app.shared.utils.middleware import request_logging_middleware
@@ -107,6 +108,7 @@ def create_app() -> FastAPI:
     app.include_router(marketplace_router)
     app.include_router(support_router)
     app.include_router(reports_router)
+    app.include_router(integrations_router)
 
     @app.on_event("startup")
     async def startup():
