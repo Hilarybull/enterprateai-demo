@@ -1834,7 +1834,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
       </div>
 
       {activeTab === "overview" ? (
-      <div className="mt-6 space-y-4">
+      <div className="mt-6 space-y-4"> {/* overview */}
 
         {/* KPI tiles */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
