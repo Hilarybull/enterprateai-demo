@@ -233,6 +233,7 @@ export default function DocumentEditor({
   saveLabel = "Save changes",
   saveDisabled = false,
   showEditButton = true,
+  readOnly = false,
 }) {
   const availableFormats = useMemo(() => {
     const formats = Array.isArray(downloadFormats) && downloadFormats.length ? downloadFormats : ["pdf", "doc"];
@@ -444,7 +445,7 @@ export default function DocumentEditor({
         {isCompactPreview ? (
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Preview</div>
-            {showEditButton ? (
+            {showEditButton && !readOnly ? (
               <Button variant="secondary" onClick={() => setShowPaginated(false)}>
                 Edit
               </Button>
@@ -455,30 +456,34 @@ export default function DocumentEditor({
 
               <ShareMenu items={shareItems} />
 
-              <select
-                className="ea-input h-10 w-[140px]"
-                value={downloadFormat}
-                onChange={(e) => setDownloadFormat(e.target.value)}
-                disabled={availableFormats.length <= 1}
-              >
-                {availableFormats.includes("pdf") ? <option value="pdf">PDF</option> : null}
-                {availableFormats.includes("doc") ? <option value="doc">Word</option> : null}
-              </select>
+              {!readOnly ? (
+                <>
+                  <select
+                    className="ea-input h-10 w-[140px]"
+                    value={downloadFormat}
+                    onChange={(e) => setDownloadFormat(e.target.value)}
+                    disabled={availableFormats.length <= 1}
+                  >
+                    {availableFormats.includes("pdf") ? <option value="pdf">PDF</option> : null}
+                    {availableFormats.includes("doc") ? <option value="doc">Word</option> : null}
+                  </select>
 
-              {toolbarBeforeDownloadSlot}
+                  {toolbarBeforeDownloadSlot}
 
-              <Button
-                variant="secondary"
-                disabled={!onDownload}
-                onClick={() => onDownload?.(downloadFormat)}
-              >
-                Download
-              </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={!onDownload}
+                    onClick={() => onDownload?.(downloadFormat)}
+                  >
+                    Download
+                  </Button>
 
-              {showSaveButton && typeof onSave === "function" ? (
-                <Button onClick={onSave} disabled={saveDisabled}>
-                  {saveLabel}
-                </Button>
+                  {showSaveButton && typeof onSave === "function" ? (
+                    <Button onClick={onSave} disabled={saveDisabled}>
+                      {saveLabel}
+                    </Button>
+                  ) : null}
+                </>
               ) : null}
             </div>
           </div>
@@ -642,17 +647,17 @@ export default function DocumentEditor({
           ) : (
             <div
               ref={ref}
-              className="ea-doc mx-auto w-full max-w-[1400px] rounded-xl border border-slate-200 bg-white p-8 shadow-sm outline-none dark:border-slate-700 dark:bg-slate-950"
-              contentEditable
+              className={`ea-doc mx-auto w-full max-w-[1400px] rounded-xl border border-slate-200 bg-white p-8 shadow-sm outline-none dark:border-slate-700 dark:bg-slate-950${readOnly ? " pointer-events-none select-none" : ""}`}
+              contentEditable={!readOnly}
               suppressContentEditableWarning
-              onInput={(e) => {
+              onInput={readOnly ? undefined : (e) => {
                 const next = e.currentTarget.innerHTML;
                 setHtml(next);
                 if (typeof onHtmlChange === "function") onHtmlChange(next);
               }}
-              onKeyUp={saveSelection}
-              onMouseUp={saveSelection}
-              onFocus={saveSelection}
+              onKeyUp={readOnly ? undefined : saveSelection}
+              onMouseUp={readOnly ? undefined : saveSelection}
+              onFocus={readOnly ? undefined : saveSelection}
             />
           )}
         </div>

@@ -290,13 +290,28 @@ class AutoLLMClient(LLMClient):
 
 
 _FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
+_SERP_PLAN_KEYS = {"decision_engine", "growth_navigator", "strategic_business_os"}
+
+
+async def get_user_plan_info(user_id: str) -> tuple[str, str]:
+    """Return (plan_key, status) for the user. Falls back to ('explorer', 'trial') on error."""
+    try:
+        from app.core.supabase import sb_select
+        sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+        return (sub or {}).get("plan_key") or "", (sub or {}).get("status") or ""
+    except Exception:
+        return "", ""
 
 
 async def pick_llm_for_user(user_id: str) -> LLMClient:
-    """Return AnthropicMessagesClient for paid plans, OpenAIResponsesClient for free/trial."""
-    from app.core.supabase import sb_select
-    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
-    plan_key = (sub or {}).get("plan_key") or ""
-    status = (sub or {}).get("status") or ""
+    """Free/trial → OpenAI (gpt-4.1-mini). Starter → Claude. Pro+ → Claude."""
+    plan_key, status = await get_user_plan_info(user_id)
     is_free = plan_key in _FREE_PLAN_KEYS or status in {"trial", "expired"}
     return OpenAIResponsesClient(user_id=user_id) if is_free else AnthropicMessagesClient(user_id=user_id)
+
+
+def plan_uses_serp(plan_key: str, status: str) -> bool:
+    """SerpAPI search is only enabled for Pro+ plans (decision_engine and above)."""
+    if status in {"trial", "expired"}:
+        return False
+    return plan_key in _SERP_PLAN_KEYS

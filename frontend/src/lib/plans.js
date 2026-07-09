@@ -11,14 +11,13 @@ export const PLANS = [
     cta: "Start Free",
     ctaStyle: "solid",
     features: [
-      "1 idea validation/month",
-      "1 business plan/month",
-      "1 sales letter/month",
+      "1 idea validation (lifetime)",
+      "1 business plan (lifetime, view only, no download)",
+      "Unlimited workspace & financial tools",
       "Unlimited products, customers & vendors",
       "Unlimited invoices & quotations",
-      "1 marketplace listing",
       "Business Registration Guide",
-      "Basic PDF reports",
+      "1 marketplace listing",
     ],
   },
   {

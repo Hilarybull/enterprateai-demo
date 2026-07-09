@@ -761,13 +761,22 @@ def _normalize_report(report: dict[str, Any], *, fields: dict[str, Any], search_
     }
 
 
-async def run_research_data(fields: dict[str, Any]) -> dict[str, Any]:
-    settings = get_settings()
+async def run_research_data(fields: dict[str, Any], *, use_serp: bool = True) -> dict[str, Any]:
+    """
+    Retrieve market research via SerpAPI/Serper.
+    use_serp=False skips all external search (free/starter plans) — AI narration
+    still runs but without live web evidence.
+    """
     evidence: dict[str, list[str]] = {}
     sources: dict[str, list[dict[str, str]]] = {}
     shopping: list[dict[str, str]] = []
     queries = _build_queries(fields)
     search_queries = {key: query for key, (query, _, _) in queries.items()}
+
+    if not use_serp:
+        return {"evidence": evidence, "sources": sources, "shopping": shopping, "search_queries": search_queries}
+
+    settings = get_settings()
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         if settings.serp_api_key:
             tasks = {key: _serp(client, query, engine, extra) for key, (query, engine, extra) in queries.items()}

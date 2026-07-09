@@ -36,6 +36,7 @@ import ResetPasswordPage from "./pages/ResetPasswordPage";
 import IntegrationsCallbackPage from "./pages/IntegrationsCallbackPage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import TermsOfServicePage from "./pages/TermsOfServicePage";
+import DisclaimerPage from "./pages/DisclaimerPage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -75,6 +76,7 @@ export default function App() {
       <Route path="/integrations/callback" element={<IntegrationsCallbackPage />} />
       <Route path="/legal/privacy" element={<PrivacyPolicyPage />} />
       <Route path="/legal/terms" element={<TermsOfServicePage />} />
+      <Route path="/legal/disclaimer" element={<DisclaimerPage />} />
       <Route path="/share/:token" element={<SharedBlueprintPage />} />
       <Route path="/join/:token" element={<JoinPage />} />
       <Route

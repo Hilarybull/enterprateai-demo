@@ -82,14 +82,13 @@ const PLANS = [
     free: true,
     desc: "Test the platform. No card needed.",
     features: [
-      "1 idea validation/month",
-      "1 business plan/month",
-      "1 sales letter/month",
+      "1 idea validation (lifetime)",
+      "1 business plan (lifetime, view only, no download)",
+      "Unlimited workspace & financial tools",
       "Unlimited products, customers & vendors",
       "Unlimited invoices & quotations",
-      "1 marketplace listing",
       "Business Registration Guide",
-      "Basic PDF reports",
+      "1 marketplace listing",
     ],
     highlight: false,
   },
@@ -897,7 +896,14 @@ export default function LandingPage() {
               <span>Enterprate Limited · Registered in England &amp; Wales</span>
             </div>
           </div>
-          <p className="mt-6 text-center text-[11px] text-slate-300">
+          <div className="mt-4 flex flex-wrap justify-center gap-4 text-[11px] text-slate-400">
+            <Link to="/legal/privacy" className="hover:text-slate-600">Privacy Policy</Link>
+            <span>·</span>
+            <Link to="/legal/terms" className="hover:text-slate-600">Terms of Service</Link>
+            <span>·</span>
+            <Link to="/legal/disclaimer" className="hover:text-slate-600">Disclaimer</Link>
+          </div>
+          <p className="mt-3 text-center text-[11px] text-slate-300">
             © {new Date().getFullYear()} Enterprate Limited. All rights reserved.
             ICO Registered · GDPR Compliant · SEIS Advance Assurance Approved
           </p>

@@ -25,6 +25,7 @@ from app.modules.blueprint.schemas import (
     QuotationRespondRequest,
 )
 from app.modules.blueprint.service import generate_blueprint
+from app.shared.llm.openai_client import get_user_plan_info
 from app.modules.blueprint.share_repository import (
     create_share_token,
     get_share_record_for_owner,
@@ -85,12 +86,28 @@ def _resolved_document_html(document_html: str | None, document_markdown: str | 
     return ""
 
 
+_FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
+_LIFETIME_BLUEPRINT_LIMIT = 1
+
+
 @router.post("/generate", response_model=BlueprintGenerateResponse)
 async def blueprint_generate(
     payload: BlueprintGenerateRequest,
     user=Depends(get_current_user),
 ) -> BlueprintGenerateResponse:
-    return await generate_blueprint(payload, user_id=user["id"])
+    user_id: str = user["id"]
+
+    if payload.type == "business_plan":
+        plan_key, plan_status = await get_user_plan_info(user_id)
+        if plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}:
+            existing = await list_documents(user_id=user_id, type="business_plan", limit=2)
+            if len(existing) >= _LIFETIME_BLUEPRINT_LIMIT:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You have used your free lifetime business plan. Upgrade to generate more.",
+                )
+
+    return await generate_blueprint(payload, user_id=user_id)
 
 
 @router.get("/documents", response_model=list[BlueprintDocumentListItem])
@@ -346,9 +363,18 @@ async def blueprint_documents_export(
     format: str = Query(default="pdf", pattern="^(pdf|doc)$"),
     user=Depends(get_current_user),
 ):
-    doc = await get_document(user_id=user["id"], document_id=document_id)
+    user_id: str = user["id"]
+    doc = await get_document(user_id=user_id, document_id=document_id)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    if doc.type == "business_plan":
+        plan_key, plan_status = await get_user_plan_info(user_id)
+        if plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Downloading a business plan requires a paid plan. Upgrade to export.",
+            )
 
     title = doc.title or doc.type or "document"
     raw_html = _resolved_document_html(doc.document_html, doc.document_markdown)

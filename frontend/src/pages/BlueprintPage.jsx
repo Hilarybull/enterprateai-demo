@@ -326,8 +326,7 @@ export default function BlueprintPage() {
   function canBlueprintDoc(docId) {
     const featureKey = DOC_FEATURE_KEY[docId];
     if (!featureKey) return true;
-    // Free/trial plans cannot access Business Proposal at all
-    if (docId === "client_proposal" && isFreeOrTrial) return false;
+    if ((docId === "client_proposal" || docId === "sales_letter") && isFreeOrTrial) return false;
     if (isPlatformFeatureRestricted("blueprint", featureKey, platformRestrictions)) return false;
     return !isMemberMode || hasFeatureAccess("blueprint", featureKey, memberPermissionType, memberPermissions);
   }
@@ -1540,12 +1539,16 @@ export default function BlueprintPage() {
       ]);
       await refreshSavedDocs();
     } catch (e) {
-      const msg = String(e?.message || "").toLowerCase();
+      const rawMsg = e instanceof Error ? e.message : String(e || "");
+      const msg = rawMsg.toLowerCase();
       const isNetwork = msg.includes("network") || msg.includes("failed to fetch") || msg.includes("load");
+      const is403 = rawMsg.startsWith("HTTP 403:");
       setError(
         isNetwork
           ? "Network error — please check your connection and try again. Your inputs are saved."
-          : (e instanceof Error ? e.message : "Blueprint generation failed")
+          : is403
+          ? rawMsg.replace(/^HTTP 403:\s*/i, "")
+          : rawMsg || "Blueprint generation failed"
       );
       setShowInputs(true);
     } finally {
@@ -1854,7 +1857,9 @@ export default function BlueprintPage() {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       if (!res.ok) {
-        if (res.status === 404) {
+        if (res.status === 403) {
+          throw new Error("Downloading a business plan requires a paid plan. Upgrade to export.");
+        } else if (res.status === 404) {
           throw new Error("Document not found. Please regenerate it.");
         } else if (res.status === 500) {
           throw new Error("Server error. Please try again.");
@@ -2007,23 +2012,45 @@ export default function BlueprintPage() {
         </IllustrationCard>
         <SectionCard title="Documents" subtitle="Click a document to generate it.">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {DOCUMENTS.filter((d) => canBlueprintDoc(d.id)).map((d) => (
-              <button
-                key={d.id}
-                type="button"
-                onClick={() => openDoc(d.id)}
-                className={"ea-card ea-card-hover relative p-4 text-left border-slate-200"}
-              >
-                <div className="absolute right-3 top-3 inline-flex items-center rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
-                  {pct(completionFor(d.id))}
-                </div>
-                <div className="text-sm font-semibold text-slate-900">{d.title}</div>
-                <div className="mt-1 text-xs text-slate-600">{d.desc}</div>
-                {d.needsWorkspace ? (
-                  <div className="mt-2 text-[11px] font-semibold text-slate-500">Uses Idea Validation metrics</div>
-                ) : null}
-              </button>
-            ))}
+            {DOCUMENTS.map((d) => {
+              const canAccess = canBlueprintDoc(d.id);
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => canAccess ? openDoc(d.id) : null}
+                  disabled={!canAccess}
+                  className={`ea-card relative p-4 text-left border-slate-200 ${canAccess ? "ea-card-hover" : "cursor-not-allowed opacity-60 bg-slate-50"}`}
+                >
+                  <div className="absolute right-3 top-3 flex items-center gap-1.5">
+                    {!canAccess ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        Paid only
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
+                        {pct(completionFor(d.id))}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm font-semibold text-slate-900">{d.title}</div>
+                  <div className="mt-1 text-xs text-slate-600">{d.desc}</div>
+                  {!canAccess && (
+                    <Link
+                      to="/pricing"
+                      onClick={(e) => e.stopPropagation()}
+                      className="mt-2 inline-block text-[11px] font-semibold text-indigo-600 hover:underline"
+                    >
+                      Upgrade to access →
+                    </Link>
+                  )}
+                  {canAccess && d.needsWorkspace ? (
+                    <div className="mt-2 text-[11px] font-semibold text-slate-500">Uses Idea Validation metrics</div>
+                  ) : null}
+                </button>
+              );
+            })}
           </div>
         </SectionCard>
 
@@ -2206,20 +2233,33 @@ export default function BlueprintPage() {
                   <div className="flex h-full min-h-0 flex-col gap-3">
                     {isFreeOrTrial && selectedDoc === "business_plan" ? (
                       <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                        Free plan — read only.{" "}
-                        <Link to="/pricing" className="font-semibold underline hover:text-amber-900">Upgrade</Link>
-                        {" "}to copy, share, or download.
+                        Free plan — read only. <Link to="/pricing" className="font-semibold underline hover:text-amber-900">Upgrade</Link> to edit, copy, share, or download.
                       </div>
                     ) : null}
-                    <div className="flex-1 min-h-0">
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      <span className="font-semibold">AI output disclaimer: </span>
+                      This document is AI-generated and may be incomplete or inaccurate. Review carefully before using for any business, legal, or financial purpose. <Link to="/legal/disclaimer" className="underline hover:text-amber-900">Learn more</Link>.
+                    </div>
+                    <div className={`flex-1 min-h-0 relative${isFreeOrTrial && selectedDoc === "business_plan" ? " select-none" : ""}`}>
+                      {isFreeOrTrial && selectedDoc === "business_plan" && (
+                        <div
+                          aria-hidden="true"
+                          className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
+                          style={{
+                            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='180'%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='28' font-weight='700' fill='%23000' fill-opacity='0.045' transform='rotate(-30 170 90)'%3EEnterprateAI%3C/text%3E%3C/svg%3E")`,
+                            backgroundRepeat: "repeat",
+                          }}
+                        />
+                      )}
                       <DocumentEditor
                         title={selectedMeta.title}
                         markdown={selectedDocResult.document_markdown}
                         initialHtml={selectedDocResult.document_html || ""}
-                        onHtmlChange={(h) => setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: h }))}
+                        onHtmlChange={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : (h) => setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: h }))}
                         onDownload={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : downloadExport}
                         onSave={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : saveEdits}
                         hideShare={isFreeOrTrial && selectedDoc === "business_plan"}
+                        readOnly={isFreeOrTrial && selectedDoc === "business_plan"}
                         defaultMode="preview"
                         compactPreview
                         shareMenuItems={[

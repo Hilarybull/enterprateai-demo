@@ -31,8 +31,12 @@ from app.modules.idea_validation.market_research_service import (
 )
 from app.shared.schemas.common import WorkspaceDocument
 from app.core.supabase import sb_insert, sb_select, sb_update
+from app.shared.llm.openai_client import get_user_plan_info, plan_uses_serp
 
 logger = logging.getLogger(__name__)
+
+_FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
+_LIFETIME_VALIDATION_LIMIT = 1
 
 
 async def create_workspace(
@@ -298,14 +302,24 @@ async def evaluate(
     Main evaluation entry point.
     Now follows the deterministic research-backed flow for idea validation.
     """
-    # 1. Usage Limit Check (DISABLED for testing)
-    # is_allowed = await check_user_usage(user_id)
-    # if not is_allowed:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-    #         detail="Daily validation limit reached. Please upgrade or try again tomorrow."
-    #     )
-    
+    # 1. Plan-based gating: enforce lifetime limits and route SerpAPI
+    plan_key, plan_status = await get_user_plan_info(user_id)
+    is_free_plan = plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}
+    use_serp = plan_uses_serp(plan_key, plan_status)
+
+    if is_free_plan:
+        # Count lifetime validations for this user
+        existing_validations = await sb_select(
+            "idea_validation_results",
+            filters=[("user_id", "eq", user_id)],
+        )
+        count = len(existing_validations) if existing_validations else 0
+        if count >= _LIFETIME_VALIDATION_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You have used your free lifetime validation. Upgrade to run more validations.",
+            )
+
     # Always prefer the user's current input payloads when provided.
     iv_payload = None
     if idea_validation:
@@ -369,9 +383,9 @@ async def evaluate(
         fields["idea_description"] = raw_name  # AI uses full description for context
 
         # A. Research Retrieval
-        logger.info(f"Starting research retrieval for idea: {engine_inputs.idea_name}")
+        logger.info(f"Starting research retrieval for idea: {engine_inputs.idea_name} (serp={use_serp})")
         try:
-            research_res = await run_research_data(fields)
+            research_res = await run_research_data(fields, use_serp=use_serp)
         except Exception as e:
             logger.error(f"Research retrieval failed: {e}")
             research_res = {"evidence": {}, "sources": {}, "shopping": [], "search_queries": {}}

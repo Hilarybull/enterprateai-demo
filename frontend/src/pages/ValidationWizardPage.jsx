@@ -26,6 +26,10 @@ function humanizeValidationError(e) {
   }
   if (msg === "TIMEOUT") return "The server is taking too long to respond. Check the backend logs and try again.";
   if (msg.startsWith("HTTP 401:")) return "Please sign in to continue.";
+  if (msg.startsWith("HTTP 403:")) {
+    const detail = msg.replace(/^HTTP 403:\s*/i, "").trim();
+    return detail || "You have reached the limit for your current plan. Upgrade to continue.";
+  }
   if (msg.startsWith("HTTP 422:")) {
     const detail = msg.replace(/^HTTP 422:\s*/i, "").trim();
     return detail ? `Validation error: ${detail}` : "Please check the required fields and try again.";
@@ -3258,9 +3262,9 @@ export default function ValidationWizardPage() {
             <>
               {!fromOtherModule ? (
                 <div className="mb-6 overflow-hidden rounded-2xl bg-gradient-to-br from-brand-600 to-brand-800 p-5 text-white shadow-lg md:p-8">
-                  <div className="relative z-10 max-w-xl">
+                  <div className="relative z-10 max-w-3xl">
                     <h1 className="text-xl font-bold md:text-3xl leading-tight">Validate your vision</h1>
-                    <p className="mt-2 text-xs font-medium text-brand-100 md:text-base opacity-90">
+                    <p className="mt-2 text-xs font-medium text-brand-100 md:text-base opacity-90 whitespace-nowrap">
                       Turn your assumptions into a data-backed business case. Choose a pathway below to begin.
                     </p>
                   </div>

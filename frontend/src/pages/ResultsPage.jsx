@@ -462,6 +462,12 @@ export default function ResultsPage() {
           <p className="mt-1 text-sm text-slate-500">Product / service viability report and analysis.</p>
         </div>
 
+        {/* ── Disclaimer ── */}
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <span className="font-semibold">AI output disclaimer: </span>
+          Results are decision-support tools only and may be incomplete or inaccurate. Do not rely solely on this report for legal, financial, or investment decisions. <a href="/legal/disclaimer" className="underline hover:text-amber-900">Learn more</a>.
+        </div>
+
         {/* ── Action toolbar ── */}
         <div className="flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
           <Button
@@ -1034,6 +1040,12 @@ export default function ResultsPage() {
           {pathwayLabel ? <Badge>{pathwayLabel}</Badge> : null}
         </div>
         <p className="mt-1 text-sm text-slate-500">Validation report and recommended next steps.</p>
+      </div>
+
+      {/* ── Disclaimer ── */}
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <span className="font-semibold">AI output disclaimer: </span>
+        Results are decision-support tools only and may be incomplete or inaccurate. Do not rely solely on this report for legal, financial, or investment decisions. <a href="/legal/disclaimer" className="underline hover:text-amber-900">Learn more</a>.
       </div>
 
       {/* ── Action toolbar ── */}

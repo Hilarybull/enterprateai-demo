@@ -811,7 +811,7 @@ function AddonCard({ addon, mode, token }) {
       const msg = (e instanceof Error ? e.message : String(e)).replace(/^HTTP \d+:\s*/, "");
       setError(
         msg.includes("503") || msg.includes("not yet available")
-          ? "This add-on is coming soon — contact us to arrange manually."
+          ? "This add-on is coming soon. Contact us to arrange manually."
           : msg || "Something went wrong."
       );
     } finally {
@@ -1227,7 +1227,7 @@ export default function PricingPage() {
             Marketplace Add-ons
           </h2>
           <p className="mt-1 text-[13px] text-slate-500 dark:text-slate-400">
-            Boost your marketplace presence or top up RFQ credits at any time — compatible with any plan.
+            Boost your marketplace presence or top up RFQ credits at any time, compatible with any plan.
           </p>
 
           <div className="mt-6 space-y-6">
