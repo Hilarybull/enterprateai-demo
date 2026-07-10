@@ -124,10 +124,11 @@ async def list_documents(
         desc=True,
         limit=limit,
     )
+    _VALID_TYPES = {"business_plan", "client_proposal", "sales_letter", "sales_quotation", "invoice_template", "cashflow_analysis", "financial_projection"}
     out: list[BlueprintDocumentListItem] = []
     for d in data:
         doc_type = d.get("type")
-        if not doc_type:
+        if not doc_type or doc_type not in _VALID_TYPES:
             continue
         if not d.get("document_markdown"):
             continue

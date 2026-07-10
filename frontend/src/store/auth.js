@@ -42,11 +42,11 @@ async function fetchSubscription() {
   try {
     return await apiRequest("/plans/my", "GET");
   } catch {
-    return { plan_key: "free_trial", billing_period: "monthly", status: "trial" };
+    return { plan_key: "explorer", billing_period: "monthly", status: "active" };
   }
 }
 
-const DEFAULT_SUB = { plan_key: "free_trial", billing_period: "monthly", status: "trial" };
+const DEFAULT_SUB = { plan_key: "explorer", billing_period: "monthly", status: "active" };
 
 export const useAuthStore = create((set, get) => ({
   token: null,

@@ -891,15 +891,18 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                 const isTrial = subscription.status === "trial";
                 const isActive = subscription.status === "active";
                 const isGrandfathered = subscription.status === "grandfathered";
+                const isFreePlanKey = ["free_trial", "explorer"].includes(subscription.plan_key);
+                const isPaidActive = isActive && !isFreePlanKey;
+                const isFreeActive = isActive && isFreePlanKey;
                 const startDate = fmtAdminDate(subscription.current_period_start);
                 const endDate = fmtAdminDate(subscription.current_period_end);
                 const statusColor = isExpired
                   ? "border-rose-200 bg-rose-50"
-                  : isActive
+                  : isPaidActive
                   ? "border-emerald-100 bg-emerald-50"
                   : "border-brand-100 bg-brand-50";
-                const dotColor = isExpired ? "bg-rose-500" : isActive ? "bg-emerald-500" : "bg-brand-500";
-                const statusLabel = isExpired ? "Trial expired" : isTrial ? "Free trial" : isActive ? "Paid plan" : "Grandfathered";
+                const dotColor = isExpired ? "bg-rose-500" : isPaidActive ? "bg-emerald-500" : "bg-brand-500";
+                const statusLabel = isExpired ? "Trial expired" : isTrial ? "Free trial" : isFreeActive ? "Free plan" : isPaidActive ? "Paid plan" : "Grandfathered";
                 const plan = getPlan(normalisePlanKey(subscription.plan_key ?? "explorer"));
                 const planName = plan?.label ?? subscription.plan_key ?? "Explorer";
                 const billingPeriod = subscription.billing_period === "annual" ? "Annual" : "Monthly";
@@ -911,11 +914,11 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                           <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
                           <span className="text-sm font-semibold text-slate-800">{statusLabel}</span>
                           <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{planName}</span>
-                          {isActive && (
+                          {isPaidActive && (
                             <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{billingPeriod}</span>
                           )}
                         </div>
-                        {isActive && startDate && endDate && (
+                        {isPaidActive && startDate && endDate && (
                           <p className="mt-1 text-[11px] text-slate-600">
                             Paid: {startDate} → {endDate}
                           </p>
@@ -925,7 +928,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                             {isExpired ? "Expired" : "Expires"}: {endDate}
                           </p>
                         )}
-                        {isActive && subscription.stripe_subscription_id && (
+                        {isPaidActive && subscription.stripe_subscription_id && (
                           <p className="mt-1 text-[11px] text-slate-400">Stripe: {subscription.stripe_subscription_id}</p>
                         )}
                         {isActive && plan?.features?.length > 0 && (
@@ -1365,6 +1368,11 @@ export default function AdminPage() {
   const [tab, setTab] = useState("overview");
   const [search, setSearch] = useState("");
   const [invitationFilter, setInvitationFilter] = useState("all");
+  const [aiModelFilter, setAiModelFilter] = useState("");
+  const [aiDateFilter, setAiDateFilter] = useState("all");
+  const [aiUserFilter, setAiUserFilter] = useState("");
+  const [aiFeatureFilter, setAiFeatureFilter] = useState("");
+  const [aiPage, setAiPage] = useState(1);
 
   const [confirm, setConfirm] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -2182,59 +2190,160 @@ export default function AdminPage() {
 
             {/* Recent events */}
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-800">Recent AI calls</h2>
-                <button
-                  type="button"
-                  onClick={() => downloadCSV(stats?.ai_usage?.recent || [], [
-                    { key: "created_at", label: "Time" },
-                    { key: "user_email", label: "User" },
-                    { key: "feature", label: "Feature" },
-                    { key: "provider", label: "Provider" },
-                    { key: "model", label: "Model" },
-                    { key: "input_tokens", label: "Input Tokens" },
-                    { key: "output_tokens", label: "Output Tokens" },
-                    { key: "total_tokens", label: "Total Tokens" },
-                    { key: "estimated_cost_usd", label: "Cost (USD)" },
-                  ], "ai-usage-recent.csv")}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[12px] font-medium text-slate-600 transition hover:bg-slate-50"
-                >
-                  <DownloadIcon />
-                  Export
-                </button>
-              </div>
-              {(stats?.ai_usage?.recent || []).length ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-max text-[12px]">
-                    <thead>
-                      <tr className="border-b border-slate-100 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        <th className="pb-2 pr-3">Time</th>
-                        <th className="pb-2 pr-3">User</th>
-                        <th className="pb-2 pr-3">Feature</th>
-                        <th className="pb-2 pr-3">Provider</th>
-                        <th className="pb-2 pr-3 text-right">In</th>
-                        <th className="pb-2 pr-3 text-right">Out</th>
-                        <th className="pb-2 text-right">Cost</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {(stats.ai_usage.recent || []).map((row) => (
-                        <tr key={row.id}>
-                          <td className="py-1.5 pr-3 whitespace-nowrap text-slate-400">{formatDateTime(row.created_at)}</td>
-                          <td className="py-1.5 pr-3 truncate max-w-[160px] font-mono text-slate-600">{row.user_email || row.user_id || "—"}</td>
-                          <td className="py-1.5 pr-3 font-mono text-slate-700">{row.feature}</td>
-                          <td className="py-1.5 pr-3 text-slate-500">{row.provider} / {row.model}</td>
-                          <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{(row.input_tokens || 0).toLocaleString()}</td>
-                          <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{(row.output_tokens || 0).toLocaleString()}</td>
-                          <td className="py-1.5 text-right tabular-nums font-semibold text-slate-700">${Number(row.estimated_cost_usd || 0).toFixed(5)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-xs text-slate-400">No AI calls recorded yet. Run any AI feature to see events here.</p>
-              )}
+              {(() => {
+                const AI_PAGE_SIZE = 25;
+                const allRecent = stats?.ai_usage?.recent || [];
+                const now = new Date();
+
+                const modelOptions = [...new Set(allRecent.map((r) => `${r.provider} / ${r.model}`).filter(Boolean))].sort();
+                const userOptions = [...new Set(allRecent.map((r) => r.user_email || r.user_id).filter(Boolean))].sort();
+                const featureOptions = [...new Set(allRecent.map((r) => r.feature).filter(Boolean))].sort();
+
+                const filteredRecent = allRecent.filter((r) => {
+                  if (aiModelFilter && `${r.provider} / ${r.model}` !== aiModelFilter) return false;
+                  if (aiUserFilter && (r.user_email || r.user_id) !== aiUserFilter) return false;
+                  if (aiFeatureFilter && r.feature !== aiFeatureFilter) return false;
+                  if (aiDateFilter !== "all") {
+                    const created = new Date(r.created_at);
+                    if (aiDateFilter === "today") {
+                      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                      if (created < today) return false;
+                    } else if (aiDateFilter === "7d") {
+                      if (created < new Date(now - 7 * 24 * 60 * 60 * 1000)) return false;
+                    } else if (aiDateFilter === "30d") {
+                      if (created < new Date(now - 30 * 24 * 60 * 60 * 1000)) return false;
+                    }
+                  }
+                  return true;
+                });
+
+                const totalPages = Math.max(1, Math.ceil(filteredRecent.length / AI_PAGE_SIZE));
+                const safePage = Math.min(aiPage, totalPages);
+                const pagedRecent = filteredRecent.slice((safePage - 1) * AI_PAGE_SIZE, safePage * AI_PAGE_SIZE);
+                const hasFilters = aiModelFilter || aiUserFilter || aiFeatureFilter || aiDateFilter !== "all";
+
+                function clearFilters() {
+                  setAiModelFilter(""); setAiUserFilter(""); setAiFeatureFilter(""); setAiDateFilter("all"); setAiPage(1);
+                }
+
+                const selCls = "rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[12px] text-slate-700 outline-none focus:border-brand-300 focus:ring-1 focus:ring-brand-100";
+
+                return (
+                  <>
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-sm font-semibold text-slate-800">Recent AI calls</h2>
+                        {hasFilters && (
+                          <span className="text-[11px] text-slate-400">{filteredRecent.length} of {allRecent.length}</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => downloadCSV(filteredRecent, [
+                          { key: "created_at", label: "Time" },
+                          { key: "user_email", label: "User" },
+                          { key: "feature", label: "Feature" },
+                          { key: "provider", label: "Provider" },
+                          { key: "model", label: "Model" },
+                          { key: "input_tokens", label: "Input Tokens" },
+                          { key: "output_tokens", label: "Output Tokens" },
+                          { key: "total_tokens", label: "Total Tokens" },
+                          { key: "estimated_cost_usd", label: "Cost (USD)" },
+                        ], "ai-usage-recent.csv")}
+                        className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[12px] font-medium text-slate-600 transition hover:bg-slate-50"
+                      >
+                        <DownloadIcon />
+                        Export{hasFilters ? " (filtered)" : ""}
+                      </button>
+                    </div>
+
+                    {allRecent.length > 0 && (
+                      <div className="mb-3 flex flex-wrap items-center gap-2">
+                        <select value={aiDateFilter} onChange={(e) => { setAiDateFilter(e.target.value); setAiPage(1); }} className={selCls}>
+                          <option value="all">All time</option>
+                          <option value="today">Today</option>
+                          <option value="7d">Last 7 days</option>
+                          <option value="30d">Last 30 days</option>
+                        </select>
+                        {userOptions.length > 0 && (
+                          <select value={aiUserFilter} onChange={(e) => { setAiUserFilter(e.target.value); setAiPage(1); }} className={selCls}>
+                            <option value="">All users</option>
+                            {userOptions.map((u) => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                        )}
+                        {featureOptions.length > 0 && (
+                          <select value={aiFeatureFilter} onChange={(e) => { setAiFeatureFilter(e.target.value); setAiPage(1); }} className={selCls}>
+                            <option value="">All features</option>
+                            {featureOptions.map((f) => <option key={f} value={f}>{f}</option>)}
+                          </select>
+                        )}
+                        {modelOptions.length > 0 && (
+                          <select value={aiModelFilter} onChange={(e) => { setAiModelFilter(e.target.value); setAiPage(1); }} className={selCls}>
+                            <option value="">All models</option>
+                            {modelOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        )}
+                        {hasFilters && (
+                          <button type="button" onClick={clearFilters} className="text-[12px] font-medium text-brand-600 hover:text-brand-700">
+                            Clear filters
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {pagedRecent.length ? (
+                      <>
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-max text-[12px]">
+                            <thead>
+                              <tr className="border-b border-slate-100 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                <th className="pb-2 pr-3">Time</th>
+                                <th className="pb-2 pr-3">User</th>
+                                <th className="pb-2 pr-3">Feature</th>
+                                <th className="pb-2 pr-3">Provider</th>
+                                <th className="pb-2 pr-3 text-right">In</th>
+                                <th className="pb-2 pr-3 text-right">Out</th>
+                                <th className="pb-2 text-right">Cost</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                              {pagedRecent.map((row) => (
+                                <tr key={row.id}>
+                                  <td className="py-1.5 pr-3 whitespace-nowrap text-slate-400">{formatDateTime(row.created_at)}</td>
+                                  <td className="py-1.5 pr-3 max-w-[160px] truncate font-mono text-slate-600">{row.user_email || row.user_id || "—"}</td>
+                                  <td className="py-1.5 pr-3 font-mono text-slate-700">{row.feature}</td>
+                                  <td className="py-1.5 pr-3 text-slate-500">{row.provider} / {row.model}</td>
+                                  <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{(row.input_tokens || 0).toLocaleString()}</td>
+                                  <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{(row.output_tokens || 0).toLocaleString()}</td>
+                                  <td className="py-1.5 text-right tabular-nums font-semibold text-slate-700">${Number(row.estimated_cost_usd || 0).toFixed(5)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {totalPages > 1 && (
+                          <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+                            <span className="text-[11px] text-slate-400">
+                              {(safePage - 1) * AI_PAGE_SIZE + 1}–{Math.min(safePage * AI_PAGE_SIZE, filteredRecent.length)} of {filteredRecent.length}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button type="button" disabled={safePage <= 1} onClick={() => setAiPage((p) => Math.max(1, p - 1))}
+                                className="rounded-lg border border-slate-200 px-2.5 py-1 text-[12px] font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40">←</button>
+                              <span className="px-2 text-[12px] text-slate-500">{safePage} / {totalPages}</span>
+                              <button type="button" disabled={safePage >= totalPages} onClick={() => setAiPage((p) => Math.min(totalPages, p + 1))}
+                                className="rounded-lg border border-slate-200 px-2.5 py-1 text-[12px] font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40">→</button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-xs text-slate-400">
+                        {allRecent.length ? "No calls match the current filters." : "No AI calls recorded yet. Run any AI feature to see events here."}
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
             </section>
 
           </div>

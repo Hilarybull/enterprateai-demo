@@ -4,15 +4,15 @@ export const PLANS = [
   {
     key: "explorer",
     label: "Explorer",
-    tagline: "Test the platform, no card needed",
+    tagline: "No card needed",
     monthlyPrice: 0,
     annualPrice: 0,
     annualSaving: 0,
     cta: "Start Free",
     ctaStyle: "solid",
     features: [
-      "1 idea validation (lifetime)",
-      "1 business plan (lifetime, view only, no download)",
+      "1 Idea Validation",
+      "1 Business Plan",
       "Unlimited workspace & financial tools",
       "Unlimited products, customers & vendors",
       "Unlimited invoices & quotations",
@@ -155,7 +155,7 @@ export function planAllowsScenario(planKey, scenarioTemplateId, status) {
   if (status === "grandfathered") return true;
   if (!scenarioTemplateId || scenarioTemplateId === "do_nothing_projection") return true;
   const normalised = normalisePlanKey(planKey);
-  if (normalised === "explorer") return false; // trial and expired — no manual scenarios
+  if (normalised === "explorer") return false; // free plan — no manual scenarios
   if (normalised === "starter_insight") return STARTER_ALLOWED_SCENARIOS.includes(scenarioTemplateId);
   return true;
 }

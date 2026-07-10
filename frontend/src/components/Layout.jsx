@@ -685,7 +685,7 @@ export default function Layout() {
                 onClick={() => navigate("/pricing")}
                 className={
                   "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold transition " +
-                  (subscription?.plan_key && subscription.plan_key !== "free_trial"
+                  (subscription?.plan_key && !["free_trial", "explorer"].includes(subscription.plan_key)
                     ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
                     : "bg-brand-50 text-brand-700 hover:bg-brand-100 dark:bg-slate-800 dark:text-brand-400 dark:hover:bg-slate-700")
                 }
@@ -695,7 +695,7 @@ export default function Layout() {
                 </svg>
                 {planLabel(subscription?.plan_key, subscription?.status)}
               </button>
-              {(!subscription?.plan_key || subscription.plan_key === "free_trial") && (
+              {(!subscription?.plan_key || ["free_trial", "explorer"].includes(subscription.plan_key)) && (
                 <button
                   type="button"
                   onClick={() => navigate("/pricing")}
@@ -737,7 +737,7 @@ export default function Layout() {
               <button
                 type="button"
                 onClick={() => {
-                  const isFreePlan = !subscription?.plan_key || subscription.plan_key === "free_trial";
+                  const isFreePlan = !subscription?.plan_key || ["free_trial", "explorer"].includes(subscription.plan_key);
                   if (isFreePlan) { setShowInviteUpgrade(true); return; }
                   setInviteOpen(true);
                 }}

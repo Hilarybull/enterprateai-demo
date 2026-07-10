@@ -63,7 +63,7 @@ export default function PricingSuccessPage() {
               You're all set!
             </h1>
 
-            {sub && sub.plan_key !== "free_trial" ? (
+            {sub && !["free_trial", "explorer"].includes(sub.plan_key) ? (
               <>
                 <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                   Your <strong className="text-slate-800 dark:text-slate-200">{planLabel(sub.plan_key, sub.status)}</strong> plan is now active.

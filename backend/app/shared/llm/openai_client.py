@@ -294,7 +294,7 @@ _SERP_PLAN_KEYS = {"decision_engine", "growth_navigator", "strategic_business_os
 
 
 async def get_user_plan_info(user_id: str) -> tuple[str, str]:
-    """Return (plan_key, status) for the user. Falls back to ('explorer', 'trial') on error."""
+    """Return (plan_key, status) for the user. Falls back to ('', '') on error."""
     try:
         from app.core.supabase import sb_select
         sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)

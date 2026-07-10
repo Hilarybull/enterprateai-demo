@@ -2233,7 +2233,7 @@ export default function BlueprintPage() {
                   <div className="flex h-full min-h-0 flex-col gap-3">
                     {isFreeOrTrial && selectedDoc === "business_plan" ? (
                       <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                        Free plan — read only. <Link to="/pricing" className="font-semibold underline hover:text-amber-900">Upgrade</Link> to edit, copy, share, or download.
+                        Free plan read only. <Link to="/pricing" className="font-semibold underline hover:text-amber-900">Upgrade</Link> to edit, copy, share, or download.
                       </div>
                     ) : null}
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">

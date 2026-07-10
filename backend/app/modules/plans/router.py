@@ -513,22 +513,12 @@ async def get_my_subscription(user=Depends(get_current_user)) -> SubscriptionOut
                     trial_started_at=created_at_str,
                 )
 
-            # Still within trial window
-            trial_end = created_at + timedelta(days=TRIAL_DAYS)
-            if datetime.now(timezone.utc) < trial_end:
-                return SubscriptionOut(
-                    plan_key="free_trial",
-                    billing_period="monthly",
-                    status="trial",
-                    trial_started_at=created_at_str,
-                    current_period_end=trial_end.isoformat(),
-                )
         except Exception:
             pass
 
-    # Trial expired, no paid plan
+    # No paid plan → permanent free Explorer plan
     return SubscriptionOut(
-        plan_key="free_trial",
+        plan_key="explorer",
         billing_period="monthly",
-        status="expired",
+        status="active",
     )

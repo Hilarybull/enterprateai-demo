@@ -82,8 +82,8 @@ const PLANS = [
     free: true,
     desc: "Test the platform. No card needed.",
     features: [
-      "1 idea validation (lifetime)",
-      "1 business plan (lifetime, view only, no download)",
+      "1 Idea Validation",
+      "1 Business Plan",
       "Unlimited workspace & financial tools",
       "Unlimited products, customers & vendors",
       "Unlimited invoices & quotations",
@@ -123,7 +123,7 @@ const FAQS = [
   { q: "Do I need to connect my accounts?", a: "No. You can enter your data manually, upload a spreadsheet, or optionally connect Xero or QuickBooks for automatic updates. Manual entry works perfectly for most early stage businesses." },
   { q: "How is this different from my accountant's spreadsheet?", a: "Your accountant shows you what already happened. EnterprateAI models your business as a live system and simulates what will happen next, across all your interconnected costs, revenues, and decisions, before you commit." },
   { q: "What if my business is very small or early-stage?", a: "EnterprateAI is specifically designed for UK SMEs, including early stage businesses with as few as 2–3 months of trading data. The simpler your business, the faster the setup." },
-  { q: "What happens after my 14-day free trial?", a: "At the end of your trial you choose a plan. There is no automatic charge. You will be asked explicitly to select a plan and enter payment details. You can also continue on a free read-only tier indefinitely." },
+  { q: "Is there a free plan?", a: "Yes. The Explorer plan is free forever with no credit card required. You get 1 idea validation, 1 view-only business plan, unlimited workspace and financial tools, and more. Upgrade to a paid plan whenever you are ready for more validations, downloads, and advanced features." },
   { q: "Is EnterprateAI GDPR compliant?", a: "Yes, fully. We are ICO Registered (UK data protection authority), process all data within UK/EU jurisdictions, and provide a full Data Processing Agreement (DPA) on request for business customers." },
   { q: "How quickly can I run my first simulation?", a: "Most users run their first decision simulation within 15 minutes of signing up. Our onboarding flow guides you through connecting your data and building your first business model step by step." },
   { q: "Can I cancel anytime?", a: "Yes. No lock-in contracts, no cancellation fees. Cancel from your account settings in 30 seconds. Your data remains accessible for 30 days after cancellation." },
@@ -203,7 +203,7 @@ export default function LandingPage() {
               <span className="text-2xl">👋</span>
               <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Before you go</span>
             </div>
-            <h3 className="mt-2 text-xl font-bold text-slate-900">Start your free 14-day trial</h3>
+            <h3 className="mt-2 text-xl font-bold text-slate-900">Get started for free</h3>
             <p className="mt-2 text-sm text-slate-500">
               EnterprateAI gives you the business intelligence tools to validate ideas, run scenario simulations, and make smarter decisions - completely free to start.
             </p>
@@ -221,7 +221,7 @@ export default function LandingPage() {
               onClick={() => navigate("/login")}
               className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition"
             >
-              Start My Free Trial →
+              Get Started Free →
             </button>
             <button
               type="button"
@@ -230,7 +230,7 @@ export default function LandingPage() {
             >
               Maybe later
             </button>
-            <p className="mt-3 text-center text-xs text-slate-400">14-day free trial · No credit card required</p>
+            <p className="mt-3 text-center text-xs text-slate-400">Free plan · No credit card required</p>
           </div>
         </div>
       )}
@@ -255,7 +255,7 @@ export default function LandingPage() {
               onClick={() => navigate("/login")}
               className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700"
             >
-              Start Free Trial
+              Start Free
             </button>
             <button
               type="button"
@@ -782,7 +782,7 @@ export default function LandingPage() {
           <div className="mb-10 text-center">
             <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Pricing</span>
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Simple, Transparent Pricing</h2>
-            <p className="mt-3 text-slate-500">Every plan includes a 14-day free trial. No credit card required to start.</p>
+            <p className="mt-3 text-slate-500">Start free on the Explorer plan. No credit card required.</p>
             <div className="mt-5 inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
               <button type="button" onClick={() => setAnnualBilling(false)} className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${!annualBilling ? "bg-brand-600 text-white" : "text-slate-500 hover:text-slate-700"}`}>Monthly</button>
               <button type="button" onClick={() => setAnnualBilling(true)} className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${annualBilling ? "bg-brand-600 text-white" : "text-slate-500 hover:text-slate-700"}`}>
@@ -815,7 +815,7 @@ export default function LandingPage() {
                   )}
                 </div>
                 {plan.free ? (
-                  <p className="text-xs font-medium text-emerald-600">14-day trial · No credit card required</p>
+                  <p className="text-xs font-medium text-emerald-600">No credit card required</p>
                 ) : annualBilling ? (
                   <p className="text-xs text-emerald-600">Billed annually (save £{plan.annualSaving}/yr)</p>
                 ) : (

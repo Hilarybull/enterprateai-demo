@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     xero_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("XERO_CLIENT_SECRET",))
     zoho_client_id: str | None = Field(default=None, validation_alias=AliasChoices("ZOHO_CLIENT_ID",))
     zoho_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("ZOHO_CLIENT_SECRET",))
+    zoho_region: str = Field(default="com", validation_alias=AliasChoices("ZOHO_REGION",))
 
     # Stripe
     stripe_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_SECRET_KEY", "STRIPE_LIVE_KEY"))
