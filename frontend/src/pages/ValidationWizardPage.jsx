@@ -4279,7 +4279,7 @@ export default function ValidationWizardPage() {
                             <button
                               type="button"
                               onClick={() => canAccessComprehensive
-                                ? (markV4StepComplete(v4Step), setV4Journey("comprehensive"), setV4Step(7))
+                                ? (markV4StepComplete(v4Step), setV4Journey("comprehensive"), setV4Step(3))
                                 : navigate("/pricing")}
                               className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-semibold text-violet-700 hover:bg-violet-100 flex items-center gap-1.5"
                             >
