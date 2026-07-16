@@ -11,6 +11,7 @@ export const PLANS = [
     cta: "Start Free",
     ctaStyle: "solid",
     features: [
+      "50 AI credits",
       "Basic Idea Validation",
       "Business Plan",
       "Unlimited products, customers & vendors",

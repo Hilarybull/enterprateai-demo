@@ -80,8 +80,9 @@ const PLANS = [
     annual: 0,
     annualSaving: 0,
     free: true,
-    desc: "Test the platform. No card needed.",
+    desc: "",
     features: [
+      "50 AI credits",
       "Basic Idea Validation",
       "Business Plan",
       "Unlimited products, customers & vendors",
@@ -101,6 +102,7 @@ const PLANS = [
     free: false,
     desc: "Solo founders & new service businesses.",
     features: [
+      "500 AI credits",
       "Basic & Comprehensive Idea Validation",
       "Business Blueprints & Proposals",
       "Scenario Simulation",

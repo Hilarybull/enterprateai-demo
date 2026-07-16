@@ -695,13 +695,14 @@ async def _ai_enrich_v4_input(inp, user_id: str) -> None:
     if needs_revenue:
         fields_needed.append('"revenue_model": "<most likely model, e.g. subscription, one-time, per-session>"')
 
+    joined = ",\n  ".join(fields_needed)
     prompt = f"""You are a business analyst inferring missing business details from limited idea information.
 
 {context}
 
 Based only on the above, infer the most likely values for these fields. Be concise and realistic.
 Return ONLY a valid JSON object with these exact keys — no explanation, no markdown:
-{{{",\n  ".join(fields_needed)}}}"""
+{{{joined}}}"""
 
     try:
         call_llm = await _pick_llm_caller(user_id)
