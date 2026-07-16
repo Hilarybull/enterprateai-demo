@@ -14,6 +14,7 @@ from app.modules.plans.schemas import (
     SubscriptionOut,
 )
 from app.shared.auth.deps import get_current_user
+from app.modules.credits.service import provision_plan_credits, reset_monthly_credits
 
 logger = logging.getLogger(__name__)
 
@@ -411,6 +412,29 @@ async def stripe_webhook(request: Request):
                 },
                 on_conflict="user_id",
             )
+            # Issue initial credits for new subscription
+            try:
+                await provision_plan_credits(user_id, plan_key, reason=f"{plan_key} initial subscription credit allocation")
+                logger.info("Provisioned credits for user %s plan %s on checkout", user_id, plan_key)
+            except Exception as e:
+                logger.error("Failed to provision credits on checkout for user %s: %s", user_id, e)
+
+    elif etype == "invoice.paid":
+        # Monthly renewal — reset credits
+        invoice = event["data"]["object"] if isinstance(event, dict) else event.data.object
+        customer_id = invoice.get("customer") if isinstance(invoice, dict) else getattr(invoice, "customer", None)
+        billing_reason = invoice.get("billing_reason") if isinstance(invoice, dict) else getattr(invoice, "billing_reason", None)
+        # Only reset on renewal invoices, not the initial subscription invoice (that's handled in checkout.session.completed)
+        if billing_reason == "subscription_cycle" and customer_id:
+            sub_row = await sb_select("user_subscriptions", filters=[("stripe_customer_id", "eq", customer_id)], single=True)
+            if sub_row and sub_row.get("user_id") and sub_row.get("plan_key"):
+                user_id = sub_row["user_id"]
+                plan_key = sub_row["plan_key"]
+                try:
+                    await reset_monthly_credits(user_id, plan_key)
+                    logger.info("Reset monthly credits for user %s plan %s on invoice.paid", user_id, plan_key)
+                except Exception as e:
+                    logger.error("Failed to reset monthly credits for user %s: %s", user_id, e)
 
     elif etype in ("customer.subscription.deleted", "customer.subscription.updated"):
         sub_obj = event["data"]["object"] if isinstance(event, dict) else event.data.object

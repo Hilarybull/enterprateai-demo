@@ -61,6 +61,10 @@ export const useAuthStore = create((set, get) => ({
   platformRestrictions: [],
   platformGrants: [],
   subscription: DEFAULT_SUB,
+  creditBalance: null,
+  creditInfo: null,
+  setCreditBalance: (v) => set({ creditBalance: typeof v === "number" ? v : null }),
+  setCreditInfo: (info) => set({ creditInfo: info || null, creditBalance: typeof info?.available_credits === "number" ? info.available_credits : null }),
 
   hydrate: async () => {
     const token = localStorage.getItem("ea_token");
@@ -179,6 +183,6 @@ export const useAuthStore = create((set, get) => ({
   logout: () => {
     localStorage.removeItem("ea_token");
     localStorage.removeItem("ea_email");
-    set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true, platformRestrictions: [], platformGrants: [], subscription: DEFAULT_SUB });
+    set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true, platformRestrictions: [], platformGrants: [], subscription: DEFAULT_SUB, creditBalance: null, creditInfo: null });
   }
 }));

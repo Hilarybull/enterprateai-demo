@@ -329,13 +329,14 @@ def _build_synthesis_prompt(fields: dict[str, Any], evidence: dict[str, list[str
     location = _clean_text(country or fields.get("location") or "United Kingdom")
     currency = _clean_text(fields.get("currency") or "GBP")
     alternatives = _clean_text(fields.get("alternatives") or "")
+    alternatives_display = alternatives or "not specified"
     differentiator = _clean_text(fields.get("differentiator") or "")
     market_scope = _clean_text(fields.get("market_scope") or "")
     
     evidence_text = ""
     for key, snippets in evidence.items():
         if snippets:
-            evidence_text += f"\n### {key.upper().replace('_', ' ')}\n" + "\n".join(f"- {snippet}" for snippet in snippets)
+            evidence_text += f"\n### {key.upper().replace('_', ' ')}\n" + "\n".join(f"- {snippet}" for snippet in snippets[:2])
 
     engine_data = fields.get("deterministic_evaluation") or {}
     score = engine_data.get("score", "N/A")
@@ -380,15 +381,28 @@ REQUIRED JSON STRUCTURE:
     "competition": "Verdict on local/digital saturation vs opportunity space."
   }},
   "risks": [
-    "Specific market-entry risk (e.g. 'High CAC for {segment} in {industry}')",
-    "Evidence-based risk"
+    "MANDATORY — at least 3 specific risks. Examples: 'High CAC to acquire {segment} in competitive {industry} market', 'Established competitors with switching costs make displacement hard', 'Low demand evidence (0 interviews) increases execution risk'. Base on research evidence and the {score}/100 score.",
+    "Second specific risk tied to competition or unit economics found in research.",
+    "Third risk tied to market timing, regulation, or adoption barriers."
   ],
   "next_actions": [
     {{
-      "step": 1, 
-      "action": "Immediate tactical step", 
-      "why": "How this resolves a specific gap in the {score}/100 score.", 
+      "step": 1,
+      "action": "Immediate tactical step",
+      "why": "How this resolves a specific gap in the {score}/100 score.",
       "timeframe": "7 days"
+    }},
+    {{
+      "step": 2,
+      "action": "Second action targeting the biggest risk identified above.",
+      "why": "Specific rationale.",
+      "timeframe": "30 days"
+    }},
+    {{
+      "step": 3,
+      "action": "Third action for market validation or revenue generation.",
+      "why": "Specific rationale.",
+      "timeframe": "60 days"
     }}
   ],
   "investor_perspective": {{
@@ -469,7 +483,44 @@ REQUIRED JSON STRUCTURE:
     "recommended_premium_price": "Premium tier price in {currency}",
     "pricing_rationale": "Why these price points work for {segment} — reference what competitors charge",
     "currency": "{currency}"
-  }}
+  }},
+  "sections": {{
+    "problem": {{
+      "body": "2-3 sentences describing the problem '{problem}' experienced by {segment} — its severity, frequency, and consequence if left unresolved. Ground it in the inputs provided.",
+      "insight": "One sentence key finding on problem validation quality and real-world impact."
+    }},
+    "customer": {{
+      "body": "2-3 sentences assessing how precisely {segment} is defined as the primary buyer — beachhead specificity, economic buyer identity, and buying triggers provided.",
+      "insight": "One sentence key finding on customer targeting precision and segment clarity."
+    }},
+    "solution": {{
+      "body": "2-3 sentences evaluating the proposed solution's relevance to the problem and differentiation vs alternatives ({alternatives_display}). Reference the core value proposition.",
+      "insight": "One sentence key finding on solution-problem fit and competitive edge."
+    }},
+    "market": {{
+      "body": "2-3 sentences estimating the market opportunity for {business_name} in {location} — addressable size, growth signals, and any demand evidence found in research.",
+      "insight": "One sentence key finding on market opportunity credibility and sizing confidence.",
+      "source_hint": "Name 2-3 specific authoritative sources (e.g. a {location} government statistics body, {industry} trade association report, or recognised industry analyst) that would verify these market figures."
+    }},
+    "competition": {{
+      "body": "2-3 sentences identifying real named competitors or substitutes customers currently use, assessing switching barriers and {business_name}'s differentiation angle. Name specific brands where known.",
+      "insight": "One sentence key finding on competitive positioning and defensibility."
+    }}
+  }},
+  "contradictions": [
+    "First specific inconsistency between claimed inputs and evidence (e.g. 'Market described as growing but no market data or sources cited', 'Customer segment defined but no customer interviews or behavioural evidence cited'). Use a real inconsistency found.",
+    "Second contradiction if genuinely present — omit if only one inconsistency exists"
+  ],
+  "key_strengths": [
+    "One sentence strength 1 — specific to the idea, grounded in the inputs or evidence",
+    "One sentence strength 2",
+    "One sentence strength 3 (include only if genuinely present)"
+  ],
+  "key_weaknesses": [
+    "One sentence gap or risk 1 — what is missing or unvalidated",
+    "One sentence gap or risk 2",
+    "One sentence gap or risk 3 (include only if genuinely present)"
+  ]
 }}
 
 STRICT CONSTRAINTS:
@@ -493,7 +544,7 @@ async def _call_claude(prompt: str, *, user_id: str = "", feature: str = "idea_v
     }
     body = {
         "model": settings.claude_model or "claude-3-5-sonnet-20241022",
-        "max_tokens": 5120,
+        "max_tokens": 8192,
         "messages": [{"role": "user", "content": prompt}],
     }
     logger.info("Calling Claude with model: %s", body["model"])
@@ -758,6 +809,11 @@ def _normalize_report(report: dict[str, Any], *, fields: dict[str, Any], search_
         "market_sizing": merged.get("market_sizing") or fallback["market_sizing"],
         "competitor_analysis": merged.get("competitor_analysis") or fallback["competitor_analysis"],
         "price_intelligence": merged.get("price_intelligence") or fallback["price_intelligence"],
+        "sections": merged.get("sections") or {},
+        "contradictions": merged.get("contradictions") or [],
+        "key_strengths": merged.get("key_strengths") or [],
+        "key_weaknesses": merged.get("key_weaknesses") or [],
+        "sources": sources,
     }
 
 
@@ -879,7 +935,7 @@ Return ONLY valid JSON (no markdown, no preamble):
 }}"""
 
 
-async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]], shopping: list[dict[str, Any]] = None, *, user_id: str = "") -> dict[str, Any]:
+async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]], shopping: list[dict[str, Any]] = None, *, user_id: str = "", sources: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Step 2: Run narrative prompt + market-data prompt concurrently, merge results.
     """
@@ -913,7 +969,7 @@ async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]
         fields=fields,
         search_queries={},
         evidence=evidence,
-        sources={}
+        sources=sources or {}
     )
 
 
@@ -958,6 +1014,52 @@ def extract_research_signals(evidence: dict[str, list[str]], sources: dict[str, 
         "competition_level": "high" if unique_domains > 10 else "medium" if unique_domains > 3 else "low",
         "competitor_count": unique_domains,
         "trend_score": 70.0 # Placeholder
+    }
+
+
+def flatten_fields_from_v4_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Convert V4 wizard step payload (step1..step12) to the flat search-query fields format."""
+    step1 = payload.get("step1") or {}
+    step2 = payload.get("step2") or {}
+    step3 = payload.get("step3") or {}
+    step4 = payload.get("step4") or {}
+    step5 = payload.get("step5") or {}
+    step6 = payload.get("step6") or {}
+
+    competitors_raw = step4.get("direct_competitors") or []
+    if isinstance(competitors_raw, list):
+        alternatives = ", ".join(str(c).strip() for c in competitors_raw if c)
+    else:
+        alternatives = _clean_text(competitors_raw)
+
+    country = _clean_text(step1.get("operating_country") or "")
+    industry = _clean_text(step1.get("idea_sector") or step1.get("idea_type") or step6.get("market_category") or "")
+    segment = _clean_text(
+        step3.get("beachhead_segment")
+        or step3.get("primary_segment")
+        or step2.get("who_affected")
+        or ""
+    )
+    location = _clean_text(step1.get("launch_geography") or country or "United Kingdom")
+    idea_name = _clean_text(step1.get("idea_name") or "")
+    idea_desc = _clean_text(step1.get("idea_description") or idea_name)
+    what_building = (idea_name + (" — " + idea_desc if idea_desc and idea_desc != idea_name else "")).strip(" —")
+
+    return {
+        "business_name": idea_name,
+        "what_building": what_building or idea_desc,
+        "industry": industry,
+        "primary_industry": industry,
+        "sector": _clean_text(step1.get("idea_type") or ""),
+        "customer_segment": segment,
+        "country": country,
+        "location": location,
+        "currency": _clean_text(payload.get("currency") or "GBP"),
+        "problem_short": _clean_text(step2.get("problem_description") or ""),
+        "alternatives": alternatives,
+        "differentiator": _clean_text(step5.get("why_better") or step5.get("defensibility") or ""),
+        "market_scope": _clean_text(step6.get("market_scope") or step1.get("market_scope") or ""),
+        "interviews_conducted": "0",
     }
 
 

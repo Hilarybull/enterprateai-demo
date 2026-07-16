@@ -90,6 +90,7 @@ export default function ResultsPage() {
   const setServiceDecisionStatusStore = useWorkspaceStore((s) => s.setServiceDecisionStatus);
   const setValidation = useWorkspaceStore((s) => s.setValidation);
   const validation = useWorkspaceStore((s) => s.validation);
+  const validationEntryId = useWorkspaceStore((s) => s.validationEntryId);
   const location = useWorkspaceStore((s) => s.inputs?.location || s.inputs?.country || "United Kingdom");
   const currency = useWorkspaceStore((s) => s.currency);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
@@ -100,7 +101,7 @@ export default function ResultsPage() {
   const simulationEnabled = planStatus === "grandfathered" || planStatus === "active";
 
   function simCardClick(templateId) {
-    if (!simulationEnabled || !planAllowsScenario(planKey, templateId, planStatus)) {
+    if (!simulationEnabled) {
       navigate("/pricing");
     } else {
       navigate(`/simulation?template=${templateId}`);
@@ -113,6 +114,7 @@ export default function ResultsPage() {
   const [decisionNotice, setDecisionNotice] = useState(null);
   const [sideTab, setSideTab] = useState("breakdown"); // breakdown | reasons | recommendations
   const [viewMode, setViewMode] = useState("simple"); // simple | detailed
+  const [dimTab, setDimTab] = useState("vps"); // vps | ecs — V4 dimension breakdown tabs
   const [signalsTab, setSignalsTab] = useState("trend"); // trend | community
   const [marketFitTab, setMarketFitTab] = useState("score"); // score | demand | survival | competition
   const [marketFit, setMarketFit] = useState(null);
@@ -120,6 +122,12 @@ export default function ResultsPage() {
   const [mfError, setMfError] = useState(null);
   const [serviceDraft, setServiceDraft] = useState(null);
   const [activeValidationId, setActiveValidationId] = useState(null);
+  const [simTemplates, setSimTemplates] = useState([]);
+  useEffect(() => {
+    apiRequest("/v1/scenario-intelligence/scenario-templates", "GET")
+      .then((data) => { if (Array.isArray(data)) setSimTemplates(data); })
+      .catch(() => {});
+  }, []);
   const [activeServiceValidationId, setActiveServiceValidationId] = useState(null);
   const [svcMarketResearch, setSvcMarketResearch] = useState(null);
   const [svcMrLoading, setSvcMrLoading] = useState(false);
@@ -137,9 +145,17 @@ export default function ResultsPage() {
         if (ws?.data?.draft_service_idea) {
           setServiceDraft(ws.data.draft_service_idea);
         }
-        if (ws?.data?.idea_validation_result) {
+
+        // V4 active history entry takes priority over legacy idea_validation_result
+        const vHistory = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
+        const activeVId = ws?.data?.active_validation_id || null;
+        const activeVEntry = activeVId ? vHistory.find((h) => h?.id === activeVId) : vHistory[0];
+        if (activeVEntry?.result?.engine_version === "4.0") {
+          setValidation(activeVEntry.result);
+        } else if (ws?.data?.idea_validation_result) {
           setValidation(ws.data.idea_validation_result);
         }
+
         if (isServiceIdeaView) {
           const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
           const activeId = ws?.data?.active_service_validation_id;
@@ -167,13 +183,11 @@ export default function ResultsPage() {
             setDecisionStatusStore(null);
           }
         } else {
-          // Read status from the active validation history entry, not the stale global decision object
-          const validationHistory = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
-          const activeValidationId = ws?.data?.active_validation_id || null;
+          // Read status from the active validation history entry
+          const validationHistory = vHistory;
+          const activeValidationId = activeVId;
           setActiveValidationId(activeValidationId);
-          const activeEntry = activeValidationId
-            ? validationHistory.find((h) => h?.id === activeValidationId)
-            : validationHistory[0];
+          const activeEntry = activeVEntry;
           const status = activeEntry?.status || activeEntry?.decision_status || null;
           if (status === "accepted" || status === "rejected") {
             setDecision(status);
@@ -304,32 +318,91 @@ export default function ResultsPage() {
         }
       }
 
-      // For product/service pathway, only persist to catalogue when the user explicitly accepts.
-      if (isServiceIdeaView && status === "accepted" && serviceDraft) {
-        const serviceName = String(serviceDraft.service_name || "").trim() || "Service";
-        const productFromValidation = {
-          id: crypto.randomUUID(),
-          name: serviceName,
-          type: "service",
-          base_price: Number(serviceDraft.price_per_sale || 0),
+      // Catalogue sync for ALL validation types
+      const existingCatalogue = ws?.data?.catalogue || {};
+      const existingProducts = Array.isArray(existingCatalogue?.products) ? existingCatalogue.products : [];
+
+      // Determine the product name coming from either pathway
+      const isV4 = validation?.engine_version === "4.0";
+      let syncProduct = null;
+      if (isV4 && validation?.idea_name) {
+        const rawPrice = String(validation.proposed_price || "").replace(/[^0-9.]/g, "");
+        syncProduct = {
+          id: validationEntryId || crypto.randomUUID(),
+          name: String(validation.idea_name).trim(),
+          type: validation.idea_type || "Product",
+          base_price: rawPrice ? Number(rawPrice) : 0,
           discount: 0,
           freight_cost: 0,
+          description: String(validation.idea_tagline || validation.idea_description || "").trim(),
           archived: false,
+          source: "idea_validation",
+          validation_id: validationEntryId || null,
+          validation_snapshot: {
+            industry: validation.idea_sector || "",
+            target_customer: validation.primary_segment || "",
+            problem: validation.problem_description || "",
+            solution: validation.solution_description || "",
+            value_prop: validation.idea_tagline || validation.idea_description || "",
+            revenue_model: validation.revenue_model || "",
+          },
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
-
-        const existingCatalogue = ws?.data?.catalogue || {};
-        const existingProducts = Array.isArray(existingCatalogue?.products) ? existingCatalogue.products : [];
-        const alreadyExists = existingProducts.some(
-          (p) => String(p?.name || "").trim().toLowerCase() === productFromValidation.name.toLowerCase()
-        );
-        const nextProducts = alreadyExists ? existingProducts : [productFromValidation, ...existingProducts];
-        patchPayload.data.catalogue = {
-          products: nextProducts,
-          customers: Array.isArray(existingCatalogue?.customers) ? existingCatalogue.customers : [],
-          vendors: Array.isArray(existingCatalogue?.vendors) ? existingCatalogue.vendors : [],
+      } else if (isServiceIdeaView && serviceDraft) {
+        const rawPrice = Number(serviceDraft.price_per_sale || 0);
+        syncProduct = {
+          id: crypto.randomUUID(),
+          name: String(serviceDraft.service_name || "").trim() || "Service",
+          type: "service",
+          base_price: rawPrice,
+          discount: 0,
+          freight_cost: 0,
+          archived: false,
+          source: "service_validation",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         };
+      }
+
+      if (syncProduct) {
+        const productName = syncProduct.name.toLowerCase();
+        const validationId = syncProduct.validation_id;
+        if (status === "accepted") {
+          // Add if not already present (match by validation_id or name)
+          const exists = existingProducts.some(
+            (p) => (validationId && p.validation_id === validationId) ||
+                   String(p?.name || "").trim().toLowerCase() === productName
+          );
+          const nextProducts = exists
+            ? existingProducts.map((p) =>
+                ((validationId && p.validation_id === validationId) ||
+                 String(p?.name || "").trim().toLowerCase() === productName)
+                  ? { ...p, ...syncProduct, archived: false }
+                  : p
+              )
+            : [syncProduct, ...existingProducts];
+          patchPayload.data.catalogue = {
+            products: nextProducts,
+            customers: Array.isArray(existingCatalogue?.customers) ? existingCatalogue.customers : [],
+            vendors: Array.isArray(existingCatalogue?.vendors) ? existingCatalogue.vendors : [],
+          };
+          if (isV4) patchPayload.data.v4_accepted_validation = validation;
+        } else if (status === "rejected") {
+          // Archive the matching product
+          const nextProducts = existingProducts.map((p) =>
+            ((validationId && p.validation_id === validationId) ||
+             String(p?.name || "").trim().toLowerCase() === productName)
+              ? { ...p, archived: true, updated_at: new Date().toISOString() }
+              : p
+          );
+          patchPayload.data.catalogue = {
+            products: nextProducts,
+            customers: Array.isArray(existingCatalogue?.customers) ? existingCatalogue.customers : [],
+            vendors: Array.isArray(existingCatalogue?.vendors) ? existingCatalogue.vendors : [],
+          };
+          if (isV4) patchPayload.data.v4_accepted_validation = null;
+        }
       }
 
       await apiRequest(`/validation/${workspaceId}`, "PATCH", {
@@ -353,6 +426,629 @@ export default function ResultsPage() {
         subtitle="Save a workspace in Idea Validation, then run evaluation to see results here."
         ctaLabel="Go to Idea Validation"
       />
+    );
+  }
+
+  // ---- V4 RESULT VIEW ----
+  const isV4Result = validation?.engine_version === "4.0" || validation?.pathway === "v4_universal" || Boolean(validation?.validation_mode && !validation?.metrics);
+  if (isV4Result) {
+    const vps = validation.scores?.potential_score ?? 0;
+    const ecs = validation.scores?.evidence_confidence_score ?? 0;
+    const v4Verdict = validation.verdict || {};
+    const verdictCategory = v4Verdict.category || v4Verdict.label || "Unknown";
+    const BASIC_HIDDEN = new Set(["unit_economics", "operational_feasibility", "founder_readiness", "regulatory_risk"]);
+    const narration = validation.market_research || {};
+    const ideaName = validation.idea_name || validation.business_name || "Idea Validation";
+    const validationMode = validation.validation_mode || "basic";
+    const isPaid = Boolean(validation.is_paid_plan);
+    const isBasic = validationMode === "basic";
+    const allVpsDims = Array.isArray(validation.scores?.vps_dimensions) ? validation.scores.vps_dimensions : [];
+    const vpsDims = isBasic ? allVpsDims.filter((d) => !BASIC_HIDDEN.has(d.dimension)) : allVpsDims;
+    const ecsDims = Array.isArray(validation.scores?.ecs_dimensions) ? validation.scores.ecs_dimensions : [];
+    const v4Contradictions = Array.isArray(validation.contradictions) ? validation.contradictions : [];
+    const experiments = Array.isArray(validation.experiments) ? validation.experiments : [];
+    const riskFlags = (Array.isArray(validation.risk_flags) ? validation.risk_flags : [])
+      .filter((rf) => !(isBasic && BASIC_HIDDEN.has(rf.dimension)));
+
+    const vpsTone = vps >= 75 ? "success" : vps >= 55 ? "warn" : "danger";
+    const ecsTone = ecs >= 60 ? "success" : ecs >= 40 ? "warn" : "danger";
+
+    const VERDICT_TONE = {
+      "Weak Hypothesis": "danger", "Needs Reframing": "danger",
+      "Developing Fit": "warn", "Promising but Unvalidated": "warn",
+      "Strong Hypothesis, Insufficient Evidence": "warn",
+      "Evidence-Supported Opportunity": "success", "Ready for Controlled Pilot": "success",
+      "Early Market Validation": "success", "Ready for Scale Assessment": "success",
+    };
+    const vtone = VERDICT_TONE[verdictCategory] || "slate";
+    const vBg = vtone === "success" ? "bg-emerald-50 border-emerald-200" : vtone === "warn" ? "bg-amber-50 border-amber-200" : vtone === "danger" ? "bg-rose-50 border-rose-200" : "bg-slate-50 border-slate-200";
+    const vText = vtone === "success" ? "text-emerald-800" : vtone === "warn" ? "text-amber-800" : vtone === "danger" ? "text-rose-800" : "text-slate-700";
+    const vBadge = vtone === "success" ? "bg-emerald-600" : vtone === "warn" ? "bg-amber-500" : vtone === "danger" ? "bg-rose-600" : "bg-slate-500";
+
+    function dimBarColor(pct) {
+      if (pct >= 70) return "bg-emerald-500";
+      if (pct >= 45) return "bg-amber-500";
+      return "bg-rose-500";
+    }
+    function v4DimLabel(key) {
+      return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
+    const cleanAi = (s) => (s || "")
+      .replace(/—/g, " ")
+      .replace(/–/g, " to ")
+      .replace(/(\d)\s*[-]\s*(\d)/g, "$1 to $2")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    const overviewSummary = cleanAi(narration.executive_summary);
+    const verdictInterp = cleanAi(v4Verdict.description || narration.verdict_interpretation?.explanation || "");
+    const recommendations = (Array.isArray(validation.recommendations) ? validation.recommendations
+      : Array.isArray(narration.next_actions) ? narration.next_actions.map((a) => (typeof a === "string" ? a : `${a.action || ""}${a.timeframe ? ` (${a.timeframe})` : ""}`))
+      : []).map(cleanAi);
+    const keyStrengths = (Array.isArray(narration.key_strengths) ? narration.key_strengths : []).map(cleanAi);
+    const keyWeaknesses = (Array.isArray(narration.key_weaknesses) ? narration.key_weaknesses : []).map(cleanAi);
+    const sections = narration.sections || {};
+    const sources = narration.sources || validation.research_data?.sources || {};
+
+    const strongestDim = validation.summary?.strongest_dimension;
+    const weakestDim = validation.summary?.weakest_dimension;
+
+    function InlineSources({ sourceKeys }) {
+      const seen = new Set();
+      const items = (Array.isArray(sourceKeys) ? sourceKeys : [])
+        .flatMap((k) => (sources[k] || []))
+        .filter((s) => {
+          const u = s?.url || s?.link || "";
+          if (!u || seen.has(u)) return false;
+          seen.add(u);
+          return true;
+        })
+        .slice(0, 4);
+      if (!items.length) return null;
+      return (
+        <div className="mt-2 flex gap-1.5">
+          {items.map((s, i) => {
+            const url = s?.url || s?.link || "";
+            const label = s?.title || url;
+            return (
+              <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                className="flex flex-1 min-w-0 items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500 hover:border-brand-300 hover:text-brand-600 transition-colors">
+                <svg className="h-2.5 w-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+                <span className="truncate">{cleanAi(label)}</span>
+              </a>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function AssessmentCard({ title, data, sourceKeys }) {
+      if (!data?.body && !data?.summary) return null;
+      return (
+        <div className="py-3 border-b border-slate-100 last:border-0">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">{title}</span>
+            {data.evidence_status && (
+              <span className="rounded-full border bg-slate-100 text-slate-600 border-slate-200 px-2 py-0.5 text-[10px] font-semibold">{data.evidence_status}</span>
+            )}
+          </div>
+          {(data.body || data.summary) && <p className="text-sm text-slate-700 leading-relaxed">{cleanAi(data.body || data.summary)}</p>}
+          {(data.insight || data.key_finding) && <p className="mt-1 text-xs font-semibold text-slate-500">{cleanAi(data.insight || data.key_finding)}</p>}
+          {data.market_size_note && (
+            <p className="mt-1 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1">{cleanAi(data.market_size_note)}</p>
+          )}
+          <InlineSources sourceKeys={sourceKeys} />
+        </div>
+      );
+    }
+
+    const hasAssessments = sections.problem || sections.customer || sections.solution || sections.market || sections.competition;
+
+    return (
+      <div className="w-full max-w-full space-y-4 overflow-x-hidden px-2 sm:px-4">
+        <button type="button" onClick={() => navigate("/validation")}
+          className="group flex items-center gap-1.5 text-sm font-semibold text-slate-400 transition-colors hover:text-brand-600">
+          <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5m7 7l-7-7 7-7" /></svg>
+          Back to Validation
+        </button>
+
+        {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
+        {decisionNotice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{decisionNotice}</div>}
+
+        {/* Header */}
+        <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-violet-700 to-indigo-800 p-5 text-white shadow-lg md:p-7">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">V4 Engine</span>
+                <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">{validationMode === "comprehensive" ? "Comprehensive" : "Basic"}</span>
+                {!isPaid && <span className="rounded-full bg-amber-400/30 text-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">Free Plan · Estimates Only</span>}
+              </div>
+              <h1 className="text-xl font-bold leading-tight sm:text-2xl">{ideaName}</h1>
+              {validation.idea_type && <p className="mt-1 text-sm text-violet-200">{validation.idea_type}</p>}
+            </div>
+            <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
+              {validationEntryId && (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/validation?history_id=${validationEntryId}&history_type=business_validation&edit=1`)}
+                  className="flex items-center gap-1.5 rounded-xl border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/20 transition"
+                >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  Modify
+                </button>
+              )}
+              {(decision === "accepted" || decision === "rejected") ? (
+                <span className={`rounded-full px-3 py-1 text-xs font-bold uppercase ${decision === "accepted" ? "bg-emerald-400/30 text-emerald-100" : "bg-rose-400/30 text-rose-100"}`}>
+                  {decision === "accepted" ? "Accepted" : "Rejected"}
+                </span>
+              ) : (
+                <>
+                  <button disabled={decisionSaving} onClick={() => setDecisionStatus("accepted")} className="rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-600 disabled:opacity-50">Accept</button>
+                  <button disabled={decisionSaving} onClick={() => setDecisionStatus("rejected")} className="rounded-xl bg-white/20 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/30 disabled:opacity-50">Reject</button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* AI Analysis Overview */}
+        {overviewSummary && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="mb-2 text-xs font-bold uppercase tracking-wider text-brand-600">AI Analysis Overview</div>
+            <p className="text-sm leading-relaxed text-slate-700">{overviewSummary}</p>
+          </div>
+        )}
+
+        {/* Dual score cards */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 flex flex-col items-center justify-center text-center">
+            <CircularScore score={Math.round(vps)} tone={vpsTone} size={88} strokeWidth={9} />
+            <div className="mt-3 mb-3">
+              <div className="text-sm font-bold text-slate-900 leading-snug">Commercial Score</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">How strong the idea is commercially</div>
+            </div>
+            {strongestDim && (
+              <div className="w-full rounded-lg bg-emerald-50 border border-emerald-100 px-2.5 py-1.5 text-[11px] text-emerald-700 mb-1.5 text-left">
+                <span className="font-semibold">Best:</span> {v4DimLabel(strongestDim.dimension)} ({strongestDim.pct}%)
+              </div>
+            )}
+            {weakestDim && (
+              <div className="w-full rounded-lg bg-rose-50 border border-rose-100 px-2.5 py-1.5 text-[11px] text-rose-700 text-left">
+                <span className="font-semibold">Weakest:</span> {v4DimLabel(weakestDim.dimension)} ({weakestDim.pct}%)
+              </div>
+            )}
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 flex flex-col items-center justify-center text-center">
+            <CircularScore score={Math.round(ecs)} tone={ecsTone} size={88} strokeWidth={9} />
+            <div className="mt-3">
+              <div className="text-sm font-bold text-slate-900 leading-snug">Evidence Score</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">How well your inputs are backed up</div>
+            </div>
+            {!isPaid && (
+              <div className="mt-3 w-full rounded-lg bg-amber-50 border border-amber-100 px-2.5 py-1.5 text-[11px] text-amber-700">
+                Free plan: figures are AI estimates, not live-verified.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Verdict */}
+        <div className={`rounded-2xl border p-5 ${vBg}`}>
+          <div className="flex flex-wrap items-center gap-3 mb-3">
+            <span className={`rounded-full px-3 py-1 text-xs font-bold text-white ${vBadge}`}>{verdictCategory}</span>
+            <span className={`text-sm font-semibold ${vText}`}>Commercial Score {Math.round(vps)} · Evidence Score {Math.round(ecs)}</span>
+          </div>
+          {verdictInterp && <p className={`text-sm leading-relaxed ${vText}`}>{verdictInterp}</p>}
+        </div>
+
+        {/* Strengths / Gaps */}
+        {(keyStrengths.length > 0 || keyWeaknesses.length > 0) && (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {keyStrengths.length > 0 && (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                <div className="mb-2 text-xs font-bold uppercase tracking-wider text-emerald-700">Strengths</div>
+                <ul className="space-y-1">
+                  {keyStrengths.slice(0, 4).map((s, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-emerald-800">
+                      <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-emerald-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                      {typeof s === "string" ? s : s.point || s.text || JSON.stringify(s)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {keyWeaknesses.length > 0 && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <div className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-700">Gaps to Address</div>
+                <ul className="space-y-1">
+                  {keyWeaknesses.slice(0, 4).map((w, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-amber-800">
+                      <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+                      {typeof w === "string" ? w : w.point || w.text || JSON.stringify(w)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Analysis by Section */}
+        {hasAssessments && (
+          <SectionCard title="Analysis by Section">
+            <div className="divide-y divide-slate-100">
+              <AssessmentCard title="Problem" data={sections.problem} sourceKeys={["problem_validation", "demand_signals"]} />
+              <AssessmentCard title="Customer" data={sections.customer} sourceKeys={["target_customer", "demand_signals"]} />
+              <AssessmentCard title="Solution" data={sections.solution} sourceKeys={[]} />
+              <AssessmentCard title="Market" data={sections.market} sourceKeys={["market_opportunity", "industry_trends"]} />
+              <AssessmentCard title="Competition" data={sections.competition} sourceKeys={["competitors"]} />
+            </div>
+          </SectionCard>
+        )}
+
+        {/* Score Breakdown — tabbed Potential / Evidence */}
+        <SectionCard
+          title="Score Breakdown"
+          headerRight={
+            <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-semibold">
+              <button type="button" onClick={() => setDimTab("vps")} className={`px-3 py-1 transition-colors ${dimTab === "vps" ? "bg-brand-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>Potential</button>
+              <button type="button" onClick={() => setDimTab("ecs")} className={`px-3 py-1 transition-colors ${dimTab === "ecs" ? "bg-brand-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>Evidence</button>
+            </div>
+          }
+        >
+          <div className="space-y-3 min-w-0">
+            {(dimTab === "vps" ? vpsDims : ecsDims).map((dim) => (
+              <div key={dim.dimension} className="min-w-0">
+                <div className="mb-1 flex items-center justify-between gap-2 min-w-0">
+                  <span className="text-xs font-semibold text-slate-700 truncate">{v4DimLabel(dim.dimension)}</span>
+                  <span className="text-xs font-bold text-slate-500 shrink-0">{Math.round(dim.pct)}%</span>
+                </div>
+                <div className="relative h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div className={`h-full rounded-full transition-all duration-700 ${dimBarColor(dim.pct)}`} style={{ width: `${Math.min(100, Math.max(0, dim.pct))}%` }} />
+                </div>
+                {dim.note && <p className="mt-0.5 text-[11px] text-slate-400 truncate" title={dim.note}>{dim.note}</p>}
+              </div>
+            ))}
+            {isBasic && (
+              <p className="pt-2 text-[11px] text-slate-400">
+                Upgrade to Comprehensive mode to assess Unit Economics, Operational Feasibility, Founder Readiness, and Regulatory Risk.
+              </p>
+            )}
+          </div>
+        </SectionCard>
+
+        {/* Suggested Validation Experiments */}
+        {experiments.length > 0 && (
+          <SectionCard title="Suggested Validation Experiments">
+            <div className="space-y-4">
+              {experiments.map((exp, i) => {
+                const ec = (v) => cleanAi(v || "");
+                return (
+                <div key={i} className="rounded-xl border border-slate-200 bg-white p-4">
+                  {/* Header row */}
+                  <div className="flex items-start justify-between gap-2 mb-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-bold text-slate-900">{ec(exp.name)}</span>
+                      {exp.method && (
+                        <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{ec(exp.method)}</span>
+                      )}
+                    </div>
+                    {exp.duration && (
+                      <span className="shrink-0 rounded-full bg-brand-50 px-2.5 py-0.5 text-[10px] font-bold text-brand-600">{ec(exp.duration)}</span>
+                    )}
+                  </div>
+
+                  {/* Hypothesis */}
+                  {exp.hypothesis && (
+                    <p className="text-xs text-slate-600 italic mb-3 leading-relaxed">"{ec(exp.hypothesis)}"</p>
+                  )}
+
+                  {/* Why it matters */}
+                  {exp.why_it_matters && (
+                    <p className="text-xs text-slate-500 mb-3 leading-relaxed">{ec(exp.why_it_matters)}</p>
+                  )}
+
+                  {/* Key details grid */}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mb-3">
+                    {exp.target_customer && (
+                      <div className="text-[11px] text-slate-500 col-span-2"><span className="font-semibold text-slate-700">Target:</span> {ec(exp.target_customer)}</div>
+                    )}
+                    {exp.sample_size && (
+                      <div className="text-[11px] text-slate-500"><span className="font-semibold text-slate-700">Sample:</span> {ec(exp.sample_size)}</div>
+                    )}
+                    {exp.budget && (
+                      <div className="text-[11px] text-slate-500"><span className="font-semibold text-slate-700">Budget:</span> {ec(exp.budget)}</div>
+                    )}
+                    {exp.metric && (
+                      <div className="text-[11px] text-slate-500 col-span-2"><span className="font-semibold text-slate-700">Metric:</span> {ec(exp.metric)}</div>
+                    )}
+                    {exp.evidence_to_collect && (
+                      <div className="text-[11px] text-slate-500 col-span-2"><span className="font-semibold text-slate-700">Collect:</span> {ec(exp.evidence_to_collect)}</div>
+                    )}
+                  </div>
+
+                  {/* Pass / Fail thresholds */}
+                  {(exp.pass_threshold || exp.fail_threshold) && (
+                    <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 space-y-1">
+                      {exp.pass_threshold && (
+                        <div className="text-[11px]"><span className="font-semibold text-emerald-700">Pass:</span> <span className="text-slate-600">{ec(exp.pass_threshold)}</span></div>
+                      )}
+                      {exp.partial_pass_threshold && (
+                        <div className="text-[11px]"><span className="font-semibold text-amber-600">Partial:</span> <span className="text-slate-600">{ec(exp.partial_pass_threshold)}</span></div>
+                      )}
+                      {exp.fail_threshold && (
+                        <div className="text-[11px]"><span className="font-semibold text-rose-600">Fail:</span> <span className="text-slate-600">{ec(exp.fail_threshold)}</span></div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* If passed / if failed */}
+                  {(exp.if_passed || exp.if_failed) && (
+                    <div className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
+                      {exp.if_passed && (
+                        <div className="text-[11px] text-emerald-700 bg-emerald-50 rounded-lg px-2.5 py-1.5 border border-emerald-100">
+                          <span className="font-semibold">If passed:</span> {ec(exp.if_passed)}
+                        </div>
+                      )}
+                      {exp.if_failed && (
+                        <div className="text-[11px] text-rose-700 bg-rose-50 rounded-lg px-2.5 py-1.5 border border-rose-100">
+                          <span className="font-semibold">If failed:</span> {ec(exp.if_failed)}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );})}
+            </div>
+          </SectionCard>
+        )}
+
+        {/* Comprehensive-only: AI Market Sizing */}
+        {!isBasic && narration.market_sizing && (
+          <SectionCard title="Market Sizing">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {narration.market_sizing.total_addressable_market && (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">TAM</div>
+                  <div className="text-sm font-bold text-slate-800">{cleanAi(String(narration.market_sizing.total_addressable_market))}</div>
+                  {narration.market_sizing.tam_basis && <div className="mt-1 text-[11px] text-slate-500">{cleanAi(narration.market_sizing.tam_basis)}</div>}
+                </div>
+              )}
+              {narration.market_sizing.serviceable_addressable_market && (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">SAM</div>
+                  <div className="text-sm font-bold text-slate-800">{cleanAi(String(narration.market_sizing.serviceable_addressable_market))}</div>
+                  {narration.market_sizing.sam_basis && <div className="mt-1 text-[11px] text-slate-500">{cleanAi(narration.market_sizing.sam_basis)}</div>}
+                </div>
+              )}
+              {narration.market_sizing.projected_growth_rate && (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Growth Rate</div>
+                  <div className="text-sm font-bold text-slate-800">{cleanAi(String(narration.market_sizing.projected_growth_rate))}</div>
+                  {narration.market_sizing.projected_market_size_2030 && <div className="mt-1 text-[11px] text-slate-500">{cleanAi(narration.market_sizing.projected_market_size_2030)}</div>}
+                </div>
+              )}
+            </div>
+            {Array.isArray(narration.market_sizing.growth_drivers) && narration.market_sizing.growth_drivers.length > 0 && (
+              <div className="mt-3">
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Growth Drivers</div>
+                <ul className="space-y-1">
+                  {narration.market_sizing.growth_drivers.map((d, i) => (
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-slate-600"><span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400"></span>{cleanAi(d)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <InlineSources sourceKeys={["market_opportunity", "industry_trends", "tam_sam"]} />
+          </SectionCard>
+        )}
+
+        {/* Comprehensive-only: Pricing / Revenue Intelligence */}
+        {!isBasic && (narration.pricing_strategy || narration.price_intelligence) && (
+          <SectionCard title="Pricing / Revenue Intelligence">
+            {narration.pricing_strategy && (
+              <div className="mb-4">
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Recommended Model</div>
+                {narration.pricing_strategy.recommended_model && (
+                  <div className="text-sm font-bold text-slate-800 mb-1">{cleanAi(narration.pricing_strategy.recommended_model)}</div>
+                )}
+                {narration.pricing_strategy.rationale && (
+                  <p className="text-xs text-slate-600 leading-relaxed mb-2">{cleanAi(narration.pricing_strategy.rationale)}</p>
+                )}
+                {narration.pricing_strategy.launch_offer && (
+                  <div className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-xs text-brand-700">
+                    <span className="font-semibold">Launch offer: </span>{cleanAi(narration.pricing_strategy.launch_offer)}
+                  </div>
+                )}
+              </div>
+            )}
+            {narration.price_intelligence && (
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Market Pricing Intelligence</div>
+                {Array.isArray(narration.price_intelligence.similar_products) && narration.price_intelligence.similar_products.length > 0 && (
+                  <div className="space-y-1.5 mb-3">
+                    {narration.price_intelligence.similar_products.map((p, i) => (
+                      <div key={i} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+                        <span className="font-medium text-slate-700">{cleanAi(p.name || "")}</span>
+                        <span className="font-bold text-brand-700">{cleanAi(p.price || "")}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {narration.price_intelligence.recommended_entry_price && (
+                    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Entry</div>
+                      <div className="text-sm font-bold text-slate-800">{cleanAi(narration.price_intelligence.recommended_entry_price)}</div>
+                    </div>
+                  )}
+                  {narration.price_intelligence.recommended_growth_price && (
+                    <div className="rounded-xl border border-brand-100 bg-brand-50 p-3 text-center">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-brand-400 mb-1">Growth</div>
+                      <div className="text-sm font-bold text-brand-700">{cleanAi(narration.price_intelligence.recommended_growth_price)}</div>
+                    </div>
+                  )}
+                  {narration.price_intelligence.recommended_premium_price && (
+                    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Premium</div>
+                      <div className="text-sm font-bold text-slate-800">{cleanAi(narration.price_intelligence.recommended_premium_price)}</div>
+                    </div>
+                  )}
+                </div>
+                {narration.price_intelligence.pricing_rationale && (
+                  <p className="mt-2 text-xs text-slate-500 leading-relaxed">{cleanAi(narration.price_intelligence.pricing_rationale)}</p>
+                )}
+                <InlineSources sourceKeys={["pricing"]} />
+              </div>
+            )}
+          </SectionCard>
+        )}
+
+        {/* Contradictions */}
+        {v4Contradictions.length > 0 && (
+          <SectionCard title="Integrity Checks">
+            <div className="space-y-2">
+              {v4Contradictions.map((c, i) => (
+                <div key={i} className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-sm ${c.severity === "high" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                  <svg className="mt-0.5 h-4 w-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+                  <span>{typeof c === "string" ? c : c.message || c.description || JSON.stringify(c)}</span>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+        )}
+
+        {/* Risk Flags */}
+        {riskFlags.length > 0 && (
+          <SectionCard title="Risk Flags">
+            <div className="space-y-2">
+              {riskFlags.map((rf, i) => (
+                <div key={i} className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                  <svg className="mt-0.5 h-4 w-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+                  <span>{typeof rf === "string" ? rf : rf.note || rf.message || JSON.stringify(rf)}</span>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+        )}
+
+        {/* Run a Simulation CTA */}
+        {(() => {
+          // Relevance weights keyed by scenario_template_id
+          const WEIGHTS = {
+            tmpl_revenue_drop: (wdLow, rfStr, vps_, ecs_, vc) =>
+              (wdLow.includes("revenue") || wdLow.includes("market") || wdLow.includes("demand") ? 3 : 0)
+              + (vps_ < 50 || vc.includes("Weak") || vc.includes("Reframing") ? 2 : 0)
+              + (rfStr.includes("revenue") || rfStr.includes("demand") ? 1 : 0),
+            tmpl_price_increase: (wdLow, rfStr, vps_, ecs_, vc) =>
+              (wdLow.includes("revenue") || wdLow.includes("pricing") || wdLow.includes("unit_econ") ? 3 : 0)
+              + (rfStr.includes("pric") || rfStr.includes("unit") ? 1 : 0),
+            tmpl_client_loss: (wdLow, rfStr, vps_, ecs_, vc) =>
+              (wdLow.includes("customer") || wdLow.includes("traction") || wdLow.includes("evidence") ? 3 : 0)
+              + (rfStr.includes("customer") || rfStr.includes("client") || rfStr.includes("churn") ? 2 : 0)
+              + (ecs_ < 45 ? 1 : 0),
+            tmpl_hire_staff: (wdLow, rfStr, vps_, ecs_, vc) =>
+              (wdLow.includes("operational") || wdLow.includes("feasib") ? 3 : 0)
+              + (rfStr.includes("staff") || rfStr.includes("team") || rfStr.includes("operat") ? 2 : 0)
+              + (vps_ >= 55 ? 1 : 0),
+            tmpl_payment_delay: (wdLow, rfStr, vps_, ecs_, vc) =>
+              (wdLow.includes("unit_econ") || wdLow.includes("financial") ? 2 : 0)
+              + (rfStr.includes("cash") || rfStr.includes("payment") || rfStr.includes("runway") ? 2 : 0)
+              + (ecs_ < 50 ? 1 : 0),
+            tmpl_cost_increase: (wdLow, rfStr, vps_, ecs_, vc) =>
+              (wdLow.includes("unit_econ") || wdLow.includes("operational") ? 3 : 0)
+              + (rfStr.includes("cost") || rfStr.includes("margin") || rfStr.includes("feasib") ? 2 : 0)
+              + (vps_ < 45 ? 1 : 0),
+            tmpl_contractor_addition: (wdLow, rfStr, vps_, ecs_, vc) =>
+              (wdLow.includes("operational") || wdLow.includes("feasib") ? 3 : 0)
+              + (rfStr.includes("staff") || rfStr.includes("team") || rfStr.includes("capac") ? 2 : 0)
+              + (vps_ >= 50 ? 1 : 0),
+          };
+
+          const wdLow = (typeof weakestDim === "string" ? weakestDim : String(weakestDim?.key || weakestDim?.dimension || weakestDim?.label || "")).toLowerCase();
+          const rfStr = riskFlags.map((r) => (typeof r === "string" ? r : r?.flag || r?.description || "")).join(" ").toLowerCase();
+
+          // Use fetched templates; fall back to built-in list so simulations always show
+          const FALLBACK_TEMPLATES = [
+            { scenario_template_id: "tmpl_revenue_drop", title: "Revenue Drop", description: "Simulate a drop in revenue and see how your runway holds up." },
+            { scenario_template_id: "tmpl_client_loss", title: "Loss of Largest Client", description: "What happens if your biggest customer walks away?" },
+            { scenario_template_id: "tmpl_price_increase", title: "Increase Price", description: "Model the impact of raising your price on conversion and revenue." },
+            { scenario_template_id: "tmpl_hire_staff", title: "Hire Employees", description: "Forecast the cash impact of bringing on additional team members." },
+            { scenario_template_id: "tmpl_payment_delay", title: "Delayed Payments", description: "Simulate slower cash collection and its effect on your runway." },
+            { scenario_template_id: "tmpl_cost_increase", title: "Cost Increase", description: "See how rising operating costs affect your margins and breakeven." },
+            { scenario_template_id: "tmpl_contractor_addition", title: "Add a Contractor", description: "Model adding contractor capacity without a permanent hire." },
+          ];
+          const pool = simTemplates.length > 0 ? simTemplates : FALLBACK_TEMPLATES;
+          const scored = pool.map((t) => {
+            const tid = t.scenario_template_id;
+            const weightFn = WEIGHTS[tid];
+            return {
+              id: tid,
+              title: t.title || tid,
+              desc: t.description || t.summary || "",
+              score: weightFn ? weightFn(wdLow, rfStr, vps, ecs, verdictCategory) : 0,
+            };
+          }).sort((a, b) => b.score - a.score);
+          const suggestedSims = scored.slice(0, 2);
+
+          if (suggestedSims.length === 0) return null;
+
+          return (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-600 text-white shrink-0">
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                </div>
+                <div>
+                  <div className="text-sm font-bold text-slate-900">Run a Simulation</div>
+                  <div className="text-xs text-slate-500">Stress-test your idea with what-if scenarios based on these results.</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {suggestedSims.map((sim) => (
+                  <button
+                    key={sim.id}
+                    type="button"
+                    onClick={() => simCardClick(sim.id)}
+                    className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-left transition-all hover:border-brand-300 hover:bg-brand-50 hover:shadow-sm w-full"
+                  >
+                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm group-hover:bg-brand-100 group-hover:text-brand-600">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-slate-900 group-hover:text-brand-700 leading-snug">{sim.title}</div>
+                      <div className="mt-1 text-xs text-slate-500 leading-relaxed">{sim.desc}</div>
+                    </div>
+                    <svg className="mt-1 h-4 w-4 shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6" /></svg>
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Recommended Next Steps */}
+        {recommendations.length > 0 && (
+          <SectionCard title="Recommended Next Steps">
+            <ol className="space-y-3">
+              {recommendations.slice(0, 5).map((rec, i) => (
+                <li key={i} className="flex gap-3">
+                  <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700">{i + 1}</span>
+                  <p className="text-sm text-slate-700 leading-relaxed">{rec}</p>
+                </li>
+              ))}
+            </ol>
+          </SectionCard>
+        )}
+
+        {/* Footer */}
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-400 text-center">
+          This report is for business decision-support purposes only and does not constitute financial, legal or investment advice.
+          Scores are deterministic and based on your inputs. LLM narration is indicative only.
+          {!isPaid && " Free plan figures are AI-estimated, not live-verified."}
+        </div>
+      </div>
     );
   }
 
@@ -924,6 +1620,35 @@ export default function ResultsPage() {
 
   const flags = Array.isArray(validation.flags) ? validation.flags : [];
   const dimensionScores = validation.dimension_scores && typeof validation.dimension_scores === "object" ? validation.dimension_scores : null;
+
+  // V4 Universal Engine detection
+  const isV4 = validation?.pathway === "v4_universal" || validation?.engine_version === "4.0" || Boolean(validation?.validation_mode);
+  const validationMode = isV4 ? (validation?.validation_mode || "basic") : null;
+  const isComprehensive = validationMode === "comprehensive";
+  const v4CommercialScore = isV4 ? (validation?.scores?.potential_score ?? null) : null;
+  const v4EvidenceScore = isV4 ? (validation?.scores?.evidence_confidence_score ?? null) : null;
+  const v4Sections = isV4 ? (validation?.market_research?.sections || {}) : {};
+  const v4AiContradictions = isV4 ? (validation?.market_research?.contradictions || []) : [];
+  const v4EngineContradictions = isV4 ? (Array.isArray(validation?.contradictions) ? validation.contradictions : []) : [];
+  const v4RiskFlags = isV4 ? (Array.isArray(validation?.risk_flags) ? validation.risk_flags : []) : [];
+  const v4Sources = isV4 ? (validation?.market_research?.sources || {}) : {};
+  const V4_DIM_ORDER = ["problem_strength", "customer_clarity", "evidence_traction", "solution_relevance", "differentiation", "demand_market", "competition_positioning", "revenue_pricing", "unit_economics", "operational_feasibility", "founder_readiness", "regulatory_risk"];
+  const V4_BASIC_HIDDEN = new Set(["unit_economics", "operational_feasibility", "founder_readiness", "regulatory_risk"]);
+  const V4_DIM_LABELS = {
+    problem_strength: "Problem Strength", customer_clarity: "Customer Clarity", evidence_traction: "Evidence & Traction",
+    solution_relevance: "Solution Relevance", differentiation: "Differentiation", demand_market: "Demand & Market",
+    competition_positioning: "Competitive Position", revenue_pricing: "Revenue & Pricing",
+    unit_economics: "Unit Economics", operational_feasibility: "Operational Feasibility",
+    founder_readiness: "Founder Readiness", regulatory_risk: "Regulatory Risk",
+  };
+  const V4_SECTION_CONFIG = [
+    { key: "problem", label: "Problem", icon: "⚡", color: "rose" },
+    { key: "customer", label: "Customer", icon: "👤", color: "indigo" },
+    { key: "solution", label: "Solution", icon: "💡", color: "amber" },
+    { key: "market", label: "Market", icon: "📊", color: "emerald" },
+    { key: "competition", label: "Competition", icon: "🏁", color: "violet" },
+  ];
+
   const businessName = String(ideaValidation?.context?.business_name || "").trim() || null;
   const primaryIndustry = String(ideaValidation?.context?.primary_industry || "").trim() || null;
   const businessType = String(ideaValidation?.context?.business_type || "").trim() || null;
@@ -971,12 +1696,17 @@ export default function ResultsPage() {
 
   const orderedDimensions = useMemo(() => {
     if (!dimensionScores) return [];
+    if (isV4) {
+      const present = new Set(Object.keys(dimensionScores));
+      return V4_DIM_ORDER.filter((k) => present.has(k) && (isComprehensive || !V4_BASIC_HIDDEN.has(k)));
+    }
     const preferred = ["problem_severity", "customer_clarity", "demand_validation", "market_evidence", "differentiation", "trend_strength"];
     const present = new Set(Object.keys(dimensionScores || {}));
     const base = preferred.filter((k) => present.has(k));
     const rest = Object.keys(dimensionScores || {}).filter((k) => !base.includes(k));
     return [...base, ...rest].slice(0, Math.max(6, base.length));
-  }, [dimensionScores]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dimensionScores, isV4, isComprehensive]);
 
   const validationExplanation = (() => {
     const raw = String(validation?.validation_explanation || validation?.market_research?.executive_summary || "").trim();
@@ -1002,6 +1732,7 @@ export default function ResultsPage() {
 
   function dimLabel(key) {
     const k = String(key || "").trim();
+    if (isV4 && V4_DIM_LABELS[k]) return V4_DIM_LABELS[k];
     const meta = DIMENSION_META[k];
     if (meta?.label) return meta.label;
     return k.replaceAll("_", " ");
@@ -1010,6 +1741,7 @@ export default function ResultsPage() {
   function dimHelp(key) {
     const k = String(key || "").trim();
     const fromBackend = validation?.dimension_explanations && typeof validation.dimension_explanations === "object" ? validation.dimension_explanations[k] : null;
+    if (isV4 && V4_DIM_LABELS[k]) return `V4 scoring dimension: ${V4_DIM_LABELS[k]}.`;
     return fromBackend || DIMENSION_META[k]?.help || "Validation metric based on deterministic engine scoring.";
   }
 
@@ -1038,6 +1770,11 @@ export default function ResultsPage() {
           </h1>
           <Badge tone={decisionMeta.tone}>{decisionMeta.text}</Badge>
           {pathwayLabel ? <Badge>{pathwayLabel}</Badge> : null}
+          {isV4 && (
+            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest ${isComprehensive ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-600"}`}>
+              {isComprehensive ? "Comprehensive" : "Basic"}
+            </span>
+          )}
         </div>
         <p className="mt-1 text-sm text-slate-500">Validation report and recommended next steps.</p>
       </div>
@@ -1099,7 +1836,7 @@ export default function ResultsPage() {
       {decisionNotice ? <InlineAlert message={decisionNotice} /> : null}
 
       {/* Biz intro cards — full width, outside the aside grid so Score card aligns with Validation Insights */}
-      {!isServiceIdea && viewMode === "simple" && (
+      {!isServiceIdea && !isV4 && viewMode === "simple" && (
         <SectionCard title="Market Intelligence" subtitle="AI-driven summary of your validation result.">
           <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-brand-50 via-white to-brand-100 p-4 sm:p-6 shadow-[0_4px_16px_rgb(0,0,0,0.04)] ring-1 ring-brand-200/50">
             <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-brand-200/20 blur-3xl" />
@@ -1143,7 +1880,7 @@ export default function ResultsPage() {
           </div>
         </SectionCard>
       )}
-      {!isServiceIdea && viewMode === "detailed" && (
+      {!isServiceIdea && !isV4 && viewMode === "detailed" && (
         <SectionCard title="Validation Engine Data" subtitle="Underlying deterministic metrics for this idea.">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <StatTile
@@ -1164,6 +1901,92 @@ export default function ResultsPage() {
               info="Currency used for any estimates."
               className="bg-white shadow-sm ring-1 ring-slate-200"
             />
+          </div>
+        </SectionCard>
+      )}
+
+      {/* V4 Analysis by Section */}
+      {isV4 && Object.keys(v4Sections).length > 0 && (
+        <SectionCard
+          title="Analysis by Section"
+          subtitle={isComprehensive ? "Comprehensive AI analysis with live market research." : "AI-powered analysis of your idea across key dimensions."}
+        >
+          <div className="space-y-3">
+            {V4_SECTION_CONFIG.filter((sc) => v4Sections[sc.key]).map((sc) => {
+              const sec = v4Sections[sc.key] || {};
+              const colorMap = {
+                rose: { bg: "bg-rose-50", border: "border-rose-200", icon: "bg-rose-100 text-rose-600", label: "text-rose-700", insight: "bg-rose-50 border-rose-100" },
+                indigo: { bg: "bg-indigo-50", border: "border-indigo-200", icon: "bg-indigo-100 text-indigo-600", label: "text-indigo-700", insight: "bg-indigo-50 border-indigo-100" },
+                amber: { bg: "bg-amber-50", border: "border-amber-200", icon: "bg-amber-100 text-amber-600", label: "text-amber-700", insight: "bg-amber-50 border-amber-100" },
+                emerald: { bg: "bg-emerald-50", border: "border-emerald-200", icon: "bg-emerald-100 text-emerald-600", label: "text-emerald-700", insight: "bg-emerald-50 border-emerald-100" },
+                violet: { bg: "bg-violet-50", border: "border-violet-200", icon: "bg-violet-100 text-violet-600", label: "text-violet-700", insight: "bg-violet-50 border-violet-100" },
+              };
+              const c = colorMap[sc.color] || colorMap.indigo;
+              return (
+                <div key={sc.key} className={`rounded-xl border p-4 ${c.border} bg-white`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={`flex h-7 w-7 items-center justify-center rounded-lg text-sm ${c.icon}`}>{sc.icon}</span>
+                    <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${c.label}`}>{sc.label}</span>
+                  </div>
+                  {sec.body && <p className="text-sm text-slate-700 leading-relaxed mb-2">{sec.body}</p>}
+                  {sec.insight && (
+                    <div className={`rounded-lg border px-3 py-2 text-xs font-semibold text-slate-600 ${c.insight}`}>
+                      <span className="font-black text-slate-500 mr-1">Key finding:</span>{sec.insight}
+                    </div>
+                  )}
+                  {isComprehensive && sec.source_hint && (
+                    <p className="mt-2 text-[11px] text-slate-400 italic">{sec.source_hint}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </SectionCard>
+      )}
+
+      {/* V4 Integrity Checks & Contradictions — comprehensive only */}
+      {isV4 && isComprehensive && (v4AiContradictions.length > 0 || v4EngineContradictions.length > 0) && (
+        <SectionCard title="Integrity Checks" subtitle="Cross-validation of your inputs against research evidence.">
+          <div className="space-y-2">
+            {v4EngineContradictions.map((c, i) => (
+              <div key={`eng-${i}`} className="flex gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
+                <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
+                <p className="text-sm font-medium text-amber-800 leading-relaxed">
+                  {typeof c === "string" ? c : (c?.note || c?.message || JSON.stringify(c))}
+                </p>
+              </div>
+            ))}
+            {v4AiContradictions.map((c, i) => (
+              <div key={`ai-${i}`} className="flex gap-3 rounded-xl border border-rose-100 bg-rose-50 px-4 py-3">
+                <svg className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
+                <p className="text-sm font-medium text-rose-800 leading-relaxed">{String(c)}</p>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
+      {/* V4 Risk Flags — comprehensive only */}
+      {isV4 && isComprehensive && v4RiskFlags.length > 0 && (
+        <SectionCard title="Risk Flags" subtitle="Identified risks from the validation engine.">
+          <div className="space-y-2">
+            {v4RiskFlags.map((flag, i) => {
+              const severity = String(flag?.severity || "medium").toLowerCase();
+              const note = String(flag?.note || flag?.message || flag || "");
+              const dim = flag?.dimension ? String(flag.dimension).replace(/_/g, " ") : null;
+              const flagColor = severity === "high" ? "border-rose-100 bg-rose-50 text-rose-700" : severity === "low" ? "border-slate-100 bg-slate-50 text-slate-600" : "border-amber-100 bg-amber-50 text-amber-700";
+              const dotColor = severity === "high" ? "bg-rose-500" : severity === "low" ? "bg-slate-400" : "bg-amber-500";
+              return (
+                <div key={i} className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${flagColor}`}>
+                  <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
+                  <div className="min-w-0">
+                    {dim && <div className="text-[10px] font-black uppercase tracking-wide opacity-60 mb-0.5">{dim}</div>}
+                    <p className="text-sm font-medium leading-relaxed">{note}</p>
+                  </div>
+                  <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${severity === "high" ? "bg-rose-100 text-rose-600" : severity === "low" ? "bg-slate-100 text-slate-500" : "bg-amber-100 text-amber-600"} opacity-90`}>{severity}</span>
+                </div>
+              );
+            })}
           </div>
         </SectionCard>
       )}
@@ -1493,6 +2316,30 @@ export default function ResultsPage() {
         </div>
 
         <aside className="lg:col-span-4 flex flex-col gap-4">
+          {/* V4 Score Cards: Commercial + Evidence */}
+          {isV4 && (v4CommercialScore !== null || v4EvidenceScore !== null) && (
+            <div className="grid grid-cols-2 gap-3">
+              {v4CommercialScore !== null && (
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-center">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-indigo-400 mb-2">Commercial Score</div>
+                  <div className={`text-3xl font-black ${v4CommercialScore >= 75 ? "text-emerald-600" : v4CommercialScore >= 50 ? "text-amber-500" : "text-rose-500"}`}>
+                    {Math.round(v4CommercialScore)}
+                  </div>
+                  <div className="text-[10px] font-bold text-indigo-400 mt-0.5">/ 100</div>
+                </div>
+              )}
+              {v4EvidenceScore !== null && (
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-center">
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-emerald-500 mb-2">Evidence Score</div>
+                  <div className={`text-3xl font-black ${v4EvidenceScore >= 75 ? "text-emerald-600" : v4EvidenceScore >= 50 ? "text-amber-500" : "text-rose-500"}`}>
+                    {Math.round(v4EvidenceScore)}
+                  </div>
+                  <div className="text-[10px] font-bold text-emerald-400 mt-0.5">/ 100</div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Card 1: Score + Engine */}
           <div className={`relative overflow-hidden rounded-2xl border shadow-sm flex flex-col transition-all duration-700 ${
             risk.tone === "danger" ? "border-rose-100 bg-white" :
@@ -1535,7 +2382,7 @@ export default function ResultsPage() {
                   <div className={`h-1.5 w-1.5 rounded-full animate-pulse ${
                     risk.tone === "danger" ? "bg-rose-500" : risk.tone === "warn" ? "bg-amber-500" : "bg-emerald-500"
                   }`} />
-                  <span>DETERMINISTIC ENGINE 3.0</span>
+                  <span>{isV4 ? "V4 UNIVERSAL ENGINE" : "DETERMINISTIC ENGINE 3.0"}</span>
                 </div>
                 {dimensionScores && (
                   <div className="mt-3.5 space-y-1.5">
@@ -1614,6 +2461,11 @@ export default function ResultsPage() {
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
+                  {isV4 && !isComprehensive && (
+                    <div className="mt-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+                      <span className="font-black text-slate-400">Not assessed (Basic):</span> Unit Economics, Operational Feasibility, Founder Readiness, Regulatory Risk
+                    </div>
+                  )}
                 </>
               ) : (
                 <p className="text-sm text-slate-500">No score breakdown available yet.</p>
@@ -1784,39 +2636,46 @@ export default function ResultsPage() {
           {/* Idea Strength Dimensions */}
           <SectionCard title="Idea Strength Dimensions" subtitle="Radar · bar view · scored /100" className="flex flex-col">
             {dimensionScores ? (
-              <div className="flex-1 flex flex-col gap-2">
-                <div style={{ height: 220 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RadarChart data={orderedDimensions.map(k => ({ subject: dimLabel(k).split(' ')[0], score: Math.round(typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0), fullMark: 100 }))}>
-                      <PolarGrid stroke="#e2e8f0" />
-                      <PolarAngleAxis dataKey="subject" tick={{ fontSize: 9, fontWeight: 700, fill: "#94a3b8" }} />
-                      <Radar dataKey="score"
-                        stroke={risk.tone === "danger" ? "#f43f5e" : risk.tone === "warn" ? "#f59e0b" : "#10b981"}
-                        fill={risk.tone === "danger" ? "#f43f5e" : risk.tone === "warn" ? "#f59e0b" : "#10b981"}
-                        fillOpacity={0.18} strokeWidth={2} />
-                    </RadarChart>
-                  </ResponsiveContainer>
+              <>
+                <div className="flex-1 flex flex-col gap-2">
+                  <div style={{ height: 220 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RadarChart data={orderedDimensions.map(k => ({ subject: dimLabel(k).split(' ')[0], score: Math.round(typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0), fullMark: 100 }))}>
+                        <PolarGrid stroke="#e2e8f0" />
+                        <PolarAngleAxis dataKey="subject" tick={{ fontSize: 9, fontWeight: 700, fill: "#94a3b8" }} />
+                        <Radar dataKey="score"
+                          stroke={risk.tone === "danger" ? "#f43f5e" : risk.tone === "warn" ? "#f59e0b" : "#10b981"}
+                          fill={risk.tone === "danger" ? "#f43f5e" : risk.tone === "warn" ? "#f59e0b" : "#10b981"}
+                          fillOpacity={0.18} strokeWidth={2} />
+                      </RadarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div style={{ height: 185 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart layout="vertical" data={orderedDimensions.map(k => ({ name: dimLabel(k), score: Math.round(typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0) }))} margin={{ top: 0, right: 20, bottom: 0, left: 0 }}>
+                        <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 8, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                        <YAxis type="category" dataKey="name" width={88} tick={{ fontSize: 9, fontWeight: 700, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                        <Tooltip cursor={{ fill: "#f8fafc" }} content={({ active, payload }) => active && payload?.length ? (
+                          <div className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white shadow-xl">
+                            {payload[0].payload.name}: <span className="text-emerald-400">{payload[0].value}/100</span>
+                          </div>
+                        ) : null} />
+                        <Bar dataKey="score" radius={[0, 4, 4, 0]} maxBarSize={9}>
+                          {orderedDimensions.map((k) => {
+                            const v = typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0;
+                            return <Cell key={k} fill={v >= 80 ? "#10b981" : v >= 50 ? "#f59e0b" : "#f43f5e"} />;
+                          })}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
-                <div style={{ height: 185 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart layout="vertical" data={orderedDimensions.map(k => ({ name: dimLabel(k), score: Math.round(typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0) }))} margin={{ top: 0, right: 20, bottom: 0, left: 0 }}>
-                      <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 8, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-                      <YAxis type="category" dataKey="name" width={88} tick={{ fontSize: 9, fontWeight: 700, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                      <Tooltip cursor={{ fill: "#f8fafc" }} content={({ active, payload }) => active && payload?.length ? (
-                        <div className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white shadow-xl">
-                          {payload[0].payload.name}: <span className="text-emerald-400">{payload[0].value}/100</span>
-                        </div>
-                      ) : null} />
-                      <Bar dataKey="score" radius={[0, 4, 4, 0]} maxBarSize={9}>
-                        {orderedDimensions.map((k) => {
-                          const v = typeof dimensionScores[k] === "number" ? dimensionScores[k] : 0;
-                          return <Cell key={k} fill={v >= 80 ? "#10b981" : v >= 50 ? "#f59e0b" : "#f43f5e"} />;
-                        })}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
+                {isV4 && !isComprehensive && (
+                  <div className="mt-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+                    <span className="font-black text-slate-400">Not assessed (Basic):</span> Unit Economics, Operational Feasibility, Founder Readiness, Regulatory Risk
+                  </div>
+                )}
+              </>
             ) : (
               <p className="mt-3 text-sm text-slate-500">No score breakdown available yet.</p>
             )}
@@ -2231,6 +3090,54 @@ export default function ResultsPage() {
           ) : null}
         </div>
       ) : null}
+
+      {/* Research Sources — comprehensive V4 uses market_research.sources; legacy uses research_data.sources */}
+      {(() => {
+        const sourcesObj = (isV4 && isComprehensive && Object.keys(v4Sources).length > 0)
+          ? v4Sources
+          : (validation?.research_data?.sources || {});
+        const hasAny = Object.values(sourcesObj).some((s) => Array.isArray(s) && s.length > 0);
+        if (!hasAny) return null;
+        return (
+          <SectionCard
+            title="Research Sources"
+            subtitle={isComprehensive ? "Verified web sources used to inform this comprehensive analysis." : "Live web sources used to inform this validation report."}
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {Object.entries(sourcesObj)
+                .filter(([, items]) => Array.isArray(items) && items.length > 0)
+                .map(([category, items]) => (
+                  <div key={category}>
+                    <div className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 mb-2">
+                      {category.replace(/_/g, " ")}
+                    </div>
+                    <ul className="space-y-2">
+                      {items.slice(0, 3).map((src, i) =>
+                        src?.url ? (
+                          <li key={i} className="flex flex-col gap-0.5">
+                            <a
+                              href={src.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs font-semibold text-brand-600 hover:underline leading-snug line-clamp-2"
+                            >
+                              {src.title || src.url}
+                            </a>
+                            {src.snippet && (
+                              <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2">
+                                {src.snippet}
+                              </p>
+                            )}
+                          </li>
+                        ) : null
+                      )}
+                    </ul>
+                  </div>
+                ))}
+            </div>
+          </SectionCard>
+        );
+      })()}
     </div>
   );
 }

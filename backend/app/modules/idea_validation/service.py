@@ -27,11 +27,13 @@ from app.modules.idea_validation.market_research_service import (
     run_research_data,
     run_ai_narration,
     extract_research_signals,
-    flatten_fields_from_payload
+    flatten_fields_from_payload,
+    flatten_fields_from_v4_payload,
 )
 from app.shared.schemas.common import WorkspaceDocument
 from app.core.supabase import sb_insert, sb_select, sb_update
 from app.shared.llm.openai_client import get_user_plan_info, plan_uses_serp
+from app.modules.idea_validation.market_research_service import _pick_llm_caller
 
 logger = logging.getLogger(__name__)
 
@@ -606,6 +608,279 @@ async def evaluate(
                 pass
     
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not determine evaluation path")
+
+
+def _build_v4_reasons(narrative_report: dict, v4_result: dict) -> list[str]:
+    """Build Critical Risks list from AI narration risks + V4 risk flags."""
+    ai_risks = [r for r in (narrative_report.get("risks") or []) if isinstance(r, str) and r.strip()]
+    if ai_risks:
+        return ai_risks
+    # V4 risk_flags are dicts: {"dimension": str, "severity": str, "note": str}
+    out = []
+    for f in (v4_result.get("risk_flags") or []):
+        if isinstance(f, str) and f.strip():
+            out.append(f)
+        elif isinstance(f, dict):
+            note = (f.get("note") or "").strip()
+            if note:
+                out.append(note)
+    return out
+
+
+def _build_v4_recommendations(narrative_report: dict, v4_result: dict) -> list[str]:
+    """Build Strategic Roadmap list from AI narration next_actions."""
+    next_actions = narrative_report.get("next_actions") or []
+    ai_recs = []
+    for a in next_actions:
+        if not isinstance(a, dict):
+            continue
+        action = (a.get("action") or "").strip()
+        timeframe = (a.get("timeframe") or "").strip()
+        if action:
+            ai_recs.append(f"{action} ({timeframe})" if timeframe else action)
+    if ai_recs:
+        return ai_recs
+    return [e.get("name", "") for e in (v4_result.get("experiments") or [])[:3] if e.get("name")]
+
+
+async def _ai_enrich_v4_input(inp, user_id: str) -> None:
+    """
+    Fill in blank VPS-scoring fields with AI inference so Basic-mode results
+    reflect the idea rather than showing 0% for every unfilled step.
+    Modifies inp in-place. ECS stays low since these are AI estimates, not
+    user-provided evidence.
+    """
+    from app.modules.idea_validation.engine_v4 import V4Input
+
+    # Only enrich fields that are genuinely empty
+    needs_customer = not inp.primary_segment.strip()
+    needs_solution = not inp.solution_description.strip()
+    needs_revenue  = not inp.revenue_model.strip()
+
+    if not (needs_customer or needs_solution or needs_revenue):
+        return  # nothing to do
+
+    # Build a compact context string from what the user did supply
+    context_parts = [f"Idea: {inp.idea_name}" if inp.idea_name else ""]
+    if inp.idea_type:
+        context_parts.append(f"Type: {inp.idea_type}")
+    if inp.idea_sector:
+        context_parts.append(f"Sector: {inp.idea_sector}")
+    if inp.idea_description:
+        context_parts.append(f"Description: {inp.idea_description}")
+    if inp.idea_tagline:
+        context_parts.append(f"Tagline: {inp.idea_tagline}")
+    if inp.problem_description:
+        context_parts.append(f"Problem: {inp.problem_description}")
+    if inp.who_affected:
+        context_parts.append(f"Who is affected: {inp.who_affected}")
+    if inp.customer_model:
+        context_parts.append(f"Customer model: {inp.customer_model}")
+    if inp.operating_country:
+        context_parts.append(f"Country: {inp.operating_country}")
+
+    context = "\n".join(p for p in context_parts if p)
+    if not context.strip():
+        return  # nothing to infer from
+
+    fields_needed = []
+    if needs_customer:
+        fields_needed.append('"primary_segment": "<who the primary customer is, 1 short phrase>"')
+        fields_needed.append('"customer_specificity": "<one of: broad, moderate, narrow, niche>"')
+        fields_needed.append('"beachhead_segment": "<the most focused initial customer group, 1 phrase>"')
+    if needs_solution:
+        fields_needed.append('"solution_description": "<what the product/service does, 1-2 sentences>"')
+        fields_needed.append('"core_outcome": "<the main result the customer achieves, 1 short phrase>"')
+        fields_needed.append('"delivery_method": "<how it is delivered, e.g. online platform, mobile app, in-person>"')
+    if needs_revenue:
+        fields_needed.append('"revenue_model": "<most likely model, e.g. subscription, one-time, per-session>"')
+
+    prompt = f"""You are a business analyst inferring missing business details from limited idea information.
+
+{context}
+
+Based only on the above, infer the most likely values for these fields. Be concise and realistic.
+Return ONLY a valid JSON object with these exact keys — no explanation, no markdown:
+{{{",\n  ".join(fields_needed)}}}"""
+
+    try:
+        call_llm = await _pick_llm_caller(user_id)
+        raw = await call_llm(prompt, user_id=user_id, feature="idea_validation.v4_enrichment")
+        if not raw:
+            return
+        text = raw if isinstance(raw, str) else (raw.get("executive_summary") or raw.get("raw") or json.dumps(raw))
+        # Extract JSON
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start == -1 or end == 0:
+            return
+        inferred = json.loads(text[start:end])
+        if not isinstance(inferred, dict):
+            return
+
+        def _clean(v: str) -> str:
+            return v.replace("—", " ").replace("–", " to ").strip()
+
+        # Apply inferred values only to fields that were empty
+        if needs_customer:
+            if inferred.get("primary_segment"):
+                inp.primary_segment = _clean(str(inferred["primary_segment"]))
+            if inferred.get("customer_specificity") and inferred["customer_specificity"].lower() in ("broad", "moderate", "narrow", "niche"):
+                inp.customer_specificity = inferred["customer_specificity"].lower()
+            if inferred.get("beachhead_segment"):
+                inp.beachhead_segment = _clean(str(inferred["beachhead_segment"]))
+        if needs_solution:
+            if inferred.get("solution_description"):
+                inp.solution_description = _clean(str(inferred["solution_description"]))
+            if inferred.get("core_outcome"):
+                inp.core_outcome = _clean(str(inferred["core_outcome"]))
+            if inferred.get("delivery_method"):
+                inp.delivery_method = _clean(str(inferred["delivery_method"]))
+        if needs_revenue:
+            if inferred.get("revenue_model"):
+                inp.revenue_model = _clean(str(inferred["revenue_model"]))
+
+    except Exception as exc:
+        logger.warning("V4 AI enrichment failed (non-fatal): %s", exc)
+
+
+async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
+    """
+    V4 Universal Validation — deterministic scoring (VPS + ECS) + live web research.
+    Accepts the raw V4 wizard payload {step1..step12, validation_mode, currency, workspace_id}.
+    """
+    from app.modules.idea_validation.engine_v4 import v4_payload_to_input, evaluate_v4
+
+    # 1. Plan gating
+    plan_key, plan_status = await get_user_plan_info(user_id)
+    is_free = plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}
+    use_serp = plan_uses_serp(plan_key, plan_status)
+
+    if is_free:
+        existing = await sb_select("idea_validation_results", filters=[("user_id", "eq", user_id)])
+        if len(existing or []) >= _LIFETIME_VALIDATION_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You have used your free lifetime validation. Upgrade to run more validations.",
+            )
+
+    # 2. Deterministic scoring — enrich blank fields with AI before scoring
+    v4_inp = v4_payload_to_input(payload)
+    await _ai_enrich_v4_input(v4_inp, user_id)
+    v4_result = evaluate_v4(v4_inp)
+
+    # 3. Flatten V4 fields for search query building
+    fields = flatten_fields_from_v4_payload(payload)
+
+    # 4. Live web research
+    logger.info("V4: starting web research for %r (serp=%s)", fields.get("business_name"), use_serp)
+    try:
+        research_res = await run_research_data(fields, use_serp=use_serp)
+    except Exception as exc:
+        logger.error("V4 research retrieval failed: %s", exc)
+        research_res = {"evidence": {}, "sources": {}, "shopping": [], "search_queries": {}}
+
+    # 5. AI narration — pass V4 scores in the format the synthesis prompt understands
+    vps = v4_result["scores"]["potential_score"]
+    ecs = v4_result["scores"]["evidence_confidence_score"]
+    verdict = v4_result["verdict"]
+    narration_fields = {
+        **fields,
+        "deterministic_evaluation": {
+            "score": vps,
+            "classification": verdict.get("label", verdict.get("category", "")),
+        },
+    }
+    try:
+        narrative_report = await run_ai_narration(
+            narration_fields,
+            research_res["evidence"],
+            research_res.get("shopping", []),
+            user_id=user_id,
+            sources=research_res.get("sources", {}),
+        )
+        logger.info("V4 narration complete.")
+    except Exception as exc:
+        logger.error("V4 narration failed: %s", exc)
+        narrative_report = {
+            "executive_summary": "Validation complete. Scores are ready below.",
+            "dimension_explanations": {},
+        }
+
+    # 6. Map VPS dimensions → dimension_scores for ResultsPage radar/bar charts
+    dimension_scores: dict[str, int] = {}
+    for dim in (v4_result["scores"].get("vps_dimensions") or []):
+        key = dim.get("dimension", "")
+        if key:
+            dimension_scores[key] = int(dim.get("pct", 0))
+
+    classification = verdict.get("label", verdict.get("category", "Developing Fit")).upper()
+
+    final_result = {
+        # V4-native fields
+        "engine_version": "4.0",
+        "validation_mode": "basic" if is_free else "comprehensive",
+        "is_paid_plan": not is_free,
+        "idea_name": v4_inp.idea_name or fields.get("business_name", ""),
+        "idea_type": v4_inp.idea_type or "",
+        "idea_sector": v4_inp.idea_sector or "",
+        "idea_tagline": v4_inp.idea_tagline or "",
+        "idea_description": v4_inp.idea_description or "",
+        "primary_segment": v4_inp.primary_segment or "",
+        "problem_description": v4_inp.problem_description or "",
+        "solution_description": v4_inp.solution_description or "",
+        "proposed_price": v4_inp.proposed_price or "",
+        "revenue_model": v4_inp.revenue_model or "",
+        "scores": v4_result["scores"],
+        "summary": v4_result.get("summary", {}),
+        "verdict": verdict,
+        "experiments": v4_result.get("experiments", []),
+        "contradictions": v4_result.get("contradictions", []),
+        "risk_flags": v4_result.get("risk_flags", []),
+        # ResultsPage-compatible fields
+        "score": vps,
+        "classification": classification,
+        "dimension_scores": dimension_scores,
+        "market_research": narrative_report,
+        "research_data": research_res,
+        "validation_explanation": narrative_report.get("executive_summary", ""),
+        "dimension_explanations": {
+            **narrative_report.get("dimension_explanations", {}),
+        },
+        "business_name": v4_inp.idea_name or fields.get("business_name", ""),
+        "service_name": v4_inp.idea_name or fields.get("business_name", ""),
+        "pathway": "v4_universal",
+        "reasons": _build_v4_reasons(narrative_report, v4_result),
+        "recommendations": _build_v4_recommendations(narrative_report, v4_result),
+        "flags": [],
+        "advisory_flags": [],
+    }
+
+    # 7. Persist result
+    workspace_id = payload.get("workspace_id")
+    try:
+        result_id = await save_validation_result(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            pathway="v4_universal",
+            eval_result={
+                "score": vps,
+                "dimension_scores": dimension_scores,
+                "metrics": {},
+                "reasons": final_result["reasons"],
+                "recommendations": final_result["recommendations"],
+                "classification": classification,
+                "dimension_explanations": {},
+            },
+            narrative_report=narrative_report,
+            fields=fields,
+            research_data=research_res,
+        )
+        final_result["result_id"] = result_id
+    except Exception as exc:
+        logger.warning("V4 result persist failed: %s", exc)
+
+    return final_result
 
 
 async def market_fit(

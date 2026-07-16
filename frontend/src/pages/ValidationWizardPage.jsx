@@ -17,6 +17,7 @@ import { imageFileToDataUrl } from "../lib/files";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { generateValidationInsightPdf } from "../lib/reports/index";
 import ValidationLoadingOverlay from "../components/ValidationLoadingOverlay";
+import CreditConfirmModal from "../components/CreditConfirmModal";
 
 function humanizeValidationError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
@@ -204,6 +205,7 @@ function buildInitialBusinessForm() {
       customer_segment_category: defaults.customer_segment_category || "SMEs",
       customer_segment_other: defaults.customer_segment_other || "",
       problem_type: defaults.problem_type || "", // Map to "What problem?"
+      proposed_solution: "",
       severity: "Moderate", // NEW
       frequency: frequencyFields.frequency,
       frequency_category: frequencyFields.frequency_category,
@@ -284,7 +286,10 @@ function AISuggest({ onAccept, context }) {
     setSuggestion(null);
     try {
       const res = await apiRequest("/validation/suggest-field", "POST", context);
-      if (res?.suggestion) setSuggestion(res.suggestion);
+      if (res?.suggestion) {
+        setSuggestion(res.suggestion);
+        window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
+      }
     } catch (_) {
       // silently fail
     } finally {
@@ -368,11 +373,16 @@ export default function ValidationWizardPage() {
   const returnTo = searchParams.get("return");
   const requestedHistoryId = searchParams.get("history_id");
   const requestedHistoryType = searchParams.get("history_type");
+  const requestedEditMode = searchParams.get("edit") === "1";
   const storedWorkspaceId = useWorkspaceStore((s) => s.workspaceId);
   const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
+  const subscription = useAuthStore((s) => s.subscription);
+  const canAccessComprehensive = subscription &&
+    !["free_trial", "explorer", "expired", ""].includes(subscription.plan_key ?? "") &&
+    !["trial", "expired"].includes(subscription.status ?? "");
 
   const canEvaluateIdea =
     !isPlatformFeatureRestricted("validation", "evaluate_idea", platformRestrictions) &&
@@ -393,13 +403,15 @@ export default function ValidationWizardPage() {
   const setDraftIdeaValidation = useWorkspaceStore((s) => s.setDraftIdeaValidation);
   const setDraftServiceIdea = useWorkspaceStore((s) => s.setDraftServiceIdea);
   const setValidation = useWorkspaceStore((s) => s.setValidation);
+  const setValidationEntryId = useWorkspaceStore((s) => s.setValidationEntryId);
   const setCurrency = useWorkspaceStore((s) => s.setCurrency);
   const authEmail = useAuthStore((s) => s.email);
 
-  const [mode, setMode] = useState(fromOtherModule ? "fill" : "select"); // select | fill
+  const [mode, setMode] = useState(fromOtherModule ? "fill" : "v4"); // v4 | fill
   const [isLoading, setIsLoading] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [error, setError] = useState(null);
+  const [creditModal, setCreditModal] = useState(null);
   const [isPrefilling, setIsPrefilling] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
   const [existingCatalogue, setExistingCatalogue] = useState({ products: [], customers: [], vendors: [] });
@@ -432,6 +444,253 @@ export default function ValidationWizardPage() {
   const [lastResearchHash, setLastResearchHash] = useState(null);
   const [showAdvancedOffer, setShowAdvancedOffer] = useState(false);
   const initialStageDefaults = useMemo(() => loadValidationStageDefaults(), []);
+
+  // ---- V4 Universal Wizard state ----
+  const [v4Journey, setV4Journey] = useState(null); // "basic" | "comprehensive"
+  const [v4Step, setV4Step] = useState(0); // 0 = journey select, 1-12 = wizard steps
+  const [v4Form, setV4Form] = useState({});
+  const [v4Error, setV4Error] = useState(null);
+  const [v4Saving, setV4Saving] = useState(false);
+  const [v4Suggesting, setV4Suggesting] = useState(null); // "${step}_${field}" when loading
+
+  const V4_IDEA_TYPES = [
+    "Professional service", "Local service", "Digital service", "SaaS", "Software product",
+    "Mobile application", "Marketplace", "Platform business", "Physical product", "E-commerce",
+    "Subscription business", "Training or education", "Event or conference", "Community or membership",
+    "Property or real estate", "Manufacturing", "Franchise", "Social enterprise", "Nonprofit",
+    "Internal enterprise solution", "Existing-business product extension", "Existing-business service extension",
+    "Hybrid", "Other",
+  ];
+  const V4_BUSINESS_STAGES = [
+    "Idea only", "Customer discovery", "Prototype", "MVP", "Pilot",
+    "Pre-revenue", "Early revenue", "Existing customers", "Scaling", "Existing business extension",
+  ];
+  const V4_CUSTOMER_MODELS = ["B2C", "B2B", "B2B2C", "B2G", "C2C", "Nonprofit beneficiary", "Internal organisational users", "Hybrid"];
+  const V4_PAIN_SEVERITIES = ["mild", "moderate", "severe", "critical"];
+  const V4_FREQUENCIES = ["daily", "weekly", "monthly", "quarterly", "rarely", "unknown"];
+  const V4_URGENCIES = ["urgent", "moderate", "deferrable", "unknown"];
+  const V4_TRENDS = ["growing", "stable", "declining", "unknown"];
+  const V4_SPECIFICITIES = ["broad", "moderate", "narrow", "niche"];
+  const V4_CHANNELS = ["Paid ads", "Organic/SEO", "Social media", "Email", "Referrals", "Partnerships", "Direct sales", "Events", "Marketplace", "Cold outreach", "PR/Media", "In-store", "Other"];
+  const V4_IP_MOATS = ["none", "IP", "network_effects", "data", "process", "expertise"];
+  const V4_MARKET_SCOPES = ["local", "regional", "national", "global"];
+  const V4_PURCHASE_FREQUENCIES = ["one-off", "daily", "weekly", "monthly", "quarterly", "annually", "irregular", "unknown"];
+  const V4_DELIVERY_METHODS = ["Web app (SaaS)", "Mobile app", "Desktop software", "API / integration", "In-person service", "Remote service", "Physical product delivery", "Marketplace", "Hybrid digital and physical", "Other"];
+  const V4_PROBLEM_AFFECTS = ["Buyer only", "End user only", "Both buyer and user", "Unknown"];
+  const V4_MARKET_GROWTHS = ["yes", "no", "unknown"];
+  const V4_REVENUE_MODELS = ["One-off sale", "Subscription", "Usage-based", "Freemium", "Marketplace commission", "Service fee", "Licensing", "Advertising", "Donation/Grant", "Hybrid", "Other"];
+  const V4_FOUNDER_EXPERIENCE = ["none", "some", "relevant", "deep"];
+  const V4_REG_RISKS = ["none", "low", "medium", "high", "unknown"];
+  const V4_EVIDENCE_TYPES = [
+    { id: "no_evidence", label: "No evidence yet" },
+    { id: "personal_experience", label: "Personal experience" },
+    { id: "informal_conversations", label: "Informal conversations" },
+    { id: "customer_interviews", label: "Customer interviews" },
+    { id: "survey_responses", label: "Survey responses" },
+    { id: "social_media_engagement", label: "Social media engagement" },
+    { id: "search_demand", label: "Search demand data" },
+    { id: "landing_page_visits", label: "Landing page visits" },
+    { id: "email_sign_ups", label: "Email sign-ups" },
+    { id: "waiting_list", label: "Waiting list" },
+    { id: "letters_of_intent", label: "Letters of intent" },
+    { id: "requests_for_quotation", label: "Requests for quotation" },
+    { id: "pre_orders", label: "Pre-orders" },
+    { id: "deposits", label: "Deposits received" },
+    { id: "paid_pilots", label: "Paid pilots" },
+    { id: "existing_customers", label: "Existing paying customers" },
+    { id: "repeat_customers", label: "Repeat customers" },
+    { id: "revenue", label: "Revenue generated" },
+    { id: "retention_data", label: "Retention data" },
+    { id: "usage_data", label: "Usage data" },
+  ];
+
+  const BASIC_STEPS = [1, 2];
+  const COMP_STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const V4_STEP_TITLES = {
+    1: "Idea Identity",
+    2: "Problem",
+    3: "Customer",
+    4: "Current Alternatives",
+    5: "Proposed Solution",
+    6: "Market",
+    7: "Revenue & Pricing",
+    8: "Costs & Economics",
+    9: "Capacity & Operations",
+    10: "Traction & Evidence",
+    11: "Founder Readiness",
+    12: "Regulatory Risk",
+  };
+
+  function getV4Steps() {
+    return v4Journey === "basic" ? BASIC_STEPS : COMP_STEPS;
+  }
+
+  function setV4Field(step, field, value) {
+    setV4Form((prev) => ({
+      ...prev,
+      [`step${step}`]: { ...(prev[`step${step}`] || {}), [field]: value },
+    }));
+  }
+
+  function getV4(step, field, fallback = "") {
+    return (v4Form[`step${step}`] || {})[field] ?? fallback;
+  }
+
+  function toggleV4ArrayField(step, field, item) {
+    const current = getV4(step, field, []);
+    const arr = Array.isArray(current) ? current : [];
+    const next = arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item];
+    setV4Field(step, field, next);
+  }
+
+  function markV4StepComplete(stepNum) {
+    setV4Form((prev) => {
+      const done = Array.isArray(prev.steps_completed) ? prev.steps_completed : [];
+      if (done.includes(stepNum)) return prev;
+      return { ...prev, steps_completed: [...done, stepNum] };
+    });
+  }
+
+  async function handleV4AISuggest(step, field, contextOverride = {}) {
+    const key = `${step}_${field}`;
+    setV4Suggesting(key);
+    const step1 = v4Form.step1 || {};
+    const step2 = v4Form.step2 || {};
+    const step3 = v4Form.step3 || {};
+    const step4 = v4Form.step4 || {};
+    const step5 = v4Form.step5 || {};
+    const step6 = v4Form.step6 || {};
+    const context = {
+      // Core identity
+      description: [step1.idea_name, step1.idea_tagline, step1.idea_description].filter(Boolean).join(" — "),
+      industry: step1.idea_type || "",
+      sector: step1.idea_sector || "",
+      business_stage: step1.business_stage || "",
+      customer_model: step1.customer_model || "",
+      location: step1.launch_geography || "",
+      country: step1.operating_country || "",
+      // Problem
+      problem: step2.problem_description || "",
+      who_affected: step2.who_affected || "",
+      pain_severity: step2.pain_severity || "",
+      frequency: step2.problem_frequency || "",
+      // Customer
+      segment: step3.primary_segment || "",
+      beachhead: step3.beachhead_segment || "",
+      economic_buyer: step3.economic_buyer || "",
+      // Competition
+      alternatives: step4.how_solve_currently || "",
+      competitors: (step4.direct_competitors || []).join(", "),
+      substitutes: (step4.substitutes || []).join(", "),
+      // Solution
+      solution: step5.solution_description || "",
+      core_outcome: step5.core_outcome || "",
+      why_better: step5.why_better || "",
+      // Market
+      market_category: step6.market_category || "",
+      ...contextOverride,
+    };
+    try {
+      const res = await apiRequest("/validation/suggest-field", "POST", { field, ...context });
+      if (res?.suggestion) {
+        const raw = res.suggestion.replace(/^[\s\-–—•·*]+/gm, "").trim();
+        // Array fields: split suggestion into items
+        if (["direct_competitors", "substitutes", "main_features", "main_benefits"].includes(field)) {
+          const items = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+          setV4Field(step, field, items);
+        } else {
+          setV4Field(step, field, raw.replace(/\n+/g, " ").trim());
+        }
+        window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
+      }
+    } catch { /* silent */ } finally {
+      setV4Suggesting(null);
+    }
+  }
+
+  function v4SuggestBtn(step, field, override) {
+    const key = `${step}_${field}`;
+    const busy = v4Suggesting === key;
+    return (
+      <button
+        type="button"
+        disabled={busy || Boolean(v4Suggesting)}
+        className="flex items-center gap-1 text-xs font-semibold text-brand-600 hover:text-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+        onClick={() => handleV4AISuggest(step, field, override)}
+      >
+        {busy ? (
+          <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" strokeLinecap="round" />
+          </svg>
+        ) : (
+          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" />
+          </svg>
+        )}
+        {busy ? "Thinking..." : "AI Suggest"}
+      </button>
+    );
+  }
+
+  async function handleV4Evaluate() {
+    setV4Error(null);
+    setV4Saving(true);
+    setIsValidating(true);
+    try {
+      const steps = getV4Steps();
+      const stepsCompleted = Array.isArray(v4Form.steps_completed) ? v4Form.steps_completed : steps;
+      const payload = {
+        ...v4Form,
+        validation_mode: v4Journey,
+        currency: getV4(1, "currency", "GBP") || "GBP",
+        steps_completed: stepsCompleted,
+        workspace_id: editingWorkspaceId || storedWorkspaceId || null,
+      };
+      const result = await apiRequest("/validation/evaluate-v4", "POST", payload, { timeoutMs: 300000 });
+      setValidation(result);
+
+      // Persist to workspace history
+      const wsId = editingWorkspaceId || storedWorkspaceId;
+      if (wsId) {
+        const validationId = crypto.randomUUID();
+        setValidationEntryId(validationId);
+        const { research_data: _rd, ...resultForHistory } = result || {};
+        const entry = {
+          id: validationId,
+          type: "v4_validation",
+          title: getV4(1, "idea_name", "Idea Validation"),
+          created_at: new Date().toISOString(),
+          status: "pending",
+          score: result?.scores?.potential_score ?? null,
+          confidence: result?.scores?.evidence_confidence_score ?? null,
+          verdict: result?.verdict?.category ?? null,
+          journey: v4Journey,
+          payload,
+          result: resultForHistory,
+        };
+        try {
+          const ws = await apiRequest(`/validation/${wsId}`, "GET");
+          const existing = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
+          await apiRequest(`/validation/${wsId}`, "PATCH", {
+            data: {
+              validation_history: [entry, ...existing.filter((i) => i?.id !== validationId)],
+              active_validation_id: validationId,
+            },
+          }, { timeoutMs: 60000 });
+          setValidationHistory([entry, ...validationHistory]);
+        } catch { /* silent */ }
+      }
+
+      setSavedNotice("Validation complete. Redirecting to report...");
+      window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
+      setTimeout(() => navigate("/results"), 800);
+    } catch (e) {
+      setV4Error(humanizeValidationError(e));
+      setIsValidating(false);
+    } finally {
+      setV4Saving(false);
+    }
+  }
 
   const [workspaceName, setWorkspaceName] = useState(() => String(loadValidationStageDefaults().workspace_name || "").trim());
   const [workspaceNameTouched, setWorkspaceNameTouched] = useState(false);
@@ -926,9 +1185,9 @@ export default function ValidationWizardPage() {
     if (!activeWorkspaceId || historyRequestHandled || isPrefilling) return;
     setHistoryRequestHandled(true);
     setContentTab("builder");
-    setMode("fill");
+    if (requestedHistoryType === "service_validation") setMode("fill");
     if (requestedHistoryId) {
-      editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, true);
+      editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, true, requestedEditMode);
     } else if (requestedHistoryType === "service_validation") {
       // history_type present but no specific history_id — find the active service entry
       (async () => {
@@ -955,7 +1214,16 @@ export default function ValidationWizardPage() {
     isPrefilling,
     requestedHistoryId,
     requestedHistoryType,
+    requestedEditMode,
   ]);
+
+  // When Modify is clicked from ResultsPage (edit=1 URL param), auto-advance to
+  // the form step once editHistoryEntry has loaded the journey and form data.
+  useEffect(() => {
+    if (requestedEditMode && v4Journey && mode === "v4" && v4Step === 0) {
+      setV4Step(1);
+    }
+  }, [requestedEditMode, v4Journey, mode, v4Step]);
 
   useEffect(() => {
     if (!isCreateWorkspace) return;
@@ -1148,7 +1416,7 @@ export default function ValidationWizardPage() {
       setError(null);
       try {
         const defaults = loadValidationStageDefaults();
-        const ws = await apiRequest(`/validation/${wsId}`, "GET");
+        const ws = await apiRequest(`/validation/${wsId}`, "GET", undefined, { timeoutMs: 90000 });
         const iv = ws?.data?.idea_validation || ws?.data?.draft_idea_validation;
         setExistingCatalogue(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
         setSavedServiceIdeas(Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : []);
@@ -1434,6 +1702,7 @@ export default function ValidationWizardPage() {
       score: typeof entry.score === "number" ? entry.score : null,
       payload: entry.payload || null,
       result: entry.result || null,
+      journey: entry.journey || null,
     };
   }
 
@@ -1550,11 +1819,11 @@ export default function ValidationWizardPage() {
     return next;
   }
 
-  async function editHistoryEntry(entry, skipNavigation = false) {
+  async function editHistoryEntry(entry, skipNavigation = false, goToForm = false) {
     if (!activeWorkspaceId) return;
     setError(null);
     try {
-      const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+      const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET", undefined, { timeoutMs: 90000 });
       const data = ws?.data || {};
       setWorkspaceId(activeWorkspaceId);
       setWorkspaceNameStore(ws?.name || null);
@@ -1642,24 +1911,14 @@ export default function ValidationWizardPage() {
           setError("We could not find the saved business inputs for this history item.");
           return;
         }
-        const hydrated = hydrateBusinessFormForEditor(payload);
-        setForm(hydrated);
-        setDraftIdeaValidation(payload);
-        setValidation(entry.result || null);
-        setIdeaValidation(payload);
-        // For rejected entries, clear decision status so the form is editable
-        setDecisionStatus(isRejected ? null : (entry.status || null));
-        setServiceDecisionStatus(null);
-        setIsRejectedReedit(isRejected);
-        setEditingHistoryEntry({
-          id: entry.id,
-          type: "business_validation",
-          created_at: entry.created_at || new Date().toISOString(),
-        });
-        const mr = entry.market_research || data.market_research || null;
-        if (mr && typeof mr === "object") {
-          setBusinessMarketResearch(mr);
-        }
+
+        // V4 entries have a `journey` field ("basic" | "comprehensive")
+        const isV4Entry = Boolean(entry.journey || payload?.validation_mode || payload?.steps_completed);
+
+        const vHistory = Array.isArray(data.validation_history) ? data.validation_history : [];
+        const apiHistEntry = vHistory.find((e) => String(e?.id) === String(entry.id));
+        const bizResult = entry.result || apiHistEntry?.result || null;
+        if (bizResult) setValidation(bizResult);
 
         await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
           data: {
@@ -1668,25 +1927,33 @@ export default function ValidationWizardPage() {
           }
         });
 
-        const vHistory = Array.isArray(data.validation_history) ? data.validation_history : [];
-        const apiHistEntry = vHistory.find((e) => String(e?.id) === String(entry.id));
-        const bizResult = entry.result || apiHistEntry?.result || null;
-        if (bizResult) setValidation(bizResult);
-        const bizHasResult = Boolean(bizResult);
-        if (!skipNavigation && (isViewing || bizHasResult)) {
+        // All business entries (V4 or legacy) — if there's a result show it, else go to V4 step 0
+        const journey = entry.journey || payload?.validation_mode || "basic";
+        setV4Journey(journey);
+        setV4Form(payload);
+        setV4Error(null);
+        setEditingHistoryEntry({
+          id: entry.id,
+          type: "business_validation",
+          created_at: entry.created_at || new Date().toISOString(),
+        });
+        setValidationEntryId(entry.id || null);
+        setMrError(null);
+        setContentTab("builder");
+
+        if (!skipNavigation && (isViewing || Boolean(bizResult))) {
           navigate("/results");
           return;
         }
+
+        setMode("v4");
+        setV4Step(goToForm ? 1 : 0);
+        return;
       }
 
       setMrError(null);
       setContentTab("builder");
-      setMode("fill");
       setServiceFormDirty(false);
-
-      if (!skipNavigation && isViewing) {
-        navigate("/results");
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load this validation history item.");
     }
@@ -1696,7 +1963,7 @@ export default function ValidationWizardPage() {
     if (!activeWorkspaceId) return;
     setError(null);
     try {
-      const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+      const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET", undefined, { timeoutMs: 90000 });
       const data = ws?.data || {};
       const vHistory = Array.isArray(data.validation_history) ? data.validation_history : [];
       const sHistory = Array.isArray(data.service_validation_history) ? data.service_validation_history : [];
@@ -2415,17 +2682,18 @@ export default function ValidationWizardPage() {
                 ? editingHistoryEntry.created_at || new Date().toISOString()
                 : new Date().toISOString();
               try {
-                const ws = await apiRequest(`/validation/${wsId}`, "GET");
+                const ws = await apiRequest(`/validation/${wsId}`, "GET", undefined, { timeoutMs: 90000 });
                 const history = Array.isArray(ws?.data?.service_validation_history) ? ws.data.service_validation_history : [];
                 const validationHistoryExisting = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
                 const nextServiceHistoryBase = history.filter((item) => item?.id !== validationId);
                 const nextValidationHistoryBase = validationHistoryExisting.filter((item) => item?.id !== validationId);
+                const { research_data: _srd, ...svcResultForHistory } = result || {};
                 const entry = {
                   id: validationId,
                   created_at: createdAt,
                   service_name: payloadService.service_name,
                   payload: payloadService,
-                  result,
+                  result: svcResultForHistory,
                   decision_status: null,
                   currency: serviceCurrency || "GBP"
                 };
@@ -2444,7 +2712,7 @@ export default function ValidationWizardPage() {
                           score: typeof result?.scores?.viability_score === "number" ? result.scores.viability_score : null,
                           summary: String(result?.outcome || "").trim() || "Service validation completed",
                           payload: payloadService,
-                          result,
+                          result: svcResultForHistory,
                         },
                         ...nextValidationHistoryBase
                       ],
@@ -2512,7 +2780,7 @@ export default function ValidationWizardPage() {
               ? editingHistoryEntry.created_at || new Date().toISOString()
               : new Date().toISOString();
             try {
-              const ws = await apiRequest(`/validation/${wsId}`, "GET");
+              const ws = await apiRequest(`/validation/${wsId}`, "GET", undefined, { timeoutMs: 90000 });
               const existing = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
               const nextHistoryBase = existing.filter((item) => item?.id !== validationId);
               const businessTitle = String(
@@ -2521,6 +2789,7 @@ export default function ValidationWizardPage() {
                 payload?.context?.business_name ||
                 "Business validation"
               );
+              const { research_data: _brd, ...bizResultForHistory } = result || {};
               const nextEntry = {
                 id: validationId,
                 type: "business_validation",
@@ -2530,7 +2799,7 @@ export default function ValidationWizardPage() {
                 score: typeof result?.score === "number" ? result.score : null,
                 summary: String(result?.classification || result?.outcome || "Business validation completed"),
                 payload,
-                result,
+                result: bizResultForHistory,
               };
               await apiRequest(`/validation/${wsId}`, "PATCH", {
                 data: {
@@ -2576,6 +2845,7 @@ export default function ValidationWizardPage() {
     } finally {
       setIsLoading(false);
       setIsValidating(false);
+      if (shouldEvaluate) window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
     }
   }
 
@@ -2665,7 +2935,7 @@ export default function ValidationWizardPage() {
               {mode === "fill" ? (
                 <button
                   type="button"
-                  onClick={() => setMode("select")}
+                  onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }}
                   className="group flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-bold text-slate-600 shadow-sm ring-1 ring-slate-200 transition-all hover:bg-slate-50 hover:text-brand-600"
                 >
                   <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -3184,9 +3454,18 @@ export default function ValidationWizardPage() {
                                 <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ring-1 ${badgeClass}`}>
                                   {String(entry.status || "pending").toUpperCase()}
                                 </span>
-                                <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">
-                                  {entry.type === "service_validation" ? "Service" : "Business"}
-                                </span>
+                                {entry.type === "v4_validation" ? (
+                                  <>
+                                    <span className="rounded-full bg-violet-100 px-2 py-1 text-[11px] font-semibold text-violet-700">V4</span>
+                                    {entry.journey && (
+                                      <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500 capitalize">{entry.journey}</span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">
+                                    {entry.type === "service_validation" ? "Service" : "Business"}
+                                  </span>
+                                )}
                               </div>
                               <div className="mt-1 text-xs text-slate-500">
                                 {new Date(entry.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
@@ -3258,6 +3537,777 @@ export default function ValidationWizardPage() {
 
               </div>
             </SectionCard>
+          ) : mode === "v4" ? (
+            <div className="space-y-6">
+              <ValidationLoadingOverlay isVisible={isValidating} />
+              {/* V4 header */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5m7 7l-7-7 7-7" /></svg>
+                  Back
+                </button>
+                <div>
+                  <span className="text-lg font-bold text-slate-900">Universal Idea Validation</span>
+                  <span className="ml-2 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold text-white">V4</span>
+                </div>
+              </div>
+
+              {v4Error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{v4Error}</div>}
+              {savedNotice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{savedNotice}</div>}
+
+              {/* V4 wizard body */}
+              {v4Step === 0 ? (
+                /* Journey selection */
+                <>
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                    <h2 className="text-xl font-bold text-slate-900">How deeply would you like to validate your idea?</h2>
+                    <p className="mt-1 text-sm text-slate-500">Choose a journey. You can upgrade from Basic to Comprehensive at any time without re-entering data.</p>
+                    <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => { setV4Journey("basic"); setV4Step(1); }}
+                        className="flex flex-col gap-3 rounded-2xl border-2 border-slate-200 bg-white p-6 text-left transition-all hover:border-brand-400 hover:shadow-md"
+                      >
+                        <div className="flex items-center gap-2">
+                          <svg className="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M12 8v4l3 3" /></svg>
+                          <span className="text-lg font-bold text-slate-900">Basic Validation</span>
+                          <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-600">2–3 min</span>
+                        </div>
+                        <p className="text-sm text-slate-600">A quick preliminary snapshot covering your idea and the core problem it solves. Ideal for early-stage ideas.</p>
+                        <ul className="mt-1 space-y-1">
+                          {["Idea & Concept", "Problem Definition & Impact"].map((l) => (
+                            <li key={l} className="flex items-center gap-2 text-xs text-slate-500">
+                              <svg className="h-3.5 w-3.5 text-brand-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                              {l}
+                            </li>
+                          ))}
+                        </ul>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => canAccessComprehensive ? (setV4Journey("comprehensive"), setV4Step(1)) : navigate("/pricing")}
+                        className="flex flex-col gap-3 rounded-2xl border-2 border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50 p-6 text-left transition-all hover:border-violet-500 hover:shadow-md relative"
+                      >
+                        {!canAccessComprehensive && (
+                          <div className="absolute top-3 right-3 flex items-center gap-1 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                            Paid plan
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <svg className="h-6 w-6 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18" /></svg>
+                          <span className="text-lg font-bold text-violet-900">Comprehensive</span>
+                          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">15–25 min</span>
+                        </div>
+                        <p className="text-sm text-violet-800">A full assessment covering all dimensions — customer, solution, market, competition, pricing, unit economics, operations, founder readiness and regulatory risk.</p>
+                        <ul className="mt-1 space-y-1">
+                          {["Everything in Basic", "Customer & Solution", "Market & Competition", "Pricing & Revenue Model", "Unit Economics", "Founder & Operational Readiness", "Regulatory Risk"].map((l) => (
+                            <li key={l} className="flex items-center gap-2 text-xs text-violet-700">
+                              <svg className="h-3.5 w-3.5 text-violet-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                              {l}
+                            </li>
+                          ))}
+                        </ul>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {!fromOtherModule && (
+                  <div className="mt-8">
+                    <SectionCard
+                      title="Validation history"
+                      subtitle="Resume or view your previous analysis items."
+                      badge={validationHistory.length ? String(validationHistory.length) : null}
+                      headerRight={validationHistory.length > 5 ? (
+                        <button
+                          type="button"
+                          onClick={() => setContentTab("history")}
+                          className="text-xs font-semibold text-brand-600 hover:text-brand-700"
+                        >
+                          View all →
+                        </button>
+                      ) : null}
+                    >
+                      <div className="space-y-3">
+                        {filteredValidationHistory.length ? (
+                          filteredValidationHistory.slice(0, 5).map((entry) => {
+                            const badgeClass =
+                              entry.status === "accepted"
+                                ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                                : entry.status === "rejected"
+                                  ? "bg-rose-50 text-rose-700 ring-rose-200"
+                                  : "bg-amber-50 text-amber-700 ring-amber-200";
+                            return (
+                              <div
+                                key={entry.id}
+                                onClick={() => editHistoryEntry(entry)}
+                                className="flex w-full cursor-pointer flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm text-left transition hover:border-brand-300 hover:shadow-md"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <div className="text-sm font-semibold text-slate-900">{entry.title}</div>
+                                    <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ring-1 ${badgeClass}`}>
+                                      {String(entry.status || "pending").toUpperCase()}
+                                    </span>
+                                    {entry.type === "v4_validation" ? (
+                                      <>
+                                        <span className="rounded-full bg-violet-100 px-2 py-1 text-[11px] font-semibold text-violet-700">V4</span>
+                                        {entry.journey && (
+                                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500 capitalize">{entry.journey}</span>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">
+                                        {entry.type === "service_validation" ? "Service" : "Business"}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-500">
+                                    {new Date(entry.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                  <Button size="sm" variant="secondary" onClick={() => editHistoryEntry(entry)}>
+                                    {entry.status === "accepted" || entry.status === "rejected" ? "View" : "Resume"}
+                                  </Button>
+                                  <Button variant="ghost" onClick={() => deleteHistoryEntry(entry.id)}>
+                                    Delete
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5 text-sm text-slate-500">
+                            {validationHistory.length
+                              ? "No items match this filter."
+                              : "No validation history yet. Run a validation and it will appear here."}
+                          </div>
+                        )}
+                      </div>
+                    </SectionCard>
+                  </div>
+                )}
+                </>
+              ) : (() => {
+                const steps = getV4Steps();
+                const stepIdx = steps.indexOf(v4Step);
+                const totalSteps = steps.length;
+                const isLast = stepIdx === totalSteps - 1;
+                const isFirst = stepIdx === 0;
+                const progressPct = totalSteps > 1 ? Math.round((stepIdx / (totalSteps - 1)) * 100) : 0;
+
+                function goNext() {
+                  markV4StepComplete(v4Step);
+                  if (!isLast) setV4Step(steps[stepIdx + 1]);
+                }
+                function goBack() {
+                  if (!isFirst) setV4Step(steps[stepIdx - 1]);
+                  else { setV4Step(0); }
+                }
+
+                return (
+                  <div className="space-y-4">
+                    {/* Progress bar */}
+                    <div className="rounded-2xl border border-slate-200 bg-white px-6 py-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-slate-500">Step {stepIdx + 1} of {totalSteps}</span>
+                        <span className="text-xs font-semibold text-brand-600">{V4_STEP_TITLES[v4Step]}</span>
+                        {v4Journey === "basic" ? (
+                          <button type="button" onClick={() => canAccessComprehensive ? (setV4Journey("comprehensive"), setV4Step(v4Step)) : navigate("/pricing")} className="text-xs font-semibold text-violet-600 hover:text-violet-700">
+                            {canAccessComprehensive ? "Upgrade to Comprehensive" : "🔒 Comprehensive (Paid)"}
+                          </button>
+                        ) : <span className="text-xs font-semibold text-violet-600">Comprehensive</span>}
+                      </div>
+                      <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full bg-brand-600 transition-all duration-300" style={{ width: `${progressPct}%` }} />
+                      </div>
+                      <div className="mt-3 flex gap-1 overflow-x-auto pb-1">
+                        {steps.map((s, i) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => setV4Step(s)}
+                            title={V4_STEP_TITLES[s]}
+                            className={`flex-shrink-0 h-2 rounded-full transition-all ${s === v4Step ? "w-6 bg-brand-600" : i < stepIdx ? "w-2 bg-brand-300" : "w-2 bg-slate-200"}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Step content card */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                      <div className="mb-6">
+                        <h3 className="text-xl font-bold text-slate-900">Step {stepIdx + 1}: {V4_STEP_TITLES[v4Step]}</h3>
+                      </div>
+
+                      {/* ---- STEP 1: IDEA IDENTITY ---- */}
+                      {v4Step === 1 && (
+                        <div className="space-y-5">
+                          <div>
+                            <FieldLabel>Idea name <span className="text-rose-500">*</span></FieldLabel>
+                            <Input value={getV4(1,"idea_name")} onChange={(e) => setV4Field(1,"idea_name",e.target.value)} placeholder="e.g. Real-Time Local Social Connection Platform" />
+                          </div>
+                          <div>
+                            <FieldLabel info="One sentence only — summarise the idea as if explaining it to a stranger.">One-sentence description</FieldLabel>
+                            <Input value={getV4(1,"idea_tagline")} onChange={(e) => setV4Field(1,"idea_tagline",e.target.value)} placeholder="e.g. A platform connecting local freelancers with SMEs needing short-term help" />
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel info="A full description of what you're building and why.">Full idea description</FieldLabel>
+                              {v4SuggestBtn(1,"idea_description",{field:"v4_idea_description"})}
+                            </div>
+                            <textarea rows={3} className="ea-input w-full resize-none" value={getV4(1,"idea_description")} onChange={(e) => setV4Field(1,"idea_description",e.target.value)} placeholder="Describe your idea in detail..." />
+                          </div>
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                              <FieldLabel>Idea type <span className="text-rose-500">*</span></FieldLabel>
+                              <select className="ea-input w-full" value={getV4(1,"idea_type")} onChange={(e) => setV4Field(1,"idea_type",e.target.value)}>
+                                <option value="">Select type...</option>
+                                {V4_IDEA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel>Sector</FieldLabel>
+                              <Input value={getV4(1,"idea_sector")} onChange={(e) => setV4Field(1,"idea_sector",e.target.value)} placeholder="e.g. FinTech, HealthTech, Legal, Retail..." />
+                            </div>
+                            <div>
+                              <FieldLabel>Business stage</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(1,"business_stage")} onChange={(e) => setV4Field(1,"business_stage",e.target.value)}>
+                                <option value="">Select stage...</option>
+                                {V4_BUSINESS_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel>Customer model</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(1,"customer_model")} onChange={(e) => setV4Field(1,"customer_model",e.target.value)}>
+                                <option value="">Select model...</option>
+                                {V4_CUSTOMER_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel>Currency</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(1,"currency","GBP")} onChange={(e) => setV4Field(1,"currency",e.target.value)}>
+                                {["GBP","USD","EUR","NGN","GHS","KES","ZAR","CAD","AUD","INR"].map((c) => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel>Operating country</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(1,"operating_country")} onChange={(e) => { setV4Field(1,"operating_country",e.target.value); setV4Field(1,"launch_geography",""); setV4Field(1,"future_geography",""); }}>
+                                <option value="">Select country...</option>
+                                {COUNTRY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel>Launch geography</FieldLabel>
+                              {(() => {
+                                const country = getV4(1,"operating_country");
+                                if (!country || !CITIES_BY_COUNTRY[country]) {
+                                  return <Input value={getV4(1,"launch_geography")} onChange={(e) => setV4Field(1,"launch_geography",e.target.value)} placeholder={country ? "Enter city..." : "Select country first..."} disabled={!country} />;
+                                }
+                                return (
+                                  <select className="ea-input w-full" value={getV4(1,"launch_geography")} onChange={(e) => setV4Field(1,"launch_geography",e.target.value)}>
+                                    <option value="">Select city...</option>
+                                    {CITIES_BY_COUNTRY[country].map((c) => <option key={c} value={c}>{c}</option>)}
+                                  </select>
+                                );
+                              })()}
+                            </div>
+                            <div>
+                              <FieldLabel>Future target geography</FieldLabel>
+                              {(() => {
+                                const country = getV4(1,"operating_country");
+                                if (!country || !CITIES_BY_COUNTRY[country]) {
+                                  return <Input value={getV4(1,"future_geography")} onChange={(e) => setV4Field(1,"future_geography",e.target.value)} placeholder={country ? "Enter city or region..." : "Select country first..."} disabled={!country} />;
+                                }
+                                return (
+                                  <select className="ea-input w-full" value={getV4(1,"future_geography")} onChange={(e) => setV4Field(1,"future_geography",e.target.value)}>
+                                    <option value="">Select city...</option>
+                                    {CITIES_BY_COUNTRY[country].map((c) => <option key={c} value={c}>{c}</option>)}
+                                  </select>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 2: PROBLEM ---- */}
+                      {v4Step === 2 && (
+                        <div className="space-y-5">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>What problem is being solved? <span className="text-rose-500">*</span></FieldLabel>
+                              {v4SuggestBtn(2,"problem_description",{field:"problem"})}
+                            </div>
+                            <textarea rows={3} className="ea-input w-full resize-none" value={getV4(2,"problem_description")} onChange={(e) => setV4Field(2,"problem_description",e.target.value)} placeholder="Describe the problem clearly..." />
+                          </div>
+                          {v4Journey === "basic" && (
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <FieldLabel info="Briefly describe your proposed approach or product/service idea that addresses this problem.">What is your proposed solution? <span className="text-rose-500">*</span></FieldLabel>
+                                {v4SuggestBtn(2,"proposed_solution",{field:"solution", problem: getV4(2,"problem_description")})}
+                              </div>
+                              <textarea rows={3} className="ea-input w-full resize-none" value={getV4(2,"proposed_solution")} onChange={(e) => { setV4Field(2,"proposed_solution",e.target.value); setV4Field(5,"solution_description",e.target.value); }} placeholder="Describe your proposed solution or product idea..." />
+                            </div>
+                          )}
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>What triggers the problem?</FieldLabel>
+                              {v4SuggestBtn(2,"problem_trigger",{field:"v4_problem_trigger", problem: getV4(2,"problem_description"), who_affected: getV4(2,"who_affected")})}
+                            </div>
+                            <Input value={getV4(2,"problem_trigger")} onChange={(e) => setV4Field(2,"problem_trigger",e.target.value)} placeholder="e.g. Month-end reporting, hiring a new employee, a compliance deadline..." />
+                          </div>
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                              <FieldLabel>Pain severity</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(2,"pain_severity")} onChange={(e) => setV4Field(2,"pain_severity",e.target.value)}>
+                                <option value="">Select...</option>
+                                {V4_PAIN_SEVERITIES.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel>Problem frequency</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(2,"problem_frequency")} onChange={(e) => setV4Field(2,"problem_frequency",e.target.value)}>
+                                <option value="">Select...</option>
+                                {V4_FREQUENCIES.map((f) => <option key={f} value={f}>{f.charAt(0).toUpperCase()+f.slice(1)}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel>Urgency</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(2,"urgency")} onChange={(e) => setV4Field(2,"urgency",e.target.value)}>
+                                <option value="">Select...</option>
+                                {V4_URGENCIES.map((u) => <option key={u} value={u}>{u.charAt(0).toUpperCase()+u.slice(1)}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel>Is the problem growing?</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(2,"problem_trend")} onChange={(e) => setV4Field(2,"problem_trend",e.target.value)}>
+                                <option value="">Select...</option>
+                                {V4_TRENDS.map((t) => <option key={t} value={t}>{t.charAt(0).toUpperCase()+t.slice(1)}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel info="Does the buyer (who pays) or the end user (who uses it) experience this problem?">Problem experienced by</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(2,"problem_affects")} onChange={(e) => setV4Field(2,"problem_affects",e.target.value)}>
+                                <option value="">Select...</option>
+                                {V4_PROBLEM_AFFECTS.map((o) => <option key={o} value={o}>{o}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel>Does the problem have a financial impact?</FieldLabel>
+                              <label className="mt-2 flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                                <input type="checkbox" checked={getV4(2,"financial_impact_known",false)} onChange={(e) => setV4Field(2,"financial_impact_known",e.target.checked)} className="accent-brand-600 h-4 w-4 rounded" />
+                                Yes, financial cost is known
+                              </label>
+                            </div>
+                          </div>
+                          {getV4(2,"financial_impact_known",false) && (
+                            <Input value={getV4(2,"financial_impact_description")} onChange={(e) => setV4Field(2,"financial_impact_description",e.target.value)} placeholder="e.g. £2,000/month in lost productivity..." />
+                          )}
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>What happens if the customer does nothing?</FieldLabel>
+                              {v4SuggestBtn(2,"if_nothing",{field:"v4_if_nothing", problem: getV4(2,"problem_description"), who_affected: getV4(2,"who_affected"), pain_severity: getV4(2,"pain_severity")})}
+                            </div>
+                            <Input value={getV4(2,"if_nothing")} onChange={(e) => setV4Field(2,"if_nothing",e.target.value)} placeholder="e.g. Continued lost revenue, regulatory fine, employee churn..." />
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>Evidence the problem exists</FieldLabel>
+                              {v4SuggestBtn(2,"evidence_problem_exists",{field:"v4_evidence_problem"})}
+                            </div>
+                            <textarea rows={2} className="ea-input w-full resize-none" value={getV4(2,"evidence_problem_exists")} onChange={(e) => setV4Field(2,"evidence_problem_exists",e.target.value)} placeholder="e.g. 15 customer interviews, industry report, personal experience..." />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 3: CUSTOMER ---- */}
+                      {v4Step === 3 && (
+                        <div className="space-y-5">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>Primary customer segment <span className="text-rose-500">*</span></FieldLabel>
+                              {v4SuggestBtn(3,"primary_segment",{field:"v4_primary_segment"})}
+                            </div>
+                            <Input value={getV4(3,"primary_segment")} onChange={(e) => setV4Field(3,"primary_segment",e.target.value)} placeholder="e.g. Solo founder aged 25–40 in UK tech" />
+                          </div>
+                          <div>
+                            <FieldLabel info="A second distinct group you could serve — beyond your primary segment.">Secondary customer segment</FieldLabel>
+                            <Input value={getV4(3,"secondary_segment")} onChange={(e) => setV4Field(3,"secondary_segment",e.target.value)} placeholder="e.g. Scale-up operations teams..." />
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel info="The narrowest initial niche you will target first.">Beachhead / initial niche segment</FieldLabel>
+                              {v4SuggestBtn(3,"beachhead_segment",{field:"v4_beachhead"})}
+                            </div>
+                            <Input value={getV4(3,"beachhead_segment")} onChange={(e) => setV4Field(3,"beachhead_segment",e.target.value)} placeholder="e.g. B2B SaaS founders in London with 1–5 employees" />
+                          </div>
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                              <FieldLabel>Customer specificity</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(3,"customer_specificity")} onChange={(e) => setV4Field(3,"customer_specificity",e.target.value)}>
+                                <option value="">Select...</option>
+                                {V4_SPECIFICITIES.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <FieldLabel>Economic buyer (who pays?)</FieldLabel>
+                              <Input value={getV4(3,"economic_buyer")} onChange={(e) => setV4Field(3,"economic_buyer",e.target.value)} placeholder="e.g. HR Manager, CEO..." />
+                            </div>
+                            <div>
+                              <FieldLabel>End user (who uses it?)</FieldLabel>
+                              <Input value={getV4(3,"end_user")} onChange={(e) => setV4Field(3,"end_user",e.target.value)} placeholder="e.g. Sales team, employees..." />
+                            </div>
+                            <div>
+                              <FieldLabel info="The person who formally approves or influences the purchase decision.">Decision maker</FieldLabel>
+                              <Input value={getV4(3,"decision_maker")} onChange={(e) => setV4Field(3,"decision_maker",e.target.value)} placeholder="e.g. CFO, IT Director, Team lead..." />
+                            </div>
+                            <div>
+                              <FieldLabel>Purchase frequency</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(3,"purchase_frequency")} onChange={(e) => setV4Field(3,"purchase_frequency",e.target.value)}>
+                                <option value="">Select...</option>
+                                {V4_PURCHASE_FREQUENCIES.map((f) => <option key={f} value={f}>{f.charAt(0).toUpperCase()+f.slice(1)}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          <div>
+                            <FieldLabel info="What event or situation causes this customer to start looking for a solution?">Buying triggers</FieldLabel>
+                            <Input value={getV4(3,"buying_triggers")} onChange={(e) => setV4Field(3,"buying_triggers",e.target.value)} placeholder="e.g. Reaching 10 employees, losing a key client, new regulation..." />
+                          </div>
+                          <div>
+                            <FieldLabel>Channels to reach customer</FieldLabel>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {V4_CHANNELS.map((ch) => {
+                                const selected = (getV4(3,"channels",[]) || []).includes(ch);
+                                return (
+                                  <button key={ch} type="button" onClick={() => toggleV4ArrayField(3,"channels",ch)} className={`rounded-full border px-3 py-1 text-xs font-medium transition ${selected ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-brand-300"}`}>{ch}</button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>Main customer objections</FieldLabel>
+                              {v4SuggestBtn(3,"main_objections",{field:"v4_objections"})}
+                            </div>
+                            <textarea rows={2} className="ea-input w-full resize-none" value={getV4(3,"main_objections")} onChange={(e) => setV4Field(3,"main_objections",e.target.value)} placeholder="e.g. Price, existing contract, switching effort..." />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 4: CURRENT ALTERNATIVES ---- */}
+                      {v4Step === 4 && (
+                        <div className="space-y-5">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>How do customers currently solve this problem?</FieldLabel>
+                              {v4SuggestBtn(4,"how_solve_currently",{field:"alternatives"})}
+                            </div>
+                            <textarea rows={2} className="ea-input w-full resize-none" value={getV4(4,"how_solve_currently")} onChange={(e) => setV4Field(4,"how_solve_currently",e.target.value)} placeholder="e.g. Spreadsheets, hiring consultants, doing nothing..." />
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel info="Include direct competitors (same problem, same customer), substitutes (related alternatives), and manual workarounds — one per line.">Competitors & alternatives (one per line)</FieldLabel>
+                              {v4SuggestBtn(4,"direct_competitors",{field:"v4_direct_competitors"})}
+                            </div>
+                            <textarea rows={4} className="ea-input w-full resize-none" value={(getV4(4,"direct_competitors",[]) || []).join("\n")} onChange={(e) => setV4Field(4,"direct_competitors",e.target.value.split("\n").filter(Boolean))} placeholder="e.g. Salesforce&#10;HubSpot&#10;Generic spreadsheets&#10;In-house team" />
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>Main customer frustrations with current alternatives</FieldLabel>
+                              {v4SuggestBtn(4,"alternative_frustrations",{field:"v4_alternative_frustrations"})}
+                            </div>
+                            <textarea rows={2} className="ea-input w-full resize-none" value={getV4(4,"alternative_frustrations")} onChange={(e) => setV4Field(4,"alternative_frustrations",e.target.value)} placeholder="e.g. Too expensive, too complex, not built for SMEs..." />
+                          </div>
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <FieldLabel>Existing customer spending on alternatives</FieldLabel>
+                                {v4SuggestBtn(4,"existing_spending",{field:"v4_existing_spending"})}
+                              </div>
+                              <Input value={getV4(4,"existing_spending")} onChange={(e) => setV4Field(4,"existing_spending",e.target.value)} placeholder="e.g. £200/month on Salesforce..." />
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <FieldLabel>Main switching barriers</FieldLabel>
+                                {v4SuggestBtn(4,"switching_barriers",{field:"v4_switching_barriers"})}
+                              </div>
+                              <Input value={getV4(4,"switching_barriers")} onChange={(e) => setV4Field(4,"switching_barriers",e.target.value)} placeholder="e.g. Data migration, long contracts..." />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 5: PROPOSED SOLUTION ---- */}
+                      {v4Step === 5 && (
+                        <div className="space-y-5">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>Solution description <span className="text-rose-500">*</span></FieldLabel>
+                              {v4SuggestBtn(5,"solution_description",{field:"solution"})}
+                            </div>
+                            <textarea rows={3} className="ea-input w-full resize-none" value={getV4(5,"solution_description")} onChange={(e) => setV4Field(5,"solution_description",e.target.value)} placeholder="Describe your solution..." />
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>Core customer outcome</FieldLabel>
+                              {v4SuggestBtn(5,"core_outcome",{field:"v4_core_outcome"})}
+                            </div>
+                            <Input value={getV4(5,"core_outcome")} onChange={(e) => setV4Field(5,"core_outcome",e.target.value)} placeholder="e.g. Save 5 hours/week on reporting..." />
+                          </div>
+                          <div>
+                            <FieldLabel>Delivery method</FieldLabel>
+                            <select className="ea-input w-full" value={getV4(5,"delivery_method")} onChange={(e) => setV4Field(5,"delivery_method",e.target.value)}>
+                              <option value="">Select...</option>
+                              {V4_DELIVERY_METHODS.map((d) => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>Why is this better than alternatives?</FieldLabel>
+                              {v4SuggestBtn(5,"why_better",{field:"service_differentiator"})}
+                            </div>
+                            <textarea rows={2} className="ea-input w-full resize-none" value={getV4(5,"why_better")} onChange={(e) => setV4Field(5,"why_better",e.target.value)} placeholder="e.g. 10x faster, no data migration, simpler pricing..." />
+                          </div>
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                              <FieldLabel info="New habit, workflow, or skill the customer must adopt to get value.">Required customer behaviour change</FieldLabel>
+                              <Input value={getV4(5,"behaviour_change")} onChange={(e) => setV4Field(5,"behaviour_change",e.target.value)} placeholder="e.g. Must upload invoices daily instead of monthly..." />
+                            </div>
+                            <div>
+                              <FieldLabel>Time to value for customer</FieldLabel>
+                              <Input value={getV4(5,"time_to_value")} onChange={(e) => setV4Field(5,"time_to_value",e.target.value)} placeholder="e.g. Value seen within 30 minutes of setup" />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel info="Describe your competitive moat — e.g. proprietary data, network effects, switching costs, brand, IP.">Defensibility / moat</FieldLabel>
+                              {v4SuggestBtn(5,"defensibility",{field:"v4_defensibility"})}
+                            </div>
+                            <Input value={getV4(5,"defensibility")} onChange={(e) => setV4Field(5,"defensibility",e.target.value)} placeholder="e.g. Proprietary data moat, switching cost after onboarding..." />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 6: MARKET ---- */}
+                      {v4Step === 6 && (
+                        <div className="space-y-5">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <FieldLabel>Market category</FieldLabel>
+                              {v4SuggestBtn(6,"market_category",{field:"v4_market_category"})}
+                            </div>
+                            <Input value={getV4(6,"market_category")} onChange={(e) => setV4Field(6,"market_category",e.target.value)} placeholder="e.g. SME HR Software, Local Food Delivery..." />
+                          </div>
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <FieldLabel>Estimated number of potential customers</FieldLabel>
+                                {v4SuggestBtn(6,"estimated_customers",{field:"v4_estimated_customers"})}
+                              </div>
+                              <textarea rows={2} className="ea-input w-full resize-none" value={getV4(6,"estimated_customers")} onChange={(e) => setV4Field(6,"estimated_customers",e.target.value)} placeholder="e.g. 50,000 businesses in UK" />
+                            </div>
+                            <div>
+                              <FieldLabel>Market scope</FieldLabel>
+                              <select className="ea-input w-full" value={getV4(6,"market_scope")} onChange={(e) => setV4Field(6,"market_scope",e.target.value)}>
+                                <option value="">Select...</option>
+                                {V4_MARKET_SCOPES.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          <div>
+                            <FieldLabel>Is the market growing?</FieldLabel>
+                            <div className="flex gap-3 mt-1">
+                              {V4_MARKET_GROWTHS.map((g) => (
+                                <label key={g} className={`flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition ${getV4(6,"market_growing") === g ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600 hover:border-brand-300"}`}>
+                                  <input type="radio" name="market_growing" checked={getV4(6,"market_growing") === g} onChange={() => setV4Field(6,"market_growing",g)} className="sr-only" />
+                                  {g.charAt(0).toUpperCase()+g.slice(1)}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <FieldLabel>Market sources / reports (one per line)</FieldLabel>
+                            <textarea rows={2} className="ea-input w-full resize-none" value={(getV4(6,"market_sources",[]) || []).join("\n")} onChange={(e) => setV4Field(6,"market_sources",e.target.value.split("\n").filter(Boolean))} placeholder="e.g. Statista report URL, IBISWorld, ONS data..." />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 7: REVENUE & PRICING (Comprehensive) ---- */}
+                      {v4Step === 7 && (
+                        <div className="space-y-5">
+                          <div>
+                            <FieldLabel>Primary revenue model</FieldLabel>
+                            <select className="ea-input w-full" value={getV4(7,"revenue_model")} onChange={(e) => setV4Field(7,"revenue_model",e.target.value)}>
+                              <option value="">Select model...</option>
+                              {V4_REVENUE_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                          </div>
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                              <FieldLabel>Proposed price</FieldLabel>
+                              <Input value={getV4(7,"proposed_price")} onChange={(e) => setV4Field(7,"proposed_price",e.target.value)} placeholder="e.g. £49/month, £500/project..." />
+                            </div>
+                            <div>
+                              <FieldLabel>Payment frequency</FieldLabel>
+                              <Input value={getV4(7,"payment_frequency")} onChange={(e) => setV4Field(7,"payment_frequency",e.target.value)} placeholder="e.g. Monthly, Annual, One-off..." />
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(7,"willingness_to_pay_evidence",false)} onChange={(e) => setV4Field(7,"willingness_to_pay_evidence",e.target.checked)} className="accent-brand-600" />I have evidence customers will pay this price</label>
+                            <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(7,"recurring_model",false)} onChange={(e) => setV4Field(7,"recurring_model",e.target.checked)} className="accent-brand-600" />This is a recurring/subscription model</label>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 8: COSTS & UNIT ECONOMICS (Comprehensive) ---- */}
+                      {v4Step === 8 && (
+                        <div className="space-y-5">
+                          <p className="text-xs text-slate-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">All cost inputs are indicative — confirm with suppliers before making investment decisions.</p>
+                          <div className="space-y-2">
+                            <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(8,"variable_cost_known",false)} onChange={(e) => setV4Field(8,"variable_cost_known",e.target.checked)} className="accent-brand-600" />I know the variable / delivery cost per unit</label>
+                            {getV4(8,"variable_cost_known",false) && (
+                              <Input value={getV4(8,"variable_cost_per_unit")} onChange={(e) => setV4Field(8,"variable_cost_per_unit",e.target.value)} placeholder="e.g. £12 per delivery..." />
+                            )}
+                          </div>
+                          <div>
+                            <FieldLabel>Estimated monthly fixed costs</FieldLabel>
+                            <Input value={getV4(8,"fixed_costs_monthly")} onChange={(e) => setV4Field(8,"fixed_costs_monthly",e.target.value)} placeholder="e.g. £3,500/month (salaries, rent, software)" />
+                          </div>
+                          <div>
+                            <FieldLabel>Estimated gross margin</FieldLabel>
+                            <Input value={getV4(8,"gross_margin_estimate")} onChange={(e) => setV4Field(8,"gross_margin_estimate",e.target.value)} placeholder="e.g. 60% — not confirmed" />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 9: CAPACITY & OPERATIONS (Comprehensive) ---- */}
+                      {v4Step === 9 && (
+                        <div className="space-y-5">
+                          <div>
+                            <FieldLabel>Delivery unit</FieldLabel>
+                            <Input value={getV4(9,"delivery_unit")} onChange={(e) => setV4Field(9,"delivery_unit",e.target.value)} placeholder="e.g. Per project, per subscription seat, per delivery..." />
+                          </div>
+                          <div>
+                            <FieldLabel>Maximum capacity per month</FieldLabel>
+                            <Input value={getV4(9,"capacity_per_month")} onChange={(e) => setV4Field(9,"capacity_per_month",e.target.value)} placeholder="e.g. 50 clients, 200 orders..." />
+                          </div>
+                          <div>
+                            <FieldLabel>Key operational bottleneck</FieldLabel>
+                            <Input value={getV4(9,"key_bottleneck")} onChange={(e) => setV4Field(9,"key_bottleneck",e.target.value)} placeholder="e.g. Founder time, equipment capacity, supplier lead time..." />
+                          </div>
+                          <div>
+                            <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(9,"delivery_model_defined",false)} onChange={(e) => setV4Field(9,"delivery_model_defined",e.target.checked)} className="accent-brand-600" />I have a defined delivery model / process</label>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 10: TRACTION & EVIDENCE ---- */}
+                      {v4Step === 10 && (
+                        <div className="space-y-5">
+                          <p className="text-sm text-slate-600">Select all types of evidence you currently have. Be honest — this directly affects your Evidence Confidence Score.</p>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            {V4_EVIDENCE_TYPES.map(({ id, label }) => {
+                              const selected = (getV4(10,"evidence_types",[]) || []).includes(id);
+                              return (
+                                <label key={id} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm transition ${selected ? "border-brand-400 bg-brand-50 text-brand-800 font-medium" : "border-slate-200 bg-white text-slate-700 hover:border-brand-200"}`}>
+                                  <input type="checkbox" checked={selected} onChange={() => toggleV4ArrayField(10,"evidence_types",id)} className="accent-brand-600 shrink-0" />
+                                  {label}
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(10,"has_paying_customers",false)} onChange={(e) => setV4Field(10,"has_paying_customers",e.target.checked)} className="accent-brand-600" />I have at least one paying customer</label>
+                            <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(10,"has_repeat_customers",false)} onChange={(e) => setV4Field(10,"has_repeat_customers",e.target.checked)} className="accent-brand-600" />I have repeat / returning customers</label>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 11: FOUNDER READINESS (Comprehensive) ---- */}
+                      {v4Step === 11 && (
+                        <div className="space-y-5">
+                          <div>
+                            <FieldLabel>Industry experience</FieldLabel>
+                            <select className="ea-input w-full" value={getV4(11,"founder_industry_experience")} onChange={(e) => setV4Field(11,"founder_industry_experience",e.target.value)}>
+                              <option value="">Select...</option>
+                              {V4_FOUNDER_EXPERIENCE.map((e) => <option key={e} value={e}>{e.charAt(0).toUpperCase()+e.slice(1)}</option>)}
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(11,"founder_capital_available",false)} onChange={(e) => setV4Field(11,"founder_capital_available",e.target.checked)} className="accent-brand-600" />I have capital available to launch</label>
+                            <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(11,"founder_time_available",false)} onChange={(e) => setV4Field(11,"founder_time_available",e.target.checked)} className="accent-brand-600" />I have sufficient time to dedicate to this</label>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ---- STEP 12: REGULATORY RISK (Comprehensive) ---- */}
+                      {v4Step === 12 && (
+                        <div className="space-y-5">
+                          <div>
+                            <FieldLabel>Regulatory risk level</FieldLabel>
+                            <select className="ea-input w-full" value={getV4(12,"regulatory_risk_level")} onChange={(e) => setV4Field(12,"regulatory_risk_level",e.target.value)}>
+                              <option value="">Select...</option>
+                              {V4_REG_RISKS.map((r) => <option key={r} value={r}>{r.charAt(0).toUpperCase()+r.slice(1)}</option>)}
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(12,"regulatory_requirements_known",false)} onChange={(e) => setV4Field(12,"regulatory_requirements_known",e.target.checked)} className="accent-brand-600" />I have identified the regulatory requirements</label>
+                            <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(12,"regulatory_mitigation_planned",false)} onChange={(e) => setV4Field(12,"regulatory_mitigation_planned",e.target.checked)} className="accent-brand-600" />I have a plan to address regulatory requirements</label>
+                          </div>
+                          <p className="text-xs text-slate-400 border border-slate-200 rounded-lg px-3 py-2">Potential regulatory considerations identified — professional legal verification required before proceeding.</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Navigation */}
+                    <div className="mt-6 flex items-center justify-between gap-3">
+                      <button type="button" onClick={goBack} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5m7 7l-7-7 7-7" /></svg>
+                        Back
+                      </button>
+                      {isLast ? (
+                        <div className="flex items-center gap-3">
+                          {v4Journey === "basic" && (
+                            <button
+                              type="button"
+                              onClick={() => canAccessComprehensive
+                                ? (markV4StepComplete(v4Step), setV4Journey("comprehensive"), setV4Step(7))
+                                : navigate("/pricing")}
+                              className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-semibold text-violet-700 hover:bg-violet-100 flex items-center gap-1.5"
+                            >
+                              {!canAccessComprehensive && <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>}
+                              {canAccessComprehensive ? "Upgrade to Comprehensive" : "Comprehensive (Paid)"}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={v4Saving}
+                            onClick={() => setCreditModal({ featureName: "Idea Validation", creditCost: 5, onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } })}
+                            className="flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-brand-700 disabled:opacity-50"
+                          >
+                            {v4Saving ? "Running validation..." : "Run Validation"}
+                            {!v4Saving && <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14m-7-7l7 7-7 7" /></svg>}
+                          </button>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={goNext} className="flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-brand-700">
+                          Continue
+                          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14m-7-7l7 7-7 7" /></svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
           ) : mode === "select" && !isCreateWorkspace ? (
             <>
               {!fromOtherModule ? (
@@ -3265,7 +4315,7 @@ export default function ValidationWizardPage() {
                   <div className="relative z-10 max-w-3xl">
                     <h1 className="text-xl font-bold md:text-3xl leading-tight">Validate your vision</h1>
                     <p className="mt-2 text-xs font-medium text-brand-100 md:text-base opacity-90 whitespace-nowrap">
-                      Turn your assumptions into a data-backed business case. Choose a pathway below to begin.
+                      Turn your assumptions into a data-backed business case. Click below to get started.
                     </p>
                   </div>
                   <div className="absolute -right-16 -top-16 h-48 w-48 rounded-full bg-white/10 blur-3xl" />
@@ -3275,82 +4325,28 @@ export default function ValidationWizardPage() {
 
               {!fromOtherModule ? (
                 <div className="space-y-6">
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    {canEvaluateIdea && (
-                      <button
-                        type="button"
-                        onClick={() => selectPathway("business_idea")}
-                        className={
-                          "group relative flex flex-col items-start gap-3 overflow-hidden rounded-3xl border-2 p-5 text-left transition-all duration-300 " +
-                          (form.pathway === "business_idea"
-                            ? "border-brand-500 bg-brand-50/50 shadow-md ring-1 ring-brand-500"
-                            : "border-slate-100 bg-white hover:border-brand-200 hover:shadow-lg")
-                        }
-                      >
-                        <div className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-110 " + (form.pathway === "business_idea" ? "bg-brand-600 text-white" : "bg-slate-50 text-slate-500")}>
-                          <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M9 18h6" /><path d="M10 22h4" /><path d="M12 2a7 7 0 0 0-4 12c.6.5 1 1.2 1.1 2h5.8c.1-.8.5-1.5 1.1-2A7 7 0 0 0 12 2Z" />
-                          </svg>
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className={"text-base font-bold " + (form.pathway === "business_idea" ? "text-brand-900" : "text-slate-900")}>Business concept</div>
-                          <p className="mt-1 text-xs leading-relaxed text-slate-500">Validate the problem-solution fit and general viability of your idea.</p>
-                        </div>
-                        {form.pathway === "business_idea" ? (
-                          <div className="absolute right-4 top-4">
-                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-600 text-white">
-                              <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                            </div>
-                          </div>
-                        ) : null}
-                      </button>
-                    )}
+                  {canEvaluateIdea && (
                     <button
                       type="button"
-                      onClick={() => selectPathway("product_service_idea")}
-                      className={
-                        "group relative flex flex-col items-start gap-3 overflow-hidden rounded-3xl border-2 p-5 text-left transition-all duration-300 " +
-                        (form.pathway === "product_service_idea"
-                          ? "border-brand-500 bg-brand-50/50 shadow-md ring-1 ring-brand-500"
-                          : "border-slate-100 bg-white hover:border-brand-200 hover:shadow-lg")
-                      }
+                      onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }}
+                      className="group relative w-full flex items-center gap-5 overflow-hidden rounded-3xl border-2 border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50 p-6 text-left transition-all duration-300 hover:border-violet-400 hover:shadow-xl"
                     >
-                      <div className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-110 " + (form.pathway === "product_service_idea" ? "bg-brand-600 text-white" : "bg-slate-50 text-slate-500")}>
-                        <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2" />
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-violet-600 text-white shadow-lg transition-transform duration-300 group-hover:scale-110">
+                        <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="m2 17 10 5 10-5" /><path d="m2 12 10 5 10-5" />
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className={"text-base font-bold " + (form.pathway === "product_service_idea" ? "text-brand-900" : "text-slate-900")}>Product / Service</div>
-                        <p className="mt-1 text-xs leading-relaxed text-slate-500">Perform a deep-dive analysis of a specific offering and its competitive positioning.</p>
-                      </div>
-                      {form.pathway === "product_service_idea" ? (
-                        <div className="absolute right-4 top-4">
-                          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-600 text-white">
-                            <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                            </svg>
-                          </div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="text-lg font-black text-violet-900">Universal Idea Validation</div>
+                          <span className="rounded-full bg-violet-600 px-2.5 py-0.5 text-[10px] font-bold text-white tracking-wide">V4</span>
                         </div>
-                      ) : null}
+                        <p className="text-sm leading-relaxed text-violet-700">
+                          Evidence-aware validation with dual scores — Commercial Potential and Evidence Confidence. Choose Basic or Comprehensive depth.
+                        </p>
+                      </div>
+                      <svg className="h-5 w-5 shrink-0 text-violet-400 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14m-7-7l7 7-7 7" /></svg>
                     </button>
-                  </div>
-
-                  {form.pathway && (
-                    <div className="flex justify-center pt-2">
-                      <Button
-                        size="lg"
-                        onClick={() => setMode("fill")}
-                        className="group min-w-[200px] shadow-lg shadow-brand-200"
-                      >
-                        Start Validation Wizard
-                        <svg className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <path d="M5 12h14m-7-7l7 7-7 7" />
-                        </svg>
-                      </Button>
-                    </div>
                   )}
                 </div>
               ) : null}
@@ -3447,7 +4443,7 @@ export default function ValidationWizardPage() {
                 {!isCreateWorkspace && (
                   <button
                     type="button"
-                    onClick={() => setMode("select")}
+                    onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }}
                     className="group flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-brand-600 transition-colors"
                     disabled={isLoading}
                   >
@@ -3477,7 +4473,7 @@ export default function ValidationWizardPage() {
                               onChange={(e) => update("context.description", e.target.value)}
                             />
                             <AISuggest
-                              context={{ field: "description", segment: form.problem?.customer_segment_category, location: form.context?.location }}
+                              context={{ field: "description", description: form.context?.description, segment: form.problem?.customer_segment_category, location: form.context?.location, industry: form.context?.industry_category, country: form.context?.country }}
                               onAccept={(v) => update("context.description", v)}
                             />
                           </div>
@@ -3500,12 +4496,21 @@ export default function ValidationWizardPage() {
                               onChange={(e) => update("problem.problem_type", e.target.value)}
                             />
                             <AISuggest
-                              context={{ field: "problem", description: form.context?.description, segment: form.problem?.customer_segment_category }}
+                              context={{ field: "problem", description: form.context?.description, segment: form.problem?.customer_segment_category, industry: form.context?.industry_category, country: form.context?.country, location: form.context?.location }}
                               onAccept={(v) => update("problem.problem_type", v)}
                             />
                           </div>
+                          <div className="md:col-span-2">
+                            <FieldLabel info="Briefly describe your proposed approach or product/service idea that addresses this problem.">3. What is your proposed solution?</FieldLabel>
+                            <textarea
+                              className="ea-input min-h-[100px] py-3 text-sm"
+                              placeholder="Describe your proposed solution or product idea..."
+                              value={form.problem.proposed_solution || ""}
+                              onChange={(e) => update("problem.proposed_solution", e.target.value)}
+                            />
+                          </div>
                           <div>
-                            <FieldLabel info="Who is the primary audience for this?">3. Who experiences this problem?</FieldLabel>
+                            <FieldLabel info="Who is the primary audience for this?">4. Who experiences this problem?</FieldLabel>
                             <select className="ea-input" value={form.problem.customer_segment_category} onChange={(e) => update("problem.customer_segment_category", e.target.value)}>
                               {["Individuals", "Students", "Professionals", "SMEs", "Enterprises", "Government", "Other"].map(o => (
                                 <option key={o} value={o}>{o}</option>
@@ -3513,7 +4518,7 @@ export default function ValidationWizardPage() {
                             </select>
                           </div>
                           <div>
-                            <FieldLabel info="How severe is the impact on them?">4. How painful is this problem?</FieldLabel>
+                            <FieldLabel info="How severe is the impact on them?">5. How painful is this problem?</FieldLabel>
                             <select className="ea-input" value={form.problem.severity} onChange={(e) => update("problem.severity", e.target.value)}>
                               {["Mild", "Moderate", "Severe", "Critical"].map(o => (
                                 <option key={o} value={o}>{o}</option>
@@ -3530,7 +4535,7 @@ export default function ValidationWizardPage() {
                           <h3 className="text-sm font-bold uppercase tracking-wider text-slate-600">Section 3 — Existing Alternatives</h3>
                         </div>
                         <div>
-                          <FieldLabel info="How do they manage today?">5. How do people solve this problem today?</FieldLabel>
+                          <FieldLabel info="How do they manage today?">6. How do people solve this problem today?</FieldLabel>
                           <textarea
                             className="ea-input min-h-[100px] py-3 text-sm"
                             placeholder="e.g. Manual spreadsheets, hiring expensive consultants..."
@@ -3538,7 +4543,7 @@ export default function ValidationWizardPage() {
                             onChange={(e) => update("problem.alternatives", e.target.value)}
                           />
                           <AISuggest
-                            context={{ field: "alternatives", description: form.context?.description, problem: form.problem?.problem_type }}
+                            context={{ field: "alternatives", description: form.context?.description, problem: form.problem?.problem_type, segment: form.problem?.customer_segment_category, industry: form.context?.industry_category, country: form.context?.country }}
                             onAccept={(v) => update("problem.alternatives", v)}
                           />
                         </div>
@@ -3551,7 +4556,7 @@ export default function ValidationWizardPage() {
                           <h3 className="text-sm font-bold uppercase tracking-wider text-slate-600">Section 4 — Your Solution</h3>
                         </div>
                         <div>
-                          <FieldLabel info="Your unique edge or primary value.">6. How does your solution solve the problem better?</FieldLabel>
+                          <FieldLabel info="Your unique edge or primary value.">7. How does your solution solve the problem better?</FieldLabel>
                           <textarea
                             className="ea-input min-h-[100px] py-3 text-sm"
                             placeholder="Describe your unique value or edge..."
@@ -3559,7 +4564,7 @@ export default function ValidationWizardPage() {
                             onChange={(e) => update("offer.service_type", e.target.value)}
                           />
                           <AISuggest
-                            context={{ field: "solution", description: form.context?.description, problem: form.problem?.problem_type, alternatives: form.problem?.alternatives }}
+                            context={{ field: "solution", description: form.context?.description, problem: form.problem?.problem_type, alternatives: form.problem?.alternatives, segment: form.problem?.customer_segment_category, industry: form.context?.industry_category, country: form.context?.country }}
                             onAccept={(v) => update("offer.service_type", v)}
                           />
                         </div>
@@ -3572,7 +4577,7 @@ export default function ValidationWizardPage() {
                           <h3 className="text-sm font-bold uppercase tracking-wider text-slate-600">Section 5 — Market</h3>
                         </div>
                         <div>
-                          <FieldLabel info="Territory reach.">7. Where is your target market?</FieldLabel>
+                          <FieldLabel info="Territory reach.">8. Where is your target market?</FieldLabel>
                           <select className="ea-input" value={form.context.location} onChange={(e) => update("context.location", e.target.value)}>
                             {["Local", "National", "Regional", "Global"].map(o => (
                               <option key={o} value={o}>{o}</option>
@@ -3630,7 +4635,7 @@ export default function ValidationWizardPage() {
                         </div>
                         <div className="space-y-6">
                           <div>
-                            <FieldLabel info="Direct user feedback.">8. Have you spoken to potential users?</FieldLabel>
+                            <FieldLabel info="Direct user feedback.">9. Have you spoken to potential users?</FieldLabel>
                             <div className="flex flex-wrap gap-2">
                               {["No", "1–5", "6–20", "20+"].map((label) => (
                                 <button
@@ -3645,7 +4650,7 @@ export default function ValidationWizardPage() {
                             </div>
                           </div>
                           <div>
-                            <FieldLabel info="Evidence of demand.">9. Do you have any proof people want this?</FieldLabel>
+                            <FieldLabel info="Evidence of demand.">10. Do you have any proof people want this?</FieldLabel>
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                               {["Waiting list", "Survey responses", "Pre-orders", "Existing customers", "Social media interest", "None yet"].map((item) => {
                                 const isSelected = (form.validation?.demand_proof || []).includes(item);
@@ -3686,16 +4691,19 @@ export default function ValidationWizardPage() {
                             <Input placeholder="e.g. Premium Tech Support" value={serviceForm.service_name} onChange={(e) => updateService("service_name", e.target.value)} />
                           </div>
                           <div>
-                            <FieldLabel info="Concise mission.">2. Describe it in one sentence</FieldLabel>
+                            <FieldLabel info="What does it do and what specific problem does it solve for your target customers?">2. Describe your service and the problem it solves</FieldLabel>
                             <textarea
-                              className="ea-input min-h-[80px] py-3 text-sm"
-                              placeholder="e.g. On-demand technical consulting for growing creative agencies."
+                              className="ea-input min-h-[110px] py-3 text-sm"
+                              placeholder="e.g. On-demand tech consulting for creative agencies that struggle to find reliable technical support without hiring full-time."
                               value={serviceForm.service_description}
-                              onChange={(e) => updateService("service_description", e.target.value)}
+                              onChange={(e) => {
+                                updateService("service_description", e.target.value);
+                                updateService("problem_to_solve", e.target.value);
+                              }}
                             />
                             <AISuggest
-                              context={{ field: "service_description", description: serviceForm.service_name, segment: Array.isArray(serviceForm.target_customer_type) ? serviceForm.target_customer_type.join(", ") : serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
-                              onAccept={(v) => updateService("service_description", v)}
+                              context={{ field: "service_description", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(": "), segment: Array.isArray(serviceForm.target_customer_type) ? serviceForm.target_customer_type.join(", ") : serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
+                              onAccept={(v) => { updateService("service_description", v); updateService("problem_to_solve", v); }}
                             />
                           </div>
                         </div>
@@ -3731,20 +4739,7 @@ export default function ValidationWizardPage() {
                             </select>
                           </div>
                           <div className="md:col-span-2">
-                            <FieldLabel info="The pain point.">5. What problem does it solve?</FieldLabel>
-                            <textarea
-                              className="ea-input min-h-[80px] py-3 text-sm"
-                              placeholder="Describe the problem..."
-                              value={serviceForm.problem_to_solve}
-                              onChange={(e) => updateService("problem_to_solve", e.target.value)}
-                            />
-                            <AISuggest
-                              context={{ field: "service_problem", description: [serviceForm.service_name, serviceForm.service_description].filter(Boolean).join(" — "), segment: Array.isArray(serviceForm.target_customer_type) ? serviceForm.target_customer_type.join(", ") : serviceForm.target_customer_type, industry: form.context?.industry_category, sector: form.context?.sector_category, country: form.context?.country }}
-                              onAccept={(v) => updateService("problem_to_solve", v)}
-                            />
-                          </div>
-                          <div className="md:col-span-2">
-                            <FieldLabel info="Usage frequency.">6. How often would customers need it?</FieldLabel>
+                            <FieldLabel info="Usage frequency.">5. How often would customers need it?</FieldLabel>
                             <div className="flex flex-wrap gap-2">
                               {["Daily", "Weekly", "Monthly", "Occasionally"].map((label) => (
                                 <button
@@ -3769,7 +4764,7 @@ export default function ValidationWizardPage() {
                         </div>
                         <div className="grid grid-cols-1 gap-6">
                           <div>
-                            <FieldLabel info="Current habits.">7. What do customers currently use instead?</FieldLabel>
+                            <FieldLabel info="Current habits.">6. What do customers currently use instead?</FieldLabel>
                             <textarea
                               className="ea-input min-h-[80px] py-3 text-sm"
                               placeholder="e.g. Existing manual habits, competitors, spreadsheets..."
@@ -3782,10 +4777,10 @@ export default function ValidationWizardPage() {
                             />
                           </div>
                           <div>
-                            <FieldLabel info="Primary differentiator.">8. Why would they choose yours?</FieldLabel>
+                            <FieldLabel info="Compared to the alternatives above, what gives your offering a clear edge?">7. What is your competitive advantage over existing alternatives?</FieldLabel>
                             <textarea
                               className="ea-input min-h-[80px] py-3 text-sm"
-                              placeholder="Lower cost, better quality, faster speed, etc."
+                              placeholder="e.g. Faster turnaround, lower cost, specialised expertise competitors lack..."
                               value={serviceForm.differentiator}
                               onChange={(e) => updateService("differentiator", e.target.value)}
                             />
@@ -3805,7 +4800,7 @@ export default function ValidationWizardPage() {
                         </div>
                         <div className="space-y-6">
                           <div>
-                            <FieldLabel info="Validated demand signals.">9. Have you validated demand?</FieldLabel>
+                            <FieldLabel info="Validated demand signals.">8. Have you validated demand?</FieldLabel>
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                               {["Interviews", "Surveys", "Waitlist", "Sales", "Social engagement", "None"].map((item) => {
                                 const isSelected = (serviceForm.demand_validation_proof || []).includes(item);
@@ -3832,21 +4827,21 @@ export default function ValidationWizardPage() {
                           <div className="md:col-span-2">
                             <div className="flex flex-wrap gap-6 items-start">
                               <div className="flex-1 min-w-[160px]">
-                                <FieldLabel info="Pricing strategy.">10. Estimated selling price (Optional)</FieldLabel>
+                                <FieldLabel info="Pricing strategy.">9. Estimated selling price (Optional)</FieldLabel>
                                 <div className="relative">
                                   <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">{serviceCurrencySymbol}</div>
                                   <NumberInput className="pl-8 bg-white dark:bg-slate-900 border-slate-200" placeholder="0.0" value={serviceForm.estimated_price} onChange={(v) => updateService("estimated_price", v)} />
                                 </div>
                               </div>
                               <div className="flex-1 min-w-[160px]">
-                                <FieldLabel info="The assumed cost to deliver one unit of this service (materials, labour, etc.).">11. Assumed cost per unit (Optional)</FieldLabel>
+                                <FieldLabel info="The assumed cost to deliver one unit of this service (materials, labour, etc.).">10. Assumed cost per unit (Optional)</FieldLabel>
                                 <div className="relative">
                                   <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">{serviceCurrencySymbol}</div>
                                   <NumberInput className="pl-8 bg-white dark:bg-slate-900 border-slate-200" placeholder="0.0" value={serviceForm.assumed_cost_per_unit} onChange={(v) => updateService("assumed_cost_per_unit", v)} />
                                 </div>
                               </div>
                               <div className="flex-1 min-w-[160px]">
-                                <FieldLabel info="How many units of this service can you deliver per month (your capacity)?">12. Required delivery capacity / month (Optional)</FieldLabel>
+                                <FieldLabel info="How many units of this service can you deliver per month (your capacity)?">11. Required delivery capacity / month (Optional)</FieldLabel>
                                 <NumberInput className="bg-white dark:bg-slate-900 border-slate-200" placeholder="e.g. 20" value={serviceForm.required_capacity} onChange={(v) => updateService("required_capacity", v)} />
                               </div>
                             </div>
@@ -3907,8 +4902,8 @@ export default function ValidationWizardPage() {
                   ) : !isCreateWorkspace ? (
                     <div className="space-y-3">
                       <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
-                        <div className="text-sm font-semibold text-slate-600">Please choose a validation path on the landing page.</div>
-                        <button onClick={() => setMode("select")} className="mt-2 text-xs font-bold text-brand-600 hover:underline">Go back to selection</button>
+                        <div className="text-sm font-semibold text-slate-600">Please start a new validation.</div>
+                        <button onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }} className="mt-2 text-xs font-bold text-brand-600 hover:underline">Start new validation</button>
                       </div>
                     </div>
                   ) : null}
@@ -4719,7 +5714,7 @@ export default function ValidationWizardPage() {
                       <div className="flex w-full items-center justify-between gap-4">
                         <button
                           type="button"
-                          onClick={() => setMode("select")}
+                          onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }}
                           className="text-sm font-bold text-slate-400 hover:text-slate-600 transition-colors"
                           disabled={isLoading}
                         >
@@ -4757,7 +5752,13 @@ export default function ValidationWizardPage() {
                             <Button
                               className="w-full bg-slate-900 text-white hover:bg-slate-800 border-0 h-12 text-base font-bold shadow-xl shadow-slate-200"
                               disabled={isLoading || isPrefilling || !canRun}
-                              onClick={() => saveWorkspace(isCreateWorkspace ? false : true)}
+                              onClick={() => {
+                                if (!isCreateWorkspace) {
+                                  setCreditModal({ featureName: "Idea Validation", creditCost: 5, onConfirm: () => { setCreditModal(null); saveWorkspace(true); } });
+                                } else {
+                                  saveWorkspace(false);
+                                }
+                              }}
                             >
                               {isLoading ? null : <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 1 1-7.6-13.5 8.38 8.38 0 0 1 3.8.9" /><path d="M22 2L12 12" /><path d="M22 2l-7 20-4-9-9-4 20-7z" /></svg>}
                               {isLoading ? (isCreateWorkspace ? "Creating Workspace..." : "Running Intelligence Engine...") : (isCreateWorkspace ? "Create Workspace" : "Run Validation Analysis")}
@@ -4779,6 +5780,14 @@ export default function ValidationWizardPage() {
           )}
 
         </div >
+        {creditModal && (
+          <CreditConfirmModal
+            featureName={creditModal.featureName}
+            creditCost={creditModal.creditCost}
+            onConfirm={creditModal.onConfirm}
+            onCancel={() => setCreditModal(null)}
+          />
+        )}
         {
           confirmDialog ? (
             <ConfirmDialog

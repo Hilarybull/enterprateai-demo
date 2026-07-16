@@ -37,6 +37,7 @@ import IntegrationsCallbackPage from "./pages/IntegrationsCallbackPage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import TermsOfServicePage from "./pages/TermsOfServicePage";
 import DisclaimerPage from "./pages/DisclaimerPage";
+import CreditsPage from "./pages/CreditsPage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -97,6 +98,7 @@ export default function App() {
         <Route path="financials" element={<FinancialsPage />} />
         <Route path="team" element={<TeamPage />} />
         <Route path="account" element={<AccountPage />} />
+        <Route path="credits" element={<CreditsPage />} />
       </Route>
       <Route
         path="ent-admin"

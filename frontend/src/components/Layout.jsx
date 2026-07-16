@@ -272,6 +272,9 @@ export default function Layout() {
   const [feedbackSent, setFeedbackSent] = useState(false);
   const [feedbackError, setFeedbackError] = useState(null);
   const [showInviteUpgrade, setShowInviteUpgrade] = useState(false);
+  const creditBalance = useAuthStore((s) => s.creditBalance);
+  const creditInfo = useAuthStore((s) => s.creditInfo);
+  const setCreditInfo = useAuthStore((s) => s.setCreditInfo);
 
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
@@ -442,6 +445,31 @@ export default function Layout() {
       cancelled = true;
     };
   }, [token, logout, navigate]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+
+    async function fetchCredits() {
+      try {
+        const data = await apiRequest("/credits/balance", "GET");
+        if (!cancelled && data != null) {
+          setCreditInfo(data);
+        }
+      } catch {
+        // leave the last known value — don't reset to null on error
+      }
+    }
+
+    fetchCredits();
+    const id = setInterval(fetchCredits, 10000);
+    window.addEventListener("ea:credits:refresh", fetchCredits);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      window.removeEventListener("ea:credits:refresh", fetchCredits);
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -705,13 +733,26 @@ export default function Layout() {
                 </button>
               )}
             </div>
-            <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              {acceptedAny
-                ? "Workspace verified"
-                : rejectedAny
-                  ? "Needs review"
-                  : "Setup in progress"}
-            </div>
+            <button
+              type="button"
+              onClick={() => navigate("/credits")}
+              className="mt-2 w-full rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-left hover:bg-brand-100 transition-colors dark:border-slate-700 dark:bg-slate-800/60 dark:hover:bg-slate-700/60"
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-brand-600 text-white">
+                  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                </div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-brand-500 dark:text-brand-400">AI Credits</div>
+              </div>
+              <div className="text-[13px] font-bold text-brand-700 dark:text-brand-300 leading-tight">
+                {creditBalance !== null
+                  ? `${creditBalance.toLocaleString()} credits`
+                  : <span className="inline-block h-3.5 w-16 rounded bg-brand-200 dark:bg-slate-600 animate-pulse" />}
+              </div>
+              {creditInfo?.plan_code === "explorer" && (
+                <div className="text-[10px] text-brand-400 dark:text-brand-500 mt-0.5">Free trial allocation</div>
+              )}
+            </button>
             {showInviteUpgrade ? (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/40 dark:bg-amber-900/20">
                 <p className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">Upgrade to invite members</p>

@@ -19,6 +19,7 @@ import { planAllowsScenario } from "../lib/plans";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
+import CreditConfirmModal from "../components/CreditConfirmModal";
 
 const FieldLabel = ({ children, info }) => (
   <div className="ea-label flex items-center gap-2">
@@ -181,12 +182,16 @@ export default function SimulationPage() {
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [creditModal, setCreditModal] = useState(null);
   const [autoProjectionLoading, setAutoProjectionLoading] = useState(false);
   const [scenarioRunningId, setScenarioRunningId] = useState(null);
   const [error, setError] = useState(null);
   const [prefillDone, setPrefillDone] = useState(false);
 
-  const [manualTemplateId, setManualTemplateId] = useState("");
+  const [manualTemplateId, setManualTemplateId] = useState(() => {
+    const p = new URLSearchParams(window.location.search || "");
+    return p.get("template") || "";
+  });
   const [manualName, setManualName] = useState("");
   const [manualParams, setManualParams] = useState({});
   const [manualTimelineMonths, setManualTimelineMonths] = useState("6");
@@ -396,6 +401,7 @@ export default function SimulationPage() {
     } finally {
       setActionLoading(false);
       setScenarioRunningId(null);
+      window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
     }
   }
 
@@ -563,6 +569,7 @@ export default function SimulationPage() {
     const template = templates.find((t) => t.scenario_template_id === templateId);
     if (template) {
       openManualScenario(templateId, template.title);
+      setTab("manual");
     }
     setPrefillDone(true);
   }, [prefillDone, templates]);
@@ -1115,17 +1122,17 @@ export default function SimulationPage() {
                       const selectedPendingReceivableAmount = pendingScenarioOptions
                         .filter((item) => !selectedPendingIds.length || selectedPendingIds.includes(item.id))
                         .reduce((sum, item) => sum + Number(item.amount || 0), 0);
-                      runScenario(
-                        manualTemplateId,
-                        "manual",
-                        {
-                          ...manualParams,
-                          selected_product_revenue_monthly: Number(selectedProductRevenue.toFixed(2)),
-                          selected_pending_receivable_amount: Number(selectedPendingReceivableAmount.toFixed(2)),
-                          timeline_months: parseNumber(manualTimelineMonths, 6)
-                        },
-                        manualName
-                      );
+                      const scenarioParams = {
+                        ...manualParams,
+                        selected_product_revenue_monthly: Number(selectedProductRevenue.toFixed(2)),
+                        selected_pending_receivable_amount: Number(selectedPendingReceivableAmount.toFixed(2)),
+                        timeline_months: parseNumber(manualTimelineMonths, 6)
+                      };
+                      setCreditModal({
+                        featureName: "Scenario Simulation",
+                        creditCost: 10,
+                        onConfirm: () => { setCreditModal(null); runScenario(manualTemplateId, "manual", scenarioParams, manualName); }
+                      });
                     }}
                   >
                     {actionLoading ? <Spinner size={16} /> : null}
@@ -1293,6 +1300,14 @@ export default function SimulationPage() {
           </div>
         </div>
       ) : null}
+      {creditModal && (
+        <CreditConfirmModal
+          featureName={creditModal.featureName}
+          creditCost={creditModal.creditCost}
+          onConfirm={creditModal.onConfirm}
+          onCancel={() => setCreditModal(null)}
+        />
+      )}
       {confirmDialog ? (
         <ConfirmDialog
           message={confirmDialog.message}

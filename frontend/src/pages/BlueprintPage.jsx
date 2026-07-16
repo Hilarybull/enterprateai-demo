@@ -16,6 +16,7 @@ import SegmentedTabs from "../components/SegmentedTabs";
 import { imageFileToDataUrl } from "../lib/files";
 import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
 import ConfirmDialog from "../components/ConfirmDialog";
+import CreditConfirmModal from "../components/CreditConfirmModal";
 
 const DOCUMENTS = [
   {
@@ -308,6 +309,7 @@ export default function BlueprintPage() {
   const setWorkspaceNameStored = useWorkspaceStore((s) => s.setWorkspaceName);
   const setWorkspaceLogoStored = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
+  const v4Validation = useWorkspaceStore((s) => s.validation);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
   const serviceDecisionStatus = useWorkspaceStore((s) => s.serviceDecisionStatus);
   const draftServiceIdea = useWorkspaceStore((s) => s.draftServiceIdea);
@@ -411,6 +413,7 @@ export default function BlueprintPage() {
   const [customClientName, setCustomClientName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [creditModal, setCreditModal] = useState(null);
   const [savedNotice, setSavedNotice] = useState(null);
   const [shareNotice, setShareNotice] = useState(null);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
@@ -645,6 +648,48 @@ export default function BlueprintPage() {
     }
   }, [serviceDecisionStatus, draftServiceIdea, dirtyFields, industry, targetMarket, problem, solution, valueProp, selectedServices]);
 
+  // V4 universal validation — auto-populate when accepted
+  useEffect(() => {
+    if (decisionStatus !== "accepted") return;
+    if (!v4Validation || v4Validation.engine_version !== "4.0") return;
+    const v = v4Validation;
+    if (!dirtyFields.companyName && !companyName && v.idea_name) setCompanyName(v.idea_name);
+    if (!dirtyFields.industry && !industry) {
+      const ind = String(v.idea_sector || v.idea_type || "").trim();
+      if (ind) setIndustry(ind);
+    }
+    if (!dirtyFields.targetMarket && !targetMarket && v.primary_segment) setTargetMarket(v.primary_segment);
+    if (!dirtyFields.problem && !problem && v.problem_description) setProblem(v.problem_description);
+    if (!dirtyFields.solution && !solution && (v.solution_description || v.idea_name)) setSolution(v.solution_description || v.idea_name);
+    if (!dirtyFields.valueProp && !valueProp) {
+      const vp = String(v.idea_tagline || v.idea_description || v.solution_description || "").trim();
+      if (vp) setValueProp(vp);
+    }
+    if (!dirtyFields.selectedServices && !selectedServices.length && v.idea_name) {
+      setSelectedServices([v.idea_name]);
+    }
+  }, [decisionStatus, v4Validation, companyName, dirtyFields, industry, targetMarket, problem, solution, valueProp, selectedServices]);
+
+  // When a validated product is selected from the catalogue, populate blueprint fields from its snapshot
+  const prevSelectedRef = useRef([]);
+  useEffect(() => {
+    const prev = prevSelectedRef.current;
+    const added = selectedServices.filter((s) => !prev.includes(s));
+    prevSelectedRef.current = selectedServices;
+    if (!added.length || !catalogueServices.length) return;
+    for (const name of added) {
+      const product = catalogueServices.find((s) => s.service_name === name);
+      const snap = product?.validation_snapshot;
+      if (!snap) continue;
+      if (!dirtyFields.industry && !industry && snap.industry) setIndustry(snap.industry);
+      if (!dirtyFields.targetMarket && !targetMarket && snap.target_customer) setTargetMarket(snap.target_customer);
+      if (!dirtyFields.problem && !problem && snap.problem) setProblem(snap.problem);
+      if (!dirtyFields.solution && !solution && snap.solution) setSolution(snap.solution);
+      if (!dirtyFields.valueProp && !valueProp && snap.value_prop) setValueProp(snap.value_prop);
+      break;
+    }
+  }, [selectedServices, catalogueServices, dirtyFields, industry, targetMarket, problem, solution, valueProp]);
+
   useEffect(() => {
     let alive = true;
     async function prefillFromWorkspace() {
@@ -736,8 +781,13 @@ export default function BlueprintPage() {
         setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
         setVendors(Array.isArray(cat.vendors) ? cat.vendors : []);
         const svcProducts = (Array.isArray(cat.products) ? cat.products : [])
-          .filter((p) => !p.archived && (p.type === "service" || p.type === "Service"))
-          .map((p) => ({ service_name: String(p.name || "").trim(), service_category: "service", service_description: "" }))
+          .filter((p) => !p.archived)
+          .map((p) => ({
+            service_name: String(p.name || "").trim(),
+            service_category: p.type || "product",
+            service_description: p.description || "",
+            validation_snapshot: p.validation_snapshot || null,
+          }))
           .filter((s) => s.service_name);
         setCatalogueServices(svcProducts);
       } catch {
@@ -1553,6 +1603,7 @@ export default function BlueprintPage() {
       setShowInputs(true);
     } finally {
       setIsLoading(false);
+      window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
     }
   }
 
@@ -2126,7 +2177,7 @@ export default function BlueprintPage() {
                 >
                   {showInputs ? "Hide inputs" : "Edit inputs"}
                 </Button>
-                <Button disabled={isLoading} onClick={generateSelected}>
+                <Button disabled={isLoading} onClick={() => setCreditModal({ featureName: "Business Plan Generation", creditCost: 40, onConfirm: () => { setCreditModal(null); generateSelected(); } })}>
                   {isLoading ? <Spinner size={16} /> : null}
                   {isLoading ? "Generating..." : hasGenerated ? "Regenerate" : "Generate"}
                 </Button>
@@ -2895,6 +2946,14 @@ export default function BlueprintPage() {
           }}
         />
       ) : null}
+      {creditModal && (
+        <CreditConfirmModal
+          featureName={creditModal.featureName}
+          creditCost={creditModal.creditCost}
+          onConfirm={creditModal.onConfirm}
+          onCancel={() => setCreditModal(null)}
+        />
+      )}
       {confirmDialog ? (
         <ConfirmDialog
           message={confirmDialog.message}

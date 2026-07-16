@@ -290,7 +290,7 @@ class AutoLLMClient(LLMClient):
 
 
 _FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
-_SERP_PLAN_KEYS = {"decision_engine", "growth_navigator", "strategic_business_os"}
+_SERP_PLAN_KEYS = {"starter_insight", "decision_engine", "growth_navigator", "strategic_business_os"}
 
 
 async def get_user_plan_info(user_id: str) -> tuple[str, str]:

@@ -15,6 +15,7 @@ from app.modules.idea_validation.schemas import (
 from app.modules.idea_validation.service import (
     create_workspace,
     evaluate,
+    evaluate_v4_idea,
     get_user_workspace,
     get_workspace,
     market_fit,
@@ -28,6 +29,7 @@ from app.modules.idea_validation.market_research_service import (
     _call_openai,
 )
 from app.shared.auth.deps import get_current_user
+from app.modules.credits.service import credit_guard
 
 router = APIRouter(prefix="/validation", tags=["idea_validation"])
 
@@ -97,6 +99,14 @@ async def evaluate_validation(
     return ValidationResult(**result)
 
 
+@router.post("/evaluate-v4")
+async def evaluate_v4_endpoint(
+    payload: dict,
+    user=Depends(get_current_user),
+) -> dict:
+    return await evaluate_v4_idea(user_id=user["id"], payload=payload)
+
+
 @router.patch("/me", response_model=WorkspaceResponse)
 async def patch_my_workspace(
     payload: UpdateWorkspaceRequest,
@@ -124,6 +134,7 @@ async def patch_validation_workspace(
 class FieldSuggestRequest(BaseModel):
     field: str
     description: Optional[str] = ""
+    tagline: Optional[str] = ""
     problem: Optional[str] = ""
     alternatives: Optional[str] = ""
     solution: Optional[str] = ""
@@ -132,7 +143,26 @@ class FieldSuggestRequest(BaseModel):
     industry: Optional[str] = ""
     sector: Optional[str] = ""
     country: Optional[str] = ""
+    # V4 extended context
+    who_affected: Optional[str] = ""
+    pain_severity: Optional[str] = ""
+    frequency: Optional[str] = ""
+    beachhead: Optional[str] = ""
+    economic_buyer: Optional[str] = ""
+    competitors: Optional[str] = ""
+    substitutes: Optional[str] = ""
+    why_better: Optional[str] = ""
+    core_outcome: Optional[str] = ""
+    market_category: Optional[str] = ""
+    business_stage: Optional[str] = ""
+    customer_model: Optional[str] = ""
 
+
+_NO_DASH_RULE = (
+    "IMPORTANT: Write only clean flowing prose sentences. "
+    "Absolutely NO hyphens, NO en dashes, NO em dashes, NO bullet points, NO asterisks, NO numbered lists, NO markdown formatting anywhere in the text. "
+    "One or two complete natural sentences only. "
+)
 
 _FIELD_PROMPTS = {
     "description": (
@@ -183,6 +213,102 @@ _FIELD_PROMPTS = {
         "Base your answer on the product/service and industry context. "
         'Respond in JSON only: {{"suggestion": "<differentiator text, max 25 words>"}}'
     ),
+    # V4 Universal wizard fields
+    "v4_problem_trigger": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Problem: '{problem}'. Who affected: {who_affected}. Industry: {industry}. "
+        "Suggest the most common real-world event or situation that triggers this specific problem for the customer. "
+        "Be concrete and tie the trigger directly to the problem above. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<trigger, max 20 words>"}}'
+    ),
+    "v4_if_nothing": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Problem: '{problem}'. Who affected: {who_affected}. Pain severity: {pain_severity}. "
+        "Describe in one sentence the specific negative outcome the customer will continue to face if they ignore this problem and do nothing. "
+        "Be concrete and tie the consequence directly to the problem described above. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<consequence, max 25 words>"}}'
+    ),
+    "v4_idea_description": (
+        "You are a startup advisor. "
+        "Idea name: '{description}'. Industry: {industry}. Country: {country}. "
+        "Write 2-3 sentences describing what this business is building, the problem it solves, and who it serves. "
+        "Be specific and grounded. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<description, 40-60 words>"}}'
+    ),
+    "v4_evidence_problem": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Problem: '{problem}'. Who affected: {who_affected}. Industry: {industry}. "
+        "Suggest concrete evidence that this problem is real — e.g. industry reports, customer interviews, research data. "
+        "Be realistic and specific to the industry. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<evidence, max 25 words>"}}'
+    ),
+    "v4_primary_segment": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Problem: '{problem}'. Industry: {industry}. Country: {country}. "
+        "Describe the primary customer segment most likely to buy this — include role, company size, or demographic detail. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<segment description, max 20 words>"}}'
+    ),
+    "v4_beachhead": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Primary segment: {segment}. Country: {country}. Problem: '{problem}'. "
+        "Suggest the narrowest possible initial niche within the primary segment to target first to get early traction. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<beachhead niche, max 20 words>"}}'
+    ),
+    "v4_objections": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Customer segment: {segment}. Alternatives: '{alternatives}'. Industry: {industry}. "
+        "List the 2-3 most likely objections this customer segment would raise before buying. Be specific and brief. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<objections, max 30 words>"}}'
+    ),
+    "v4_direct_competitors": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Industry: {industry}. Country: {country}. Problem: '{problem}'. "
+        "List 3-5 real competitors or alternatives (direct rivals, substitutes, workarounds) a customer might use. "
+        "Return them as a comma-separated list with no extra explanation. "
+        'Respond in JSON only: {{"suggestion": "<competitor1, competitor2, competitor3>"}}'
+    ),
+    "v4_alternative_frustrations": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Current alternatives: '{alternatives}'. Competitors: {competitors}. Segment: {segment}. "
+        "Describe the main frustrations customers have with these existing alternatives. Be specific and grounded in the problem. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<frustrations, max 25 words>"}}'
+    ),
+    "v4_existing_spending": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Competitors: {competitors}. Segment: {segment}. Country: {country}. "
+        "Estimate what customers in this segment typically spend per month on their current alternatives. Be realistic and include the currency unit. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<spending estimate, max 15 words>"}}'
+    ),
+    "v4_switching_barriers": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Competitors: {competitors}. Segment: {segment}. Alternatives: '{alternatives}'. "
+        "Describe the main barriers that would prevent this segment from switching away from their current solution. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<barriers, max 20 words>"}}'
+    ),
+    "v4_core_outcome": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Problem: '{problem}'. Solution: '{solution}'. Segment: {segment}. "
+        "Describe the single most valuable measurable outcome the customer achieves after using this solution. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<outcome, max 20 words>"}}'
+    ),
+    "v4_defensibility": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Industry: {industry}. Why better: '{why_better}'. Competitors: {competitors}. "
+        "Suggest the strongest competitive moat for this business — e.g. proprietary data, network effects, switching costs, brand, or IP. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<moat description, max 25 words>"}}'
+    ),
+    "v4_market_category": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Industry: {industry}. Segment: {segment}. Country: {country}. "
+        "Name the specific market category this business competes in — e.g. 'SME Payroll Software' or 'B2B Food Delivery Logistics'. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<market category name, max 8 words>"}}'
+    ),
+    "v4_estimated_customers": (
+        "You are a startup advisor. "
+        "Idea: '{description}'. Market category: {market_category}. Segment: {segment}. Country: {country}. "
+        "Estimate the realistic number of potential customers in this target market, including the unit and a brief qualifier. " + _NO_DASH_RULE +
+        'Respond in JSON only: {{"suggestion": "<number + unit + qualifier, max 15 words>"}}'
+    ),
 }
 
 
@@ -199,6 +325,7 @@ async def suggest_field(
     sector_part = f" / {sector}" if sector else ""
     prompt = template.format(
         description=payload.description or "",
+        tagline=payload.tagline or "",
         problem=payload.problem or "",
         alternatives=payload.alternatives or "",
         solution=payload.solution or "",
@@ -207,16 +334,30 @@ async def suggest_field(
         industry=industry,
         sector_part=sector_part,
         country=payload.country or payload.location or "their market",
+        who_affected=payload.who_affected or "",
+        pain_severity=payload.pain_severity or "",
+        frequency=payload.frequency or "",
+        beachhead=payload.beachhead or "",
+        economic_buyer=payload.economic_buyer or "",
+        competitors=payload.competitors or "",
+        substitutes=payload.substitutes or "",
+        why_better=payload.why_better or "",
+        core_outcome=payload.core_outcome or "",
+        market_category=payload.market_category or industry,
+        business_stage=payload.business_stage or "",
+        customer_model=payload.customer_model or "",
     )
-    try:
-        result = await _call_claude(prompt, user_id=user["id"], feature="validation.suggest_field")
-        suggestion = result.get("suggestion") or result.get("text") or ""
-    except Exception:
+    suggestion = ""
+    async with credit_guard(user["id"], "suggest_field"):
         try:
-            result = await _call_openai(prompt, user_id=user["id"], feature="validation.suggest_field")
+            result = await _call_claude(prompt, user_id=user["id"], feature="suggest_field")
             suggestion = result.get("suggestion") or result.get("text") or ""
         except Exception:
-            suggestion = ""
+            try:
+                result = await _call_openai(prompt, user_id=user["id"], feature="suggest_field")
+                suggestion = result.get("suggestion") or result.get("text") or ""
+            except Exception:
+                suggestion = ""
     return {"suggestion": suggestion.strip()}
 
 
