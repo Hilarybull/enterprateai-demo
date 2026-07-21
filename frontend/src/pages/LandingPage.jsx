@@ -160,6 +160,7 @@ function FAQItem({ q, a }) {
 export default function LandingPage() {
   const [annualBilling, setAnnualBilling] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [heroZoomOpen, setHeroZoomOpen] = useState(false);
   const [showExitPopup, setShowExitPopup] = useState(false);
   const [exitDismissed, setExitDismissed] = useState(false);
   const exitTimerRef = useRef(null);
@@ -186,6 +187,15 @@ export default function LandingPage() {
       clearTimeout(exitTimerRef.current);
     };
   }, [exitDismissed, showExitPopup]);
+
+  // close hero zoom on Escape
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "Escape") setHeroZoomOpen(false);
+    }
+    if (heroZoomOpen) document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [heroZoomOpen]);
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-white font-sans text-slate-800 antialiased">
@@ -335,17 +345,37 @@ export default function LandingPage() {
             {/* Hero image — visible on all screen sizes and responsive */}
             <div className="relative block">
               <div className="overflow-hidden rounded-3xl max-w-full sm:max-w-2xl md:max-w-xl mx-auto lg:mx-0">
-                <img
-                  src="/hero-section-a.png"
-                  alt="Hero Section A"
-                  className="block w-full h-56 sm:h-72 md:h-[440px] lg:h-auto object-contain rounded-2xl"
-                  style={{ background: 'transparent' }}
-                />
-              </div>
+                  <img
+                    src="/hero-section-a.png"
+                    alt="Hero Section A"
+                    onClick={() => setHeroZoomOpen(true)}
+                    className="block w-full h-56 sm:h-72 md:h-[440px] lg:h-auto object-contain rounded-2xl cursor-zoom-in"
+                    style={{ background: 'transparent' }}
+                  />
+                </div>
             </div>
           </div>
         </div>
       </section>
+
+        {/* Hero zoom modal */}
+        {heroZoomOpen && (
+          <div
+            onClick={() => setHeroZoomOpen(false)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="max-w-4xl w-full">
+              <img
+                src="/hero-section-a.png"
+                alt="Hero Section A enlarged"
+                className="w-full h-auto object-contain rounded-lg cursor-zoom-out shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+          </div>
+        )}
 
       {/* ══════════════════════════════════════════
           TRUST BAR
