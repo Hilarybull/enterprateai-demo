@@ -126,6 +126,8 @@ export default function FinancialsPage() {
   const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
+  const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
+  const refreshWorkspaceData = useWorkspaceStore((s) => s.refreshWorkspaceData);
   const navigate = useNavigate();
 
   function canFinancialsFeature(featureKey) {
@@ -367,7 +369,7 @@ export default function FinancialsPage() {
     return () => {
       alive = false;
     };
-  }, [workspaceId, setWorkspaceId, setWorkspaceLogo, setWorkspaceName]);
+  }, [workspaceId, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, workspaceDataRefreshTrigger]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -427,6 +429,7 @@ export default function FinancialsPage() {
 
   async function persist(next) {
     await apiRequest("/validation/me", "PATCH", { data: { financials: next } });
+    refreshWorkspaceData();
   }
   async function persistIntegrations(next) {
     await apiRequest("/validation/me", "PATCH", { data: { integrations: next } });

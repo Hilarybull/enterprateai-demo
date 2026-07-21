@@ -19,6 +19,7 @@ export const useWorkspaceStore = create(
       validation: null,
       validationEntryId: null,
       currency: "GBP",
+      workspaceDataRefreshTrigger: 0,
 
       // Member mode — set when the user is accessing someone else's workspace via invite
       isMemberMode: false,
@@ -41,8 +42,7 @@ export const useWorkspaceStore = create(
       setDraftServiceIdea: (draftServiceIdea) => set({ draftServiceIdea: draftServiceIdea ?? null }),
       setValidation: (validation) => set({ validation: validation ?? null }),
       setValidationEntryId: (validationEntryId) => set({ validationEntryId: validationEntryId ?? null }),
-      setCurrency: (currency) => set({ currency: currency || "GBP" }),
-
+      setCurrency: (currency) => set({ currency: currency || "GBP" }),      refreshWorkspaceData: () => set((state) => ({ workspaceDataRefreshTrigger: state.workspaceDataRefreshTrigger + 1 })),
       setMemberMode: (membershipId, permType, perms, workspaceName) =>
         set({
           isMemberMode: true,

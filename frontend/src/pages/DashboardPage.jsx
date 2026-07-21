@@ -26,6 +26,7 @@ export default function DashboardPage() {
   const currency = useWorkspaceStore((s) => s.currency);
   const inputs = useWorkspaceStore((s) => s.inputs);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
+  const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
   const email = useAuthStore((s) => s.email);
 
   const [loading, setLoading] = useState(true);
@@ -74,7 +75,7 @@ export default function DashboardPage() {
     }
     load();
     return () => { alive = false; };
-  }, [workspaceId]);
+  }, [workspaceId, workspaceDataRefreshTrigger]);
 
   const metrics = useMemo(
     () => buildFinancialIntelligence({

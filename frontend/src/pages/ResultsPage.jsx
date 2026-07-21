@@ -4,7 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Cell, Tooltip,
   PieChart, Pie, Legend,
 } from "recharts";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import Badge from "../components/Badge";
 import Button from "../components/Button";
@@ -94,6 +94,8 @@ export default function ResultsPage() {
   const location = useWorkspaceStore((s) => s.inputs?.location || s.inputs?.country || "United Kingdom");
   const currency = useWorkspaceStore((s) => s.currency);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
+  const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
+  const serviceDecisionStatus = useWorkspaceStore((s) => s.serviceDecisionStatus);
 
   const subscription = useAuthStore((s) => s.subscription);
   const planKey = subscription?.plan_key ?? "free_trial";
@@ -123,6 +125,8 @@ export default function ResultsPage() {
   const [serviceDraft, setServiceDraft] = useState(null);
   const [activeValidationId, setActiveValidationId] = useState(null);
   const [simTemplates, setSimTemplates] = useState([]);
+  const [recOpen, setRecOpen] = useState(false);
+  const recShownRef = useRef(false);
   useEffect(() => {
     apiRequest("/v1/scenario-intelligence/scenario-templates", "GET")
       .then((data) => { if (Array.isArray(data)) setSimTemplates(data); })
@@ -177,6 +181,10 @@ export default function ResultsPage() {
             setDecision(status);
             setServiceDecisionStatusStore(status);
             setDecisionStatusStore(null);
+            if (status === "accepted" && !recShownRef.current) {
+              setRecOpen(true);
+              recShownRef.current = true;
+            }
           } else {
             setDecision(null);
             setServiceDecisionStatusStore(null);
@@ -193,6 +201,10 @@ export default function ResultsPage() {
             setDecision(status);
             setDecisionStatusStore(status);
             setServiceDecisionStatusStore(null);
+            if (status === "accepted" && !recShownRef.current) {
+              setRecOpen(true);
+              recShownRef.current = true;
+            }
           } else {
             setDecision(null);
             setDecisionStatusStore(null);
@@ -412,6 +424,10 @@ export default function ResultsPage() {
       if (!isServiceIdeaView) setDecisionStatusStore(status);
       if (isServiceIdeaView) setServiceDecisionStatusStore(status);
       setDecisionNotice(status === "accepted" ? "Validation accepted." : "Validation rejected.");
+      if (status === "accepted" && !recShownRef.current) {
+        setRecOpen(true);
+        recShownRef.current = true;
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save decision");
     } finally {
@@ -641,6 +657,73 @@ export default function ResultsPage() {
           </div>
           {verdictInterp && <p className={`text-sm leading-relaxed ${vText}`}>{verdictInterp}</p>}
         </div>
+
+        {/* Recommendations after acceptance */}
+        {(
+          decision === "accepted" || decisionStatus === "accepted" || serviceDecisionStatus === "accepted"
+        ) && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 mt-4">
+            <div className="mb-2 text-sm font-semibold text-slate-800">Recommended next steps</div>
+            <p className="text-sm text-slate-600 mb-3">
+              We recommend generating a Business Plan and listing your idea on the Marketplace to turn this validated concept into an actionable offer.
+            </p>
+            <p className="text-xs text-slate-500 mb-4">
+              Note: the business plan will be generated using the data from this validation (service/idea only). If you want a plan for a different business or wider scope, use the <Link to="/blueprint" className="text-brand-600 underline">Business Blueprints</Link> module and select a different workspace.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                disabled={!workspaceId}
+                onClick={() => navigate(`/blueprint?validation_workspace=${workspaceId}`)}
+                className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-50"
+              >
+                Generate Business Plan
+              </button>
+              <button
+                type="button"
+                disabled={!workspaceId}
+                onClick={() => navigate(`/marketplace?validation_workspace=${workspaceId}`)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
+              >
+                Create Marketplace Listing
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Recommendation modal (popup) */}
+        {recOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setRecOpen(false)} />
+            <div className="relative z-10 w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">Next steps</h2>
+                  <p className="mt-1 text-sm text-slate-600">Your validation has been accepted — here are recommended next steps to turn this into an offer.</p>
+                </div>
+                <button onClick={() => setRecOpen(false)} className="text-slate-400 hover:text-slate-600">Close</button>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-slate-100 p-4">
+                  <div className="mb-2 text-sm font-semibold">Generate Business Plan</div>
+                  <p className="text-xs text-slate-500 mb-3">This business plan will be generated using the data from this validation (service/idea only). To create a different plan, use the <Link to="/blueprint" className="text-brand-600 underline">Business Blueprints</Link> module.</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setRecOpen(false); navigate(`/blueprint?validation_workspace=${workspaceId}`); }} className="rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white">Generate</button>
+                    <button onClick={() => setRecOpen(false)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Maybe later</button>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-100 p-4">
+                  <div className="mb-2 text-sm font-semibold">List on Marketplace</div>
+                  <p className="text-xs text-slate-500 mb-3">Create a marketplace listing prefilled from this validation so customers can discover your offering.</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setRecOpen(false); navigate(`/marketplace?validation_workspace=${workspaceId}`); }} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Create listing</button>
+                    <button onClick={() => setRecOpen(false)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Maybe later</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Strengths / Gaps */}
         {(keyStrengths.length > 0 || keyWeaknesses.length > 0) && (

@@ -745,6 +745,87 @@ Return ONLY a valid JSON object with these exact keys — no explanation, no mar
         logger.warning("V4 AI enrichment failed (non-fatal): %s", exc)
 
 
+async def _ai_generate_experiments(v4_inp, vps_dims: list[dict], user_id: str) -> list[dict]:
+    """Generate adaptive validation experiments via LLM, tailored to the specific idea and weak dimensions."""
+    from app.modules.idea_validation.engine_v4 import generate_experiments
+
+    weak_dims = sorted(vps_dims, key=lambda d: d.get("pct", 0))[:5]
+    weak_dim_lines = "\n".join(
+        f"  - {d['dimension']} ({d.get('pct', 0):.0f}%): {d.get('label', '')}" for d in weak_dims
+    )
+
+    evidence_list = ", ".join(v4_inp.evidence_types) if v4_inp.evidence_types else "none documented"
+    channels_list = ", ".join(v4_inp.channels) if v4_inp.channels else "not specified"
+
+    context_parts = [
+        f"Idea: {v4_inp.idea_name or 'Unnamed'}",
+        f"Description: {v4_inp.idea_description or v4_inp.idea_tagline or 'Not provided'}",
+        f"Type: {v4_inp.idea_type or 'Not specified'} | Sector: {v4_inp.idea_sector or 'Not specified'}",
+        f"Stage: {v4_inp.business_stage or 'idea'} | Customer model: {v4_inp.customer_model or 'Not specified'}",
+        f"Primary customer: {v4_inp.primary_segment or 'Not specified'}",
+        f"Problem: {v4_inp.problem_description or 'Not provided'}",
+        f"Solution: {v4_inp.solution_description or 'Not provided'}",
+        f"Delivery method: {v4_inp.delivery_method or 'Not specified'}",
+        f"Revenue model: {v4_inp.revenue_model or 'Not specified'}",
+        f"Proposed price: {v4_inp.proposed_price or 'Not specified'}",
+        f"Customer channels: {channels_list}",
+        f"Existing evidence: {evidence_list}",
+    ]
+    context = "\n".join(context_parts)
+
+    joined_keys = ",\n    ".join([
+        '"name"', '"method"', '"duration"', '"hypothesis"', '"why_it_matters"',
+        '"target_customer"', '"sample_size"', '"budget"', '"metric"',
+        '"evidence_to_collect"', '"pass_threshold"', '"partial_pass_threshold"',
+        '"fail_threshold"', '"if_passed"', '"if_failed"'
+    ])
+
+    prompt = f"""You are a lean startup validation expert designing hypothesis-driven experiments.
+
+IDEA CONTEXT:
+{context}
+
+WEAKEST VALIDATION DIMENSIONS (prioritise addressing these):
+{weak_dim_lines}
+
+Generate 3 to 5 validation experiments tailored specifically to this idea and its weakest dimensions. Each must be concrete, actionable, and realistic for a founder at the {v4_inp.business_stage or 'idea'} stage with limited resources.
+
+Return ONLY a valid JSON array. Each element must have exactly these keys:
+[
+  {{
+    {joined_keys}
+  }}
+]
+
+Rules:
+- Name experiments specifically to this idea (e.g. "Catering Pre-Order Campaign" not "Sales Test")
+- Write the hypothesis in first person about this specific product/customer
+- Budget and timeline must be realistic for the stage
+- Pass/fail thresholds must be concrete numbers or percentages
+- evidence_to_collect must name specific data points to gather
+- if_passed and if_failed must name the concrete next step
+- Do not add markdown, explanation, or any text outside the JSON array"""
+
+    try:
+        call_llm = await _pick_llm_caller(user_id)
+        raw = await call_llm(prompt, user_id=user_id, feature="idea_validation.v4_enrichment")
+        text = raw if isinstance(raw, str) else (raw.get("executive_summary") or raw.get("raw") or json.dumps(raw))
+        text = text.strip()
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            text = text.split("```", 2)[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.rsplit("```", 1)[0].strip()
+        experiments = json.loads(text)
+        if isinstance(experiments, list) and experiments:
+            return experiments
+    except Exception as exc:
+        logger.warning("AI experiment generation failed (falling back to static): %s", exc)
+
+    return generate_experiments(v4_inp, vps_dims)
+
+
 async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
     """
     V4 Universal Validation — deterministic scoring (VPS + ECS) + live web research.
@@ -769,6 +850,10 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
     v4_inp = v4_payload_to_input(payload)
     await _ai_enrich_v4_input(v4_inp, user_id)
     v4_result = evaluate_v4(v4_inp)
+
+    # 2b. AI-generated experiments tailored to this idea and its weak dimensions
+    vps_dims = v4_result["scores"].get("vps_dimensions", [])
+    ai_experiments = await _ai_generate_experiments(v4_inp, vps_dims, user_id)
 
     # 3. Flatten V4 fields for search query building
     fields = flatten_fields_from_v4_payload(payload)
@@ -835,7 +920,7 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
         "scores": v4_result["scores"],
         "summary": v4_result.get("summary", {}),
         "verdict": verdict,
-        "experiments": v4_result.get("experiments", []),
+        "experiments": ai_experiments,
         "contradictions": v4_result.get("contradictions", []),
         "risk_flags": v4_result.get("risk_flags", []),
         # ResultsPage-compatible fields

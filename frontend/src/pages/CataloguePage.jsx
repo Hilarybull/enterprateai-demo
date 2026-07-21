@@ -25,6 +25,7 @@ export default function CataloguePage() {
   const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
+  const refreshWorkspaceData = useWorkspaceStore((s) => s.refreshWorkspaceData);
   const navigate = useNavigate();
 
   function canCatalogueFeature(featureKey) {
@@ -481,6 +482,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
 
   async function persist(next) {
     await apiRequest("/validation/me", "PATCH", { data: { catalogue: next } });
+    refreshWorkspaceData();
   }
   async function persistCatalogueIntegrations(next) {
     await apiRequest("/validation/me", "PATCH", { data: { integrations: { catalogue: next } } });
