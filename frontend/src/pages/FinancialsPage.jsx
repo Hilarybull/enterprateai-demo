@@ -193,7 +193,8 @@ export default function FinancialsPage() {
   const [previewQuoteId, setPreviewQuoteId] = useState(null);
   const [previewReceiptInv, setPreviewReceiptInv] = useState(null);
   const [previewReceiptExp, setPreviewReceiptExp] = useState(null);
-  const [receiptForm, setReceiptForm] = useState({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), items: [{ description: "", quantity: "1", unit_price: "" }], vat_rate: "", notes: "" });
+  const [receiptForm, setReceiptForm] = useState({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), product_ids: [], items: [], vat_rate: "", notes: "" });
+  const [manualReceipts, setManualReceipts] = useState([]);
   const [previewManualReceipt, setPreviewManualReceipt] = useState(null);
   const [shareMenu, setShareMenu] = useState(null);
   const ARCHIVE_WARNING_DAYS = 60;
@@ -352,6 +353,7 @@ export default function FinancialsPage() {
         setQuotes(Array.isArray(fin.quotes) ? fin.quotes : []);
         setExpenses(Array.isArray(fin.expenses) ? fin.expenses : []);
         setContracts(Array.isArray(fin.contracts) ? fin.contracts : []);
+        setManualReceipts(Array.isArray(fin.manual_receipts) ? fin.manual_receipts : []);
         setRfqRequests(Array.isArray(fin.rfq_requests) ? fin.rfq_requests : []);
         setIntegrations({
           financial: {
@@ -438,7 +440,7 @@ export default function FinancialsPage() {
     if (!workspaceId) return;
     try {
       // Increase timeout for workspace patch in case backend processing is slow
-      await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: next } }, { timeoutMs: 120000 });
+      await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: { ...next, manual_receipts: next.manual_receipts !== undefined ? next.manual_receipts : manualReceipts } } }, { timeoutMs: 120000 });
       refreshWorkspaceData();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -2438,28 +2440,12 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 onChange={(e) => setInvoiceForm((f) => ({ ...f, vat_rate: e.target.value }))}
               />
             </div>
-            <div className={`grid grid-cols-1 items-start gap-3 ${invoiceCostOfSalesTotal > 0 || invoiceVatAmount > 0 ? "sm:grid-cols-2" : ""}`}>
-              <div>
-                <div className="ea-label">Subtotal</div>
-                <Input value={formatMoney(invoiceSubtotal)} disabled />
-              </div>
-              {invoiceCostOfSalesTotal > 0 && (
-                <div>
-                  <div className="ea-label">Total cost of sales</div>
-                  <Input value={formatMoney(invoiceCostOfSalesTotal)} disabled />
-                </div>
-              )}
-              {invoiceVatAmount > 0 && (
-                <div>
-                  <div className="ea-label">VAT ({invoiceVatRate}%)</div>
-                  <Input value={formatMoney(invoiceVatAmount)} disabled />
-                </div>
-              )}
-            </div>
-            {(invoiceCostOfSalesTotal > 0 || invoiceVatAmount > 0) && (
-              <div>
-                <div className="ea-label">Grand Total</div>
-                <Input value={formatMoney(invoiceGrandTotal)} disabled />
+            {invoiceSubtotal > 0 && (
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+                <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(invoiceSubtotal)}</span></div>
+                {invoiceCostOfSalesTotal > 0 && <div className="flex justify-between"><span>Cost of sales</span><span>{formatMoney(invoiceCostOfSalesTotal)}</span></div>}
+                {invoiceVatAmount > 0 && <div className="flex justify-between"><span>VAT ({invoiceVatRate}%)</span><span>{formatMoney(invoiceVatAmount)}</span></div>}
+                <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(invoiceGrandTotal)}</span></div>
               </div>
             )}
             {invoiceSubmitAttempted && invoiceContractWarning ? <InlineAlert kind="error" message={invoiceContractWarning} /> : null}
@@ -2726,20 +2712,13 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <Input type="date" value={quoteForm.due_date} onChange={(e) => setQuoteForm((f) => ({ ...f, due_date: e.target.value }))} />
               </div>
             </div>
-            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
-              <div>
-                <div className="ea-label">Subtotal</div>
-                <Input value={formatMoney(quoteSubtotal)} disabled />
+            {quoteSubtotal > 0 && (
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+                <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(quoteSubtotal)}</span></div>
+                {quoteCostOfSalesTotal > 0 && <div className="flex justify-between"><span>Cost of sales</span><span>{formatMoney(quoteCostOfSalesTotal)}</span></div>}
+                <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(quoteGrandTotal)}</span></div>
               </div>
-              <div>
-                <div className="ea-label">Total cost of sales</div>
-                <Input value={formatMoney(quoteCostOfSalesTotal)} disabled />
-              </div>
-            </div>
-            <div>
-              <div className="ea-label">Grand Total</div>
-              <Input value={formatMoney(quoteGrandTotal)} disabled />
-            </div>
+            )}
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertQuote}>{editingQuoteId ? "Update quotation" : "Add quotation"}</Button>
               {editingQuoteId ? (
@@ -3455,24 +3434,20 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 }
               >
                 {(() => {
-                  const rfItems = Array.isArray(receiptForm.items) ? receiptForm.items : [{ description: "", quantity: "1", unit_price: "" }];
-                  const subtotal = rfItems.reduce((s, i) => s + Number(i.unit_price || 0) * Number(i.quantity || 1), 0);
+                  const rfLineItems = syncProductLineItems(Array.isArray(receiptForm.product_ids) ? receiptForm.product_ids : [], Array.isArray(receiptForm.items) ? receiptForm.items : []);
+                  const subtotal = rfLineItems.reduce((s, i) => s + Number(i.unit_price || 0) * Number(i.quantity || 1), 0);
                   const vatRate = Number(receiptForm.vat_rate || 0);
                   const vatAmount = Number((subtotal * vatRate / 100).toFixed(2));
                   const grandTotal = Number((subtotal + vatAmount).toFixed(2));
-                  function updateRfItem(idx, field, val) {
+                  function updateRfItem(productId, field, val) {
                     setReceiptForm((f) => {
-                      const next = [...(f.items || [])];
-                      next[idx] = { ...next[idx], [field]: val };
+                      const next = syncProductLineItems(f.product_ids || [], f.items || []).map((item) =>
+                        item.product_id === productId ? { ...item, [field]: val } : item
+                      );
                       return { ...f, items: next };
                     });
                   }
-                  function addRfItem() {
-                    setReceiptForm((f) => ({ ...f, items: [...(f.items || []), { description: "", quantity: "1", unit_price: "" }] }));
-                  }
-                  function removeRfItem(idx) {
-                    setReceiptForm((f) => ({ ...f, items: (f.items || []).filter((_, i) => i !== idx) }));
-                  }
+                  const resetForm = () => setReceiptForm({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), product_ids: [], items: [], vat_rate: "", notes: "" });
                   return (
                     <div className="grid grid-cols-1 gap-3">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -3503,26 +3478,41 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                         />
                       </div>
                       <div>
-                        <div className="ea-label mb-1.5">Items *</div>
+                        <div className="ea-label">Products / Services *</div>
+                        <MultiProductDropdown
+                          products={activeProducts}
+                          selectedIds={Array.isArray(receiptForm.product_ids) ? receiptForm.product_ids : []}
+                          onChange={(nextIds) => {
+                            const synced = syncProductLineItems(nextIds, Array.isArray(receiptForm.items) ? receiptForm.items : []);
+                            setReceiptForm((f) => ({ ...f, product_ids: nextIds, items: synced }));
+                          }}
+                        />
+                      </div>
+                      {rfLineItems.length > 0 && (
                         <div className="space-y-2">
-                          {rfItems.map((item, idx) => (
-                            <div key={idx} className="rounded-xl border border-slate-200 p-3">
-                              <div className="mb-2">
-                                <div className="ea-label">Description</div>
-                                <Input
-                                  placeholder="What was paid for?"
-                                  value={item.description}
-                                  onChange={(e) => updateRfItem(idx, "description", e.target.value)}
-                                />
-                              </div>
+                          <div className="ea-label">Item details</div>
+                          {rfLineItems.map((item) => (
+                            <div key={item.product_id} className="rounded-xl border border-slate-200 p-3">
+                              {item.product_id === OTHER_PRODUCT_ID ? (
+                                <div className="mb-2">
+                                  <div className="ea-label">Product / Service name *</div>
+                                  <Input
+                                    placeholder="Enter name"
+                                    value={item.product_name}
+                                    onChange={(e) => updateRfItem(OTHER_PRODUCT_ID, "product_name", e.target.value)}
+                                  />
+                                </div>
+                              ) : (
+                                <div className="mb-2 text-sm font-semibold text-slate-900">{item.product_name}</div>
+                              )}
                               <div className="grid grid-cols-2 gap-2">
                                 <div>
                                   <div className="ea-label">Qty</div>
                                   <Input
                                     type="number"
                                     min="1"
-                                    value={item.quantity}
-                                    onChange={(e) => updateRfItem(idx, "quantity", e.target.value)}
+                                    value={String(item.quantity ?? 1)}
+                                    onChange={(e) => updateRfItem(item.product_id, "quantity", e.target.value)}
                                   />
                                 </div>
                                 <div>
@@ -3530,32 +3520,15 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                   <Input
                                     type="number"
                                     min="0"
-                                    placeholder="0.00"
-                                    value={item.unit_price}
-                                    onChange={(e) => updateRfItem(idx, "unit_price", e.target.value)}
+                                    value={String(item.unit_price ?? 0)}
+                                    onChange={(e) => updateRfItem(item.product_id, "unit_price", e.target.value)}
                                   />
                                 </div>
                               </div>
-                              {rfItems.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => removeRfItem(idx)}
-                                  className="mt-2 text-xs text-rose-500 hover:text-rose-700"
-                                >
-                                  Remove
-                                </button>
-                              )}
                             </div>
                           ))}
-                          <button
-                            type="button"
-                            onClick={addRfItem}
-                            className="w-full rounded-xl border border-dashed border-slate-300 py-2 text-xs font-medium text-slate-500 hover:border-brand-400 hover:text-brand-600"
-                          >
-                            + Add item
-                          </button>
                         </div>
-                      </div>
+                      )}
                       <div>
                         <div className="ea-label">VAT / Tax rate (%) — optional</div>
                         <Input
@@ -3586,30 +3559,31 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                       <div className="flex flex-wrap gap-2">
                         <Button
                           onClick={() => {
-                            const validItems = rfItems.filter((i) => i.description.trim() && Number(i.unit_price) > 0);
-                            if (!receiptForm.customer_name.trim() || !validItems.length) return;
-                            const manualInv = {
-                              invoice_id: receiptForm.receipt_number || null,
-                              paid_at: receiptForm.date || new Date().toISOString(),
+                            if (!receiptForm.customer_name.trim() || !rfLineItems.length) return;
+                            const validItems = rfLineItems.filter((i) => Number(i.unit_price) >= 0);
+                            const newReceipt = {
+                              id: crypto.randomUUID(),
+                              receipt_number: receiptForm.receipt_number || null,
+                              customer_name: receiptForm.customer_name.trim(),
+                              date: receiptForm.date || new Date().toISOString().slice(0, 10),
                               subtotal_amount: subtotal,
-                              cost_of_sales: 0,
                               vat_rate: vatRate,
                               vat_amount: vatAmount,
                               total_amount: grandTotal,
                               notes: receiptForm.notes || null,
-                              items: validItems.map((i) => ({ product_name: i.description, quantity: Number(i.quantity || 1), unit_price: Number(i.unit_price), unit_cost_of_sales: 0 }))
+                              items: validItems.map((i) => ({ product_name: i.product_name, quantity: Number(i.quantity || 1), unit_price: Number(i.unit_price), unit_cost_of_sales: 0 })),
+                              created_at: new Date().toISOString()
                             };
-                            setPreviewManualReceipt({ inv: manualInv, cust: { name: receiptForm.customer_name.trim() } });
+                            const manualInv = { invoice_id: newReceipt.receipt_number, paid_at: newReceipt.date, subtotal_amount: subtotal, cost_of_sales: 0, vat_rate: vatRate, vat_amount: vatAmount, total_amount: grandTotal, notes: newReceipt.notes, items: newReceipt.items };
+                            const updatedReceipts = [...manualReceipts, newReceipt];
+                            setManualReceipts(updatedReceipts);
+                            persist({ invoices, quotes, expenses, contracts, manual_receipts: updatedReceipts });
+                            setPreviewManualReceipt({ inv: manualInv, cust: { name: newReceipt.customer_name } });
                           }}
                         >
                           Preview receipt
                         </Button>
-                        <Button
-                          variant="secondary"
-                          onClick={() => setReceiptForm({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), items: [{ description: "", quantity: "1", unit_price: "" }], vat_rate: "", notes: "" })}
-                        >
-                          Clear
-                        </Button>
+                        <Button variant="secondary" onClick={resetForm}>Clear</Button>
                       </div>
                     </div>
                   );
@@ -3630,20 +3604,16 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 }
               >
                 <div className="flex items-center gap-2 mb-4">
-                  <button
-                    type="button"
-                    onClick={() => setReceiptDocType("invoices")}
-                    className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${receiptDocType === "invoices" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
-                  >
-                    Invoices
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setReceiptDocType("expenses")}
-                    className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${receiptDocType === "expenses" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
-                  >
-                    Expenses
-                  </button>
+                  {["invoices", "expenses", "generated"].map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setReceiptDocType(t)}
+                      className={`rounded-lg px-4 py-1.5 text-sm font-medium capitalize transition-colors ${receiptDocType === t ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                    >
+                      {t === "generated" ? `Generated (${manualReceipts.length})` : t.charAt(0).toUpperCase() + t.slice(1)}
+                    </button>
+                  ))}
                 </div>
 
                 {receiptDocType === "invoices" ? (
@@ -3679,7 +3649,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                       </div>
                     )}
                   </div>
-                ) : (
+                ) : receiptDocType === "expenses" ? (
                   <div className="space-y-2">
                     {paidExpenses.length ? paidExpenses.map((exp) => {
                       const vendor = resolveVendor(exp.vendor_id, exp.vendor_name);
@@ -3708,6 +3678,34 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     }) : (
                       <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
                         No paid expenses yet. Mark an expense as paid to generate a receipt.
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {manualReceipts.length ? [...manualReceipts].reverse().map((rec) => (
+                      <div key={rec.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-900">{rec.customer_name}</span>
+                            <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Generated</span>
+                          </div>
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            {rec.receipt_number ? `#${rec.receipt_number} · ` : ""}{rec.date ? new Date(rec.date).toLocaleDateString() : ""}{" · "}{formatMoney(rec.total_amount || 0)}
+                          </div>
+                        </div>
+                        <ActionMenu
+                          items={[
+                            { label: "View receipt", onClick: () => { const inv = { invoice_id: rec.receipt_number, paid_at: rec.date, subtotal_amount: rec.subtotal_amount, cost_of_sales: 0, vat_rate: rec.vat_rate, vat_amount: rec.vat_amount, total_amount: rec.total_amount, items: rec.items }; setPreviewManualReceipt({ inv, cust: { name: rec.customer_name } }); } },
+                            { label: "Share", onClick: () => { const inv = { invoice_id: rec.receipt_number, paid_at: rec.date, subtotal_amount: rec.subtotal_amount, cost_of_sales: 0, vat_rate: rec.vat_rate, vat_amount: rec.vat_amount, total_amount: rec.total_amount, items: rec.items }; setShareDialog({ kind: "receipt", record: inv, customer: { name: rec.customer_name }, product: null }); } },
+                            { label: "Download receipt", onClick: () => { const inv = { invoice_id: rec.receipt_number, paid_at: rec.date, subtotal_amount: rec.subtotal_amount, cost_of_sales: 0, vat_rate: rec.vat_rate, vat_amount: rec.vat_amount, total_amount: rec.total_amount, items: rec.items }; downloadReceipt(inv, { name: rec.customer_name }, null); } },
+                            { label: "Delete", tone: "danger", onClick: () => { const next = manualReceipts.filter((r) => r.id !== rec.id); setManualReceipts(next); persist({ invoices, quotes, expenses, contracts, manual_receipts: next }); } }
+                          ]}
+                        />
+                      </div>
+                    )) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+                        No generated receipts yet. Use the form on the left to create one.
                       </div>
                     )}
                   </div>
