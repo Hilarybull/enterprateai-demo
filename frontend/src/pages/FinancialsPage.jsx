@@ -17,7 +17,6 @@ import { useWorkspaceStore } from "../store/workspace";
 import { hasFeatureAccess } from "../lib/permissions";
 import { formatCurrency } from "../lib/format";
 import { getProductCostOfSales, getProductSalesPrice } from "../lib/financialIntelligence";
-import { debugLog } from "../lib/debugLog";
 
 const OTHER_PRODUCT_ID = "__other__";
 
@@ -194,7 +193,7 @@ export default function FinancialsPage() {
   const [previewQuoteId, setPreviewQuoteId] = useState(null);
   const [previewReceiptInv, setPreviewReceiptInv] = useState(null);
   const [previewReceiptExp, setPreviewReceiptExp] = useState(null);
-  const [receiptForm, setReceiptForm] = useState({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), item: "", amount: "", notes: "" });
+  const [receiptForm, setReceiptForm] = useState({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), items: [{ description: "", quantity: "1", unit_price: "" }], vat_rate: "", notes: "" });
   const [previewManualReceipt, setPreviewManualReceipt] = useState(null);
   const [shareMenu, setShareMenu] = useState(null);
   const ARCHIVE_WARNING_DAYS = 60;
@@ -438,17 +437,10 @@ export default function FinancialsPage() {
   async function persist(next) {
     if (!workspaceId) return;
     try {
-      debugLog("FinancialsPage", "Persisting financials", { workspaceId, invoices: (next.invoices || []).length });
-    } catch (e) {}
-    try {
       // Increase timeout for workspace patch in case backend processing is slow
       await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: next } }, { timeoutMs: 120000 });
-      try {
-        debugLog("FinancialsPage", "Persist complete, calling refresh", { workspaceId });
-      } catch (e) {}
       refreshWorkspaceData();
     } catch (err) {
-      try { debugLog("FinancialsPage", "Persist error", { err: String(err) }); } catch (e) {}
       setError(err instanceof Error ? err.message : String(err));
       // Re-throw so callers can handle if needed
       throw err;
@@ -3462,88 +3454,166 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   </CardIcon>
                 }
               >
-                <div className="grid grid-cols-1 gap-3">
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div>
-                      <div className="ea-label">Receipt number</div>
-                      <Input
-                        placeholder="e.g. RCP-001"
-                        value={receiptForm.receipt_number}
-                        onChange={(e) => setReceiptForm((f) => ({ ...f, receipt_number: e.target.value }))}
-                      />
+                {(() => {
+                  const rfItems = Array.isArray(receiptForm.items) ? receiptForm.items : [{ description: "", quantity: "1", unit_price: "" }];
+                  const subtotal = rfItems.reduce((s, i) => s + Number(i.unit_price || 0) * Number(i.quantity || 1), 0);
+                  const vatRate = Number(receiptForm.vat_rate || 0);
+                  const vatAmount = Number((subtotal * vatRate / 100).toFixed(2));
+                  const grandTotal = Number((subtotal + vatAmount).toFixed(2));
+                  function updateRfItem(idx, field, val) {
+                    setReceiptForm((f) => {
+                      const next = [...(f.items || [])];
+                      next[idx] = { ...next[idx], [field]: val };
+                      return { ...f, items: next };
+                    });
+                  }
+                  function addRfItem() {
+                    setReceiptForm((f) => ({ ...f, items: [...(f.items || []), { description: "", quantity: "1", unit_price: "" }] }));
+                  }
+                  function removeRfItem(idx) {
+                    setReceiptForm((f) => ({ ...f, items: (f.items || []).filter((_, i) => i !== idx) }));
+                  }
+                  return (
+                    <div className="grid grid-cols-1 gap-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div>
+                          <div className="ea-label">Receipt number</div>
+                          <Input
+                            placeholder="e.g. RCP-001"
+                            value={receiptForm.receipt_number}
+                            onChange={(e) => setReceiptForm((f) => ({ ...f, receipt_number: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <div className="ea-label">Date *</div>
+                          <Input
+                            type="date"
+                            value={receiptForm.date}
+                            onChange={(e) => setReceiptForm((f) => ({ ...f, date: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="ea-label">Received from *</div>
+                        <Input
+                          list="financial-customers"
+                          placeholder="Customer / payer name"
+                          value={receiptForm.customer_name}
+                          onChange={(e) => setReceiptForm((f) => ({ ...f, customer_name: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <div className="ea-label mb-1.5">Items *</div>
+                        <div className="space-y-2">
+                          {rfItems.map((item, idx) => (
+                            <div key={idx} className="rounded-xl border border-slate-200 p-3">
+                              <div className="mb-2">
+                                <div className="ea-label">Description</div>
+                                <Input
+                                  placeholder="What was paid for?"
+                                  value={item.description}
+                                  onChange={(e) => updateRfItem(idx, "description", e.target.value)}
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <div className="ea-label">Qty</div>
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    value={item.quantity}
+                                    onChange={(e) => updateRfItem(idx, "quantity", e.target.value)}
+                                  />
+                                </div>
+                                <div>
+                                  <div className="ea-label">Unit price</div>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    placeholder="0.00"
+                                    value={item.unit_price}
+                                    onChange={(e) => updateRfItem(idx, "unit_price", e.target.value)}
+                                  />
+                                </div>
+                              </div>
+                              {rfItems.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeRfItem(idx)}
+                                  className="mt-2 text-xs text-rose-500 hover:text-rose-700"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={addRfItem}
+                            className="w-full rounded-xl border border-dashed border-slate-300 py-2 text-xs font-medium text-slate-500 hover:border-brand-400 hover:text-brand-600"
+                          >
+                            + Add item
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="ea-label">VAT / Tax rate (%) — optional</div>
+                        <Input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.1"
+                          placeholder="e.g. 20"
+                          value={receiptForm.vat_rate}
+                          onChange={(e) => setReceiptForm((f) => ({ ...f, vat_rate: e.target.value }))}
+                        />
+                      </div>
+                      {subtotal > 0 && (
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+                          <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(subtotal)}</span></div>
+                          {vatRate > 0 && <div className="flex justify-between"><span>VAT ({vatRate}%)</span><span>{formatMoney(vatAmount)}</span></div>}
+                          <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand total</span><span>{formatMoney(grandTotal)}</span></div>
+                        </div>
+                      )}
+                      <div>
+                        <div className="ea-label">Notes</div>
+                        <Input
+                          placeholder="Optional payment notes"
+                          value={receiptForm.notes}
+                          onChange={(e) => setReceiptForm((f) => ({ ...f, notes: e.target.value }))}
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          onClick={() => {
+                            const validItems = rfItems.filter((i) => i.description.trim() && Number(i.unit_price) > 0);
+                            if (!receiptForm.customer_name.trim() || !validItems.length) return;
+                            const manualInv = {
+                              invoice_id: receiptForm.receipt_number || null,
+                              paid_at: receiptForm.date || new Date().toISOString(),
+                              subtotal_amount: subtotal,
+                              cost_of_sales: 0,
+                              vat_rate: vatRate,
+                              vat_amount: vatAmount,
+                              total_amount: grandTotal,
+                              notes: receiptForm.notes || null,
+                              items: validItems.map((i) => ({ product_name: i.description, quantity: Number(i.quantity || 1), unit_price: Number(i.unit_price), unit_cost_of_sales: 0 }))
+                            };
+                            setPreviewManualReceipt({ inv: manualInv, cust: { name: receiptForm.customer_name.trim() } });
+                          }}
+                        >
+                          Preview receipt
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => setReceiptForm({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), items: [{ description: "", quantity: "1", unit_price: "" }], vat_rate: "", notes: "" })}
+                        >
+                          Clear
+                        </Button>
+                      </div>
                     </div>
-                    <div>
-                      <div className="ea-label">Date *</div>
-                      <Input
-                        type="date"
-                        value={receiptForm.date}
-                        onChange={(e) => setReceiptForm((f) => ({ ...f, date: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="ea-label">Received from *</div>
-                    <Input
-                      list="financial-customers"
-                      placeholder="Customer / payer name"
-                      value={receiptForm.customer_name}
-                      onChange={(e) => setReceiptForm((f) => ({ ...f, customer_name: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <div className="ea-label">Description *</div>
-                    <Input
-                      placeholder="What was paid for?"
-                      value={receiptForm.item}
-                      onChange={(e) => setReceiptForm((f) => ({ ...f, item: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <div className="ea-label">Amount *</div>
-                    <Input
-                      type="number"
-                      min="0"
-                      placeholder="0.00"
-                      value={receiptForm.amount}
-                      onChange={(e) => setReceiptForm((f) => ({ ...f, amount: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <div className="ea-label">Notes</div>
-                    <Input
-                      placeholder="Optional payment notes"
-                      value={receiptForm.notes}
-                      onChange={(e) => setReceiptForm((f) => ({ ...f, notes: e.target.value }))}
-                    />
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      onClick={() => {
-                        if (!receiptForm.customer_name.trim() || !receiptForm.item.trim() || !receiptForm.amount) return;
-                        const manualInv = {
-                          invoice_id: receiptForm.receipt_number || null,
-                          paid_at: receiptForm.date || new Date().toISOString(),
-                          subtotal_amount: Number(receiptForm.amount),
-                          cost_of_sales: 0,
-                          vat_rate: 0,
-                          vat_amount: 0,
-                          notes: receiptForm.notes || null,
-                          items: [{ product_name: receiptForm.item, quantity: 1, unit_price: Number(receiptForm.amount), unit_cost_of_sales: 0 }]
-                        };
-                        const manualCust = { name: receiptForm.customer_name.trim() };
-                        setPreviewManualReceipt({ inv: manualInv, cust: manualCust });
-                      }}
-                    >
-                      Preview receipt
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => setReceiptForm({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), item: "", amount: "", notes: "" })}
-                    >
-                      Clear
-                    </Button>
-                  </div>
-                </div>
+                  );
+                })()}
               </SectionCard>
 
               <SectionCard
