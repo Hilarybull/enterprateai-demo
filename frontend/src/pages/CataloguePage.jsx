@@ -25,6 +25,7 @@ export default function CataloguePage() {
   const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
+  const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
   const refreshWorkspaceData = useWorkspaceStore((s) => s.refreshWorkspaceData);
   const navigate = useNavigate();
 
@@ -444,7 +445,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     return () => {
       alive = false;
     };
-  }, [workspaceId, setWorkspaceId, setWorkspaceName]);
+  }, [workspaceId, setWorkspaceId, setWorkspaceName, workspaceDataRefreshTrigger]);
 
   useEffect(() => {
     if (!workspaceId) return;

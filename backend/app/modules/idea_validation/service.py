@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
+import asyncio
+import logging
 from typing import Any, Dict
 from uuid import uuid4
 
@@ -1030,6 +1032,9 @@ async def update_workspace(
     ws, _is_owner = await _get_accessible_workspace(user_id=user_id, workspace_id=workspace_id)
     now = datetime.now(timezone.utc)
 
+    logger = logging.getLogger(__name__)
+    logger.info("update_workspace start: workspace_id=%s user_id=%s", workspace_id, user_id)
+
     merged = dict(ws.data or {})
     data_patch = _augment_workspace_patch(data_patch or {}, existing=merged)
     for k, v in (data_patch or {}).items():
@@ -1042,18 +1047,28 @@ async def update_workspace(
 
     ws_name = (name and str(name).strip()) or ws.name or "Unnamed"
 
-    # Fire-and-forget snapshot to MongoDB (never blocks the save)
-    await _save_snapshot_to_mongo(str(ws.id), ws_name, dict(ws.data or {}), now.isoformat())
+    # Fire-and-forget snapshot to MongoDB (never block the main save)
+    try:
+        # schedule background task to avoid blocking PATCH
+        asyncio.create_task(_save_snapshot_to_mongo(str(ws.id), ws_name, dict(ws.data or {}), now.isoformat()))
+    except Exception as e:
+        logger.exception("snapshot scheduling failed for workspace %s: %s", workspace_id, e)
 
     update = {"data": merged, "updated_at": now.isoformat()}
     if name and str(name).strip():
         update["name"] = str(name).strip()
 
-    await sb_update(
-        "workspaces",
-        filters=[("id", "eq", ws.id), ("user_id", "eq", ws.user_id)],
-        payload=update,
-    )
+    try:
+        logger.info("calling sb_update for workspace %s", workspace_id)
+        await sb_update(
+            "workspaces",
+            filters=[("id", "eq", ws.id), ("user_id", "eq", ws.user_id)],
+            payload=update,
+        )
+        logger.info("sb_update completed for workspace %s", workspace_id)
+    except Exception as e:
+        logger.exception("sb_update failed for workspace %s: %s", workspace_id, e)
+        raise
     return await get_workspace(user_id=user_id, workspace_id=workspace_id)
 
 

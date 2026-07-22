@@ -65,7 +65,7 @@ function normaliseStatus(value, fallback = "pending") {
 function observedMonths(items) {
   const dates = items
     .map((item) => {
-      const ts = new Date(item?.created_at || item?.updated_at || item?.issued_at || "").getTime();
+      const ts = new Date(item?.paid_at || item?.issued_at || item?.incurred_at || item?.created_at || item?.updated_at || "").getTime();
       return Number.isFinite(ts) ? ts : null;
     })
     .filter((value) => value != null);
@@ -264,9 +264,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     return !isPendingWithinTerms(item, vendorTerms);
   });
 
-  const allRevenueInvoices = [...paidInvoices, ...pendingInvoices];
-  const totalInvoiceRevenue = allRevenueInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
-  const totalInvoiceCostOfSales = allRevenueInvoices.reduce((sum, item) => {
+  const totalInvoiceRevenue = paidInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
+  const totalInvoiceCostOfSales = paidInvoices.reduce((sum, item) => {
     if (item.cost_of_sales != null) return sum + toNumber(item.cost_of_sales);
     const productIds = getRecordProductIds(item);
     if (!productIds.length) {
@@ -276,8 +275,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     const perUnitCost = productIds.reduce((running, productId) => running + getProductCostOfSales(productMap.get(productId)), 0);
     return sum + perUnitCost * Math.max(1, toNumber(item.quantity || 1));
   }, 0);
-  const allExpenses = [...paidExpenses, ...pendingExpenses];
-  const totalOperationalExpenses = allExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
+  const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
 
   // Count distinct calendar months that actually have paid invoices/expenses.
   // This prevents the "marking an invoice paid reduces revenue" bug that occurs when using
@@ -285,7 +283,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   function distinctMonthCount(items) {
     const months = new Set();
     for (const item of items) {
-      const raw = item?.created_at || item?.updated_at || item?.issued_at;
+      const raw = item?.paid_at || item?.issued_at || item?.incurred_at || item?.created_at || item?.updated_at;
       if (!raw) continue;
       const d = new Date(raw);
       if (!Number.isFinite(d.getTime())) continue;
@@ -294,8 +292,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     return Math.max(1, months.size);
   }
 
-  const invoiceMonths = distinctMonthCount(allRevenueInvoices);
-  const expenseMonths = distinctMonthCount(allExpenses);
+  const invoiceMonths = distinctMonthCount(paidInvoices);
+  const expenseMonths = distinctMonthCount(paidExpenses);
   const invoiceRevenue = totalInvoiceRevenue > 0 ? Number((totalInvoiceRevenue / invoiceMonths).toFixed(2)) : 0;
   const invoiceCostOfSales = totalInvoiceCostOfSales > 0 ? Number((totalInvoiceCostOfSales / invoiceMonths).toFixed(2)) : 0;
   const operationalExpenses = totalOperationalExpenses > 0 ? Number((totalOperationalExpenses / expenseMonths).toFixed(2)) : 0;
@@ -491,14 +489,14 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
         reason_code: "HIGH_RECEIVABLE_EXPOSURE",
         severity: "high",
         title: "Critical receivable exposure",
-        detail: `Outstanding accruals (${formatCurrency(accrualsTotal, currency)}) exceed your current cash balance.`,
+        detail: `Outstanding receivables (${Math.round(accrualsTotal).toLocaleString()}) exceed your current cash balance.`,
       });
     } else if (exposureRatio >= 0.5) {
       pushRisk({
         reason_code: "MODERATE_RECEIVABLE_EXPOSURE",
         severity: "medium",
         title: "Significant receivable exposure",
-        detail: `Outstanding accruals represent over 50% of your current cash balance.`,
+        detail: `Outstanding receivables represent over 50% of your current cash balance.`,
       });
     }
   }

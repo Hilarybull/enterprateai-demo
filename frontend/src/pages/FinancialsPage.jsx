@@ -17,6 +17,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import { hasFeatureAccess } from "../lib/permissions";
 import { formatCurrency } from "../lib/format";
 import { getProductCostOfSales, getProductSalesPrice } from "../lib/financialIntelligence";
+import { debugLog } from "../lib/debugLog";
 
 const OTHER_PRODUCT_ID = "__other__";
 
@@ -175,6 +176,7 @@ export default function FinancialsPage() {
   const [pendingFinancialReport, setPendingFinancialReport] = useState(null);
   const [reportFilter, setReportFilter] = useState({ kpis: true, invoices: true, quotes: true, expenses: true, contracts: true });
   const [reportPreviewHtml, setReportPreviewHtml] = useState(null);
+  const [receiptDocType, setReceiptDocType] = useState("invoices"); // "invoices" | "expenses"
 
   // Reset to overview if current tab is locked by feature permissions
   useEffect(() => {
@@ -190,6 +192,10 @@ export default function FinancialsPage() {
 
   const [previewInvoiceId, setPreviewInvoiceId] = useState(null);
   const [previewQuoteId, setPreviewQuoteId] = useState(null);
+  const [previewReceiptInv, setPreviewReceiptInv] = useState(null);
+  const [previewReceiptExp, setPreviewReceiptExp] = useState(null);
+  const [receiptForm, setReceiptForm] = useState({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), item: "", amount: "", notes: "" });
+  const [previewManualReceipt, setPreviewManualReceipt] = useState(null);
   const [shareMenu, setShareMenu] = useState(null);
   const ARCHIVE_WARNING_DAYS = 60;
   const ARCHIVE_EXPIRE_DAYS = 90;
@@ -202,6 +208,7 @@ export default function FinancialsPage() {
     items: [],
     issued_at: new Date().toISOString().slice(0, 10),
     due_date: "",
+    vat_rate: "",
   });
   const [quoteForm, setQuoteForm] = useState({
     quotation_id: "",
@@ -327,10 +334,11 @@ export default function FinancialsPage() {
   useEffect(() => {
     let alive = true;
     async function load() {
+      if (!workspaceId) { setLoading(false); return; }
       setLoading(true);
       setError(null);
       try {
-        const ws = await apiRequest("/validation/me", "GET");
+        const ws = await apiRequest(`/validation/${workspaceId}`, "GET");
         if (!alive || !ws) return;
         setWorkspaceId(ws.id || workspaceId);
         setWorkspaceName(ws.name || null);
@@ -369,7 +377,7 @@ export default function FinancialsPage() {
     return () => {
       alive = false;
     };
-  }, [workspaceId, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, workspaceDataRefreshTrigger]);
+  }, [workspaceId, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, workspaceDataRefreshTrigger])
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -428,11 +436,27 @@ export default function FinancialsPage() {
   }, [workspaceId, invoices, quotes, expenses, contracts]);
 
   async function persist(next) {
-    await apiRequest("/validation/me", "PATCH", { data: { financials: next } });
-    refreshWorkspaceData();
+    if (!workspaceId) return;
+    try {
+      debugLog("FinancialsPage", "Persisting financials", { workspaceId, invoices: (next.invoices || []).length });
+    } catch (e) {}
+    try {
+      // Increase timeout for workspace patch in case backend processing is slow
+      await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: next } }, { timeoutMs: 120000 });
+      try {
+        debugLog("FinancialsPage", "Persist complete, calling refresh", { workspaceId });
+      } catch (e) {}
+      refreshWorkspaceData();
+    } catch (err) {
+      try { debugLog("FinancialsPage", "Persist error", { err: String(err) }); } catch (e) {}
+      setError(err instanceof Error ? err.message : String(err));
+      // Re-throw so callers can handle if needed
+      throw err;
+    }
   }
   async function persistIntegrations(next) {
-    await apiRequest("/validation/me", "PATCH", { data: { integrations: next } });
+    if (!workspaceId) return;
+    await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { integrations: next } });
   }
 
   const activeProducts = useMemo(() => products.filter((p) => !p.archived), [products]);
@@ -448,56 +472,56 @@ export default function FinancialsPage() {
   const archivedExpenses = useMemo(() => expenses.filter((e) => e.archived), [expenses]);
   const archivedContracts = useMemo(() => contracts.filter((c) => c.archived), [contracts]);
 
-  const invoicePendingCount = useMemo(() => activeInvoices.filter((i) => i.status === "pending").length, [activeInvoices]);
-  const invoicePaidCount = useMemo(() => activeInvoices.filter((i) => i.status === "paid").length, [activeInvoices]);
-  const expensePendingCount = useMemo(() => activeExpenses.filter((e) => e.status === "pending").length, [activeExpenses]);
-  const expensePaidCount = useMemo(() => activeExpenses.filter((e) => e.status === "paid").length, [activeExpenses]);
-  const contractPendingCount = useMemo(() => activeContracts.filter((c) => c.status === "pending").length, [activeContracts]);
-  const contractSignedCount = useMemo(() => activeContracts.filter((c) => c.status === "signed").length, [activeContracts]);
+  const invoicePendingCount = useMemo(() => activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "pending").length, [activeInvoices]);
+  const invoicePaidCount = useMemo(() => activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid").length, [activeInvoices]);
+  const expensePendingCount = useMemo(() => activeExpenses.filter((e) => String(e.status || "").toLowerCase() === "pending").length, [activeExpenses]);
+  const expensePaidCount = useMemo(() => activeExpenses.filter((e) => String(e.status || "").toLowerCase() === "paid").length, [activeExpenses]);
+  const contractPendingCount = useMemo(() => activeContracts.filter((c) => String(c.status || "").toLowerCase() === "pending").length, [activeContracts]);
+  const contractSignedCount = useMemo(() => activeContracts.filter((c) => String(c.status || "").toLowerCase() === "signed").length, [activeContracts]);
 
   const overviewKpis = useMemo(() => {
-    const paidInvs = activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid");
+    const revenueInvs = activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid");
     const unpaidInvs = activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid");
     const unpaidExps = activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid");
     const today = new Date();
     const overdueInvCount = unpaidInvs.filter((i) => i.due_date && new Date(i.due_date) < today).length;
-    const totalPaidRev = paidInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
+    const totalRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
     const pendingRec = unpaidInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
     const pendingPay = unpaidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
     function dmc(items) {
       const m = new Set();
       items.forEach((i) => {
-        const d = new Date(i.created_at || i.updated_at || i.issued_at || "");
+        const d = new Date(i.paid_at || i.issued_at || i.created_at || i.updated_at || "");
         if (Number.isFinite(d.getTime())) m.add(`${d.getFullYear()}-${d.getMonth()}`);
       });
       return Math.max(1, m.size);
     }
-    const monthlyRev = paidInvs.length ? totalPaidRev / dmc(paidInvs) : 0;
-    return { totalPaidRev, pendingRec, pendingPay, monthlyRev, overdueInvCount };
+    const monthlyRev = revenueInvs.length ? totalRevenue / dmc(revenueInvs) : 0;
+    return { totalRevenue, pendingRec, pendingPay, monthlyRev, overdueInvCount };
   }, [activeInvoices, activeExpenses]);
 
   const financialReportRows = useMemo(() => {
-    const paidInvs = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "paid");
-    const paidExps = expenses.filter(e => String(e.status || "").toLowerCase() === "paid");
+    const revenueInvs = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "paid");
+    const reportExpenses = activeExpenses;
     function dmc(items) {
       const s = new Set();
       for (const item of items) {
-        const raw = item?.created_at || item?.updated_at || item?.issued_at;
+        const raw = item?.paid_at || item?.issued_at || item?.incurred_at || item?.created_at || item?.updated_at;
         if (!raw) continue;
         const d = new Date(raw);
         if (Number.isFinite(d.getTime())) s.add(`${d.getFullYear()}-${d.getMonth()}`);
       }
       return Math.max(1, s.size);
     }
-    const totalPaidRev = paidInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
-    const totalPaidCos = paidInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
-    const totalPaidExp = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-    const monthlyRevenue = totalPaidRev / dmc(paidInvs);
-    const monthlyCos = totalPaidCos / dmc(paidInvs);
-    const monthlyExp = totalPaidExp / dmc(paidExps);
+    const totalRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
+    const totalCos = revenueInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
+    const totalExpenses = reportExpenses.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+    const monthlyRevenue = totalRevenue / dmc(revenueInvs);
+    const monthlyCos = totalCos / dmc(revenueInvs);
+    const monthlyExp = totalExpenses / dmc(reportExpenses);
     const grossMargin = monthlyRevenue > 0 ? (((monthlyRevenue - monthlyCos) / monthlyRevenue) * 100).toFixed(1) : null;
     const pendingReceivablesTotal = activeInvoices.filter(i => String(i.status || "").toLowerCase() !== "paid").reduce((s, i) => s + Number(i.total_amount || 0), 0);
-    const pendingPayablesTotal = expenses.filter(e => String(e.status || "").toLowerCase() !== "paid").reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+    const pendingPayablesTotal = activeExpenses.filter(e => String(e.status || "").toLowerCase() !== "paid").reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
     const kpiTiles = [
       { label: "Monthly run rate", value: formatMoney(monthlyRevenue) },
       { label: "Gross margin", value: grossMargin != null ? `${grossMargin}%` : "—" },
@@ -506,15 +530,44 @@ export default function FinancialsPage() {
     ];
     const invoiceListRaw = [...activeInvoices].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,30).map(inv=>({customer:inv.customer_name||"—",items:Array.isArray(inv.product_names)&&inv.product_names.length?inv.product_names.join(", "):inv.product_name||"—",amount:formatMoney(Number(inv.total_amount||0)),due:inv.due_date?new Date(inv.due_date).toLocaleDateString():inv.issued_at?new Date(inv.issued_at).toLocaleDateString():"—",status:String(inv.status||"pending")}));
     const quoteListRaw = [...activeQuotes].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,20).map(q=>({customer:q.customer_name||"—",items:Array.isArray(q.product_names)&&q.product_names.length?q.product_names.join(", "):q.product_name||"—",amount:formatMoney(Number(q.total_amount||q.subtotal_amount||0)),validity:q.validity_days?`${q.validity_days}d`:"—",status:String(q.status||"draft")}));
-    const expenseListRaw = [...expenses].sort((a,b)=>new Date(b.created_at||b.updated_at||0)-new Date(a.created_at||a.updated_at||0)).slice(0,20).map(e=>({vendor:e.vendor_name||e.counterparty_name||"—",description:e.description||e.expense_type||e.item||"—",amount:formatMoney(Number(e.price||e.total_amount||0)),due:e.due_date?new Date(e.due_date).toLocaleDateString():"—",status:String(e.status||"pending")}));
+    const expenseListRaw = [...activeExpenses].sort((a,b)=>new Date(b.created_at||b.updated_at||0)-new Date(a.created_at||a.updated_at||0)).slice(0,20).map(e=>({vendor:e.vendor_name||e.counterparty_name||"—",description:e.description||e.expense_type||e.item||"—",amount:formatMoney(Number(e.price||e.total_amount||0)),due:e.due_date?new Date(e.due_date).toLocaleDateString():"—",status:String(e.status||"pending")}));
     const contractListRaw = [...activeContracts].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).map(c=>({counterparty:c.counterparty_name||"—",type:c.contract_type||"—",price:formatMoney(Number(c.price||0)),cos:formatMoney(Number(c.cost_of_sales||0)),terms:c.payment_terms||"—",status:String(c.status||"active")}));
     return { kpiTiles, invoiceListRaw, quoteListRaw, expenseListRaw, contractListRaw, monthlyExp };
-  }, [activeInvoices, activeQuotes, activeContracts, expenses]); // eslint-disable-line
+  }, [activeInvoices, activeQuotes, activeExpenses, activeContracts]); // eslint-disable-line
 
   const hasArchiveWarning = useMemo(() => {
     const list = [...archivedInvoices, ...archivedQuotes, ...archivedExpenses, ...archivedContracts];
     return list.some((item) => daysSince(item.archived_at || item.updated_at || item.created_at) >= ARCHIVE_WARNING_DAYS);
   }, [archivedInvoices, archivedQuotes, archivedExpenses, archivedContracts]);
+
+  const overviewDrillItems = useMemo(() => {
+    switch (overviewDrill?.type) {
+      case "invoices-active":
+      case "invoices-paid":
+        return activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid");
+      case "invoices-unpaid":
+        return activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid");
+      case "invoices-overdue":
+        return activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid" && i.due_date && new Date(i.due_date) < new Date());
+      case "invoices-pending":
+        return activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "pending");
+      case "invoices-draft":
+        return activeInvoices.filter((i) => ["draft", "sent"].includes(String(i.status || "").toLowerCase()));
+      case "quotes-active":
+        return activeQuotes;
+      case "expenses-paid":
+        return activeExpenses.filter((e) => String(e.status || "").toLowerCase() === "paid");
+      case "expenses-unpaid":
+      case "expenses-pending":
+        return activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid");
+      case "contracts-pending":
+        return activeContracts.filter((c) => String(c.status || "").toLowerCase() === "pending");
+      case "contracts-signed":
+        return activeContracts.filter((c) => String(c.status || "").toLowerCase() === "signed");
+      default:
+        return Array.isArray(overviewDrill?.items) ? overviewDrill.items : [];
+    }
+  }, [activeContracts, activeExpenses, activeInvoices, activeQuotes, overviewDrill]);
 
   const integrationMeta = {
     quickbooks: { label: "QuickBooks", note: "Sync invoices, payments, and chart of accounts." },
@@ -733,7 +786,8 @@ export default function FinancialsPage() {
   function getDocumentGrandTotal(record) {
     const subtotal = Number(record?.subtotal_amount || 0);
     const costOfSales = Number(record?.cost_of_sales || 0);
-    return Number((subtotal + costOfSales).toFixed(2));
+    const vatAmount = Number(record?.vat_amount || 0);
+    return Number((subtotal + costOfSales + vatAmount).toFixed(2));
   }
 
   function renderShareStatus(status) {
@@ -804,18 +858,24 @@ export default function FinancialsPage() {
       <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Subtotal</th></tr>
     </thead>
     <tbody>
-      ${items.map((item) => `
+      ${items.map((item) => {
+        const unitFull = Number(item?.unit_price || 0) + Number(item?.unit_cost_of_sales || 0);
+        const qty = Number(item?.quantity || 0);
+        const subtotalFull = unitFull * qty;
+        return `
       <tr>
         <td>${item?.product_name || "Product / Service"}</td>
-        <td class="right">${item?.quantity || 0}</td>
-        <td class="right">${formatMoney(item?.unit_price || 0)}</td>
-        <td class="right"><strong>${formatMoney(item?.subtotal_amount || ((Number(item?.unit_price || 0) * Number(item?.quantity || 0))))}</strong></td>
-      </tr>
-      `).join("")}
+        <td class="right">${qty}</td>
+        <td class="right">${formatMoney(unitFull)}</td>
+        <td class="right"><strong>${formatMoney(subtotalFull)}</strong></td>
+      </tr>`;
+      }).join("")}
     </tbody>
   </table>
   <div class="card">
-    <div style="display:flex; justify-content:space-between; gap:12px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatMoney(Number(invoice?.subtotal_amount || 0) + Number(invoice?.cost_of_sales || 0))}</span></div>
+    ${Number(invoice?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatMoney(Number(invoice?.vat_amount || 0))}</span></div>` : ""}
+    <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
   </div>
   <div class="muted" style="margin-top:16px;">Thank you for your business.</div>
 </body>
@@ -882,12 +942,13 @@ export default function FinancialsPage() {
     </thead>
     <tbody>
       ${items.map((item) => {
+        const qty = Number(item?.quantity || 0);
         const unitCost = Number(item?.unit_price || 0) + Number(item?.unit_cost_of_sales || 0);
-        const lineTotal = unitCost * Number(item?.quantity || 0);
+        const lineTotal = unitCost * qty;
         return `
       <tr>
         <td>${item?.product_name || "Product / Service"}</td>
-        <td class="right">${item?.quantity || 0}</td>
+        <td class="right">${qty}</td>
         <td class="right">${formatMoney(unitCost)}</td>
         <td class="right"><strong>${formatMoney(lineTotal)}</strong></td>
       </tr>`;
@@ -904,19 +965,31 @@ export default function FinancialsPage() {
 
   function buildFinancialShareText(kind, record, customer, product) {
     const isInvoice = kind === "invoice";
-    const reference = isInvoice
-      ? record?.invoice_id || record?.id || "Draft invoice"
+    const isReceipt = kind === "receipt";
+    const isExpenseReceipt = kind === "expense-receipt";
+    if (isExpenseReceipt) {
+      const amount = Number(record?.price || record?.total_amount || 0);
+      return [
+        `Expense Receipt ${record?.id ? `EXP-${String(record.id).substring(0, 8).toUpperCase()}` : ""}`,
+        `Vendor: ${customer?.name || record?.vendor_name || "Vendor"}`,
+        `Description: ${record?.item || record?.description || "Expense"}`,
+        `Amount: ${formatMoney(amount)}`,
+        `Status: paid`,
+        ...(record?.incurred_at ? [`Incurred: ${new Date(record.incurred_at).toLocaleDateString()}`] : []),
+      ].join("\n");
+    }
+    const reference = (isInvoice || isReceipt)
+      ? record?.invoice_id || record?.id || "Draft"
       : record?.quotation_id || record?.id || "Draft quotation";
     const grandTotal = getDocumentGrandTotal(record);
     const itemName = summariseProductNames(record) || product?.name || "Product / Service";
     return [
-      `${isInvoice ? "Invoice" : "Quotation"} ${reference}`,
+      `${isReceipt ? "Receipt" : isInvoice ? "Invoice" : "Quotation"} ${reference}`,
       `Customer: ${customer?.name || "Customer"}`,
       `Items: ${itemName}`,
-      `Quantity: ${record?.quantity || 0}`,
       `Grand total: ${formatMoney(grandTotal)}`,
-      `Status: ${record?.status || (isInvoice ? "pending" : "draft")}`,
-      ...(record?.due_date ? [`Due date: ${new Date(record.due_date).toLocaleDateString()}`] : []),
+      `Status: ${record?.status || "paid"}`,
+      ...(record?.paid_at ? [`Payment date: ${new Date(record.paid_at).toLocaleDateString()}`] : []),
     ].join("\n");
   }
 
@@ -998,9 +1071,173 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     downloadPdfFile(html, filename);
   }
 
+  function buildReceiptHtml(invoice, customer, product) {
+    const grandTotal = getDocumentGrandTotal(invoice);
+    const preTaxTotal = Number(invoice?.subtotal_amount || 0) + Number(invoice?.cost_of_sales || 0);
+    const receiptId = invoice?.invoice_id ? `RCP-${invoice.invoice_id}` : (invoice?.id ? `RCP-${invoice.id.substring(0, 8).toUpperCase()}` : "RCP-DRAFT");
+    const paidDate = invoice?.paid_at || invoice?.updated_at || new Date().toISOString();
+    const items = Array.isArray(invoice?.items) && invoice.items.length
+      ? invoice.items
+      : [{ product_name: product?.name || invoice?.product_name || "Product / Service", quantity: invoice?.quantity || 0, unit_price: invoice?.unit_price || 0, unit_cost_of_sales: invoice?.unit_cost_of_sales || 0 }];
+    return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Receipt ${receiptId}</title>
+  <style>
+    *{color:#0f172a !important;}
+    body{font-family:Inter, Arial, sans-serif; background:#ffffff; padding:32px; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased; max-width:480px; margin:0 auto;}
+    .header{display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;}
+    .brand-block{text-align:left;}
+    .brand-block img{display:block; max-width:120px; max-height:48px; width:auto; height:auto; object-fit:contain; margin:0 0 10px 0;}
+    .brand-block h2{margin:0 0 2px; font-size:15px;}
+    .muted{color:#64748b !important; font-size:12px;}
+    .badge{display:inline-block; background:#dcfce7; color:#15803d !important; font-size:11px; font-weight:700; letter-spacing:.04em; padding:3px 10px; border-radius:999px; text-transform:uppercase;}
+    .divider{border:none; border-top:1px solid #e2e8f0; margin:14px 0;}
+    table{width:100%; border-collapse:collapse;}
+    th,td{padding:7px 0; text-align:left; font-size:13px;}
+    th{font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:#94a3b8 !important; border-bottom:1px solid #e2e8f0;}
+    td{border-bottom:1px solid #f1f5f9;}
+    .right{text-align:right;}
+    .totals{margin-top:14px;}
+    .totals-row{display:flex; justify-content:space-between; font-size:13px; padding:3px 0;}
+    .totals-row.grand{border-top:1px solid #e2e8f0; margin-top:6px; padding-top:8px; font-weight:700; font-size:15px;}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand-block">
+      ${workspaceLogo ? `<img src="${workspaceLogo}" alt="Logo"/>` : ""}
+      <h2>${workspaceName || "EnterprateAI"}</h2>
+      <div class="muted">Payment Receipt</div>
+    </div>
+    <div style="text-align:right;">
+      <div class="badge">PAID</div>
+      <div class="muted" style="margin-top:8px;">Receipt: ${receiptId}</div>
+      <div class="muted">Date: ${new Date(paidDate).toLocaleDateString()}</div>
+    </div>
+  </div>
+  <hr class="divider"/>
+  <div style="font-size:13px;">
+    <div class="muted">Received from</div>
+    <div style="font-weight:600; margin-top:2px;">${customer?.name || "Customer"}</div>
+    ${customer?.address ? `<div class="muted">${customer.address}</div>` : ""}
+    ${invoice?.invoice_id ? `<div class="muted" style="margin-top:6px;">Invoice ref: ${invoice.invoice_id}</div>` : ""}
+  </div>
+  <hr class="divider"/>
+  <table>
+    <thead><tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Amount</th></tr></thead>
+    <tbody>
+      ${items.map((item) => {
+        const qty = Number(item?.quantity || 0);
+        const unitFull = Number(item?.unit_price || 0) + Number(item?.unit_cost_of_sales || 0);
+        return `<tr>
+          <td>${item?.product_name || "Product / Service"}</td>
+          <td class="right">${qty}</td>
+          <td class="right">${formatMoney(unitFull)}</td>
+          <td class="right">${formatMoney(unitFull * qty)}</td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+  </table>
+  <div class="totals">
+    <div class="totals-row"><span class="muted">Total</span><span>${formatMoney(preTaxTotal)}</span></div>
+    ${Number(invoice?.vat_rate) > 0 ? `<div class="totals-row"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatMoney(Number(invoice?.vat_amount || 0))}</span></div>` : ""}
+    <div class="totals-row grand"><span>Grand Total</span><span>${formatMoney(grandTotal)}</span></div>
+  </div>
+  <hr class="divider"/>
+  <div class="muted" style="font-size:11px; text-align:center;">Thank you for your payment. This is your official receipt.</div>
+</body>
+</html>`;
+  }
+
   function downloadInvoice(invoice, customer, product) {
     const html = buildInvoiceHtml(invoice, customer, product);
     const filename = `invoice-${invoice?.invoice_id || invoice?.id || "draft"}.pdf`;
+    downloadPdfFile(html, filename);
+  }
+
+  function downloadReceipt(invoice, customer, product) {
+    const html = buildReceiptHtml(invoice, customer, product);
+    const filename = `receipt-${invoice?.invoice_id || invoice?.id || "draft"}.pdf`;
+    downloadPdfFile(html, filename);
+  }
+
+  function buildExpenseReceiptHtml(expense, vendor) {
+    const receiptId = expense?.id ? `EXP-${String(expense.id).substring(0, 8).toUpperCase()}` : "EXP-DRAFT";
+    const paidDate = expense?.updated_at || expense?.incurred_at || new Date().toISOString();
+    const amount = Number(expense?.price || expense?.total_amount || 0);
+    const itemName = expense?.item || expense?.description || expense?.expense_type || "Expense";
+    const vendorName = vendor?.name || expense?.vendor_name || "Vendor";
+    return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Receipt ${receiptId}</title>
+  <style>
+    *{color:#0f172a !important;}
+    body{font-family:Inter, Arial, sans-serif; background:#ffffff; padding:32px; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased; max-width:480px; margin:0 auto;}
+    .header{display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;}
+    .brand-block{text-align:left;}
+    .brand-block img{display:block; max-width:120px; max-height:48px; width:auto; height:auto; object-fit:contain; margin:0 0 10px 0;}
+    .brand-block h2{margin:0 0 2px; font-size:15px;}
+    .muted{color:#64748b !important; font-size:12px;}
+    .badge{display:inline-block; background:#dcfce7; color:#15803d !important; font-size:11px; font-weight:700; letter-spacing:.04em; padding:3px 10px; border-radius:999px; text-transform:uppercase;}
+    .divider{border:none; border-top:1px solid #e2e8f0; margin:14px 0;}
+    table{width:100%; border-collapse:collapse;}
+    th,td{padding:7px 0; text-align:left; font-size:13px;}
+    th{font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:#94a3b8 !important; border-bottom:1px solid #e2e8f0;}
+    td{border-bottom:1px solid #f1f5f9;}
+    .right{text-align:right;}
+    .totals{margin-top:14px;}
+    .totals-row{display:flex; justify-content:space-between; font-size:13px; padding:3px 0;}
+    .totals-row.grand{border-top:1px solid #e2e8f0; margin-top:6px; padding-top:8px; font-weight:700; font-size:15px;}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand-block">
+      ${workspaceLogo ? `<img src="${workspaceLogo}" alt="Logo"/>` : ""}
+      <h2>${workspaceName || "EnterprateAI"}</h2>
+      <div class="muted">Expense Receipt</div>
+    </div>
+    <div style="text-align:right;">
+      <div class="badge">PAID</div>
+      <div class="muted" style="margin-top:8px;">Receipt: ${receiptId}</div>
+      <div class="muted">Date: ${new Date(paidDate).toLocaleDateString()}</div>
+    </div>
+  </div>
+  <hr class="divider"/>
+  <div style="font-size:13px;">
+    <div class="muted">Paid to</div>
+    <div style="font-weight:600; margin-top:2px;">${vendorName}</div>
+    ${expense?.cost_type ? `<div class="muted">${expense.cost_type === "variable" ? "Variable" : "Fixed"} cost</div>` : ""}
+    ${expense?.incurred_at ? `<div class="muted" style="margin-top:4px;">Incurred: ${new Date(expense.incurred_at).toLocaleDateString()}</div>` : ""}
+  </div>
+  <hr class="divider"/>
+  <table>
+    <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>${itemName}</td>
+        <td class="right">${formatMoney(amount)}</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="totals">
+    <div class="totals-row grand"><span>Total Paid</span><span>${formatMoney(amount)}</span></div>
+  </div>
+  <hr class="divider"/>
+  <div class="muted" style="font-size:11px; text-align:center;">This confirms payment of the above expense.</div>
+</body>
+</html>`;
+  }
+
+  function downloadExpenseReceipt(expense, vendor) {
+    const html = buildExpenseReceiptHtml(expense, vendor);
+    const filename = `receipt-exp-${expense?.id || "draft"}.pdf`;
     downloadPdfFile(html, filename);
   }
 
@@ -1016,7 +1253,9 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     setShareNotice("Creating link...");
     try {
       const isInvoice = kind === "invoice";
-      const titlePrefix = isInvoice ? "Invoice" : "Sales Quotation";
+      const isReceipt = kind === "receipt";
+      const isExpenseReceipt = kind === "expense-receipt";
+      const titlePrefix = isExpenseReceipt ? "Expense Receipt" : isReceipt ? "Receipt" : isInvoice ? "Invoice" : "Sales Quotation";
       const shareIdField = "share_document_id";
       const existingDocumentId = record?.[shareIdField] || null;
       let token = null;
@@ -1024,15 +1263,16 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       let shareResponse = null;
 
       {
-        const rawHtml = isInvoice ? buildInvoiceHtml(record, customer, product) : buildQuoteHtml(record, customer, product);
+        const rawHtml = isExpenseReceipt ? buildExpenseReceiptHtml(record, customer) : isReceipt ? buildReceiptHtml(record, customer, product) : isInvoice ? buildInvoiceHtml(record, customer, product) : buildQuoteHtml(record, customer, product);
         const markdown = buildFinancialShareText(kind, record, customer, product);
+        const recId = record?.invoice_id || record?.id?.substring(0, 8).toUpperCase() || "";
         shareResponse = await apiRequest("/blueprint/financial-documents/share", "POST", {
           access_mode: shareConfig.access_mode || "link",
           email: shareConfig.email || null,
           expires_in_days: shareConfig.expires_in_days || 7,
           document_id: existingDocumentId,
-          type: isInvoice ? `invoice_template:${record.id}` : `sales_quotation:${record.id}`,
-          title: `${titlePrefix} — ${record?.invoice_id || (isInvoice ? `INV-${record?.id?.substring(0,8).toUpperCase()}` : record?.quotation_id || `QUO-${record?.id?.substring(0,8).toUpperCase()}`) || workspaceName || "Document"}`,
+          type: isExpenseReceipt ? `expense_receipt:${record.id}` : isReceipt ? `receipt:${record.id}` : isInvoice ? `invoice_template:${record.id}` : `sales_quotation:${record.id}`,
+          title: `${titlePrefix} — ${isExpenseReceipt ? `EXP-${recId}` : isReceipt ? `RCP-${recId}` : record?.invoice_id || (isInvoice ? `INV-${recId}` : record?.quotation_id || `QUO-${recId}`) || workspaceName || "Document"}`,
           company_name: workspaceName || "EnterprateAI",
           workspace_id: workspaceId || null,
           document_markdown: markdown,
@@ -1051,7 +1291,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
           );
           setInvoices(nextInvoices);
           await persist({ invoices: nextInvoices, quotes, expenses, contracts });
-        } else {
+        } else if (!isReceipt && !isExpenseReceipt) {
           const nextQuotes = quotes.map((item) =>
             item.id === record.id ? { ...item, [shareIdField]: documentId } : item
           );
@@ -1155,7 +1395,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "" });
     setEditingInvoiceId(null);
     setPreviewInvoiceId(null);
     setInvoiceFormError(null);
@@ -1254,7 +1494,10 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     }
     const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-    const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
+    const preTaxTotal = Number((subtotal + totalCostOfSales).toFixed(2));
+    const vatRate = Number(invoiceForm.vat_rate || 0);
+    const vatAmount = Number((preTaxTotal * vatRate / 100).toFixed(2));
+    const grandTotal = Number((preTaxTotal + vatAmount).toFixed(2));
     if (invoiceForm.contract_id) {
       const contract = activeContracts.find((c) => c.id === invoiceForm.contract_id);
       if (contract) {
@@ -1290,6 +1533,8 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       unit_cost_of_sales: lineItems.length === 1 ? Number(Number(lineItems[0]?.unit_cost_of_sales || 0).toFixed(2)) : null,
       subtotal_amount: subtotal,
       cost_of_sales: totalCostOfSales,
+      vat_rate: vatRate,
+      vat_amount: vatAmount,
       total_amount: grandTotal,
       status: editingInvoiceId ? next.find((i) => i.id === editingInvoiceId)?.status || "pending" : "pending",
       issued_at: invoiceForm.issued_at || null,
@@ -1457,14 +1702,14 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   async function updateStatus(type, id, status) {
     if (type === "invoice") {
       const next = invoices.map((i) =>
-        i.id === id ? { ...i, status, paid_at: status === "paid" ? new Date().toISOString() : null } : i
+        i.id === id ? { ...i, status, paid_at: status === "paid" ? new Date().toISOString() : null, updated_at: new Date().toISOString() } : i
       );
       setInvoices(next);
       await persist({ invoices: next, quotes, expenses, contracts });
     }
     if (type === "expense") {
       const next = expenses.map((e) =>
-        e.id === id ? { ...e, status, paid_at: status === "paid" ? new Date().toISOString() : null } : e
+        e.id === id ? { ...e, status, paid_at: status === "paid" ? new Date().toISOString() : null, updated_at: new Date().toISOString() } : e
       );
       setExpenses(next);
       await persist({ invoices, quotes, expenses: next, contracts });
@@ -1744,7 +1989,10 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
   const invoicePreviewItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
   const invoiceSubtotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceCostOfSalesTotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-  const invoiceGrandTotal = Number((invoiceSubtotal + invoiceCostOfSalesTotal).toFixed(2));
+  const invoiceVatRate = Number(invoiceForm.vat_rate || 0);
+  const invoicePreTaxTotal = Number((invoiceSubtotal + invoiceCostOfSalesTotal).toFixed(2));
+  const invoiceVatAmount = Number((invoicePreTaxTotal * invoiceVatRate / 100).toFixed(2));
+  const invoiceGrandTotal = Number((invoicePreTaxTotal + invoiceVatAmount).toFixed(2));
   const linkedContract = invoiceForm.contract_id ? activeContracts.find((c) => c.id === invoiceForm.contract_id) : null;
   const contractInvoiceLimit = linkedContract ? contractRemaining(linkedContract, editingInvoiceId) : null;
   const invoiceExceedsContractPrice = Boolean(linkedContract && contractInvoiceLimit && invoiceSubtotal > contractInvoiceLimit.price + 0.001);
@@ -1831,6 +2079,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             ...(canFinancialsFeature("quotations") ? [{ value: "quotes", label: "Quotations" }] : []),
             ...(canFinancialsFeature("expenses") ? [{ value: "expenses", label: "Expenses" }] : []),
             ...(canFinancialsFeature("contracts") ? [{ value: "contracts", label: "Contracts" }] : []),
+            { value: "receipts", label: "Receipts" },
             { value: "report", label: "Report" },
           ]}
         />
@@ -1869,17 +2118,17 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             <div className="mb-3 flex items-center justify-between">
               <span className="text-sm font-semibold text-slate-800">
                 {overviewDrill.label}
-                <span className="ml-1.5 text-slate-400 font-normal">({overviewDrill.items.length})</span>
+                <span className="ml-1.5 text-slate-400 font-normal">({overviewDrillItems.length})</span>
               </span>
               <button type="button" onClick={() => setOverviewDrill(null)} className="text-slate-400 hover:text-slate-600">
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
               </button>
             </div>
-            {overviewDrill.items.length === 0 ? (
+            {overviewDrillItems.length === 0 ? (
               <p className="text-[13px] text-slate-400 italic">No records found.</p>
             ) : (
               <div className="divide-y divide-slate-100 max-h-64 overflow-auto">
-                {overviewDrill.items.map((item) => {
+                {overviewDrillItems.map((item) => {
                   const isExp = overviewDrill.type.startsWith("expenses");
                   const isContract = overviewDrill.type.startsWith("contracts");
                   const isQuote = overviewDrill.type.startsWith("quotes");
@@ -2185,7 +2434,19 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <Input type="date" value={invoiceForm.due_date} onChange={(e) => setInvoiceForm((f) => ({ ...f, due_date: e.target.value }))} />
               </div>
             </div>
-            <div className={`grid grid-cols-1 items-start gap-3 ${invoiceCostOfSalesTotal > 0 ? "sm:grid-cols-2" : ""}`}>
+            <div>
+              <div className="ea-label">VAT / Tax rate (%)</div>
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                placeholder="e.g. 20"
+                value={invoiceForm.vat_rate}
+                onChange={(e) => setInvoiceForm((f) => ({ ...f, vat_rate: e.target.value }))}
+              />
+            </div>
+            <div className={`grid grid-cols-1 items-start gap-3 ${invoiceCostOfSalesTotal > 0 || invoiceVatAmount > 0 ? "sm:grid-cols-2" : ""}`}>
               <div>
                 <div className="ea-label">Subtotal</div>
                 <Input value={formatMoney(invoiceSubtotal)} disabled />
@@ -2196,8 +2457,14 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   <Input value={formatMoney(invoiceCostOfSalesTotal)} disabled />
                 </div>
               )}
+              {invoiceVatAmount > 0 && (
+                <div>
+                  <div className="ea-label">VAT ({invoiceVatRate}%)</div>
+                  <Input value={formatMoney(invoiceVatAmount)} disabled />
+                </div>
+              )}
             </div>
-            {invoiceCostOfSalesTotal > 0 && (
+            {(invoiceCostOfSalesTotal > 0 || invoiceVatAmount > 0) && (
               <div>
                 <div className="ea-label">Grand Total</div>
                 <Input value={formatMoney(invoiceGrandTotal)} disabled />
@@ -2277,6 +2544,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                   items: normalizeRecordItems(inv),
                                   issued_at: inv.issued_at || "",
                                   due_date: inv.due_date || "",
+                                  vat_rate: inv.vat_rate != null ? String(inv.vat_rate) : "",
                                 });
                             }
                           },
@@ -2288,6 +2556,10 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                             label: "View invoice",
                             onClick: () => setPreviewInvoiceId(inv.id)
                           },
+                          ...(String(inv.status || "").toLowerCase() === "paid" ? [{
+                            label: "Download receipt",
+                            onClick: () => downloadReceipt(inv, resolveCustomer(inv.customer_id, inv.customer_name), resolveProduct(inv.product_id, inv.product_name))
+                          }] : []),
                           {
                             label: "Archive",
                             onClick: () => archiveItem("invoice", inv.id)
@@ -3171,17 +3443,221 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
         </div>
         ) : null}
 
+        {activeTab === "receipts" ? (() => {
+          const paidInvoices = activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid");
+          const paidExpenses = activeExpenses.filter((e) => String(e.status || "").toLowerCase() === "paid");
+          return (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+              <SectionCard
+                title="Create receipt"
+                subtitle="Generate a standalone receipt for any payment."
+                className="lg:col-span-2"
+                icon={
+                  <CardIcon tone="bg-emerald-50 text-emerald-600">
+                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+                      <rect x="9" y="3" width="6" height="4" rx="1" />
+                      <path d="m9 12 2 2 4-4" />
+                    </svg>
+                  </CardIcon>
+                }
+              >
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <div className="ea-label">Receipt number</div>
+                      <Input
+                        placeholder="e.g. RCP-001"
+                        value={receiptForm.receipt_number}
+                        onChange={(e) => setReceiptForm((f) => ({ ...f, receipt_number: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <div className="ea-label">Date *</div>
+                      <Input
+                        type="date"
+                        value={receiptForm.date}
+                        onChange={(e) => setReceiptForm((f) => ({ ...f, date: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="ea-label">Received from *</div>
+                    <Input
+                      list="financial-customers"
+                      placeholder="Customer / payer name"
+                      value={receiptForm.customer_name}
+                      onChange={(e) => setReceiptForm((f) => ({ ...f, customer_name: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <div className="ea-label">Description *</div>
+                    <Input
+                      placeholder="What was paid for?"
+                      value={receiptForm.item}
+                      onChange={(e) => setReceiptForm((f) => ({ ...f, item: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <div className="ea-label">Amount *</div>
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0.00"
+                      value={receiptForm.amount}
+                      onChange={(e) => setReceiptForm((f) => ({ ...f, amount: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <div className="ea-label">Notes</div>
+                    <Input
+                      placeholder="Optional payment notes"
+                      value={receiptForm.notes}
+                      onChange={(e) => setReceiptForm((f) => ({ ...f, notes: e.target.value }))}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      onClick={() => {
+                        if (!receiptForm.customer_name.trim() || !receiptForm.item.trim() || !receiptForm.amount) return;
+                        const manualInv = {
+                          invoice_id: receiptForm.receipt_number || null,
+                          paid_at: receiptForm.date || new Date().toISOString(),
+                          subtotal_amount: Number(receiptForm.amount),
+                          cost_of_sales: 0,
+                          vat_rate: 0,
+                          vat_amount: 0,
+                          notes: receiptForm.notes || null,
+                          items: [{ product_name: receiptForm.item, quantity: 1, unit_price: Number(receiptForm.amount), unit_cost_of_sales: 0 }]
+                        };
+                        const manualCust = { name: receiptForm.customer_name.trim() };
+                        setPreviewManualReceipt({ inv: manualInv, cust: manualCust });
+                      }}
+                    >
+                      Preview receipt
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => setReceiptForm({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), item: "", amount: "", notes: "" })}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+              </SectionCard>
+
+              <SectionCard
+                title="Paid documents"
+                subtitle="View, share, or download receipts for paid invoices and expenses."
+                className="lg:col-span-3"
+                icon={
+                  <CardIcon tone="bg-slate-50 text-slate-600">
+                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  </CardIcon>
+                }
+              >
+                <div className="flex items-center gap-2 mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setReceiptDocType("invoices")}
+                    className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${receiptDocType === "invoices" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                  >
+                    Invoices
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReceiptDocType("expenses")}
+                    className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${receiptDocType === "expenses" ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                  >
+                    Expenses
+                  </button>
+                </div>
+
+                {receiptDocType === "invoices" ? (
+                  <div className="space-y-2">
+                    {paidInvoices.length ? paidInvoices.map((inv) => {
+                      const cust = resolveCustomer(inv.customer_id, inv.customer_name);
+                      const prod = resolveProduct(inv.product_id, inv.product_name);
+                      const grandTotal = getDocumentGrandTotal(inv);
+                      const dateStr = inv.paid_at || inv.updated_at || inv.issued_at;
+                      return (
+                        <div key={inv.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-slate-900">{cust?.name || inv.customer_name || "Customer"}</span>
+                              <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Paid</span>
+                            </div>
+                            <div className="mt-0.5 text-xs text-slate-500">
+                              {inv.invoice_id ? `#${inv.invoice_id}` : ""}{inv.invoice_id && dateStr ? " · " : ""}{dateStr ? new Date(dateStr).toLocaleDateString() : ""}{" · "}{formatMoney(grandTotal)}
+                            </div>
+                          </div>
+                          <ActionMenu
+                            items={[
+                              { label: "View receipt", onClick: () => setPreviewReceiptInv({ inv, cust, prod }) },
+                              { label: "Share", onClick: () => setShareDialog({ kind: "receipt", record: inv, customer: cust, product: prod }) },
+                              { label: "Download receipt", onClick: () => downloadReceipt(inv, cust, prod) }
+                            ]}
+                          />
+                        </div>
+                      );
+                    }) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+                        No paid invoices yet. Mark an invoice as paid to generate a receipt.
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {paidExpenses.length ? paidExpenses.map((exp) => {
+                      const vendor = resolveVendor(exp.vendor_id, exp.vendor_name);
+                      const amount = Number(exp.price || exp.total_amount || 0);
+                      const dateStr = exp.updated_at || exp.incurred_at;
+                      return (
+                        <div key={exp.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-slate-900">{vendor?.name || exp.vendor_name || "Vendor"}</span>
+                              <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Paid</span>
+                            </div>
+                            <div className="mt-0.5 text-xs text-slate-500">
+                              {exp.item || exp.description || "Expense"}{" · "}{dateStr ? new Date(dateStr).toLocaleDateString() : ""}{" · "}{formatMoney(amount)}
+                            </div>
+                          </div>
+                          <ActionMenu
+                            items={[
+                              { label: "View receipt", onClick: () => setPreviewReceiptExp({ exp, vendor }) },
+                              { label: "Share", onClick: () => setShareDialog({ kind: "expense-receipt", record: exp, customer: vendor, product: null }) },
+                              { label: "Download receipt", onClick: () => downloadExpenseReceipt(exp, vendor) }
+                            ]}
+                          />
+                        </div>
+                      );
+                    }) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+                        No paid expenses yet. Mark an expense as paid to generate a receipt.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </SectionCard>
+            </div>
+          );
+        })() : null}
+
 
       </div>
       ) : null}
 
       {activeTab === "overview" ? (() => {
-        const paidInvs = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "paid");
-        const paidExps = expenses.filter(e => String(e.status || "").toLowerCase() === "paid");
+        const revenueInvs = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "paid");
+        const reportExpenses = activeExpenses;
         function _dmc(items) {
           const s = new Set();
           for (const item of items) {
-            const raw = item?.created_at || item?.updated_at || item?.issued_at;
+            const raw = item?.paid_at || item?.issued_at || item?.incurred_at || item?.created_at || item?.updated_at;
             if (!raw) continue;
             const d = new Date(raw);
             if (!Number.isFinite(d.getTime())) continue;
@@ -3189,17 +3665,17 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           }
           return Math.max(1, s.size);
         }
-        const invMonths = _dmc(paidInvs);
-        const expMonths = _dmc(paidExps);
-        const totalPaidRev = paidInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
-        const totalPaidCos = paidInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
-        const totalPaidExp = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-        const monthlyRevenue = totalPaidRev / invMonths;
-        const monthlyCos = totalPaidCos / invMonths;
-        const monthlyExp = totalPaidExp / expMonths;
+        const invMonths = _dmc(revenueInvs);
+        const expMonths = _dmc(reportExpenses);
+        const totalRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
+        const totalCos = revenueInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
+        const totalExpenses = reportExpenses.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+        const monthlyRevenue = totalRevenue / invMonths;
+        const monthlyCos = totalCos / invMonths;
+        const monthlyExp = totalExpenses / expMonths;
         const grossMargin = monthlyRevenue > 0 ? (((monthlyRevenue - monthlyCos) / monthlyRevenue) * 100).toFixed(1) : null;
         const pendingReceivablesTotal = activeInvoices.filter(i => String(i.status || "").toLowerCase() !== "paid").reduce((s, i) => s + Number(i.total_amount || 0), 0);
-        const pendingPayablesTotal = expenses.filter(e => String(e.status || "").toLowerCase() !== "paid").reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+        const pendingPayablesTotal = activeExpenses.filter(e => String(e.status || "").toLowerCase() !== "paid").reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
 
         const invoiceRows = [...activeInvoices]
           .sort((a, b) => new Date(b.created_at || b.updated_at || 0) - new Date(a.created_at || a.updated_at || 0))
@@ -3223,7 +3699,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             status: <StatusBadge status={q.status || "draft"} />,
           }));
 
-        const expenseRows = [...expenses]
+        const expenseRows = [...activeExpenses]
           .sort((a, b) => new Date(b.created_at || b.updated_at || 0) - new Date(a.created_at || a.updated_at || 0))
           .slice(0, 20)
           .map(e => ({
@@ -3482,6 +3958,124 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
         </div>
       )}
 
+      {previewReceiptInv ? (() => {
+        const { inv, cust, prod } = previewReceiptInv;
+        const receiptHtml = buildReceiptHtml(inv, cust, prod);
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setPreviewReceiptInv(null); }}
+          >
+            <div className="ea-dialog w-full max-w-lg max-h-[90vh] overflow-hidden bg-white flex flex-col">
+              <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 shrink-0">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Receipt preview</div>
+                  <div className="text-xs text-slate-500">{cust?.name || inv?.customer_name || "Customer"} · {inv?.invoice_id ? `#${inv.invoice_id}` : ""}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="secondary" onClick={() => downloadReceipt(inv, cust, prod)}>Download</Button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewReceiptInv(null)}
+                    className="rounded-lg px-2 py-1 text-sm text-slate-600 hover:bg-slate-100"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto">
+                <iframe
+                  srcDoc={receiptHtml}
+                  title="Receipt preview"
+                  className="w-full border-0"
+                  style={{ height: "calc(90vh - 68px)" }}
+                  sandbox="allow-same-origin"
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })() : null}
+
+      {previewManualReceipt ? (() => {
+        const { inv, cust } = previewManualReceipt;
+        const receiptHtml = buildReceiptHtml(inv, cust, null);
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setPreviewManualReceipt(null); }}
+          >
+            <div className="ea-dialog w-full max-w-lg max-h-[90vh] overflow-hidden bg-white flex flex-col">
+              <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 shrink-0">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Receipt preview</div>
+                  <div className="text-xs text-slate-500">{cust?.name || "Customer"}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="secondary" onClick={() => { downloadReceipt(inv, cust, null); }}>Download</Button>
+                  <Button variant="secondary" onClick={() => setShareDialog({ kind: "receipt", record: inv, customer: cust, product: null })}>Share</Button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewManualReceipt(null)}
+                    className="rounded-lg px-2 py-1 text-sm text-slate-600 hover:bg-slate-100"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto">
+                <iframe
+                  srcDoc={receiptHtml}
+                  title="Receipt preview"
+                  className="w-full border-0"
+                  style={{ height: "calc(90vh - 68px)" }}
+                  sandbox="allow-same-origin"
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })() : null}
+
+      {previewReceiptExp ? (() => {
+        const { exp, vendor } = previewReceiptExp;
+        const receiptHtml = buildExpenseReceiptHtml(exp, vendor);
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setPreviewReceiptExp(null); }}
+          >
+            <div className="ea-dialog w-full max-w-lg max-h-[90vh] overflow-hidden bg-white flex flex-col">
+              <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 shrink-0">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Expense receipt preview</div>
+                  <div className="text-xs text-slate-500">{vendor?.name || exp?.vendor_name || "Vendor"} · {exp?.item || exp?.description || "Expense"}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="secondary" onClick={() => downloadExpenseReceipt(exp, vendor)}>Download</Button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewReceiptExp(null)}
+                    className="rounded-lg px-2 py-1 text-sm text-slate-600 hover:bg-slate-100"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto">
+                <iframe
+                  srcDoc={receiptHtml}
+                  title="Expense receipt preview"
+                  className="w-full border-0"
+                  style={{ height: "calc(90vh - 68px)" }}
+                  sandbox="allow-same-origin"
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })() : null}
+
       {previewInvoice ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
@@ -3506,6 +4100,14 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 >
                   Download
                 </Button>
+                {String(previewInvoice?.status || "").toLowerCase() === "paid" && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => downloadReceipt(previewInvoice, previewCustomer, previewProduct)}
+                  >
+                    Receipt
+                  </Button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -3578,12 +4180,30 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 })}
               </div>
 
-              <div className="mt-4 flex justify-end border-t border-slate-200 pt-3">
-                <div className="text-sm">
-                  <span className="mr-6 text-slate-500">Grand Total</span>
-                  <span className="font-semibold text-slate-900">{formatMoney(getDocumentGrandTotal(previewInvoice))}</span>
-                </div>
-              </div>
+              {(() => {
+                const items = Array.isArray(previewInvoice.items) && previewInvoice.items.length ? previewInvoice.items : [{ unit_price: previewInvoice.unit_price, unit_cost_of_sales: previewInvoice.unit_cost_of_sales, quantity: previewInvoice.quantity }];
+                const preVatTotal = items.reduce((s, it) => s + (Number(it.unit_price || 0) + Number(it.unit_cost_of_sales || 0)) * Number(it.quantity || 0), 0);
+                const vatAmt = Number(previewInvoice.vat_amount || 0);
+                const grandTotal = getDocumentGrandTotal(previewInvoice);
+                return (
+                  <div className="mt-4 border-t border-slate-200 pt-3 flex flex-col items-end gap-1.5 text-sm">
+                    <div className="flex justify-end gap-6">
+                      <span className="text-slate-500">Total</span>
+                      <span className="text-slate-700">{formatMoney(preVatTotal)}</span>
+                    </div>
+                    {Number(previewInvoice.vat_rate) > 0 && (
+                      <div className="flex justify-end gap-6">
+                        <span className="text-slate-500">VAT ({previewInvoice.vat_rate}%)</span>
+                        <span className="text-slate-700">{formatMoney(vatAmt)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-end gap-6 border-t border-slate-200 pt-1.5 mt-0.5">
+                      <span className="font-semibold text-slate-900">Grand Total</span>
+                      <span className="font-bold text-slate-900">{formatMoney(grandTotal)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="mt-4 text-xs text-slate-500">
                 Thank you for your business. If you have questions about this invoice, contact us to update details.
@@ -3673,14 +4293,19 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   quantity: previewQuote.quantity,
                   unit_price: previewQuote.unit_price,
                   subtotal_amount: previewQuote.subtotal_amount,
-                }]).map((item, index) => (
-                  <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
-                    <div className="col-span-6">{item.product_name || "Product / Service"}</div>
-                    <div className="col-span-2 text-right">{item.quantity}</div>
-                    <div className="col-span-2 text-right">{formatMoney(item.unit_price)}</div>
-                    <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(item.subtotal_amount || (Number(item.unit_price || 0) * Number(item.quantity || 0)))}</div>
-                  </div>
-                ))}
+                }]).map((item, index) => {
+                  const qty = Number(item.quantity || 0);
+                  const unitFull = Number(item.unit_price || 0) + Number(item.unit_cost_of_sales || 0);
+                  const subtotalFull = unitFull * qty;
+                  return (
+                    <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
+                      <div className="col-span-6">{item.product_name || "Product / Service"}</div>
+                      <div className="col-span-2 text-right">{qty}</div>
+                      <div className="col-span-2 text-right">{formatMoney(unitFull)}</div>
+                      <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(subtotalFull)}</div>
+                    </div>
+                  );
+                })}
               </div>
 
               <div className="mt-4 flex justify-end border-t border-slate-200 pt-3">
@@ -3752,12 +4377,18 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           }
           onSendEmail={sendFinancialShareEmail}
           getMailtoHref={({ url, email, expiryDays }) => {
-            const isInvoice = shareDialog.kind === "invoice";
+            const k = shareDialog.kind;
+            const isInvoice = k === "invoice";
+            const isReceipt = k === "receipt";
+            const isExpenseReceipt = k === "expense-receipt";
             const recipient = encodeURIComponent(email || shareDialog.customer?.email || "");
-            const reference = isInvoice
+            const reference = (isInvoice || isReceipt)
               ? shareDialog.record?.invoice_id || shareDialog.record?.id || ""
+              : isExpenseReceipt
+              ? `EXP-${String(shareDialog.record?.id || "").substring(0, 8).toUpperCase()}`
               : shareDialog.record?.quotation_id || shareDialog.record?.id || "";
-            const subject = encodeURIComponent(`${isInvoice ? "Invoice" : "Quotation"} ${reference}`);
+            const docLabel = isReceipt ? "Receipt" : isExpenseReceipt ? "Expense Receipt" : isInvoice ? "Invoice" : "Quotation";
+            const subject = encodeURIComponent(`${docLabel} ${reference}`);
             const body = encodeURIComponent(
               `Hi${shareDialog.customer?.name ? ` ${shareDialog.customer.name}` : ""},\n\nHere is your shared document link:\n${url}\n\nThis link expires in ${expiryDays} day${expiryDays !== 1 ? "s" : ""}.\n\nThank you.`
             );

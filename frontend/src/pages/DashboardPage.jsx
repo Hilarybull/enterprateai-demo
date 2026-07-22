@@ -127,7 +127,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
             <StatTile label="Total Revenue" value={formatCurrency(metrics.totalRevenue, currency)} />
             <StatTile label="Expenses + cost of sales" value={formatCurrency(metrics.totalCosts, currency)} tone="warn" />
-            <StatTile label="Accruals" value={formatCurrency(metrics.accruals || 0, currency)} />
+            <StatTile label="Receivables" value={formatCurrency(metrics.accruals || 0, currency)} />
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm min-h-[124px] flex flex-col">
               <div className="text-[12px] font-semibold text-slate-500">Active risks</div>
               <div className="mt-1 text-[20px] font-semibold tracking-tight text-slate-900">

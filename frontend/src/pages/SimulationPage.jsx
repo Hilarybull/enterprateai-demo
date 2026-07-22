@@ -38,7 +38,7 @@ function asNonEmptyString(value, fallback) {
 function observedMonths(items) {
   const dates = items
     .map((item) => {
-      const ts = new Date(item?.created_at || item?.updated_at || item?.issued_at || "").getTime();
+      const ts = new Date(item?.paid_at || item?.issued_at || item?.created_at || item?.updated_at || "").getTime();
       return Number.isFinite(ts) ? ts : null;
     })
     .filter((value) => value != null);
@@ -100,6 +100,7 @@ export default function SimulationPage() {
   const validation = useWorkspaceStore((s) => s.validation);
   const inputs = useWorkspaceStore((s) => s.inputs);
   const currency = useWorkspaceStore((s) => s.currency);
+  const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
   const email = useAuthStore((s) => s.email);
   const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
@@ -314,7 +315,7 @@ export default function SimulationPage() {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onFocus);
     };
-  }, [workspaceId]);
+  }, [workspaceId, workspaceDataRefreshTrigger]);
 
   useEffect(() => {
     lastSnapshotHashRef.current = "";
@@ -628,13 +629,13 @@ export default function SimulationPage() {
     if (code === "HIGH_RECEIVABLE_EXPOSURE") {
       return {
         title: "Critical receivable exposure",
-        detail: risk?.detail || "Accruals exceed current cash balance. Liquidity depends entirely on collections."
+        detail: risk?.detail || "Receivables exceed current cash balance. Liquidity depends entirely on collections."
       };
     }
     if (code === "MODERATE_RECEIVABLE_EXPOSURE") {
       return {
         title: "Moderate receivable exposure",
-        detail: risk?.detail || "Accruals represent over 50% of your cash balance."
+        detail: risk?.detail || "Receivables represent over 50% of your cash balance."
       };
     }
     return {
@@ -1230,7 +1231,7 @@ export default function SimulationPage() {
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
-                    {["Month","Revenue","Accruals","Expenses","Cost of sales","Total costs","Gross Profit","Gross Margin %","Net Profit","Cum. Profit","Cash balance","Status"].map((h) => (
+                    {["Month","Revenue","Receivables","Expenses","Cost of sales","Total costs","Gross Profit","Gross Margin %","Net Profit","Cum. Profit","Cash balance","Status"].map((h) => (
                       <th key={h} className="px-3 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -1895,13 +1896,13 @@ function ScenarioOutput({
     if (code === "HIGH_RECEIVABLE_EXPOSURE") {
       return {
         title: "Critical receivable exposure",
-        detail: "Outstanding accruals exceed cash balance. High dependency on collections."
+        detail: "Outstanding receivables exceed cash balance. High dependency on collections."
       };
     }
     if (code === "MODERATE_RECEIVABLE_EXPOSURE") {
       return {
         title: "Significant receivable exposure",
-        detail: "Outstanding accruals exceed 50% of cash balance. Monitoring suggested."
+        detail: "Outstanding receivables exceed 50% of cash balance. Monitoring suggested."
       };
     }
     if (code === "CRITICAL_COLLECTION_RISK") {
@@ -2106,7 +2107,7 @@ function ScenarioOutput({
                   </th>
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1.5">
-                      <span>Accruals</span>
+                      <span>Receivables</span>
                       <InfoTip text="Outstanding payments owed to you by customers." />
                     </div>
                   </th>
