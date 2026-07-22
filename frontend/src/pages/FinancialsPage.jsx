@@ -484,7 +484,7 @@ export default function FinancialsPage() {
   const archivedExpenses = useMemo(() => expenses.filter((e) => e.archived), [expenses]);
   const archivedContracts = useMemo(() => contracts.filter((c) => c.archived), [contracts]);
 
-  const invoicePendingCount = useMemo(() => activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "pending").length, [activeInvoices]);
+  const invoicePendingCount = useMemo(() => activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered").length, [activeInvoices]);
   const invoicePaidCount = useMemo(() => activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid").length, [activeInvoices]);
   const expensePendingCount = useMemo(() => activeExpenses.filter((e) => String(e.status || "").toLowerCase() === "pending").length, [activeExpenses]);
   const expensePaidCount = useMemo(() => activeExpenses.filter((e) => String(e.status || "").toLowerCase() === "paid").length, [activeExpenses]);
@@ -493,23 +493,39 @@ export default function FinancialsPage() {
 
   const overviewKpis = useMemo(() => {
     const revenueInvs = activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid");
-    const unpaidInvs = activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid");
+    const deliveredInvs = activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered");
     const unpaidExps = activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid");
+    const paidExps = activeExpenses.filter((e) => String(e.status || "").toLowerCase() === "paid");
     const today = new Date();
-    const overdueInvCount = unpaidInvs.filter((i) => i.due_date && new Date(i.due_date) < today).length;
-    const totalRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
-    const pendingRec = unpaidInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
+    const overdueInvCount = deliveredInvs.filter((i) => i.due_date && new Date(i.due_date) < today).length;
+    // Revenue = grand total from paid + delivered (accrual: earned when service delivered)
+    const earnedInvs = [...revenueInvs, ...deliveredInvs];
+    const totalRevenue = earnedInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+    const paidCoS = revenueInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
+    const paidVat = revenueInvs.reduce((s, i) => s + Number(i.vat_amount || 0), 0);
+    // Receivables = delivered invoices only (subset of revenue, not yet collected)
+    const pendingRec = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
     const pendingPay = unpaidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-    function dmc(items) {
-      const m = new Set();
+    const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+    // Cash = paid invoices only (grand total received - CoS - VAT - paid expenses)
+    const paidRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+    const cashBalance = paidRevenue - paidCoS - paidVat - paidExpTotal;
+    // MRR = most recent month's grand total from paid + delivered invoices
+    function mostRecentMonthRev(items) {
+      const byMonth = new Map();
       items.forEach((i) => {
         const d = new Date(i.paid_at || i.issued_at || i.created_at || i.updated_at || "");
-        if (Number.isFinite(d.getTime())) m.add(`${d.getFullYear()}-${d.getMonth()}`);
+        if (!Number.isFinite(d.getTime())) return;
+        const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, "0")}`;
+        byMonth.set(key, (byMonth.get(key) || 0) + Number(i.total_amount || i.subtotal_amount || 0));
       });
-      return Math.max(1, m.size);
+      if (!byMonth.size) return 0;
+      const latestKey = [...byMonth.keys()].sort().at(-1);
+      return byMonth.get(latestKey) || 0;
     }
-    const monthlyRev = revenueInvs.length ? totalRevenue / dmc(revenueInvs) : 0;
-    return { totalRevenue, pendingRec, pendingPay, monthlyRev, overdueInvCount };
+    const monthlyRev = earnedInvs.length ? mostRecentMonthRev(earnedInvs) : 0;
+    const arr = Number((monthlyRev * 12).toFixed(2));
+    return { totalRevenue, pendingRec, pendingPay, monthlyRev, overdueInvCount, cashBalance, arr };
   }, [activeInvoices, activeExpenses]);
 
   const financialReportRows = useMemo(() => {
@@ -2139,20 +2155,22 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
       <div className="mt-6 space-y-4"> {/* overview */}
 
         {/* KPI tiles */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
           {[
+            { label: "Annual Recurring Revenue", value: formatMoney(overviewKpis.arr), sub: "annualised from current revenue", tone: "slate", type: "invoices-paid", wide: true, items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
             { label: "Monthly run rate", value: formatMoney(overviewKpis.monthlyRev), sub: "from paid invoices", tone: "emerald", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
-            { label: "Pending receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${invoicePendingCount} unpaid invoice${invoicePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate", type: "invoices-unpaid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid") },
+            { label: "Cash", value: formatMoney(overviewKpis.cashBalance), sub: "paid in − paid out", tone: overviewKpis.cashBalance >= 0 ? "emerald" : "rose", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
+            { label: "Receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${invoicePendingCount} delivered invoice${invoicePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate", type: "invoices-unpaid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered") },
             { label: "Pending payables", value: formatMoney(overviewKpis.pendingPay), sub: `${expensePendingCount} unpaid expense${expensePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingPay > 0 ? "rose" : "slate", type: "expenses-unpaid", items: activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid") },
-            { label: "Overdue invoices", value: overviewKpis.overdueInvCount, sub: overviewKpis.overdueInvCount > 0 ? "require immediate action" : "all within terms", tone: overviewKpis.overdueInvCount > 0 ? "rose" : "emerald", type: "invoices-overdue", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid" && i.due_date && new Date(i.due_date) < new Date()) },
+            { label: "Overdue invoices", value: overviewKpis.overdueInvCount, sub: overviewKpis.overdueInvCount > 0 ? "require immediate action" : "all within terms", tone: overviewKpis.overdueInvCount > 0 ? "rose" : "emerald", type: "invoices-overdue", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" && i.due_date && new Date(i.due_date) < new Date()) },
           ].map((kpi) => {
             const isOpen = overviewDrill?.type === kpi.type;
             return (
               <button key={kpi.label} type="button"
                 onClick={() => setOverviewDrill(isOpen ? null : { label: kpi.label, type: kpi.type, items: kpi.items })}
-                className={`rounded-2xl border bg-white p-4 shadow-sm text-left w-full transition hover:shadow-md ${isOpen ? "border-brand-400 ring-1 ring-brand-200" : "border-slate-200 hover:border-slate-300"}`}
+                className={`rounded-2xl border bg-white p-4 shadow-sm text-left w-full transition hover:shadow-md ${kpi.wide ? "lg:col-span-2" : ""} ${isOpen ? "border-brand-400 ring-1 ring-brand-200" : "border-slate-200 hover:border-slate-300"}`}
               >
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 whitespace-nowrap">{kpi.label}</div>
                 <div className={`mt-1.5 text-2xl font-bold ${kpi.tone === "emerald" ? "text-emerald-600" : kpi.tone === "rose" ? "text-rose-600" : kpi.tone === "amber" ? "text-amber-600" : "text-slate-900"}`}>
                   {kpi.value}
                 </div>
@@ -2208,7 +2226,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                       </div>
                       <div className="shrink-0 flex flex-col items-end gap-0.5">
                         <span className="text-sm font-semibold text-slate-800">{formatMoney(amount)}</span>
-                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${item.status === "paid" || item.status === "signed" ? "bg-emerald-50 text-emerald-700" : item.status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${item.status === "paid" || item.status === "signed" ? "bg-emerald-50 text-emerald-700" : item.status === "delivered" ? "bg-blue-50 text-blue-700" : item.status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
                           {item.status || "—"}
                         </span>
                       </div>
@@ -2226,7 +2244,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             <div className="mt-3 space-y-1">
               {[
                 { label: "Paid", count: invoicePaidCount, color: "bg-emerald-500", type: "invoices-paid", items: activeInvoices.filter((i) => i.status === "paid") },
-                { label: "Pending", count: invoicePendingCount, color: "bg-amber-400", type: "invoices-pending", items: activeInvoices.filter((i) => i.status === "pending") },
+                { label: "Delivered", count: activeInvoices.filter((i) => i.status === "delivered").length, color: "bg-blue-400", type: "invoices-delivered", items: activeInvoices.filter((i) => i.status === "delivered") },
+                { label: "Pending", count: activeInvoices.filter((i) => i.status === "pending").length, color: "bg-amber-400", type: "invoices-pending", items: activeInvoices.filter((i) => i.status === "pending") },
                 { label: "Draft / Sent", count: activeInvoices.filter((i) => ["draft","sent"].includes(i.status || "")).length, color: "bg-sky-400", type: "invoices-draft", items: activeInvoices.filter((i) => ["draft","sent"].includes(i.status || "")) },
                 { label: "Quotes", count: activeQuotes.length, color: "bg-violet-400", type: "quotes-active", items: activeQuotes },
               ].map((row) => {
@@ -2676,7 +2695,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                               <div className="truncate text-sm font-semibold text-slate-900">
                                 {customer?.name || "Customer"} · {summariseProductNames(inv)}
                               </div>
-                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "draft" || inv.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "delivered" ? "bg-blue-50 text-blue-700" : inv.status === "draft" || inv.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
                                 {inv.status || "pending"}
                               </span>
                             </div>
@@ -2704,6 +2723,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                 }
                               },
                               { label: inv.status === "paid" ? "Mark pending" : "Mark paid", onClick: () => updateStatus("invoice", inv.id, inv.status === "paid" ? "pending" : "paid") },
+                              ...(inv.status !== "delivered" && inv.status !== "paid" ? [{ label: "Mark as delivered", onClick: () => updateStatus("invoice", inv.id, "delivered") }] : []),
+                              ...(inv.status === "delivered" ? [{ label: "Mark as undelivered", onClick: () => updateStatus("invoice", inv.id, "pending") }] : []),
                               { label: "View invoice", onClick: () => setPreviewInvoiceId(inv.id) },
                               ...(String(inv.status || "").toLowerCase() === "paid" ? [{ label: "Download receipt", onClick: () => downloadReceipt(inv, resolveCustomer(inv.customer_id, inv.customer_name), resolveProduct(inv.product_id, inv.product_name)) }] : []),
                               { label: "Archive", onClick: () => archiveItem("invoice", inv.id) },

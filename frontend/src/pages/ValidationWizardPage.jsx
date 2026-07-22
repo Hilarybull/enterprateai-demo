@@ -5551,7 +5551,7 @@ export default function ValidationWizardPage() {
                             >
                               <path d="m6 9 6 6 6-6" />
                             </svg>
-                            Advanced — optional
+                            Advanced (optional)
                             <span className="ml-0.5 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">3 fields</span>
                           </button>
                           {showAdvancedOffer && (

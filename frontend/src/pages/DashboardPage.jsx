@@ -88,6 +88,28 @@ export default function DashboardPage() {
 
   const primaryRecommendation = metrics.recommendations[0] || null;
 
+  const snapshotKpis = useMemo(() => {
+    const paidInvs = (snapshot.invoices || []).filter(i => String(i.status || "").toLowerCase() === "paid");
+    const deliveredInvs = (snapshot.invoices || []).filter(i => String(i.status || "").toLowerCase() === "delivered");
+    const allExps = snapshot.expenses || [];
+    const paidExps = allExps.filter(e => String(e.status || "").toLowerCase() === "paid");
+
+    // Revenue = grand total from paid + delivered (accrual: earned when service delivered)
+    const totalRevenue = [...paidInvs, ...deliveredInvs].reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+    const paidCoS = paidInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
+    const paidVat = paidInvs.reduce((s, i) => s + Number(i.vat_amount || 0), 0);
+    const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+    // Cash = paid invoices only (grand total received - CoS - VAT - paid expenses)
+    const paidRevenue = paidInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+    const cashBalance = paidRevenue - paidCoS - paidVat - paidExpTotal;
+    // Receivables = delivered but not yet paid (unchanged)
+    const receivables = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+    // Costs = all expenses + CoS from paid invoices
+    const totalCosts = allExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0) + paidCoS;
+
+    return { totalRevenue, cashBalance, receivables, totalCosts };
+  }, [snapshot]);
+
   if (!workspaceId) {
     return (
       <WorkspacePrompt
@@ -124,10 +146,11 @@ export default function DashboardPage() {
         <div className="flex items-center justify-center py-12"><Spinner /></div>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatTile label="Total Revenue" value={formatCurrency(metrics.totalRevenue, currency)} />
-            <StatTile label="Expenses + cost of sales" value={formatCurrency(metrics.totalCosts, currency)} tone="warn" />
-            <StatTile label="Receivables" value={formatCurrency(metrics.accruals || 0, currency)} />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <StatTile label="Total Revenue" value={formatCurrency(snapshotKpis.totalRevenue, currency)} />
+            <StatTile label="Cash" value={formatCurrency(snapshotKpis.cashBalance, currency)} tone={snapshotKpis.cashBalance >= 0 ? "default" : "warn"} />
+            <StatTile label="Expenses + cost of sales" value={formatCurrency(snapshotKpis.totalCosts, currency)} tone="warn" />
+            <StatTile label="Receivables" value={formatCurrency(snapshotKpis.receivables, currency)} />
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm min-h-[124px] flex flex-col">
               <div className="text-[12px] font-semibold text-slate-500">Active risks</div>
               <div className="mt-1 text-[20px] font-semibold tracking-tight text-slate-900">

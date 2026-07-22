@@ -232,6 +232,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   const pendingPayablesSchedule = emptySchedule();
 
   const paidInvoices = invoices.filter((item) => normaliseStatus(item.status) === "paid");
+  const deliveredInvoices = invoices.filter((item) => normaliseStatus(item.status) === "delivered");
   const pendingInvoices = invoices.filter((item) => normaliseStatus(item.status) !== "paid");
   const paidExpenses = expenses.filter((item) => normaliseStatus(item.status) === "paid");
   const pendingExpenses = expenses.filter((item) => normaliseStatus(item.status) !== "paid");
@@ -264,7 +265,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     return !isPendingWithinTerms(item, vendorTerms);
   });
 
-  const totalInvoiceRevenue = paidInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0);
+  // Revenue = grand total from paid + delivered (accrual basis)
+  const totalInvoiceRevenue = [...paidInvoices, ...deliveredInvoices].reduce((sum, item) => sum + toNumber(item.total_amount || item.subtotal_amount), 0);
   const totalInvoiceCostOfSales = paidInvoices.reduce((sum, item) => {
     if (item.cost_of_sales != null) return sum + toNumber(item.cost_of_sales);
     const productIds = getRecordProductIds(item);
@@ -277,26 +279,27 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   }, 0);
   const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
 
-  // Count distinct calendar months that actually have paid invoices/expenses.
-  // This prevents the "marking an invoice paid reduces revenue" bug that occurs when using
-  // a raw date-span divisor — adding an old invoice extends the span without adding months.
-  function distinctMonthCount(items) {
-    const months = new Set();
+  // Revenue for the month = most recent calendar month's grand total from paid + delivered
+  function mostRecentMonthTotal(items, field) {
+    const byMonth = new Map();
     for (const item of items) {
       const raw = item?.paid_at || item?.issued_at || item?.incurred_at || item?.created_at || item?.updated_at;
       if (!raw) continue;
       const d = new Date(raw);
       if (!Number.isFinite(d.getTime())) continue;
-      months.add(`${d.getFullYear()}-${d.getMonth()}`);
+      const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, "0")}`;
+      const val = field ? toNumber(item[field]) : toNumber(item.total_amount || item.subtotal_amount);
+      byMonth.set(key, (byMonth.get(key) || 0) + val);
     }
-    return Math.max(1, months.size);
+    if (!byMonth.size) return 0;
+    const latestKey = [...byMonth.keys()].sort().at(-1);
+    return byMonth.get(latestKey) || 0;
   }
 
-  const invoiceMonths = distinctMonthCount(paidInvoices);
-  const expenseMonths = distinctMonthCount(paidExpenses);
-  const invoiceRevenue = totalInvoiceRevenue > 0 ? Number((totalInvoiceRevenue / invoiceMonths).toFixed(2)) : 0;
-  const invoiceCostOfSales = totalInvoiceCostOfSales > 0 ? Number((totalInvoiceCostOfSales / invoiceMonths).toFixed(2)) : 0;
-  const operationalExpenses = totalOperationalExpenses > 0 ? Number((totalOperationalExpenses / expenseMonths).toFixed(2)) : 0;
+  const earnedInvoices = [...paidInvoices, ...deliveredInvoices];
+  const invoiceRevenue = Number(mostRecentMonthTotal(earnedInvoices).toFixed(2));
+  const invoiceCostOfSales = Number(mostRecentMonthTotal(earnedInvoices, "cost_of_sales").toFixed(2));
+  const operationalExpenses = Number(mostRecentMonthTotal(paidExpenses, "price").toFixed(2));
   const contractRevenue = 0;
   const contractCostOfSales = 0;
   const contractPurchases = 0;
@@ -401,8 +404,9 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       .reduce((s, inv) => s + toNumber(inv.total_amount), 0);
     return sum + Math.max(0, contractTotal - linkedTotal);
   }, 0);
+  // Receivables = grand total owed (what customers will actually pay)
   const openingAccrualBalance = Number(
-    (pendingInvoices.reduce((sum, item) => sum + toNumber(item.total_amount), 0) + uninvoicedContractBalance).toFixed(2)
+    (deliveredInvoices.reduce((sum, item) => sum + toNumber(item.total_amount || item.subtotal_amount), 0) + uninvoicedContractBalance).toFixed(2)
   );
   const startingCash = Math.max(0, toNumber(inputs?.starting_cash));
   const runwayMonths = netProfit >= 0 ? 999 : Math.max(0, startingCash / Math.max(Math.abs(netProfit), 1));

@@ -765,7 +765,7 @@ export default function SimulationPage() {
 
       {workspaceId && tab === "adaptive" ? (
         <div className="mt-4 space-y-4">
-          {canSimFeature("scenario_intelligence") && (
+          {false && canSimFeature("scenario_intelligence") && (
             <SectionCard
               title={
                 <div className="flex items-center gap-2">
@@ -1228,46 +1228,56 @@ export default function SimulationPage() {
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Timeline</div>
             </div>
             <div className="overflow-x-auto border-t border-slate-100">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50 text-slate-500">
-                  <tr>
-                    {["Month","Revenue","Receivables","Expenses","Cost of sales","Total costs","Gross Profit","Gross Margin %","Net Profit","Cum. Profit","Cash balance","Status"].map((h) => (
-                      <th key={h} className="px-3 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {timeline.map((row) => {
-                    const profit = Number(row.profit || 0);
-                    const baseDate = activeRun?.executed_at || activeRun?.created_at ? new Date(activeRun.executed_at || activeRun.created_at) : new Date();
-                    const d = new Date(baseDate); d.setDate(1); d.setHours(0,0,0,0); d.setMonth(d.getMonth() + (Number(row.month_index) - 1));
-                    const label = d.toLocaleString(undefined, { month: "short", year: "numeric" });
-                    const stateLabel = String(row.state_label || "").toLowerCase();
-                    return (
-                      <tr key={row.month_index} className="border-t border-slate-100 hover:bg-slate-50/50">
-                        <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{label}</td>
-                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.revenue, currency)}</td>
-                        <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row.accruals, currency)}</td>
-                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.expenses, currency)}</td>
-                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.cost_of_sales, currency)}</td>
-                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.costs, currency)}</td>
-                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.gross_profit, currency)}</td>
-                        <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{row.gross_margin_pct != null ? `${row.gross_margin_pct}%` : "—"}</td>
-                        <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${profit > 0 ? "text-emerald-600" : profit < 0 ? "text-rose-600" : "text-slate-700"}`}>{formatCurrency(profit, currency)}</td>
-                        <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row.cumulative_profit, currency)}</td>
-                        <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.cash_balance, currency)}</td>
-                        <td className="px-3 py-2 text-left whitespace-nowrap">
-                          {row.state_label ? (
-                            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${stateLabel.includes("stable") ? "bg-emerald-50 text-emerald-700" : stateLabel.includes("risk") || stateLabel.includes("stress") ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>
-                              {row.state_label}
-                            </span>
-                          ) : "—"}
-                        </td>
+              {(() => {
+                const openingCash = Number(activeRun?.baseline_snapshot?.starting_cash ?? stateSnapshot?.starting_cash ?? 0);
+                let cumGross = 0; let cumCash = openingCash;
+                const enriched = timeline.map((row) => {
+                  cumGross = Number((cumGross + Number(row.gross_profit || 0)).toFixed(2));
+                  // revenue = grand total (includes CoS); deduct CoS + expenses to get net cash
+                  cumCash = Number((cumCash + Number(row.revenue || 0) - Number(row.cost_of_sales || 0) - Number(row.expenses || 0)).toFixed(2));
+                  return { ...row, _cumGross: cumGross, _cash: cumCash };
+                });
+                return (
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr>
+                        {["Month","Revenue","Receivables","Expenses","Cost of sales","Total costs","Gross Profit","Gross Margin %","Cum. Profit","Cash balance","Status"].map((h) => (
+                          <th key={h} className="px-3 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
+                        ))}
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {enriched.map((row) => {
+                        const baseDate = activeRun?.executed_at || activeRun?.created_at ? new Date(activeRun.executed_at || activeRun.created_at) : new Date();
+                        const d = new Date(baseDate); d.setDate(1); d.setHours(0,0,0,0); d.setMonth(d.getMonth() + (Number(row.month_index) - 1));
+                        const label = d.toLocaleString(undefined, { month: "short", year: "numeric" });
+                        const stateLabel = String(row.state_label || "").toLowerCase();
+                        return (
+                          <tr key={row.month_index} className="border-t border-slate-100 hover:bg-slate-50/50">
+                            <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{label}</td>
+                            <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.revenue, currency)}</td>
+                            <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row.accruals, currency)}</td>
+                            <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.expenses, currency)}</td>
+                            <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.cost_of_sales, currency)}</td>
+                            <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.costs, currency)}</td>
+                            <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.gross_profit, currency)}</td>
+                            <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{row.gross_margin_pct != null ? `${row.gross_margin_pct}%` : "—"}</td>
+                            <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row._cumGross, currency)}</td>
+                            <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${row._cash > 0 ? "text-emerald-600" : row._cash < 0 ? "text-rose-600" : "text-slate-700"}`}>{formatCurrency(row._cash, currency)}</td>
+                            <td className="px-3 py-2 text-left whitespace-nowrap">
+                              {row.state_label ? (
+                                <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${stateLabel.includes("stable") ? "bg-emerald-50 text-emerald-700" : stateLabel.includes("risk") || stateLabel.includes("stress") ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>
+                                  {row.state_label}
+                                </span>
+                              ) : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
+              })()}
             </div>
           </div>
         ) : null}
@@ -1808,8 +1818,16 @@ function ScenarioOutput({
   const runRecs = Array.isArray(activeRun.recommendations) ? activeRun.recommendations : [];
   const scenarioMeaning = buildScenarioMeaning(activeRun, timeline, currency);
 
-  const timelineRows = maxTimelineRows ? timeline.slice(0, maxTimelineRows) : timeline;
+  const rawTimelineRows = maxTimelineRows ? timeline.slice(0, maxTimelineRows) : timeline;
   const isTrimmed = maxTimelineRows && timeline.length > maxTimelineRows;
+  const openingCash = Number(activeRun?.baseline_snapshot?.starting_cash ?? 0);
+  let _cumGross = 0; let _cumCash = openingCash;
+  const timelineRows = rawTimelineRows.map((row) => {
+    _cumGross = Number((_cumGross + Number(row.gross_profit || 0)).toFixed(2));
+    // revenue = grand total (includes CoS); deduct CoS + expenses to get net cash
+    _cumCash = Number((_cumCash + Number(row.revenue || 0) - Number(row.cost_of_sales || 0) - Number(row.expenses || 0)).toFixed(2));
+    return { ...row, _cumGross, _cash: _cumCash };
+  });
 
   const baseDate = useMemo(() => {
     const raw = activeRun?.executed_at || activeRun?.created_at || activeRun?.updated_at;
@@ -2143,20 +2161,14 @@ function ScenarioOutput({
                   </th>
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1.5">
-                      <span>Net Profit</span>
-                      <InfoTip text="Final earnings left this month after paying ALL bills." />
-                    </div>
-                  </th>
-                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
-                    <div className="flex items-center justify-end gap-1.5">
                       <span>Cum. Profit</span>
-                      <InfoTip text="The total running total of profit earned since month 1." />
+                      <InfoTip text="Running total of gross profit since month 1." />
                     </div>
                   </th>
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1.5">
                       <span>Cash balance</span>
-                      <InfoTip text="Actual money in your bank account once payments arrive." />
+                      <InfoTip text="Actual money in your bank account — paid revenue in, paid costs out." />
                     </div>
                   </th>
                   <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">
@@ -2169,9 +2181,6 @@ function ScenarioOutput({
               </thead>
               <tbody>
                 {timelineRows.map((row) => {
-                  const profit = Number(row.profit || 0);
-                  const profitPositive = profit > 0;
-                  const profitNegative = profit < 0;
                   return (
                     <tr key={row.month_index} className="border-t border-slate-100 hover:bg-slate-50/50">
                       <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{formatMonthLabel(row.month_index)}</td>
@@ -2182,11 +2191,8 @@ function ScenarioOutput({
                       <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.costs, currency)}</td>
                       <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.gross_profit, currency)}</td>
                       <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{row.gross_margin_pct != null ? `${row.gross_margin_pct}%` : "—"}</td>
-                      <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${profitPositive ? "text-emerald-600" : profitNegative ? "text-rose-600" : "text-slate-700"}`}>
-                        {formatCurrency(profit, currency)}
-                      </td>
-                      <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row.cumulative_profit, currency)}</td>
-                      <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.cash_balance, currency)}</td>
+                      <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row._cumGross, currency)}</td>
+                      <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${row._cash > 0 ? "text-emerald-600" : row._cash < 0 ? "text-rose-600" : "text-slate-700"}`}>{formatCurrency(row._cash, currency)}</td>
                       <td className="px-3 py-2 text-left text-slate-500 whitespace-nowrap">
                         {row.state_label ? (
                           <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${String(row.state_label).toLowerCase().includes("stable") ? "bg-emerald-50 text-emerald-700" :
