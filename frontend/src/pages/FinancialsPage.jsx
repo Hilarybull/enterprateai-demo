@@ -2155,7 +2155,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
       <div className="mt-6 space-y-4"> {/* overview */}
 
         {/* KPI tiles */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
           {[
             { label: "Annual Recurring Revenue", value: formatMoney(overviewKpis.arr), sub: "annualised from current revenue", tone: "slate", type: "invoices-paid", wide: true, items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
             { label: "Monthly run rate", value: formatMoney(overviewKpis.monthlyRev), sub: "from paid invoices", tone: "emerald", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
@@ -2170,7 +2170,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 onClick={() => setOverviewDrill(isOpen ? null : { label: kpi.label, type: kpi.type, items: kpi.items })}
                 className={`rounded-2xl border bg-white p-4 shadow-sm text-left w-full transition hover:shadow-md ${kpi.wide ? "lg:col-span-2" : ""} ${isOpen ? "border-brand-400 ring-1 ring-brand-200" : "border-slate-200 hover:border-slate-300"}`}
               >
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 whitespace-nowrap">{kpi.label}</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 leading-tight">{kpi.label}</div>
                 <div className={`mt-1.5 text-2xl font-bold ${kpi.tone === "emerald" ? "text-emerald-600" : kpi.tone === "rose" ? "text-rose-600" : kpi.tone === "amber" ? "text-amber-600" : "text-slate-900"}`}>
                   {kpi.value}
                 </div>
