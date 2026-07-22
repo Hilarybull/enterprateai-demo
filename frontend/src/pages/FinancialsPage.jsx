@@ -193,7 +193,7 @@ export default function FinancialsPage() {
   const [previewQuoteId, setPreviewQuoteId] = useState(null);
   const [previewReceiptInv, setPreviewReceiptInv] = useState(null);
   const [previewReceiptExp, setPreviewReceiptExp] = useState(null);
-  const [receiptForm, setReceiptForm] = useState({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), product_ids: [], items: [], vat_rate: "", notes: "" });
+  const [receiptForm, setReceiptForm] = useState({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), product_ids: [], items: [], extra_items: [], vat_rate: "", notes: "" });
   const [manualReceipts, setManualReceipts] = useState([]);
   const [previewManualReceipt, setPreviewManualReceipt] = useState(null);
   const [shareMenu, setShareMenu] = useState(null);
@@ -206,6 +206,7 @@ export default function FinancialsPage() {
     contract_id: "",
     product_ids: [],
     items: [],
+    extra_items: [],
     issued_at: new Date().toISOString().slice(0, 10),
     due_date: "",
     vat_rate: "",
@@ -215,10 +216,27 @@ export default function FinancialsPage() {
     customer_id: "",
     product_ids: [],
     items: [],
+    extra_items: [],
     validity_days: "30",
     issued_at: new Date().toISOString().slice(0, 10),
     due_date: "",
+    vat_rate: "",
   });
+  const [invoiceListPage, setInvoiceListPage] = useState(0);
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState("all");
+  const [invoiceSearchQuery, setInvoiceSearchQuery] = useState("");
+  const [invoiceDateFrom, setInvoiceDateFrom] = useState("");
+  const [invoiceDateTo, setInvoiceDateTo] = useState("");
+  const [expenseListPage, setExpenseListPage] = useState(0);
+  const [expenseStatusFilter, setExpenseStatusFilter] = useState("all");
+  const [expenseSearchQuery, setExpenseSearchQuery] = useState("");
+  const [expenseDateFrom, setExpenseDateFrom] = useState("");
+  const [expenseDateTo, setExpenseDateTo] = useState("");
+  const [contractListPage, setContractListPage] = useState(0);
+  const [contractStatusFilter, setContractStatusFilter] = useState("all");
+  const [contractSearchQuery, setContractSearchQuery] = useState("");
+  const [contractDateFrom, setContractDateFrom] = useState("");
+  const [contractDateTo, setContractDateTo] = useState("");
   const [expenseForm, setExpenseForm] = useState({
     vendor_id: "",
     item: "",
@@ -950,7 +968,9 @@ export default function FinancialsPage() {
     </tbody>
   </table>
   <div class="card">
-    <div style="display:flex; justify-content:space-between; gap:12px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatMoney(Number(quote?.subtotal_amount || 0) + Number(quote?.cost_of_sales || 0))}</span></div>
+    ${Number(quote?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${quote.vat_rate}%)</span><span>${formatMoney(Number(quote?.vat_amount || 0))}</span></div>` : ""}
+    <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
   </div>
   <div class="muted" style="margin-top:16px;">This quotation is valid for ${quote?.validity_days || 30} days unless otherwise stated.</div>
 </body>
@@ -981,6 +1001,8 @@ export default function FinancialsPage() {
       `${isReceipt ? "Receipt" : isInvoice ? "Invoice" : "Quotation"} ${reference}`,
       `Customer: ${customer?.name || "Customer"}`,
       `Items: ${itemName}`,
+      `Subtotal: ${formatMoney(Number(record?.subtotal_amount || 0) + Number(record?.cost_of_sales || 0))}`,
+      ...(Number(record?.vat_rate) > 0 ? [`VAT (${Number(record.vat_rate)}%): ${formatMoney(Number(record?.vat_amount || 0))}`] : []),
       `Grand total: ${formatMoney(grandTotal)}`,
       `Status: ${record?.status || "paid"}`,
       ...(record?.paid_at ? [`Payment date: ${new Date(record.paid_at).toLocaleDateString()}`] : []),
@@ -1389,7 +1411,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", product_ids: [], items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", product_ids: [], items: [], extra_items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "" });
     setEditingInvoiceId(null);
     setPreviewInvoiceId(null);
     setInvoiceFormError(null);
@@ -1397,7 +1419,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   }
 
   function resetQuoteForm() {
-    setQuoteForm({ quotation_id: "", customer_id: "", product_ids: [], items: [], validity_days: "30", issued_at: todayInputValue(), due_date: "" });
+    setQuoteForm({ quotation_id: "", customer_id: "", product_ids: [], items: [], extra_items: [], validity_days: "30", issued_at: todayInputValue(), due_date: "", vat_rate: "" });
     setEditingQuoteId(null);
   }
 
@@ -1468,14 +1490,22 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   async function upsertInvoice() {
     setInvoiceSubmitAttempted(true);
     setInvoiceFormError(null);
-    if (!invoiceForm.customer_id || !Array.isArray(invoiceForm.product_ids) || !invoiceForm.product_ids.length) {
+    const extraItemsForSubmit = (Array.isArray(invoiceForm.extra_items) ? invoiceForm.extra_items : []).map((i) => ({
+      product_id: `extra_${i.id}`,
+      product_name: i.product_name || "Custom item",
+      quantity: Number(i.quantity || 1),
+      unit_price: Number(i.unit_price || 0),
+      unit_cost_of_sales: Number(i.unit_cost_of_sales || 0),
+    }));
+    if (!invoiceForm.customer_id || (!invoiceForm.product_ids?.length && !extraItemsForSubmit.length)) {
       setInvoiceFormError("Invoice must reference a customer and at least one product or service.");
       return;
     }
     const customer = resolveCustomer(invoiceForm.customer_id);
-    const lineItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
+    const catalogueLineItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
+    const lineItems = [...catalogueLineItems, ...extraItemsForSubmit];
     if (!lineItems.length) {
-      setInvoiceFormError("Select at least one product or service for this invoice.");
+      setInvoiceFormError("Add at least one product or service to this invoice.");
       return;
     }
     if (lineItems.some((item) => !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0)) {
@@ -1548,15 +1578,23 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   }
 
   async function upsertQuote() {
-    if (!quoteForm.customer_id || !Array.isArray(quoteForm.product_ids) || !quoteForm.product_ids.length) {
+    const extraItemsForSubmit = (Array.isArray(quoteForm.extra_items) ? quoteForm.extra_items : []).map((i) => ({
+      product_id: `extra_${i.id}`,
+      product_name: i.product_name || "Custom item",
+      quantity: Number(i.quantity || 1),
+      unit_price: Number(i.unit_price || 0),
+      unit_cost_of_sales: Number(i.unit_cost_of_sales || 0),
+    }));
+    if (!quoteForm.customer_id || (!quoteForm.product_ids?.length && !extraItemsForSubmit.length)) {
       setError("Quotation must reference a customer and at least one product or service.");
       return;
     }
     setError(null);
     const customer = resolveCustomer(quoteForm.customer_id);
-    const lineItems = syncProductLineItems(quoteForm.product_ids, Array.isArray(quoteForm.items) ? quoteForm.items : []);
+    const catalogueLineItems = syncProductLineItems(quoteForm.product_ids, Array.isArray(quoteForm.items) ? quoteForm.items : []);
+    const lineItems = [...catalogueLineItems, ...extraItemsForSubmit];
     if (!lineItems.length) {
-      setError("Select at least one product or service for this quotation.");
+      setError("Add at least one product or service to this quotation.");
       return;
     }
     if (lineItems.some((item) => !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0)) {
@@ -1569,7 +1607,10 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     }
     const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-    const grandTotal = Number((subtotal + totalCostOfSales).toFixed(2));
+    const preTaxTotal = Number((subtotal + totalCostOfSales).toFixed(2));
+    const quoteVatRateSave = Number(quoteForm.vat_rate || 0);
+    const quoteVatAmountSave = Number((preTaxTotal * quoteVatRateSave / 100).toFixed(2));
+    const grandTotal = Number((preTaxTotal + quoteVatAmountSave).toFixed(2));
     const validity = Math.max(1, parseInt(String(quoteForm.validity_days || "30"), 10) || 30);
     const totalQuantity = sumLineItemQuantity(lineItems);
     const next = quotes.map((q) => ({ ...q }));
@@ -1588,6 +1629,8 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       unit_cost_of_sales: lineItems.length === 1 ? Number(Number(lineItems[0]?.unit_cost_of_sales || 0).toFixed(2)) : null,
       subtotal_amount: subtotal,
       cost_of_sales: totalCostOfSales,
+      vat_rate: quoteVatRateSave,
+      vat_amount: quoteVatAmountSave,
       total_amount: grandTotal,
       validity_days: validity,
       status: editingQuoteId ? next.find((q) => q.id === editingQuoteId)?.status || "draft" : "draft",
@@ -1981,8 +2024,13 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 
   const requiresCatalogue = !activeProducts.length || !activeCustomers.length || !activeVendors.length;
   const invoicePreviewItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
-  const invoiceSubtotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-  const invoiceCostOfSalesTotal = Number(invoicePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+  const invoiceExtraItems = (Array.isArray(invoiceForm.extra_items) ? invoiceForm.extra_items : []).map((i) => ({
+    product_id: `extra_${i.id}`, product_name: i.product_name || "Item",
+    quantity: Number(i.quantity || 1), unit_price: Number(i.unit_price || 0), unit_cost_of_sales: Number(i.unit_cost_of_sales || 0),
+  }));
+  const allInvoiceItems = [...invoicePreviewItems, ...invoiceExtraItems];
+  const invoiceSubtotal = Number(allInvoiceItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+  const invoiceCostOfSalesTotal = Number(allInvoiceItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceVatRate = Number(invoiceForm.vat_rate || 0);
   const invoicePreTaxTotal = Number((invoiceSubtotal + invoiceCostOfSalesTotal).toFixed(2));
   const invoiceVatAmount = Number((invoicePreTaxTotal * invoiceVatRate / 100).toFixed(2));
@@ -2015,9 +2063,17 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
     linkedContract,
   ]);
   const quotePreviewItems = syncProductLineItems(quoteForm.product_ids, Array.isArray(quoteForm.items) ? quoteForm.items : []);
-  const quoteSubtotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-  const quoteCostOfSalesTotal = Number(quotePreviewItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-  const quoteGrandTotal = Number((quoteSubtotal + quoteCostOfSalesTotal).toFixed(2));
+  const quoteExtraItems = (Array.isArray(quoteForm.extra_items) ? quoteForm.extra_items : []).map((i) => ({
+    product_id: `extra_${i.id}`, product_name: i.product_name || "Item",
+    quantity: Number(i.quantity || 1), unit_price: Number(i.unit_price || 0), unit_cost_of_sales: Number(i.unit_cost_of_sales || 0),
+  }));
+  const allQuoteItems = [...quotePreviewItems, ...quoteExtraItems];
+  const quoteSubtotal = Number(allQuoteItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+  const quoteCostOfSalesTotal = Number(allQuoteItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+  const quoteVatRate = Number(quoteForm.vat_rate || 0);
+  const quotePreTaxTotal = Number((quoteSubtotal + quoteCostOfSalesTotal).toFixed(2));
+  const quoteVatAmount = Number((quotePreTaxTotal * quoteVatRate / 100).toFixed(2));
+  const quoteGrandTotal = Number((quotePreTaxTotal + quoteVatAmount).toFixed(2));
   const previewInvoice = activeInvoices.find((inv) => inv.id === previewInvoiceId) || null;
   const previewCustomer = previewInvoice ? resolveCustomer(previewInvoice.customer_id, previewInvoice.customer_name) : null;
   const previewProduct = previewInvoice ? resolveProduct(previewInvoice.product_id, previewInvoice.product_name) : null;
@@ -2418,6 +2474,77 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   ))}
                 </div>
               ) : null}
+              {Array.isArray(invoiceForm.extra_items) && invoiceForm.extra_items.length > 0 && (
+                <div className="space-y-2">
+                  <div className="ea-label">Additional items</div>
+                  {invoiceForm.extra_items.map((item) => {
+                    const updInv = (patch) => setInvoiceForm((f) => ({ ...f, extra_items: f.extra_items.map((i) => i.id === item.id ? { ...i, ...patch } : i) }));
+                    return (
+                      <div key={item.id} className="rounded-xl border border-slate-200 p-3 space-y-2">
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1 space-y-2">
+                            <select
+                              value={item.product_id || ""}
+                              onChange={(e) => {
+                                const pid = e.target.value;
+                                if (!pid) { updInv({ product_id: "", product_name: "", unit_price: 0, unit_cost_of_sales: 0 }); }
+                                else if (pid === "__other__") { updInv({ product_id: "__other__", product_name: "", unit_price: item.unit_price || 0, unit_cost_of_sales: item.unit_cost_of_sales || 0 }); }
+                                else {
+                                  const p = activeProducts.find((ap) => ap.id === pid);
+                                  if (p) updInv({ product_id: pid, product_name: p.name, unit_price: getProductPrice(p), unit_cost_of_sales: getProductDefaultCost(p) });
+                                }
+                              }}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-brand-400 focus:outline-none"
+                            >
+                              <option value="">Select product / service…</option>
+                              {activeProducts.length > 0 && (
+                                <>
+                                  <optgroup label="From catalogue">
+                                    {activeProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                  </optgroup>
+                                </>
+                              )}
+                              <option value="__other__">Other (custom)</option>
+                            </select>
+                            {item.product_id === "__other__" && (
+                              <Input placeholder="Enter item / service name" value={item.product_name}
+                                onChange={(e) => updInv({ product_name: e.target.value })} />
+                            )}
+                            {item.product_id && item.product_id !== "__other__" && (
+                              <p className="text-xs text-slate-500 px-1">{item.product_name}</p>
+                            )}
+                          </div>
+                          <button type="button"
+                            onClick={() => setInvoiceForm((f) => ({ ...f, extra_items: f.extra_items.filter((i) => i.id !== item.id) }))}
+                            className="mt-1 shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors">
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <div className="ea-label">Qty</div>
+                            <Input type="number" min="1" value={String(item.quantity ?? 1)} onChange={(e) => updInv({ quantity: e.target.value })} />
+                          </div>
+                          <div>
+                            <div className="ea-label">Unit price</div>
+                            <Input type="number" min="0" value={String(item.unit_price ?? 0)} onChange={(e) => updInv({ unit_price: e.target.value })} />
+                          </div>
+                          <div>
+                            <div className="ea-label">Cost of sales</div>
+                            <Input type="number" min="0" value={String(item.unit_cost_of_sales ?? 0)} onChange={(e) => updInv({ unit_cost_of_sales: e.target.value })} />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <button type="button"
+                onClick={() => { const newId = crypto.randomUUID(); setInvoiceForm((f) => ({ ...f, extra_items: [...(f.extra_items || []), { id: newId, product_id: "", product_name: "", quantity: 1, unit_price: 0, unit_cost_of_sales: 0 }] })); }}
+                className="flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:text-brand-700 transition-colors">
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+                Add item
+              </button>
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Issued date</div>
@@ -2440,14 +2567,12 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 onChange={(e) => setInvoiceForm((f) => ({ ...f, vat_rate: e.target.value }))}
               />
             </div>
-            {invoiceSubtotal > 0 && (
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
-                <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(invoiceSubtotal)}</span></div>
-                {invoiceCostOfSalesTotal > 0 && <div className="flex justify-between"><span>Cost of sales</span><span>{formatMoney(invoiceCostOfSalesTotal)}</span></div>}
-                {invoiceVatAmount > 0 && <div className="flex justify-between"><span>VAT ({invoiceVatRate}%)</span><span>{formatMoney(invoiceVatAmount)}</span></div>}
-                <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(invoiceGrandTotal)}</span></div>
-              </div>
-            )}
+            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+              <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(invoiceSubtotal)}</span></div>
+              {invoiceCostOfSalesTotal > 0 && <div className="flex justify-between"><span>Cost of sales</span><span>{formatMoney(invoiceCostOfSalesTotal)}</span></div>}
+              {invoiceVatAmount > 0 && <div className="flex justify-between"><span>VAT ({invoiceVatRate}%)</span><span>{formatMoney(invoiceVatAmount)}</span></div>}
+              <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(invoiceGrandTotal)}</span></div>
+            </div>
             {invoiceSubmitAttempted && invoiceContractWarning ? <InlineAlert kind="error" message={invoiceContractWarning} /> : null}
             {linkedContract && contractInvoiceLimit !== null && (
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400">
@@ -2488,76 +2613,141 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             </CardIcon>
           }
         >
-            <div className="mt-2 space-y-2">
-              {activeInvoices.length ? (
-                activeInvoices.map((inv) => {
-                  const customer = resolveCustomer(inv.customer_id, inv.customer_name);
-                  const product = resolveProduct(inv.product_id, inv.product_name);
-                  return (
-                    <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <div className="truncate text-sm font-semibold text-slate-900">
-                            {customer?.name || "Customer"} · {summariseProductNames(inv)}
-                          </div>
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "draft" || inv.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
-                            {inv.status || "pending"}
-                          </span>
-                        </div>
-                        <div className="mt-0.5 text-xs text-slate-500">
-                          Qty {inv.quantity} · {formatMoney(inv.total_amount)} · Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"}
-                        </div>
-                      </div>
-                      <ActionMenu
-                        items={addFinancialShareAction([
-                          {
-                            label: "Edit",
-                            onClick: () => {
-                              setEditingInvoiceId(inv.id);
-                              setInvoiceForm({
-                                  invoice_id: inv.invoice_id || "",
-                                  customer_id: inv.customer_name || inv.customer_id,
-                                  contract_id: inv.contract_id || "",
-                                  product_ids: Array.isArray(inv.product_ids) && inv.product_ids.length ? inv.product_ids : inv.product_id ? [inv.product_id] : [],
-                                  items: normalizeRecordItems(inv),
-                                  issued_at: inv.issued_at || "",
-                                  due_date: inv.due_date || "",
-                                  vat_rate: inv.vat_rate != null ? String(inv.vat_rate) : "",
-                                });
-                            }
-                          },
-                          {
-                            label: inv.status === "paid" ? "Mark pending" : "Mark paid",
-                            onClick: () => updateStatus("invoice", inv.id, inv.status === "paid" ? "pending" : "paid")
-                          },
-                          {
-                            label: "View invoice",
-                            onClick: () => setPreviewInvoiceId(inv.id)
-                          },
-                          ...(String(inv.status || "").toLowerCase() === "paid" ? [{
-                            label: "Download receipt",
-                            onClick: () => downloadReceipt(inv, resolveCustomer(inv.customer_id, inv.customer_name), resolveProduct(inv.product_id, inv.product_name))
-                          }] : []),
-                          {
-                            label: "Archive",
-                            onClick: () => archiveItem("invoice", inv.id)
-                          },
-                          {
-                            label: "Delete",
-                            tone: "danger",
-                            onClick: () => deleteItem("invoice", inv.id)
-                          }
-                        ], "invoice", inv, customer, product)}
-                      />
+            {(() => {
+              const INVOICES_PER_PAGE = 10;
+              const q = invoiceSearchQuery.trim().toLowerCase();
+              const filtered = activeInvoices.filter((inv) => {
+                const statusMatch = invoiceStatusFilter === "all" || String(inv.status || "pending").toLowerCase() === invoiceStatusFilter;
+                if (!statusMatch) return false;
+                const invDate = inv.issued_at || inv.updated_at || inv.created_at;
+                if (invoiceDateFrom && invDate && invDate < invoiceDateFrom) return false;
+                if (invoiceDateTo && invDate && invDate > invoiceDateTo + "T23:59:59") return false;
+                if (!q) return true;
+                const cust = resolveCustomer(inv.customer_id, inv.customer_name);
+                return (
+                  (cust?.name || inv.customer_name || "").toLowerCase().includes(q) ||
+                  (inv.invoice_id || "").toLowerCase().includes(q) ||
+                  summariseProductNames(inv).toLowerCase().includes(q)
+                );
+              });
+              const totalPages = Math.max(1, Math.ceil(filtered.length / INVOICES_PER_PAGE));
+              const safePage = Math.min(invoiceListPage, totalPages - 1);
+              const paginated = filtered.slice(safePage * INVOICES_PER_PAGE, (safePage + 1) * INVOICES_PER_PAGE);
+              return (
+                <div className="mt-2 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+                      {["all", "pending", "paid"].map((s) => (
+                        <button key={s} type="button"
+                          onClick={() => { setInvoiceStatusFilter(s); setInvoiceListPage(0); }}
+                          className={`px-3 py-1.5 font-medium capitalize transition-colors ${invoiceStatusFilter === s ? "bg-brand-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+                          {s}
+                        </button>
+                      ))}
                     </div>
-                  );
-                })
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-                  No invoices yet. Add your first invoice above.
+                    <input
+                      type="text"
+                      placeholder="Search customer, product, ID…"
+                      value={invoiceSearchQuery}
+                      onChange={(e) => { setInvoiceSearchQuery(e.target.value); setInvoiceListPage(0); }}
+                      className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-slate-500 shrink-0">Date range</span>
+                    <input type="date" value={invoiceDateFrom} onChange={(e) => { setInvoiceDateFrom(e.target.value); setInvoiceListPage(0); }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
+                    <span className="text-xs text-slate-400">–</span>
+                    <input type="date" value={invoiceDateTo} onChange={(e) => { setInvoiceDateTo(e.target.value); setInvoiceListPage(0); }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
+                    {(invoiceDateFrom || invoiceDateTo) && (
+                      <button type="button" onClick={() => { setInvoiceDateFrom(""); setInvoiceDateTo(""); setInvoiceListPage(0); }}
+                        className="text-xs text-slate-400 hover:text-slate-600">Clear</button>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {paginated.length ? paginated.map((inv) => {
+                      const customer = resolveCustomer(inv.customer_id, inv.customer_name);
+                      const product = resolveProduct(inv.product_id, inv.product_name);
+                      return (
+                        <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <div className="truncate text-sm font-semibold text-slate-900">
+                                {customer?.name || "Customer"} · {summariseProductNames(inv)}
+                              </div>
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "draft" || inv.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
+                                {inv.status || "pending"}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 text-xs text-slate-500">
+                              Qty {inv.quantity} · {formatMoney(inv.total_amount)} · Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"}
+                            </div>
+                          </div>
+                          <ActionMenu
+                            items={addFinancialShareAction([
+                              {
+                                label: "Edit",
+                                onClick: () => {
+                                  setEditingInvoiceId(inv.id);
+                                  setInvoiceForm({
+                                    invoice_id: inv.invoice_id || "",
+                                    customer_id: inv.customer_name || inv.customer_id,
+                                    contract_id: inv.contract_id || "",
+                                    product_ids: Array.isArray(inv.product_ids) && inv.product_ids.length ? inv.product_ids : inv.product_id ? [inv.product_id] : [],
+                                    items: normalizeRecordItems(inv),
+                                    extra_items: [],
+                                    issued_at: inv.issued_at || "",
+                                    due_date: inv.due_date || "",
+                                    vat_rate: inv.vat_rate != null ? String(inv.vat_rate) : "",
+                                  });
+                                }
+                              },
+                              { label: inv.status === "paid" ? "Mark pending" : "Mark paid", onClick: () => updateStatus("invoice", inv.id, inv.status === "paid" ? "pending" : "paid") },
+                              { label: "View invoice", onClick: () => setPreviewInvoiceId(inv.id) },
+                              ...(String(inv.status || "").toLowerCase() === "paid" ? [{ label: "Download receipt", onClick: () => downloadReceipt(inv, resolveCustomer(inv.customer_id, inv.customer_name), resolveProduct(inv.product_id, inv.product_name)) }] : []),
+                              { label: "Archive", onClick: () => archiveItem("invoice", inv.id) },
+                              { label: "Delete", tone: "danger", onClick: () => deleteItem("invoice", inv.id) }
+                            ], "invoice", inv, customer, product)}
+                          />
+                        </div>
+                      );
+                    }) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-xs text-slate-500">
+                        {activeInvoices.length ? "No invoices match your filters." : "No invoices yet. Add your first invoice above."}
+                      </div>
+                    )}
+                  </div>
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-xs text-slate-500">{filtered.length} invoice{filtered.length !== 1 ? "s" : ""} · Page {safePage + 1} of {totalPages}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" disabled={safePage === 0}
+                          onClick={() => setInvoiceListPage((p) => Math.max(0, p - 1))}
+                          className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                          Prev
+                        </button>
+                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                          const pageIdx = totalPages <= 5 ? i : Math.max(0, Math.min(safePage - 2 + i, totalPages - 5 + i));
+                          return (
+                            <button key={pageIdx} type="button"
+                              onClick={() => setInvoiceListPage(pageIdx)}
+                              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${safePage === pageIdx ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                              {pageIdx + 1}
+                            </button>
+                          );
+                        })}
+                        <button type="button" disabled={safePage >= totalPages - 1}
+                          onClick={() => setInvoiceListPage((p) => Math.min(totalPages - 1, p + 1))}
+                          className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
         </SectionCard>
         <SectionCard
           title="Archived invoices"
@@ -2693,6 +2883,87 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   ))}
                 </div>
               ) : null}
+              {Array.isArray(quoteForm.extra_items) && quoteForm.extra_items.length > 0 && (
+                <div className="space-y-2">
+                  <div className="ea-label">Additional items</div>
+                  {quoteForm.extra_items.map((item) => {
+                    const updQt = (patch) => setQuoteForm((f) => ({ ...f, extra_items: f.extra_items.map((i) => i.id === item.id ? { ...i, ...patch } : i) }));
+                    return (
+                      <div key={item.id} className="rounded-xl border border-slate-200 p-3 space-y-2">
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1 space-y-2">
+                            <select
+                              value={item.product_id || ""}
+                              onChange={(e) => {
+                                const pid = e.target.value;
+                                if (!pid) { updQt({ product_id: "", product_name: "", unit_price: 0, unit_cost_of_sales: 0 }); }
+                                else if (pid === "__other__") { updQt({ product_id: "__other__", product_name: "", unit_price: item.unit_price || 0, unit_cost_of_sales: item.unit_cost_of_sales || 0 }); }
+                                else {
+                                  const p = activeProducts.find((ap) => ap.id === pid);
+                                  if (p) updQt({ product_id: pid, product_name: p.name, unit_price: getProductPrice(p), unit_cost_of_sales: getProductDefaultCost(p) });
+                                }
+                              }}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-brand-400 focus:outline-none"
+                            >
+                              <option value="">Select product / service…</option>
+                              {activeProducts.length > 0 && (
+                                <optgroup label="From catalogue">
+                                  {activeProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                </optgroup>
+                              )}
+                              <option value="__other__">Other (custom)</option>
+                            </select>
+                            {item.product_id === "__other__" && (
+                              <Input placeholder="Enter item / service name" value={item.product_name}
+                                onChange={(e) => updQt({ product_name: e.target.value })} />
+                            )}
+                            {item.product_id && item.product_id !== "__other__" && (
+                              <p className="text-xs text-slate-500 px-1">{item.product_name}</p>
+                            )}
+                          </div>
+                          <button type="button"
+                            onClick={() => setQuoteForm((f) => ({ ...f, extra_items: f.extra_items.filter((i) => i.id !== item.id) }))}
+                            className="mt-1 shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors">
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <div className="ea-label">Qty</div>
+                            <Input type="number" min="1" value={String(item.quantity ?? 1)} onChange={(e) => updQt({ quantity: e.target.value })} />
+                          </div>
+                          <div>
+                            <div className="ea-label">Unit price</div>
+                            <Input type="number" min="0" value={String(item.unit_price ?? 0)} onChange={(e) => updQt({ unit_price: e.target.value })} />
+                          </div>
+                          <div>
+                            <div className="ea-label">Cost of sales</div>
+                            <Input type="number" min="0" value={String(item.unit_cost_of_sales ?? 0)} onChange={(e) => updQt({ unit_cost_of_sales: e.target.value })} />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <button type="button"
+                onClick={() => { const newId = crypto.randomUUID(); setQuoteForm((f) => ({ ...f, extra_items: [...(f.extra_items || []), { id: newId, product_id: "", product_name: "", quantity: 1, unit_price: 0, unit_cost_of_sales: 0 }] })); }}
+                className="flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:text-brand-700 transition-colors">
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+                Add item
+              </button>
+            <div>
+              <div className="ea-label">VAT / Tax rate (%)</div>
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                placeholder="e.g. 20"
+                value={quoteForm.vat_rate}
+                onChange={(e) => setQuoteForm((f) => ({ ...f, vat_rate: e.target.value }))}
+              />
+            </div>
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
                 <div className="ea-label">Quotation validity (days)</div>
@@ -2712,13 +2983,12 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <Input type="date" value={quoteForm.due_date} onChange={(e) => setQuoteForm((f) => ({ ...f, due_date: e.target.value }))} />
               </div>
             </div>
-            {quoteSubtotal > 0 && (
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
-                <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(quoteSubtotal)}</span></div>
-                {quoteCostOfSalesTotal > 0 && <div className="flex justify-between"><span>Cost of sales</span><span>{formatMoney(quoteCostOfSalesTotal)}</span></div>}
-                <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(quoteGrandTotal)}</span></div>
-              </div>
-            )}
+            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+              <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(quoteSubtotal)}</span></div>
+              {quoteCostOfSalesTotal > 0 && <div className="flex justify-between"><span>Cost of sales</span><span>{formatMoney(quoteCostOfSalesTotal)}</span></div>}
+              {quoteVatAmount > 0 && <div className="flex justify-between"><span>VAT ({quoteVatRate}%)</span><span>{formatMoney(quoteVatAmount)}</span></div>}
+              <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(quoteGrandTotal)}</span></div>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertQuote}>{editingQuoteId ? "Update quotation" : "Add quotation"}</Button>
               {editingQuoteId ? (
@@ -3017,65 +3287,100 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             </CardIcon>
           }
         >
-            <div className="mt-2 space-y-2">
-              {activeExpenses.length ? (
-                activeExpenses.map((exp) => {
-                  const vendor = resolveVendor(exp.vendor_id, exp.vendor_name);
-                  return (
-                    <div key={exp.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <div className="truncate text-sm font-semibold text-slate-900">
-                            {vendor?.name || "Vendor"} · {exp.item}
-                          </div>
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${exp.status === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                            {exp.status || "pending"}
-                          </span>
-                        </div>
-                        <div className="mt-0.5 text-xs text-slate-500">
-                          {exp.cost_type} · {formatMoney(exp.price)} · Due {exp.due_date ? new Date(exp.due_date).toLocaleDateString() : "Not set"}
-                        </div>
-                      </div>
-                      <ActionMenu
-                        items={[
-                          {
-                            label: "Edit",
-                            onClick: () => {
-                              setEditingExpenseId(exp.id);
-                              setExpenseForm({
-                                vendor_id: exp.vendor_name || exp.vendor_id,
-                                item: exp.item,
-                                price: String(exp.price || ""),
-                                cost_type: exp.cost_type || "variable",
-                                incurred_at: exp.incurred_at || "",
-                                due_date: exp.due_date || ""
-                              });
-                            }
-                          },
-                          {
-                            label: exp.status === "paid" ? "Mark pending" : "Mark paid",
-                            onClick: () => updateStatus("expense", exp.id, exp.status === "paid" ? "pending" : "paid")
-                          },
-                          {
-                            label: "Archive",
-                            onClick: () => archiveItem("expense", exp.id)
-                          },
-                          {
-                            label: "Delete",
-                            tone: "danger",
-                            onClick: () => deleteItem("expense", exp.id)
-                          }
-                        ]}
-                      />
+            {(() => {
+              const EXP_PER_PAGE = 10;
+              const eq = expenseSearchQuery.trim().toLowerCase();
+              const expFiltered = activeExpenses.filter((exp) => {
+                const statusMatch = expenseStatusFilter === "all" || String(exp.status || "pending").toLowerCase() === expenseStatusFilter;
+                if (!statusMatch) return false;
+                const expDate = exp.incurred_at || exp.updated_at || exp.created_at;
+                if (expenseDateFrom && expDate && expDate < expenseDateFrom) return false;
+                if (expenseDateTo && expDate && expDate > expenseDateTo + "T23:59:59") return false;
+                if (!eq) return true;
+                const vendor = resolveVendor(exp.vendor_id, exp.vendor_name);
+                return (
+                  (vendor?.name || exp.vendor_name || "").toLowerCase().includes(eq) ||
+                  (exp.item || "").toLowerCase().includes(eq) ||
+                  (exp.cost_type || "").toLowerCase().includes(eq)
+                );
+              });
+              const expTotal = Math.max(1, Math.ceil(expFiltered.length / EXP_PER_PAGE));
+              const expPage = Math.min(expenseListPage, expTotal - 1);
+              const expPaginated = expFiltered.slice(expPage * EXP_PER_PAGE, (expPage + 1) * EXP_PER_PAGE);
+              return (
+                <div className="mt-2 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+                      {["all", "pending", "paid"].map((s) => (
+                        <button key={s} type="button" onClick={() => { setExpenseStatusFilter(s); setExpenseListPage(0); }}
+                          className={`px-3 py-1.5 font-medium capitalize transition-colors ${expenseStatusFilter === s ? "bg-brand-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>{s}</button>
+                      ))}
                     </div>
-                  );
-                })
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-                  No expenses yet. Add your first expense above.
+                    <input type="text" placeholder="Search vendor, item…" value={expenseSearchQuery}
+                      onChange={(e) => { setExpenseSearchQuery(e.target.value); setExpenseListPage(0); }}
+                      className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none" />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-slate-500 shrink-0">Date range</span>
+                    <input type="date" value={expenseDateFrom} onChange={(e) => { setExpenseDateFrom(e.target.value); setExpenseListPage(0); }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
+                    <span className="text-xs text-slate-400">–</span>
+                    <input type="date" value={expenseDateTo} onChange={(e) => { setExpenseDateTo(e.target.value); setExpenseListPage(0); }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
+                    {(expenseDateFrom || expenseDateTo) && (
+                      <button type="button" onClick={() => { setExpenseDateFrom(""); setExpenseDateTo(""); setExpenseListPage(0); }}
+                        className="text-xs text-slate-400 hover:text-slate-600">Clear</button>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {expPaginated.length ? expPaginated.map((exp) => {
+                      const vendor = resolveVendor(exp.vendor_id, exp.vendor_name);
+                      return (
+                        <div key={exp.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <div className="truncate text-sm font-semibold text-slate-900">{vendor?.name || "Vendor"} · {exp.item}</div>
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${exp.status === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                                {exp.status || "pending"}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 text-xs text-slate-500">
+                              {exp.cost_type} · {formatMoney(exp.price)} · Due {exp.due_date ? new Date(exp.due_date).toLocaleDateString() : "Not set"}
+                            </div>
+                          </div>
+                          <ActionMenu items={[
+                            { label: "Edit", onClick: () => { setEditingExpenseId(exp.id); setExpenseForm({ vendor_id: exp.vendor_name || exp.vendor_id, item: exp.item, price: String(exp.price || ""), cost_type: exp.cost_type || "variable", incurred_at: exp.incurred_at || "", due_date: exp.due_date || "" }); } },
+                            { label: exp.status === "paid" ? "Mark pending" : "Mark paid", onClick: () => updateStatus("expense", exp.id, exp.status === "paid" ? "pending" : "paid") },
+                            { label: "Archive", onClick: () => archiveItem("expense", exp.id) },
+                            { label: "Delete", tone: "danger", onClick: () => deleteItem("expense", exp.id) }
+                          ]} />
+                        </div>
+                      );
+                    }) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-xs text-slate-500">
+                        {activeExpenses.length ? "No expenses match your filters." : "No expenses yet. Add your first expense above."}
+                      </div>
+                    )}
+                  </div>
+                  {expTotal > 1 && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-xs text-slate-500">{expFiltered.length} expense{expFiltered.length !== 1 ? "s" : ""} · Page {expPage + 1} of {expTotal}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" disabled={expPage === 0} onClick={() => setExpenseListPage((p) => Math.max(0, p - 1))}
+                          className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+                        {Array.from({ length: Math.min(5, expTotal) }, (_, i) => {
+                          const pi = expTotal <= 5 ? i : Math.max(0, Math.min(expPage - 2 + i, expTotal - 5 + i));
+                          return <button key={pi} type="button" onClick={() => setExpenseListPage(pi)}
+                            className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${expPage === pi ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{pi + 1}</button>;
+                        })}
+                        <button type="button" disabled={expPage >= expTotal - 1} onClick={() => setExpenseListPage((p) => Math.min(expTotal - 1, p + 1))}
+                          className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
         </SectionCard>
         <SectionCard
           title="Archived expenses"
@@ -3244,6 +3549,22 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <Input type="date" value={contractForm.end_date} onChange={(e) => setContractForm((f) => ({ ...f, end_date: e.target.value }))} />
               </div>
             </div>
+            {(() => {
+              const conPrice = Number(contractForm.price || 0);
+              const conCos = Number(contractForm.cost_of_sales || 0);
+              const conDiscount = Number(contractForm.discount || 0);
+              const conFreight = Number(contractForm.freight || 0);
+              const conTotal = Number((conPrice + conCos - conDiscount + conFreight).toFixed(2));
+              return (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+                  <div className="flex justify-between"><span>Price</span><span>{formatMoney(conPrice)}</span></div>
+                  {conCos > 0 && <div className="flex justify-between"><span>Cost of sales</span><span>{formatMoney(conCos)}</span></div>}
+                  {conDiscount > 0 && <div className="flex justify-between text-rose-600"><span>Discount</span><span>−{formatMoney(conDiscount)}</span></div>}
+                  {conFreight > 0 && <div className="flex justify-between"><span>Freight</span><span>{formatMoney(conFreight)}</span></div>}
+                  <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Total</span><span>{formatMoney(conTotal)}</span></div>
+                </div>
+              );
+            })()}
             <div className="flex flex-wrap gap-2">
               <Button onClick={upsertContract}>{editingContractId ? "Update contract" : "Add contract"}</Button>
               {editingContractId ? (
@@ -3268,103 +3589,132 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             </CardIcon>
           }
         >
-            <div className="mt-2 space-y-2">
-              {activeContracts.length ? (
-                activeContracts.map((contract) => {
-                  const party =
-                    contract.contract_type === "sales"
-                      ? resolveCustomer(contract.counterparty_id, contract.counterparty_name)
-                      : resolveVendor(contract.counterparty_id, contract.counterparty_name);
-                  const product = resolveProduct(contract.product_id, contract.product_name);
-                  const contractTotal = (Number(contract.price) || 0) + (Number(contract.cost_of_sales) || 0);
-                  const linkedInvoices = activeInvoices.filter((i) => i.contract_id === contract.id);
-                  const totalInvoiced = linkedInvoices.reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
-                  const totalPaid = linkedInvoices.filter((i) => i.status === "paid").reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
-                  const remainingToInvoice = contractRemaining(contract);
-                  const paidPct = contractTotal > 0 ? Math.min(100, Math.round((totalPaid / contractTotal) * 100)) : 0;
-                  return (
-                    <div key={contract.id} className="rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <div className="truncate text-sm font-semibold text-slate-900">
-                              {contract.contract_type === "sales" ? "Sales" : "Purchase"} · {party?.name || "Partner"}
+            {(() => {
+              const CON_PER_PAGE = 10;
+              const cq = contractSearchQuery.trim().toLowerCase();
+              const conFiltered = activeContracts.filter((contract) => {
+                const statusMatch = contractStatusFilter === "all" || String(contract.status || "pending").toLowerCase() === contractStatusFilter;
+                if (!statusMatch) return false;
+                const conDate = contract.start_date || contract.updated_at || contract.created_at;
+                if (contractDateFrom && conDate && conDate < contractDateFrom) return false;
+                if (contractDateTo && conDate && conDate > contractDateTo + "T23:59:59") return false;
+                if (!cq) return true;
+                const party = contract.contract_type === "sales"
+                  ? resolveCustomer(contract.counterparty_id, contract.counterparty_name)
+                  : resolveVendor(contract.counterparty_id, contract.counterparty_name);
+                return (
+                  (party?.name || contract.counterparty_name || "").toLowerCase().includes(cq) ||
+                  summariseProductNames(contract).toLowerCase().includes(cq) ||
+                  (contract.contract_type || "").toLowerCase().includes(cq)
+                );
+              });
+              const conTotal = Math.max(1, Math.ceil(conFiltered.length / CON_PER_PAGE));
+              const conPage = Math.min(contractListPage, conTotal - 1);
+              const conPaginated = conFiltered.slice(conPage * CON_PER_PAGE, (conPage + 1) * CON_PER_PAGE);
+              return (
+                <div className="mt-2 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+                      {["all", "pending", "signed", "expired"].map((s) => (
+                        <button key={s} type="button" onClick={() => { setContractStatusFilter(s); setContractListPage(0); }}
+                          className={`px-3 py-1.5 font-medium capitalize transition-colors ${contractStatusFilter === s ? "bg-brand-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>{s}</button>
+                      ))}
+                    </div>
+                    <input type="text" placeholder="Search partner, product…" value={contractSearchQuery}
+                      onChange={(e) => { setContractSearchQuery(e.target.value); setContractListPage(0); }}
+                      className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none" />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-slate-500 shrink-0">Date range</span>
+                    <input type="date" value={contractDateFrom} onChange={(e) => { setContractDateFrom(e.target.value); setContractListPage(0); }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
+                    <span className="text-xs text-slate-400">–</span>
+                    <input type="date" value={contractDateTo} onChange={(e) => { setContractDateTo(e.target.value); setContractListPage(0); }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
+                    {(contractDateFrom || contractDateTo) && (
+                      <button type="button" onClick={() => { setContractDateFrom(""); setContractDateTo(""); setContractListPage(0); }}
+                        className="text-xs text-slate-400 hover:text-slate-600">Clear</button>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {conPaginated.length ? conPaginated.map((contract) => {
+                      const party = contract.contract_type === "sales"
+                        ? resolveCustomer(contract.counterparty_id, contract.counterparty_name)
+                        : resolveVendor(contract.counterparty_id, contract.counterparty_name);
+                      const contractTotal = (Number(contract.price) || 0) + (Number(contract.cost_of_sales) || 0);
+                      const linkedInvoices = activeInvoices.filter((i) => i.contract_id === contract.id);
+                      const totalInvoiced = linkedInvoices.reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
+                      const totalPaid = linkedInvoices.filter((i) => i.status === "paid").reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
+                      const remainingToInvoice = contractRemaining(contract);
+                      const paidPct = contractTotal > 0 ? Math.min(100, Math.round((totalPaid / contractTotal) * 100)) : 0;
+                      return (
+                        <div key={contract.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <div className="truncate text-sm font-semibold text-slate-900">
+                                  {contract.contract_type === "sales" ? "Sales" : "Purchase"} · {party?.name || "Partner"}
+                                </div>
+                                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${contract.status === "signed" || contract.status === "active" ? "bg-emerald-50 text-emerald-700" : contract.status === "expired" || contract.status === "cancelled" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
+                                  {contract.status || "pending"}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 text-xs text-slate-500">
+                                {summariseProductNames(contract)} · {formatMoney(contractTotal)} · {contract.end_date ? `Ends ${new Date(contract.end_date).toLocaleDateString()}` : "No end date"}
+                              </div>
                             </div>
-                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${contract.status === "signed" || contract.status === "active" ? "bg-emerald-50 text-emerald-700" : contract.status === "expired" || contract.status === "cancelled" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
-                              {contract.status || "pending"}
-                            </span>
+                            <ActionMenu items={[
+                              { label: "Edit", onClick: () => { setEditingContractId(contract.id); setContractForm({ contract_type: contract.contract_type || "sales", counterparty_id: contract.counterparty_name || contract.counterparty_id, product_ids: Array.isArray(contract.product_ids) && contract.product_ids.length ? contract.product_ids : contract.product_id ? [contract.product_id] : [], price: String(contract.price || ""), cost_of_sales: String(contract.cost_of_sales || ""), payment_terms: String(contract.payment_terms || ""), discount: String(contract.discount || ""), freight: String(contract.freight || ""), start_date: contract.start_date || "", end_date: contract.end_date || "", status: contract.status || "pending" }); } },
+                              { label: contract.status === "signed" ? "Mark pending" : "Mark signed", onClick: () => updateStatus("contract", contract.id, contract.status === "signed" ? "pending" : "signed") },
+                              { label: "Archive", onClick: () => archiveItem("contract", contract.id) },
+                              { label: "Delete", tone: "danger", onClick: () => deleteItem("contract", contract.id) }
+                            ]} />
                           </div>
-                          <div className="mt-0.5 text-xs text-slate-500">
-                            {summariseProductNames(contract)} · {formatMoney(contractTotal)} · {contract.end_date ? `Ends ${new Date(contract.end_date).toLocaleDateString()}` : "No end date"}
-                          </div>
-                        </div>
-                      <ActionMenu
-                        items={[
-                          {
-                            label: "Edit",
-                            onClick: () => {
-                              setEditingContractId(contract.id);
-                              setContractForm({
-                                contract_type: contract.contract_type || "sales",
-                                counterparty_id: contract.counterparty_name || contract.counterparty_id,
-                                product_ids: Array.isArray(contract.product_ids) && contract.product_ids.length ? contract.product_ids : contract.product_id ? [contract.product_id] : [],
-                                price: String(contract.price || ""),
-                                cost_of_sales: String(contract.cost_of_sales || ""),
-                                payment_terms: String(contract.payment_terms || ""),
-                                discount: String(contract.discount || ""),
-                                freight: String(contract.freight || ""),
-                                start_date: contract.start_date || "",
-                                end_date: contract.end_date || "",
-                                status: contract.status || "pending"
-                              });
-                            }
-                          },
-                          {
-                            label: contract.status === "signed" ? "Mark pending" : "Mark signed",
-                            onClick: () => updateStatus("contract", contract.id, contract.status === "signed" ? "pending" : "signed")
-                          },
-                          {
-                            label: "Archive",
-                            onClick: () => archiveItem("contract", contract.id)
-                          },
-                          {
-                            label: "Delete",
-                            tone: "danger",
-                            onClick: () => deleteItem("contract", contract.id)
-                          }
-                        ]}
-                      />
-                      </div>
-                      {contract.contract_type === "sales" && (
-                        <div className="mt-2 border-t border-slate-100 pt-2">
-                          <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-500">
-                            <span>Invoiced {formatMoney(totalInvoiced)} of {formatMoney(contractTotal)}</span>
-                            <span className={remainingToInvoice.total <= 0 ? "font-semibold text-emerald-600" : "font-semibold text-slate-700"}>
-                              {remainingToInvoice.total <= 0 ? "Fully invoiced" : `${formatMoney(remainingToInvoice.total)} left to invoice`}
-                            </span>
-                          </div>
-                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                            <div
-                              className={`h-full rounded-full transition-all ${paidPct >= 100 ? "bg-emerald-500" : "bg-brand-500"}`}
-                              style={{ width: `${paidPct}%` }}
-                            />
-                          </div>
-                          {linkedInvoices.length > 0 && (
-                            <div className="mt-1 text-[10px] text-slate-400">
-                              {linkedInvoices.length} invoice{linkedInvoices.length !== 1 ? "s" : ""} linked • {formatMoney(totalPaid)} paid • Price left {formatMoney(remainingToInvoice.price)} • Cost of sales left {formatMoney(remainingToInvoice.cost_of_sales)}
+                          {contract.contract_type === "sales" && (
+                            <div className="mt-2 border-t border-slate-100 pt-2">
+                              <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-500">
+                                <span>Invoiced {formatMoney(totalInvoiced)} of {formatMoney(contractTotal)}</span>
+                                <span className={remainingToInvoice.total <= 0 ? "font-semibold text-emerald-600" : "font-semibold text-slate-700"}>
+                                  {remainingToInvoice.total <= 0 ? "Fully invoiced" : `${formatMoney(remainingToInvoice.total)} left to invoice`}
+                                </span>
+                              </div>
+                              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                                <div className={`h-full rounded-full transition-all ${paidPct >= 100 ? "bg-emerald-500" : "bg-brand-500"}`} style={{ width: `${paidPct}%` }} />
+                              </div>
+                              {linkedInvoices.length > 0 && (
+                                <div className="mt-1 text-[10px] text-slate-400">
+                                  {linkedInvoices.length} invoice{linkedInvoices.length !== 1 ? "s" : ""} linked • {formatMoney(totalPaid)} paid • Price left {formatMoney(remainingToInvoice.price)} • Cost left {formatMoney(remainingToInvoice.cost_of_sales)}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
-                      )}
+                      );
+                    }) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-xs text-slate-500">
+                        {activeContracts.length ? "No contracts match your filters." : "No contracts yet. Add your first contract above."}
+                      </div>
+                    )}
+                  </div>
+                  {conTotal > 1 && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-xs text-slate-500">{conFiltered.length} contract{conFiltered.length !== 1 ? "s" : ""} · Page {conPage + 1} of {conTotal}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" disabled={conPage === 0} onClick={() => setContractListPage((p) => Math.max(0, p - 1))}
+                          className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+                        {Array.from({ length: Math.min(5, conTotal) }, (_, i) => {
+                          const pi = conTotal <= 5 ? i : Math.max(0, Math.min(conPage - 2 + i, conTotal - 5 + i));
+                          return <button key={pi} type="button" onClick={() => setContractListPage(pi)}
+                            className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${conPage === pi ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{pi + 1}</button>;
+                        })}
+                        <button type="button" disabled={conPage >= conTotal - 1} onClick={() => setContractListPage((p) => Math.min(conTotal - 1, p + 1))}
+                          className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+                      </div>
                     </div>
-                  );
-                })
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-                  No contracts yet. Add your first contract above.
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
         </SectionCard>
         <SectionCard
           title="Archived contracts"
@@ -3435,7 +3785,9 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               >
                 {(() => {
                   const rfLineItems = syncProductLineItems(Array.isArray(receiptForm.product_ids) ? receiptForm.product_ids : [], Array.isArray(receiptForm.items) ? receiptForm.items : []);
-                  const subtotal = rfLineItems.reduce((s, i) => s + Number(i.unit_price || 0) * Number(i.quantity || 1), 0);
+                  const rfExtraItems = Array.isArray(receiptForm.extra_items) ? receiptForm.extra_items : [];
+                  const subtotal = rfLineItems.reduce((s, i) => s + Number(i.unit_price || 0) * Number(i.quantity || 1), 0)
+                    + rfExtraItems.reduce((s, i) => s + Number(i.unit_price || 0) * Number(i.quantity || 1), 0);
                   const vatRate = Number(receiptForm.vat_rate || 0);
                   const vatAmount = Number((subtotal * vatRate / 100).toFixed(2));
                   const grandTotal = Number((subtotal + vatAmount).toFixed(2));
@@ -3447,7 +3799,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                       return { ...f, items: next };
                     });
                   }
-                  const resetForm = () => setReceiptForm({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), product_ids: [], items: [], vat_rate: "", notes: "" });
+                  const resetForm = () => setReceiptForm({ receipt_number: "", customer_name: "", date: new Date().toISOString().slice(0, 10), product_ids: [], items: [], extra_items: [], vat_rate: "", notes: "" });
                   return (
                     <div className="grid grid-cols-1 gap-3">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -3529,6 +3881,71 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                           ))}
                         </div>
                       )}
+                      {rfExtraItems.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="ea-label">Additional items</div>
+                          {rfExtraItems.map((item) => {
+                            const updRf = (patch) => setReceiptForm((f) => ({ ...f, extra_items: (f.extra_items || []).map((i) => i.id === item.id ? { ...i, ...patch } : i) }));
+                            return (
+                              <div key={item.id} className="rounded-xl border border-slate-200 p-3 space-y-2">
+                                <div className="flex items-start gap-2">
+                                  <div className="flex-1 space-y-2">
+                                    <select
+                                      value={item.product_id || ""}
+                                      onChange={(e) => {
+                                        const pid = e.target.value;
+                                        if (!pid) { updRf({ product_id: "", product_name: "", unit_price: 0 }); }
+                                        else if (pid === "__other__") { updRf({ product_id: "__other__", product_name: "", unit_price: item.unit_price || 0 }); }
+                                        else {
+                                          const p = activeProducts.find((ap) => ap.id === pid);
+                                          if (p) updRf({ product_id: pid, product_name: p.name, unit_price: getProductPrice(p) });
+                                        }
+                                      }}
+                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-brand-400 focus:outline-none"
+                                    >
+                                      <option value="">Select product / service…</option>
+                                      {activeProducts.length > 0 && (
+                                        <optgroup label="From catalogue">
+                                          {activeProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                        </optgroup>
+                                      )}
+                                      <option value="__other__">Other (custom)</option>
+                                    </select>
+                                    {item.product_id === "__other__" && (
+                                      <Input placeholder="Enter item / service name" value={item.product_name}
+                                        onChange={(e) => updRf({ product_name: e.target.value })} />
+                                    )}
+                                    {item.product_id && item.product_id !== "__other__" && (
+                                      <p className="text-xs text-slate-500 px-1">{item.product_name}</p>
+                                    )}
+                                  </div>
+                                  <button type="button"
+                                    onClick={() => setReceiptForm((f) => ({ ...f, extra_items: (f.extra_items || []).filter((i) => i.id !== item.id) }))}
+                                    className="mt-1 shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors">
+                                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <div className="ea-label">Qty</div>
+                                    <Input type="number" min="1" value={String(item.quantity ?? 1)} onChange={(e) => updRf({ quantity: e.target.value })} />
+                                  </div>
+                                  <div>
+                                    <div className="ea-label">Unit price</div>
+                                    <Input type="number" min="0" value={String(item.unit_price ?? 0)} onChange={(e) => updRf({ unit_price: e.target.value })} />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <button type="button"
+                        onClick={() => { const newId = crypto.randomUUID(); setReceiptForm((f) => ({ ...f, extra_items: [...(f.extra_items || []), { id: newId, product_id: "", product_name: "", quantity: 1, unit_price: 0 }] })); }}
+                        className="flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:text-brand-700 transition-colors">
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+                        Add item
+                      </button>
                       <div>
                         <div className="ea-label">VAT / Tax rate (%) — optional</div>
                         <Input
@@ -3541,13 +3958,11 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                           onChange={(e) => setReceiptForm((f) => ({ ...f, vat_rate: e.target.value }))}
                         />
                       </div>
-                      {subtotal > 0 && (
-                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
-                          <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(subtotal)}</span></div>
-                          {vatRate > 0 && <div className="flex justify-between"><span>VAT ({vatRate}%)</span><span>{formatMoney(vatAmount)}</span></div>}
-                          <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand total</span><span>{formatMoney(grandTotal)}</span></div>
-                        </div>
-                      )}
+                      <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+                        <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(subtotal)}</span></div>
+                        {vatRate > 0 && <div className="flex justify-between"><span>VAT ({vatRate}%)</span><span>{formatMoney(vatAmount)}</span></div>}
+                        <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand total</span><span>{formatMoney(grandTotal)}</span></div>
+                      </div>
                       <div>
                         <div className="ea-label">Notes</div>
                         <Input
@@ -3559,8 +3974,11 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                       <div className="flex flex-wrap gap-2">
                         <Button
                           onClick={() => {
-                            if (!receiptForm.customer_name.trim() || !rfLineItems.length) return;
-                            const validItems = rfLineItems.filter((i) => Number(i.unit_price) >= 0);
+                            if (!receiptForm.customer_name.trim() || (!rfLineItems.length && !rfExtraItems.length)) return;
+                            const validItems = [
+                              ...rfLineItems.filter((i) => Number(i.unit_price) >= 0),
+                              ...rfExtraItems.filter((i) => Number(i.unit_price) >= 0).map((i) => ({ product_name: i.product_name || "Item", quantity: Number(i.quantity || 1), unit_price: Number(i.unit_price), unit_cost_of_sales: 0 })),
+                            ];
                             const newReceipt = {
                               id: crypto.randomUUID(),
                               receipt_number: receiptForm.receipt_number || null,
@@ -4260,10 +4678,10 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                       <span className="text-slate-700">{formatMoney(preVatTotal)}</span>
                     </div>
                     {Number(previewInvoice.vat_rate) > 0 && (
-                      <div className="flex justify-end gap-6">
-                        <span className="text-slate-500">VAT ({previewInvoice.vat_rate}%)</span>
-                        <span className="text-slate-700">{formatMoney(vatAmt)}</span>
-                      </div>
+                    <div className="flex justify-end gap-6">
+                      <span className="text-slate-500">VAT ({Number(previewInvoice.vat_rate)}%)</span>
+                      <span className="text-slate-700">{formatMoney(vatAmt)}</span>
+                    </div>
                     )}
                     <div className="flex justify-end gap-6 border-t border-slate-200 pt-1.5 mt-0.5">
                       <span className="font-semibold text-slate-900">Grand Total</span>
@@ -4376,12 +4794,30 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 })}
               </div>
 
-              <div className="mt-4 flex justify-end border-t border-slate-200 pt-3">
-                <div className="text-sm">
-                  <span className="mr-6 text-slate-500">Grand Total</span>
-                  <span className="font-semibold text-slate-900">{formatMoney(getDocumentGrandTotal(previewQuote))}</span>
-                </div>
-              </div>
+              {(() => {
+                const qItems = Array.isArray(previewQuote.items) && previewQuote.items.length ? previewQuote.items : [{ unit_price: previewQuote.unit_price, unit_cost_of_sales: previewQuote.unit_cost_of_sales, quantity: previewQuote.quantity }];
+                const qPreVatTotal = qItems.reduce((s, it) => s + (Number(it.unit_price || 0) + Number(it.unit_cost_of_sales || 0)) * Number(it.quantity || 0), 0);
+                const qVatAmt = Number(previewQuote.vat_amount || 0);
+                const qGrandTotal = getDocumentGrandTotal(previewQuote);
+                return (
+                  <div className="mt-4 border-t border-slate-200 pt-3 flex flex-col items-end gap-1.5 text-sm">
+                    <div className="flex justify-end gap-6">
+                      <span className="text-slate-500">Total</span>
+                      <span className="text-slate-700">{formatMoney(qPreVatTotal)}</span>
+                    </div>
+                    {Number(previewQuote.vat_rate) > 0 && (
+                    <div className="flex justify-end gap-6">
+                      <span className="text-slate-500">VAT ({Number(previewQuote.vat_rate)}%)</span>
+                      <span className="text-slate-700">{formatMoney(qVatAmt)}</span>
+                    </div>
+                    )}
+                    <div className="flex justify-end gap-6 border-t border-slate-200 pt-1.5 mt-0.5">
+                      <span className="font-semibold text-slate-900">Grand Total</span>
+                      <span className="font-bold text-slate-900">{formatMoney(qGrandTotal)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="mt-4 text-xs text-slate-500">
                 This quotation is valid for {previewQuote.validity_days || 30} days unless otherwise stated.
