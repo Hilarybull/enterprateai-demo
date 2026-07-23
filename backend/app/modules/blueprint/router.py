@@ -34,6 +34,7 @@ from app.modules.blueprint.share_repository import (
 )
 from app.shared.email.sendgrid import send_document_share_email
 from app.shared.auth.deps import get_current_user
+from app.modules.credits.service import credit_guard
 
 router = APIRouter(prefix="/blueprint", tags=["blueprint"])
 
@@ -174,14 +175,15 @@ async def blueprint_documents_share_create(
         doc = await get_document(user_id=user["id"], document_id=document_id)
         document_title = doc.title if doc else "Shared document"
         company_name = doc.company_name if doc else get_settings().app_name
-        delivery = await send_document_share_email(
-            to_email=payload.email,
-            sender_email=user["email"],
-            share_url=_shared_document_url(token),
-            document_title=document_title,
-            company_name=company_name,
-            expires_in_days=payload.expires_in_days,
-        )
+        async with credit_guard(user["id"], "email_share"):
+            delivery = await send_document_share_email(
+                to_email=payload.email,
+                sender_email=user["email"],
+                share_url=_shared_document_url(token),
+                document_title=document_title,
+                company_name=company_name,
+                expires_in_days=payload.expires_in_days,
+            )
         email_sent = delivery.sent
         email_error = delivery.error
     return BlueprintShareLinkResponse(token=token, email_sent=email_sent, email_error=email_error)
@@ -217,14 +219,15 @@ async def blueprint_financial_documents_share(
     email_sent = False
     email_error = None
     if payload.email:
-        delivery = await send_document_share_email(
-            to_email=payload.email,
-            sender_email=user["email"],
-            share_url=_shared_document_url(token),
-            document_title=payload.title,
-            company_name=payload.company_name,
-            expires_in_days=payload.expires_in_days,
-        )
+        async with credit_guard(user["id"], "email_share"):
+            delivery = await send_document_share_email(
+                to_email=payload.email,
+                sender_email=user["email"],
+                share_url=_shared_document_url(token),
+                document_title=payload.title,
+                company_name=payload.company_name,
+                expires_in_days=payload.expires_in_days,
+            )
         email_sent = delivery.sent
         email_error = delivery.error
     return BlueprintFinancialShareResponse(
@@ -264,14 +267,15 @@ async def blueprint_share_send_email(
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    delivery = await send_document_share_email(
-        to_email=str(payload.email),
-        sender_email=user["email"],
-        share_url=_shared_document_url(token),
-        document_title=str(doc.get("title") or "Shared document"),
-        company_name=str(doc.get("company_name") or get_settings().app_name),
-        expires_in_days=_remaining_expiry_days(share.get("expires_at")),
-    )
+    async with credit_guard(user["id"], "email_share"):
+        delivery = await send_document_share_email(
+            to_email=str(payload.email),
+            sender_email=user["email"],
+            share_url=_shared_document_url(token),
+            document_title=str(doc.get("title") or "Shared document"),
+            company_name=str(doc.get("company_name") or get_settings().app_name),
+            expires_in_days=_remaining_expiry_days(share.get("expires_at")),
+        )
     return BlueprintShareEmailResponse(sent=delivery.sent, error=delivery.error)
 
 
