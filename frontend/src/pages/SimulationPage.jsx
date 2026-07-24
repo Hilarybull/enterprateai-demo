@@ -1280,13 +1280,13 @@ export default function SimulationPage() {
                     exp = expensesByMonth[monthKey] ?? 0;
                   } else if (isPast) {
                     const actualRev = revenueByMonth[monthKey];
-                    const use = actualRev != null && actualRev > 0;
-                    rev = use ? actualRev : Number(row.revenue || 0);
-                    cos = use && costOfSalesByMonth[monthKey] != null ? costOfSalesByMonth[monthKey] : Number(row.cost_of_sales || 0);
+                    rev = actualRev != null ? actualRev : Number(row.revenue || 0);
+                    const actualCoS = costOfSalesByMonth[monthKey];
+                    cos = actualCoS != null ? actualCoS : Number(row.cost_of_sales || 0);
                     const actualRec = receivablesByMonth[monthKey];
-                    rec = actualRec != null && actualRec > 0 ? actualRec : Number(row.receivables || 0);
+                    rec = actualRec != null ? actualRec : Number(row.receivables || 0);
                     const actualExp = expensesByMonth[monthKey];
-                    exp = actualExp != null && actualExp > 0 ? actualExp : Number(row.expenses || 0);
+                    exp = actualExp != null ? actualExp : Number(row.expenses || 0);
                   } else {
                     // Future: keep revenue/CoS/expenses at current actual (even if 0)
                     rev = currentActualRev;
@@ -1931,13 +1931,13 @@ function ScenarioOutput({
       _exp = _expbm[_mKey] ?? 0;
     } else if (_isPast) {
       const _ar = _rbm[_mKey];
-      const _use = _ar != null && _ar > 0;
-      _rev = _use ? _ar : Number(row.revenue || 0);
-      _cos = _use && _csbm[_mKey] != null ? _csbm[_mKey] : Number(row.cost_of_sales || 0);
+      _rev = _ar != null ? _ar : Number(row.revenue || 0);
+      const _acs = _csbm[_mKey];
+      _cos = _acs != null ? _acs : Number(row.cost_of_sales || 0);
       const _arec = _recbm[_mKey];
-      _rec = _arec != null && _arec > 0 ? _arec : Number(row.receivables || 0);
+      _rec = _arec != null ? _arec : Number(row.receivables || 0);
       const _aexp = _expbm[_mKey];
-      _exp = _aexp != null && _aexp > 0 ? _aexp : Number(row.expenses || 0);
+      _exp = _aexp != null ? _aexp : Number(row.expenses || 0);
     } else {
       // Future: keep revenue/CoS/expenses at current actual (even if 0)
       _rev = _curActualRev;
