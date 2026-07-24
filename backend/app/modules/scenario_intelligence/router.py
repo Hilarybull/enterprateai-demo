@@ -38,6 +38,7 @@ from app.modules.scenario_intelligence.service import (
     template_list,
 )
 from app.modules.scenario_intelligence.orchestration_service import run_full_engine_suite
+from app.modules.credits.service import credit_guard
 
 router = APIRouter(prefix="/v1/scenario-intelligence", tags=["scenario-intelligence"])
 
@@ -79,30 +80,31 @@ async def scenario_templates_list(
 @router.post("/scenario-runs", response_model=ScenarioRunResponse)
 async def scenario_runs_create(
     payload: ScenarioRunRequest,
-    _user=Depends(get_current_user),
+    user=Depends(get_current_user),
 ) -> ScenarioRunResponse:
     template = resolve_template(payload.scenario_template_id)
     if not template:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario template not found")
 
-    run_doc = await create_scenario_run(
-        tenant_id=payload.tenant_id,
-        business_id=payload.business_id,
-        state_version=payload.state_version,
-        template_id=payload.scenario_template_id,
-        scenario_mode=payload.scenario_mode,
-        scenario_name=payload.scenario_name,
-        scenario_type=template.scenario_type,
-        params=payload.parameters,
-        state=payload.state,
-    )
-    return ScenarioRunResponse(
-        scenario_run_id=run_doc["scenario_run_id"],
-        status=run_doc["status"],
-        engine_version=run_doc["engine_version"],
-        baseline_snapshot_id=run_doc["scenario_run_id"],
-        timeline_months=run_doc["timeline_months"],
-    )
+    async with credit_guard(user["id"], "simulation_run"):
+        run_doc = await create_scenario_run(
+            tenant_id=payload.tenant_id,
+            business_id=payload.business_id,
+            state_version=payload.state_version,
+            template_id=payload.scenario_template_id,
+            scenario_mode=payload.scenario_mode,
+            scenario_name=payload.scenario_name,
+            scenario_type=template.scenario_type,
+            params=payload.parameters,
+            state=payload.state,
+        )
+        return ScenarioRunResponse(
+            scenario_run_id=run_doc["scenario_run_id"],
+            status=run_doc["status"],
+            engine_version=run_doc["engine_version"],
+            baseline_snapshot_id=run_doc["scenario_run_id"],
+            timeline_months=run_doc["timeline_months"],
+        )
 
 
 @router.post("/scenario-runs/{scenario_run_id}/execute")

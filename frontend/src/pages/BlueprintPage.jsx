@@ -1824,6 +1824,7 @@ export default function BlueprintPage() {
       if (!token) throw new Error("Share link could not be created.");
       const url = `${window.location.origin}/share/${token}`;
       setShareNotice(null);
+      window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
       return {
         token,
         url,
@@ -1838,6 +1839,7 @@ export default function BlueprintPage() {
 
   async function sendBlueprintShareEmail({ token, email }) {
     const res = await apiRequest(`/blueprint/share/${token}/email`, "POST", { email });
+    window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
     return {
       sent: Boolean(res?.sent),
       error: res?.error || "",

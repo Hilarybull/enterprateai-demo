@@ -97,11 +97,10 @@ export default function DashboardPage() {
     // Revenue = grand total from paid + delivered (accrual: earned when service delivered)
     const totalRevenue = [...paidInvs, ...deliveredInvs].reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
     const paidCoS = paidInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
-    const paidVat = paidInvs.reduce((s, i) => s + Number(i.vat_amount || 0), 0);
     const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-    // Cash = paid invoices only (grand total received - CoS - VAT - paid expenses)
+    // Cash = total received (paid invoices grand total) minus total paid out (expenses)
     const paidRevenue = paidInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
-    const cashBalance = paidRevenue - paidCoS - paidVat - paidExpTotal;
+    const cashBalance = paidRevenue - paidExpTotal;
     // Receivables = delivered but not yet paid (unchanged)
     const receivables = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
     // Costs = all expenses + CoS from paid invoices

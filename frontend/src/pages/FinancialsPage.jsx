@@ -503,14 +503,13 @@ export default function FinancialsPage() {
     const earnedInvs = [...revenueInvs, ...deliveredInvs];
     const totalRevenue = earnedInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
     const paidCoS = revenueInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
-    const paidVat = revenueInvs.reduce((s, i) => s + Number(i.vat_amount || 0), 0);
     // Receivables = delivered invoices only (subset of revenue, not yet collected)
     const pendingRec = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
     const pendingPay = unpaidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
     const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-    // Cash = paid invoices only (grand total received - CoS - VAT - paid expenses)
+    // Cash = total received (paid invoices grand total) minus total paid out (expenses)
     const paidRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
-    const cashBalance = paidRevenue - paidCoS - paidVat - paidExpTotal;
+    const cashBalance = paidRevenue - paidExpTotal;
     // MRR = most recent month's grand total from paid + delivered invoices
     function mostRecentMonthRev(items) {
       const byMonth = new Map();
@@ -1335,6 +1334,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
 
         const url = `${window.location.origin}/share/${token}`;
         setShareNotice(null);
+        window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
         return {
           token,
           url,
@@ -1359,6 +1359,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
 
   async function sendFinancialShareEmail({ token, email }) {
     const res = await apiRequest(`/blueprint/share/${token}/email`, "POST", { email });
+    window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
     return {
       sent: Boolean(res?.sent),
       error: res?.error || "",
@@ -1912,6 +1913,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
         const nextQuotes = quotes.map((q) => q.id === quote.id ? { ...q, share_document_id: shareRes.document_id, share_token: shareRes.token } : q);
         setQuotes(nextQuotes);
         await persist({ invoices, quotes: nextQuotes, expenses, contracts });
+        window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to approve RFQ.");
