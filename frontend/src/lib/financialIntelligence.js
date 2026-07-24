@@ -279,21 +279,27 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   }, 0);
   const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
 
-  // Revenue for the month = most recent calendar month's grand total from paid + delivered
-  function mostRecentMonthTotal(items, field) {
-    const byMonth = new Map();
+  // Build a full month-by-month breakdown: { "YYYY-MM": total }
+  function buildMonthlyBreakdown(items, field) {
+    const byMonth = {};
     for (const item of items) {
       const raw = item?.paid_at || item?.issued_at || item?.incurred_at || item?.created_at || item?.updated_at;
       if (!raw) continue;
       const d = new Date(raw);
       if (!Number.isFinite(d.getTime())) continue;
-      const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, "0")}`;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const val = field ? toNumber(item[field]) : toNumber(item.total_amount || item.subtotal_amount);
-      byMonth.set(key, (byMonth.get(key) || 0) + val);
+      byMonth[key] = Number(((byMonth[key] || 0) + val).toFixed(2));
     }
-    if (!byMonth.size) return 0;
-    const latestKey = [...byMonth.keys()].sort().at(-1);
-    return byMonth.get(latestKey) || 0;
+    return byMonth;
+  }
+
+  // Revenue for the month = most recent calendar month's grand total from paid + delivered
+  function mostRecentMonthTotal(items, field) {
+    const byMonth = buildMonthlyBreakdown(items, field);
+    const keys = Object.keys(byMonth).sort();
+    if (!keys.length) return 0;
+    return byMonth[keys[keys.length - 1]] || 0;
   }
 
   const earnedInvoices = [...paidInvoices, ...deliveredInvoices];
@@ -616,6 +622,10 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       pending_receivables_schedule: pendingReceivablesSchedule,
       pending_payables_schedule: pendingPayablesSchedule,
       opening_accrual_balance: openingAccrualBalance,
+      revenue_by_month: buildMonthlyBreakdown(earnedInvoices),
+      cost_of_sales_by_month: buildMonthlyBreakdown(earnedInvoices, "cost_of_sales"),
+      receivables_by_month: buildMonthlyBreakdown(deliveredInvoices),
+      expenses_by_month: buildMonthlyBreakdown(paidExpenses, "price"),
     },
   };
 }

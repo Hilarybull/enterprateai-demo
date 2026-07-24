@@ -885,6 +885,11 @@ export default function SimulationPage() {
                 onDecision={saveDecision}
                 hideDecision
                 maxTimelineRows={6}
+                revenueByMonth={stateSnapshot?.revenue_by_month}
+                costOfSalesByMonth={stateSnapshot?.cost_of_sales_by_month}
+                receivablesByMonth={stateSnapshot?.receivables_by_month}
+                expensesByMonth={stateSnapshot?.expenses_by_month}
+                stateSnapshot={stateSnapshot}
               />
             </SectionCard>
           )}
@@ -1205,6 +1210,11 @@ export default function SimulationPage() {
               maxTimelineRows={6}
               showRisks={canSimFeature("risk_detection")}
               showRecommendations={canSimFeature("recommendations")}
+              revenueByMonth={stateSnapshot?.revenue_by_month}
+              costOfSalesByMonth={stateSnapshot?.cost_of_sales_by_month}
+              receivablesByMonth={stateSnapshot?.receivables_by_month}
+              expensesByMonth={stateSnapshot?.expenses_by_month}
+              stateSnapshot={stateSnapshot}
               hideTimelineAndMeaning
               reportOutput={activeRun ? assembleOutput({
                 workspaceId,
@@ -1230,12 +1240,53 @@ export default function SimulationPage() {
             <div className="overflow-x-auto border-t border-slate-100">
               {(() => {
                 const openingCash = Number(activeRun?.baseline_snapshot?.starting_cash ?? stateSnapshot?.starting_cash ?? 0);
-                let cumGross = 0; let cumCash = openingCash;
+                const revenueByMonth = stateSnapshot?.revenue_by_month || {};
+                const costOfSalesByMonth = stateSnapshot?.cost_of_sales_by_month || {};
+                const receivablesByMonth = stateSnapshot?.receivables_by_month || {};
+                const expensesByMonth = stateSnapshot?.expenses_by_month || {};
+                const runBase = activeRun?.executed_at || activeRun?.created_at;
+                const runBaseDate = runBase ? new Date(runBase) : new Date();
+                const nowKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+                // Current month: 0 if no data this month (don't bleed prior months in)
+                const currentActualRev = revenueByMonth[nowKey] ?? 0;
+                const currentActualCoS = costOfSalesByMonth[nowKey] ?? 0;
+                const currentActualRec = receivablesByMonth[nowKey] ?? 0;
+                const currentActualExp = expensesByMonth[nowKey] ?? 0;
+                // Seed cumulative with actual gross profit from all months before the timeline starts
+                const historicalCumGross = Object.keys(revenueByMonth)
+                  .filter((k) => k < nowKey)
+                  .reduce((sum, k) => sum + Number(((revenueByMonth[k] ?? 0) - (costOfSalesByMonth[k] ?? 0)).toFixed(2)), 0);
+                let cumGross = Number(historicalCumGross.toFixed(2)); let cumCash = openingCash;
                 const enriched = timeline.map((row) => {
-                  cumGross = Number((cumGross + Number(row.gross_profit || 0)).toFixed(2));
-                  // revenue = grand total (includes CoS); deduct CoS + expenses to get net cash
-                  cumCash = Number((cumCash + Number(row.revenue || 0) - Number(row.cost_of_sales || 0) - Number(row.expenses || 0)).toFixed(2));
-                  return { ...row, _cumGross: cumGross, _cash: cumCash };
+                  const rd = new Date(runBaseDate); rd.setDate(1); rd.setHours(0,0,0,0); rd.setMonth(rd.getMonth() + (Number(row.month_index) - 1));
+                  const monthKey = `${rd.getFullYear()}-${String(rd.getMonth() + 1).padStart(2, "0")}`;
+                  const isPast = monthKey < nowKey;
+                  const isCurrent = monthKey === nowKey;
+                  let rev, cos, rec, exp;
+                  if (isCurrent) {
+                    rev = revenueByMonth[monthKey] ?? 0;
+                    cos = costOfSalesByMonth[monthKey] ?? 0;
+                    rec = receivablesByMonth[monthKey] ?? 0;
+                    exp = expensesByMonth[monthKey] ?? 0;
+                  } else if (isPast) {
+                    const actualRev = revenueByMonth[monthKey];
+                    const use = actualRev != null && actualRev > 0;
+                    rev = use ? actualRev : Number(row.revenue || 0);
+                    cos = use && costOfSalesByMonth[monthKey] != null ? costOfSalesByMonth[monthKey] : Number(row.cost_of_sales || 0);
+                    const actualRec = receivablesByMonth[monthKey];
+                    rec = actualRec != null && actualRec > 0 ? actualRec : Number(row.receivables || 0);
+                    const actualExp = expensesByMonth[monthKey];
+                    exp = actualExp != null && actualExp > 0 ? actualExp : Number(row.expenses || 0);
+                  } else {
+                    rev = currentActualRev;
+                    cos = currentActualCoS;
+                    rec = currentActualRec;
+                    exp = currentActualExp;
+                  }
+                  const grossProfit = Number((rev - cos).toFixed(2));
+                  cumGross = Number((cumGross + grossProfit).toFixed(2));
+                  cumCash = Number((cumCash + rev - cos - exp).toFixed(2));
+                  return { ...row, revenue: rev, cost_of_sales: cos, receivables: rec, expenses: exp, gross_profit: grossProfit, _cumGross: cumGross, _cash: cumCash };
                 });
                 return (
                   <table className="min-w-full text-xs">
@@ -1799,6 +1850,11 @@ function ScenarioOutput({
   showRecommendations = true,
   hideTimelineAndMeaning = false,
   reportOutput = null,
+  revenueByMonth = {},
+  costOfSalesByMonth = {},
+  receivablesByMonth = {},
+  expensesByMonth = {},
+  stateSnapshot = null,
 }) {
   if (!activeRun) {
     return (
@@ -1821,12 +1877,51 @@ function ScenarioOutput({
   const rawTimelineRows = maxTimelineRows ? timeline.slice(0, maxTimelineRows) : timeline;
   const isTrimmed = maxTimelineRows && timeline.length > maxTimelineRows;
   const openingCash = Number(activeRun?.baseline_snapshot?.starting_cash ?? 0);
-  let _cumGross = 0; let _cumCash = openingCash;
+  const _nowKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const _rbm = revenueByMonth || {};
+  const _csbm = costOfSalesByMonth || {};
+  const _recbm = (stateSnapshot?.receivables_by_month) || {};
+  const _expbm = (stateSnapshot?.expenses_by_month) || {};
+  const _curActualRev = _rbm[_nowKey] ?? 0;
+  const _curActualCoS = _csbm[_nowKey] ?? 0;
+  const _curActualRec = _recbm[_nowKey] ?? 0;
+  const _curActualExp = _expbm[_nowKey] ?? 0;
+  const _runBase = activeRun?.executed_at || activeRun?.created_at;
+  const _historicalCumGross = Object.keys(_rbm)
+    .filter((k) => k < _nowKey)
+    .reduce((sum, k) => sum + Number(((_rbm[k] ?? 0) - (_csbm[k] ?? 0)).toFixed(2)), 0);
+  let _cumGross = Number(_historicalCumGross.toFixed(2)); let _cumCash = openingCash;
   const timelineRows = rawTimelineRows.map((row) => {
-    _cumGross = Number((_cumGross + Number(row.gross_profit || 0)).toFixed(2));
-    // revenue = grand total (includes CoS); deduct CoS + expenses to get net cash
-    _cumCash = Number((_cumCash + Number(row.revenue || 0) - Number(row.cost_of_sales || 0) - Number(row.expenses || 0)).toFixed(2));
-    return { ...row, _cumGross, _cash: _cumCash };
+    const _rd = _runBase ? new Date(_runBase) : new Date();
+    _rd.setDate(1); _rd.setHours(0,0,0,0); _rd.setMonth(_rd.getMonth() + (Number(row.month_index) - 1));
+    const _mKey = `${_rd.getFullYear()}-${String(_rd.getMonth() + 1).padStart(2, "0")}`;
+    const _isPast = _mKey < _nowKey;
+    const _isCur = _mKey === _nowKey;
+    let _rev, _cos, _rec, _exp;
+    if (_isCur) {
+      _rev = _rbm[_mKey] ?? 0;
+      _cos = _csbm[_mKey] ?? 0;
+      _rec = _recbm[_mKey] ?? 0;
+      _exp = _expbm[_mKey] ?? 0;
+    } else if (_isPast) {
+      const _ar = _rbm[_mKey];
+      const _use = _ar != null && _ar > 0;
+      _rev = _use ? _ar : Number(row.revenue || 0);
+      _cos = _use && _csbm[_mKey] != null ? _csbm[_mKey] : Number(row.cost_of_sales || 0);
+      const _arec = _recbm[_mKey];
+      _rec = _arec != null && _arec > 0 ? _arec : Number(row.receivables || 0);
+      const _aexp = _expbm[_mKey];
+      _exp = _aexp != null && _aexp > 0 ? _aexp : Number(row.expenses || 0);
+    } else {
+      _rev = _curActualRev;
+      _cos = _curActualCoS;
+      _rec = _curActualRec;
+      _exp = _curActualExp;
+    }
+    const _gp = Number((_rev - _cos).toFixed(2));
+    _cumGross = Number((_cumGross + _gp).toFixed(2));
+    _cumCash = Number((_cumCash + _rev - _cos - _exp).toFixed(2));
+    return { ...row, revenue: _rev, cost_of_sales: _cos, receivables: _rec, expenses: _exp, gross_profit: _gp, _cumGross, _cash: _cumCash };
   });
 
   const baseDate = useMemo(() => {

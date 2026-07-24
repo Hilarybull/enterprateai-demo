@@ -172,6 +172,7 @@ export default function FinancialsPage() {
   const [editingContractId, setEditingContractId] = useState(null);
   const [activeTab, setActiveTab] = useState(() => firstAccessibleFinancialsTab());
   const [overviewDrill, setOverviewDrill] = useState(null); // { label, type, items }
+  const [statusDateModal, setStatusDateModal] = useState(null); // { type, id, status, label }
   const [pendingFinancialReport, setPendingFinancialReport] = useState(null);
   const [reportFilter, setReportFilter] = useState({ kpis: true, invoices: true, quotes: true, expenses: true, contracts: true });
   const [reportPreviewHtml, setReportPreviewHtml] = useState(null);
@@ -1752,17 +1753,23 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     resetContractForm();
   }
 
-  async function updateStatus(type, id, status) {
+  async function updateStatus(type, id, status, dateStr) {
+    const ts = dateStr ? new Date(dateStr).toISOString() : new Date().toISOString();
     if (type === "invoice") {
       const next = invoices.map((i) =>
-        i.id === id ? { ...i, status, paid_at: status === "paid" ? new Date().toISOString() : null, updated_at: new Date().toISOString() } : i
+        i.id === id ? {
+          ...i, status,
+          paid_at: status === "paid" ? ts : (status === "pending" ? null : i.paid_at),
+          issued_at: status === "delivered" ? ts : i.issued_at,
+          updated_at: new Date().toISOString(),
+        } : i
       );
       setInvoices(next);
       await persist({ invoices: next, quotes, expenses, contracts });
     }
     if (type === "expense") {
       const next = expenses.map((e) =>
-        e.id === id ? { ...e, status, paid_at: status === "paid" ? new Date().toISOString() : null, updated_at: new Date().toISOString() } : e
+        e.id === id ? { ...e, status, paid_at: status === "paid" ? ts : (status === "pending" ? null : e.paid_at), updated_at: new Date().toISOString() } : e
       );
       setExpenses(next);
       await persist({ invoices, quotes, expenses: next, contracts });
@@ -2722,8 +2729,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                   });
                                 }
                               },
-                              { label: inv.status === "paid" ? "Mark pending" : "Mark paid", onClick: () => updateStatus("invoice", inv.id, inv.status === "paid" ? "pending" : "paid") },
-                              ...(inv.status !== "delivered" && inv.status !== "paid" ? [{ label: "Mark as delivered", onClick: () => updateStatus("invoice", inv.id, "delivered") }] : []),
+                              { label: inv.status === "paid" ? "Mark pending" : "Mark paid", onClick: () => inv.status === "paid" ? updateStatus("invoice", inv.id, "pending") : setStatusDateModal({ type: "invoice", id: inv.id, status: "paid", label: "Date of payment" }) },
+                              ...(inv.status !== "delivered" && inv.status !== "paid" ? [{ label: "Mark as delivered", onClick: () => setStatusDateModal({ type: "invoice", id: inv.id, status: "delivered", label: "Date of delivery" }) }] : []),
                               ...(inv.status === "delivered" ? [{ label: "Mark as undelivered", onClick: () => updateStatus("invoice", inv.id, "pending") }] : []),
                               { label: "View invoice", onClick: () => setPreviewInvoiceId(inv.id) },
                               ...(String(inv.status || "").toLowerCase() === "paid" ? [{ label: "Download receipt", onClick: () => downloadReceipt(inv, resolveCustomer(inv.customer_id, inv.customer_name), resolveProduct(inv.product_id, inv.product_name)) }] : []),
@@ -3371,7 +3378,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                           </div>
                           <ActionMenu items={[
                             { label: "Edit", onClick: () => { setEditingExpenseId(exp.id); setExpenseForm({ vendor_id: exp.vendor_name || exp.vendor_id, item: exp.item, price: String(exp.price || ""), cost_type: exp.cost_type || "variable", incurred_at: exp.incurred_at || "", due_date: exp.due_date || "" }); } },
-                            { label: exp.status === "paid" ? "Mark pending" : "Mark paid", onClick: () => updateStatus("expense", exp.id, exp.status === "paid" ? "pending" : "paid") },
+                            { label: exp.status === "paid" ? "Mark pending" : "Mark paid", onClick: () => exp.status === "paid" ? updateStatus("expense", exp.id, "pending") : setStatusDateModal({ type: "expense", id: exp.id, status: "paid", label: "Date of payment" }) },
                             { label: "Archive", onClick: () => archiveItem("expense", exp.id) },
                             { label: "Delete", tone: "danger", onClick: () => deleteItem("expense", exp.id) }
                           ]} />
@@ -4031,7 +4038,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 
               <SectionCard
                 title="Paid documents"
-                subtitle="View, share, or download receipts for paid invoices and expenses."
+                subtitle="View, share, or download receipts for paid invoices."
                 className="lg:col-span-3"
                 icon={
                   <CardIcon tone="bg-slate-50 text-slate-600">
@@ -4043,7 +4050,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 }
               >
                 <div className="flex items-center gap-2 mb-4">
-                  {["invoices", "expenses", "generated"].map((t) => (
+                  {["invoices", "generated"].map((t) => (
                     <button
                       key={t}
                       type="button"
@@ -4382,6 +4389,33 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               </div>
             </SectionCard>
           )}
+        </div>
+      )}
+
+      {/* Status date modal — paid / delivered */}
+      {statusDateModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setStatusDateModal(null); }}
+        >
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
+              <div className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                {statusDateModal.status === "paid" ? "Mark as paid" : "Mark as delivered"}
+              </div>
+              <button type="button" onClick={() => setStatusDateModal(null)} className="text-slate-400 hover:text-slate-600">
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <StatusDateForm
+              modal={statusDateModal}
+              onConfirm={(dateStr) => {
+                updateStatus(statusDateModal.type, statusDateModal.id, statusDateModal.status, dateStr);
+                setStatusDateModal(null);
+              }}
+              onCancel={() => setStatusDateModal(null)}
+            />
+          </div>
         </div>
       )}
 
@@ -4921,6 +4955,31 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+function StatusDateForm({ modal, onConfirm, onCancel }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
+  const label = modal.status === "paid" ? "Date of payment" : "Date of delivery";
+  return (
+    <div className="px-6 py-5 space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{label} <span className="text-slate-400 font-normal">(optional)</span></label>
+        <input
+          type="date"
+          value={date}
+          max={today}
+          onChange={(e) => setDate(e.target.value)}
+          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+        />
+        <p className="mt-1 text-xs text-slate-400">Defaults to today if left unchanged.</p>
+      </div>
+      <div className="flex gap-2 justify-end">
+        <button type="button" onClick={onCancel} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">Cancel</button>
+        <button type="button" onClick={() => onConfirm(date || today)} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Confirm</button>
+      </div>
     </div>
   );
 }
