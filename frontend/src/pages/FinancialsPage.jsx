@@ -2708,6 +2708,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                             </div>
                             <div className="mt-0.5 text-xs text-slate-500">
                               Qty {inv.quantity} · {formatMoney(inv.total_amount)} · Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"}
+                              {inv.status === "paid" && inv.paid_at ? ` · Paid ${new Date(inv.paid_at).toLocaleDateString()}` : inv.status === "delivered" && inv.issued_at ? ` · Delivered ${new Date(inv.issued_at).toLocaleDateString()}` : null}
                             </div>
                           </div>
                           <ActionMenu
@@ -3059,6 +3060,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                         </div>
                         <div className="mt-0.5 text-xs text-slate-500">
                           Qty {quote.quantity} · {formatMoney(quote.total_amount)} · Due {quote.due_date ? new Date(quote.due_date).toLocaleDateString() : "Not set"}
+                          {quote.status === "accepted" && quote.issued_at ? ` · Accepted ${new Date(quote.issued_at).toLocaleDateString()}` : null}
                         </div>
                       </div>
                       <ActionMenu
@@ -3374,6 +3376,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                             </div>
                             <div className="mt-0.5 text-xs text-slate-500">
                               {exp.cost_type} · {formatMoney(exp.price)} · Due {exp.due_date ? new Date(exp.due_date).toLocaleDateString() : "Not set"}
+                              {exp.status === "paid" && exp.paid_at ? ` · Paid ${new Date(exp.paid_at).toLocaleDateString()}` : null}
                             </div>
                           </div>
                           <ActionMenu items={[
