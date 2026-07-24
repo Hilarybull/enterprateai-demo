@@ -32,7 +32,7 @@ from app.modules.blueprint.share_repository import (
     get_shared_document_by_token,
     revoke_share_tokens,
 )
-from app.shared.email.resend import send_document_share_email
+from app.shared.email.sendgrid import send_document_share_email
 from app.shared.auth.deps import get_current_user
 from app.modules.credits.service import credit_guard
 
