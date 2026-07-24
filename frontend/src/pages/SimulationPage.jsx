@@ -1256,6 +1256,16 @@ export default function SimulationPage() {
                 const historicalCumGross = Object.keys(revenueByMonth)
                   .filter((k) => k < nowKey)
                   .reduce((sum, k) => sum + Number(((revenueByMonth[k] ?? 0) - (costOfSalesByMonth[k] ?? 0)).toFixed(2)), 0);
+                // Last known monthly GP from actual data — used to project cumulative when current month has no data
+                const sortedPastKeys = Object.keys(revenueByMonth).filter((k) => k < nowKey).sort();
+                const lastPastKey = sortedPastKeys[sortedPastKeys.length - 1];
+                const lastActualGP = lastPastKey
+                  ? Number(((revenueByMonth[lastPastKey] ?? 0) - (costOfSalesByMonth[lastPastKey] ?? 0)).toFixed(2))
+                  : 0;
+                const lastActualCashFlow = lastPastKey
+                  ? Number(((revenueByMonth[lastPastKey] ?? 0) - (costOfSalesByMonth[lastPastKey] ?? 0) - (expensesByMonth[lastPastKey] ?? 0)).toFixed(2))
+                  : 0;
+                const currentMonthHasData = currentActualRev > 0 || costOfSalesByMonth[nowKey] != null;
                 let cumGross = Number(historicalCumGross.toFixed(2)); let cumCash = openingCash;
                 const enriched = timeline.map((row) => {
                   const rd = new Date(runBaseDate); rd.setDate(1); rd.setHours(0,0,0,0); rd.setMonth(rd.getMonth() + (Number(row.month_index) - 1));
@@ -1278,15 +1288,22 @@ export default function SimulationPage() {
                     const actualExp = expensesByMonth[monthKey];
                     exp = actualExp != null && actualExp > 0 ? actualExp : Number(row.expenses || 0);
                   } else {
+                    // Future: keep revenue/CoS/expenses at current actual (even if 0)
                     rev = currentActualRev;
                     cos = currentActualCoS;
                     rec = currentActualRec;
                     exp = currentActualExp;
                   }
                   const grossProfit = Number((rev - cos).toFixed(2));
-                  cumGross = Number((cumGross + grossProfit).toFixed(2));
-                  cumCash = Number((cumCash + rev - cos - exp).toFixed(2));
-                  return { ...row, revenue: rev, cost_of_sales: cos, receivables: rec, expenses: exp, gross_profit: grossProfit, _cumGross: cumGross, _cash: cumCash };
+                  const isFuture = !isCurrent && !isPast;
+                  const useCarryForward = isFuture && !currentMonthHasData;
+                  const gpForCum = useCarryForward ? lastActualGP : grossProfit;
+                  const cashForCum = useCarryForward ? lastActualCashFlow : (rev - cos - exp);
+                  cumGross = Number((cumGross + gpForCum).toFixed(2));
+                  cumCash = Number((cumCash + cashForCum).toFixed(2));
+                  const totalCosts = Number((cos + exp).toFixed(2));
+                  const grossMarginPct = rev > 0 ? Number(((grossProfit / rev) * 100).toFixed(1)) : 0;
+                  return { ...row, revenue: rev, cost_of_sales: cos, receivables: rec, accruals: rec, expenses: exp, costs: totalCosts, gross_profit: grossProfit, gross_margin_pct: grossMarginPct, _cumGross: cumGross, _cash: cumCash };
                 });
                 return (
                   <table className="min-w-full text-xs">
@@ -1886,6 +1903,15 @@ function ScenarioOutput({
   const _curActualCoS = _csbm[_nowKey] ?? 0;
   const _curActualRec = _recbm[_nowKey] ?? 0;
   const _curActualExp = _expbm[_nowKey] ?? 0;
+  const _curMonthHasData = _curActualRev > 0 || _csbm[_nowKey] != null;
+  const _sortedPastKeys = Object.keys(_rbm).filter((k) => k < _nowKey).sort();
+  const _lastPastKey = _sortedPastKeys[_sortedPastKeys.length - 1];
+  const _lastActualGP = _lastPastKey
+    ? Number(((_rbm[_lastPastKey] ?? 0) - (_csbm[_lastPastKey] ?? 0)).toFixed(2))
+    : 0;
+  const _lastActualCashFlow = _lastPastKey
+    ? Number(((_rbm[_lastPastKey] ?? 0) - (_csbm[_lastPastKey] ?? 0) - (_expbm[_lastPastKey] ?? 0)).toFixed(2))
+    : 0;
   const _runBase = activeRun?.executed_at || activeRun?.created_at;
   const _historicalCumGross = Object.keys(_rbm)
     .filter((k) => k < _nowKey)
@@ -1913,15 +1939,23 @@ function ScenarioOutput({
       const _aexp = _expbm[_mKey];
       _exp = _aexp != null && _aexp > 0 ? _aexp : Number(row.expenses || 0);
     } else {
+      // Future: keep revenue/CoS/expenses at current actual (even if 0)
       _rev = _curActualRev;
       _cos = _curActualCoS;
       _rec = _curActualRec;
       _exp = _curActualExp;
     }
     const _gp = Number((_rev - _cos).toFixed(2));
-    _cumGross = Number((_cumGross + _gp).toFixed(2));
-    _cumCash = Number((_cumCash + _rev - _cos - _exp).toFixed(2));
-    return { ...row, revenue: _rev, cost_of_sales: _cos, receivables: _rec, expenses: _exp, gross_profit: _gp, _cumGross, _cash: _cumCash };
+    // For cumulative: when current month has no data, carry forward last known monthly GP
+    const _isFuture = !_isCur && !_isPast;
+    const _useCarry = _isFuture && !_curMonthHasData;
+    const _gpForCum = _useCarry ? _lastActualGP : _gp;
+    const _cashForCum = _useCarry ? _lastActualCashFlow : (_rev - _cos - _exp);
+    _cumGross = Number((_cumGross + _gpForCum).toFixed(2));
+    _cumCash = Number((_cumCash + _cashForCum).toFixed(2));
+    const _totalCosts = Number((_cos + _exp).toFixed(2));
+    const _grossMarginPct = _rev > 0 ? Number(((_gp / _rev) * 100).toFixed(1)) : 0;
+    return { ...row, revenue: _rev, cost_of_sales: _cos, receivables: _rec, accruals: _rec, expenses: _exp, costs: _totalCosts, gross_profit: _gp, gross_margin_pct: _grossMarginPct, _cumGross, _cash: _cumCash };
   });
 
   const baseDate = useMemo(() => {
