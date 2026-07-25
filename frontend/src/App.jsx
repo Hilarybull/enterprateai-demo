@@ -13,6 +13,7 @@ import { useAuthStore } from "./store/auth";
 import { useWorkspaceStore } from "./store/workspace";
 import Layout from "./components/Layout";
 import LandingPage from "./pages/LandingPage";
+import NewLandingPage from "./pages/NewLandingPage";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ValidationWizardPage from "./pages/ValidationWizardPage";
@@ -69,6 +70,7 @@ export default function App() {
       <ScrollToTop />
       <Routes>
       <Route path="/" element={<PublicRoot />} />
+      <Route path="/home" element={<NewLandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
