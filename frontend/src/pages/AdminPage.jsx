@@ -1351,6 +1351,7 @@ const TABS = [
   { key: "module-interest", label: "Module Interest" },
   { key: "mailing-list", label: "Mailing List" },
   { key: "support", label: "Support Messages" },
+  { key: "referrals", label: "Referrals" },
 ];
 
 const INV_FILTERS = ["all", "pending", "accepted", "revoked"];
@@ -1463,6 +1464,64 @@ export default function AdminPage() {
   useEffect(() => {
     if (tab === "mailing-list") loadMailingList();
   }, [tab, loadMailingList]);
+
+  // ── Referrals admin ───────────────────────────────────────────────────────
+  const [refStats, setRefStats] = useState(null);
+  const [refPayouts, setRefPayouts] = useState(null);
+  const [refParticipants, setRefParticipants] = useState(null);
+  const [refLoaded, setRefLoaded] = useState(false);
+  const [refPayoutAction, setRefPayoutAction] = useState(null); // { payout, action }
+  const [refActionReason, setRefActionReason] = useState("");
+  const [refActionRef, setRefActionRef] = useState("");
+  const [refActionBusy, setRefActionBusy] = useState(false);
+
+  const loadReferrals = useCallback(async () => {
+    if (refLoaded) return;
+    try {
+      const [stats, payouts, parts] = await Promise.all([
+        apiRequest("/referrals/admin/stats", "GET"),
+        apiRequest("/referrals/admin/payouts", "GET"),
+        apiRequest("/referrals/admin/participants", "GET"),
+      ]);
+      setRefStats(stats);
+      setRefPayouts(payouts.items || []);
+      setRefParticipants(parts.items || []);
+      setRefLoaded(true);
+    } catch (e) {
+      showToast("error", e.message || "Failed to load referral data.");
+    }
+  }, [refLoaded]);
+
+  useEffect(() => {
+    if (tab === "referrals") loadReferrals();
+  }, [tab, loadReferrals]);
+
+  async function submitRefPayoutAction() {
+    if (!refPayoutAction || !refActionReason.trim()) return;
+    setRefActionBusy(true);
+    try {
+      await apiRequest(`/referrals/admin/payouts/${refPayoutAction.payout.id}`, "PATCH", {
+        action: refPayoutAction.action,
+        reason: refActionReason.trim(),
+        provider_reference: refActionRef.trim() || undefined,
+      });
+      setRefPayouts((prev) =>
+        (prev || []).map((p) =>
+          p.id === refPayoutAction.payout.id
+            ? { ...p, status: refPayoutAction.action === "approve" ? "approved" : refPayoutAction.action === "mark_paid" ? "paid" : refPayoutAction.action === "reject" ? "rejected" : "action_required" }
+            : p
+        )
+      );
+      showToast("success", "Payout updated.");
+      setRefPayoutAction(null);
+      setRefActionReason("");
+      setRefActionRef("");
+    } catch (e) {
+      showToast("error", e.message || "Action failed.");
+    } finally {
+      setRefActionBusy(false);
+    }
+  }
 
   // ── Toast helpers ─────────────────────────────────────────────────────────
 
@@ -2802,6 +2861,176 @@ export default function AdminPage() {
                 emptyText="No support or feedback messages yet"
               />
             )}
+          </div>
+        )}
+
+        {/* ── Referrals ── */}
+        {tab === "referrals" && (
+          <div className="space-y-5">
+
+            {/* Stats */}
+            {refStats && (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  { label: "Active participants", value: refStats.participants?.active ?? 0 },
+                  { label: "Pending rewards", value: `£${((refStats.rewards?.pending_minor ?? 0) / 100).toFixed(2)}` },
+                  { label: "Approved (unpaid)", value: `£${((refStats.rewards?.outstanding_liability_minor ?? 0) / 100).toFixed(2)}` },
+                  { label: "Total paid out", value: `£${((refStats.payouts?.paid_minor ?? 0) / 100).toFixed(2)}` },
+                ].map((s) => (
+                  <div key={s.label} className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs text-slate-500">{s.label}</p>
+                    <p className="mt-1 text-xl font-bold text-slate-900">{s.value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Payout queue */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+              <h3 className="mb-3 text-sm font-semibold text-slate-800">Payout requests</h3>
+              {!refPayouts ? (
+                <p className="py-6 text-center text-sm text-slate-400">Loading…</p>
+              ) : refPayouts.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-400">No payout requests yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        {["Participant", "Amount", "Status", "Requested", "Actions"].map((h) => (
+                          <th key={h} className="pb-2 pr-4 text-xs font-semibold text-slate-500">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {refPayouts.map((p) => (
+                        <tr key={p.id} className="border-b border-slate-50">
+                          <td className="py-2 pr-4 text-xs text-slate-600">{p.participant_user_id}</td>
+                          <td className="py-2 pr-4 text-sm font-semibold text-slate-800">£{(p.amount_minor / 100).toFixed(2)}</td>
+                          <td className="py-2 pr-4">
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              p.status === "paid" ? "bg-emerald-100 text-emerald-700" :
+                              p.status === "approved" || p.status === "processing" ? "bg-blue-100 text-blue-700" :
+                              p.status === "rejected" || p.status === "failed" ? "bg-rose-100 text-rose-700" :
+                              p.status === "action_required" ? "bg-amber-100 text-amber-700" :
+                              "bg-slate-100 text-slate-600"
+                            }`}>{p.status}</span>
+                          </td>
+                          <td className="py-2 pr-4 text-xs text-slate-400">{fmtAdminDate(p.requested_at)}</td>
+                          <td className="py-2">
+                            {["requested", "under_review", "action_required"].includes(p.status) && (
+                              <div className="flex gap-1.5">
+                                <button onClick={() => { setRefPayoutAction({ payout: p, action: "approve" }); setRefActionReason(""); setRefActionRef(""); }}
+                                  className="rounded-lg bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100">Approve</button>
+                                <button onClick={() => { setRefPayoutAction({ payout: p, action: "reject" }); setRefActionReason(""); setRefActionRef(""); }}
+                                  className="rounded-lg bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100">Reject</button>
+                              </div>
+                            )}
+                            {p.status === "approved" && (
+                              <button onClick={() => { setRefPayoutAction({ payout: p, action: "mark_paid" }); setRefActionReason(""); setRefActionRef(""); }}
+                                className="rounded-lg bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100">Mark paid</button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Participants */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+              <h3 className="mb-3 text-sm font-semibold text-slate-800">Participants</h3>
+              {!refParticipants ? (
+                <p className="py-6 text-center text-sm text-slate-400">Loading…</p>
+              ) : refParticipants.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-400">No participants yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        {["User", "Code", "Status", "Joined"].map((h) => (
+                          <th key={h} className="pb-2 pr-4 text-xs font-semibold text-slate-500">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {refParticipants.map((p) => (
+                        <tr key={p.id} className="border-b border-slate-50">
+                          <td className="py-2 pr-4 text-xs text-slate-600">{p.user_id}</td>
+                          <td className="py-2 pr-4 font-mono text-xs text-slate-700">{p.referral_code}</td>
+                          <td className="py-2 pr-4">
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              p.status === "active" ? "bg-emerald-100 text-emerald-700" :
+                              p.status === "suspended" ? "bg-rose-100 text-rose-700" :
+                              "bg-slate-100 text-slate-600"
+                            }`}>{p.status}</span>
+                          </td>
+                          <td className="py-2 text-xs text-slate-400">{fmtAdminDate(p.joined_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
+
+        {/* Payout action modal */}
+        {refPayoutAction && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60" onClick={() => setRefPayoutAction(null)} />
+            <div className="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+              <h3 className="mb-1 text-base font-semibold text-slate-900 capitalize">
+                {refPayoutAction.action.replace("_", " ")} payout
+              </h3>
+              <p className="mb-4 text-sm text-slate-500">
+                £{(refPayoutAction.payout.amount_minor / 100).toFixed(2)} — {refPayoutAction.payout.participant_user_id}
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Reason <span className="text-rose-500">*</span></label>
+                  <input
+                    type="text"
+                    value={refActionReason}
+                    onChange={(e) => setRefActionReason(e.target.value)}
+                    placeholder="e.g. Verified bank details, payment sent"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none"
+                  />
+                </div>
+                {refPayoutAction.action === "mark_paid" && (
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-700">Payment reference</label>
+                    <input
+                      type="text"
+                      value={refActionRef}
+                      onChange={(e) => setRefActionRef(e.target.value)}
+                      placeholder="Bank transfer ref or PayPal transaction ID"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button onClick={() => setRefPayoutAction(null)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+                <button
+                  onClick={submitRefPayoutAction}
+                  disabled={!refActionReason.trim() || refActionBusy}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${
+                    refPayoutAction.action === "reject" ? "bg-rose-600 hover:bg-rose-700" :
+                    refPayoutAction.action === "mark_paid" ? "bg-emerald-600 hover:bg-emerald-700" :
+                    "bg-brand-600 hover:bg-brand-700"
+                  }`}
+                >
+                  {refActionBusy ? "Saving…" : "Confirm"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
