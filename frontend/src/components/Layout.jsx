@@ -6,6 +6,7 @@ import logoUrl from "../enterprate-logo.png";
 import { useWorkspaceStore } from "../store/workspace";
 import BusinessAssistant from "./BusinessAssistant";
 import InviteModal from "./InviteModal";
+import OnboardingModal, { hasSeenOnboarding } from "./OnboardingModal";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 import { hasModuleAccess, isPlatformModuleGranted, isPlatformModuleRestricted } from "../lib/permissions";
 import { planHasModuleAccess, planLabel } from "../lib/plans";
@@ -257,6 +258,7 @@ export default function Layout() {
   const [search, setSearch] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(() => !hasSeenOnboarding());
   const [theme, setTheme] = useState(() => localStorage.getItem("ea_theme") || "system");
   const profileRef = useRef(null);
   const notifRef = useRef(null);
@@ -283,6 +285,7 @@ export default function Layout() {
   const creditInfo = useAuthStore((s) => s.creditInfo);
   const setCreditInfo = useAuthStore((s) => s.setCreditInfo);
 
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
   const decisionStatus = useWorkspaceStore((s) => s.decisionStatus);
@@ -1242,6 +1245,9 @@ export default function Layout() {
         </main>
       </div>
       {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}
+      {onboardingOpen && !workspaceId && (
+        <OnboardingModal onDismiss={() => setOnboardingOpen(false)} />
+      )}
     </div>
   );
 }
