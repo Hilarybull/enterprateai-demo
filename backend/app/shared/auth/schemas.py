@@ -7,6 +7,8 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     # bcrypt limit is 72 bytes; enforce to avoid runtime errors
     password: str = Field(min_length=8, max_length=72)
+    ref_click_id: str | None = None
+    ref_code: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -39,6 +41,8 @@ class ChangePasswordRequest(BaseModel):
 
 class GoogleAuthRequest(BaseModel):
     credential: str = Field(min_length=20)
+    ref_click_id: str | None = None
+    ref_code: str | None = None
 
 
 class ForgotPasswordRequest(BaseModel):

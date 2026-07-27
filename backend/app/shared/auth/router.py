@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -10,9 +11,74 @@ from app.shared.auth.google import verify_google_id_token
 from app.shared.auth.schemas import ChangePasswordRequest, ForgotPasswordRequest, GoogleAuthRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserPublic
 from app.shared.auth.security import create_access_token, hash_password, verify_password
 from app.shared.auth.deps import get_current_user
-from app.shared.email.sendgrid import send_password_reset_email
+from app.shared.email.resend import send_password_reset_email
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+async def _resolve_referral_attribution(new_user_id: str, ref_click_id: str | None, ref_code: str | None) -> None:
+    """Attempt to link a new user to a referrer. Silent on failure — never blocks registration."""
+    try:
+        from app.modules.referral import service as ref_svc
+        from app.modules.referral.service import create_attribution
+
+        # Resolve referrer via click_id or code
+        referrer_user_id: str | None = None
+        click_id: str | None = None
+        method = "click"
+
+        if ref_click_id:
+            click = await sb_select("referral_clicks", filters=[("id", "eq", ref_click_id)], single=True)
+            if click:
+                expiry_raw = click.get("expires_at")
+                if expiry_raw:
+                    expiry = datetime.fromisoformat(expiry_raw.replace("Z", "+00:00"))
+                    if expiry > datetime.now(timezone.utc):
+                        referrer_user_id = click.get("participant_user_id")
+                        click_id = click["id"]
+                        # Mark click as converted
+                        await sb_update("referral_clicks", filters=[("id", "eq", click_id)], payload={"converted": True})
+
+        if not referrer_user_id and ref_code:
+            participant = await ref_svc.get_participant_by_code(ref_code)
+            if participant:
+                referrer_user_id = participant["user_id"]
+                method = "manual_code"
+
+        if not referrer_user_id:
+            return
+
+        # Self-referral check
+        if referrer_user_id == new_user_id:
+            await ref_svc.flag_fraud(
+                entity_type="user",
+                entity_id=new_user_id,
+                rule="self_referral",
+                severity="high",
+                evidence={"ref_code": ref_code, "ref_click_id": ref_click_id},
+            )
+            return
+
+        # Only new users qualify — check referrer is an active participant
+        participant_row = await sb_select(
+            "referral_participants",
+            filters=[("user_id", "eq", referrer_user_id), ("status", "eq", "active")],
+            single=True,
+        )
+        if not participant_row:
+            return
+
+        await create_attribution(
+            referred_user_id=new_user_id,
+            referrer_user_id=referrer_user_id,
+            click_id=click_id,
+            method=method,
+        )
+        logger.info("Referral attribution: %s referred by %s", new_user_id, referrer_user_id)
+    except Exception as exc:
+        logger.warning("Referral attribution failed for new user %s: %s", new_user_id, exc)
 
 
 @router.post("/register", response_model=UserPublic)
@@ -22,6 +88,7 @@ async def register(payload: RegisterRequest) -> UserPublic:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
     user_doc = {"id": payload.email.lower(), "email": payload.email.lower(), "password_hash": hash_password(payload.password)}
     await sb_insert("users", user_doc)
+    await _resolve_referral_attribution(user_doc["id"], payload.ref_click_id, payload.ref_code)
     return UserPublic(id=user_doc["id"], email=user_doc["email"])
 
 
@@ -46,6 +113,7 @@ async def google_auth(payload: GoogleAuthRequest) -> TokenResponse:
 
     # Upsert user by email to keep user_id stable across auth methods.
     existing = await sb_select("users", filters=[("id", "eq", identity.email)], single=True)
+    is_new_user = not existing
     if not existing:
         await sb_insert(
             "users",
@@ -64,6 +132,9 @@ async def google_auth(payload: GoogleAuthRequest) -> TokenResponse:
             filters=[("id", "eq", identity.email)],
             payload={"auth_provider": existing.get("auth_provider") or "google", "google_sub": identity.sub, "name": identity.name, "picture": identity.picture},
         )
+
+    if is_new_user:
+        await _resolve_referral_attribution(identity.email, payload.ref_click_id, payload.ref_code)
 
     token = create_access_token(subject=identity.email)
     return TokenResponse(access_token=token)

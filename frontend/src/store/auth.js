@@ -115,7 +115,20 @@ export const useAuthStore = create((set, get) => ({
   register: async (email, password) => {
     set({ isLoading: true, error: null });
     try {
-      await apiRequest("/auth/register", "POST", { email, password });
+      // Attach referral click data if stored from a /r/:code visit
+      let refData = {};
+      try {
+        const raw = localStorage.getItem("ea_referral");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const expiresAt = parsed.expires_at ? new Date(parsed.expires_at) : null;
+          if (expiresAt && expiresAt > new Date()) {
+            refData = { ref_click_id: parsed.click_id, ref_code: parsed.code };
+          }
+          localStorage.removeItem("ea_referral");
+        }
+      } catch (_) {}
+      await apiRequest("/auth/register", "POST", { email, password, ...refData });
       await get().login(email, password);
     } catch (e) {
       set({ error: humanizeAuthError(e) });
@@ -158,7 +171,19 @@ export const useAuthStore = create((set, get) => ({
   googleLogin: async (credential) => {
     set({ isLoading: true, error: null });
     try {
-      const tokenRes = await apiRequest("/auth/google", "POST", { credential });
+      let refData = {};
+      try {
+        const raw = localStorage.getItem("ea_referral");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const expiresAt = parsed.expires_at ? new Date(parsed.expires_at) : null;
+          if (expiresAt && expiresAt > new Date()) {
+            refData = { ref_click_id: parsed.click_id, ref_code: parsed.code };
+          }
+          localStorage.removeItem("ea_referral");
+        }
+      } catch (_) {}
+      const tokenRes = await apiRequest("/auth/google", "POST", { credential, ...refData });
       const token = tokenRes?.access_token ?? tokenRes?.token ?? null;
       if (!token) throw new Error("AUTH_RESPONSE_INVALID");
       localStorage.setItem("ea_token", token);

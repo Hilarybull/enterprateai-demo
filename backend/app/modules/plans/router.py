@@ -15,6 +15,7 @@ from app.modules.plans.schemas import (
 )
 from app.shared.auth.deps import get_current_user
 from app.modules.credits.service import provision_plan_credits, reset_monthly_credits
+from app.modules.referral import service as ref_svc
 
 logger = logging.getLogger(__name__)
 
@@ -350,6 +351,69 @@ async def create_checkout_session(
     return CheckoutResponse(checkout_url=session.url)
 
 
+# ── Referral reward helper ────────────────────────────────────────────────────
+
+async def _create_referral_reward(
+    *,
+    referred_user_id: str,
+    subtotal_minor: int,
+    discount_minor: int,
+    idempotency_key: str,
+    stripe_invoice_id: str | None,
+    stripe_subscription_id: str | None,
+) -> None:
+    """Look up referral attribution for the referred user and create a pending reward if eligible."""
+    attribution = await ref_svc.get_attribution_for_referred(referred_user_id)
+    if not attribution:
+        return
+
+    referrer_id = attribution["referrer_user_id"]
+    # Verify referrer is still an active participant
+    participant_row = await sb_select(
+        "referral_participants",
+        filters=[("user_id", "eq", referrer_id), ("status", "eq", "active")],
+        single=True,
+    )
+    if not participant_row:
+        return
+
+    config = await ref_svc.get_active_config()
+    if not config.get("recurring") and stripe_invoice_id and not idempotency_key.startswith("checkout_"):
+        # Recurring disabled — only credit first payment (checkout events)
+        return
+
+    eligible_base = max(0, subtotal_minor - discount_minor)
+    if eligible_base <= 0:
+        return
+
+    commission = ref_svc.calculate_commission(eligible_base, config["rate_bps"])
+    if commission <= 0:
+        return
+
+    await ref_svc.create_pending_reward(
+        referrer_user_id=referrer_id,
+        attribution_id=attribution["id"],
+        amount_minor=commission,
+        idempotency_key=idempotency_key,
+        config_version_id=config.get("id"),
+        calc_snapshot={
+            "eligible_base_minor": eligible_base,
+            "subtotal_minor": subtotal_minor,
+            "discount_minor": discount_minor,
+            "rate_bps": config["rate_bps"],
+            "commission_minor": commission,
+            "referred_user_id": referred_user_id,
+        },
+        stripe_invoice_id=stripe_invoice_id,
+        stripe_subscription_id=stripe_subscription_id,
+        hold_days=config["hold_days"],
+    )
+    logger.info(
+        "Referral reward %d pence created for referrer %s (referred: %s, key: %s)",
+        commission, referrer_id, referred_user_id, idempotency_key,
+    )
+
+
 # ── Stripe webhook ────────────────────────────────────────────────────────────
 
 @router.post("/webhook", include_in_schema=False)
@@ -419,6 +483,24 @@ async def stripe_webhook(request: Request):
             except Exception as e:
                 logger.error("Failed to provision credits on checkout for user %s: %s", user_id, e)
 
+            # Create referral reward for initial subscription payment
+            try:
+                amount_subtotal = session.get("amount_subtotal", 0) if isinstance(session, dict) else getattr(session, "amount_subtotal", 0) or 0
+                total_details = session.get("total_details", {}) if isinstance(session, dict) else getattr(session, "total_details", {}) or {}
+                amount_discount = total_details.get("amount_discount", 0) if isinstance(total_details, dict) else getattr(total_details, "amount_discount", 0) or 0
+                stripe_invoice_id = session.get("invoice") if isinstance(session, dict) else getattr(session, "invoice", None)
+                stripe_sub_id = session.get("subscription") if isinstance(session, dict) else getattr(session, "subscription", None)
+                await _create_referral_reward(
+                    referred_user_id=user_id,
+                    subtotal_minor=amount_subtotal or 0,
+                    discount_minor=amount_discount or 0,
+                    idempotency_key=f"checkout_{session.get('id') if isinstance(session, dict) else session.id}",
+                    stripe_invoice_id=str(stripe_invoice_id) if stripe_invoice_id else None,
+                    stripe_subscription_id=str(stripe_sub_id) if stripe_sub_id else None,
+                )
+            except Exception as e:
+                logger.error("Failed to create referral reward on checkout for user %s: %s", user_id, e)
+
     elif etype == "invoice.paid":
         # Monthly renewal — reset credits
         invoice = event["data"]["object"] if isinstance(event, dict) else event.data.object
@@ -435,6 +517,24 @@ async def stripe_webhook(request: Request):
                     logger.info("Reset monthly credits for user %s plan %s on invoice.paid", user_id, plan_key)
                 except Exception as e:
                     logger.error("Failed to reset monthly credits for user %s: %s", user_id, e)
+
+                # Create referral reward for recurring subscription renewal
+                try:
+                    invoice_id = invoice.get("id") if isinstance(invoice, dict) else getattr(invoice, "id", None)
+                    sub_id_inv = invoice.get("subscription") if isinstance(invoice, dict) else getattr(invoice, "subscription", None)
+                    inv_subtotal = invoice.get("subtotal", 0) if isinstance(invoice, dict) else getattr(invoice, "subtotal", 0) or 0
+                    inv_tax = invoice.get("tax", 0) if isinstance(invoice, dict) else getattr(invoice, "tax", 0) or 0
+                    eligible_base = max(0, (inv_subtotal or 0) - (inv_tax or 0))
+                    await _create_referral_reward(
+                        referred_user_id=user_id,
+                        subtotal_minor=eligible_base,
+                        discount_minor=0,
+                        idempotency_key=f"invoice_{invoice_id}",
+                        stripe_invoice_id=str(invoice_id) if invoice_id else None,
+                        stripe_subscription_id=str(sub_id_inv) if sub_id_inv else None,
+                    )
+                except Exception as e:
+                    logger.error("Failed to create referral reward on invoice.paid for user %s: %s", user_id, e)
 
     elif etype in ("customer.subscription.deleted", "customer.subscription.updated"):
         sub_obj = event["data"]["object"] if isinstance(event, dict) else event.data.object

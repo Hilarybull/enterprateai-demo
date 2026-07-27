@@ -21,6 +21,7 @@ const NAV = [
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
+  { to: "/referrals", label: "Referrals", subtitle: "Earn 5% per referral", icon: "share", moduleKey: null, public: true },
 ];
 
 
@@ -181,6 +182,15 @@ function Icon({ name, className = "h-4 w-4" }) {
         <path d="M10 9H8" />
       </svg>
     );
+  if (name === "share")
+    return (
+      <svg {...base}>
+        <circle cx="18" cy="5" r="3" />
+        <circle cx="6" cy="12" r="3" />
+        <circle cx="18" cy="19" r="3" />
+        <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+      </svg>
+    );
 
   return null;
 }
@@ -194,7 +204,6 @@ function SidebarLink({ item, onClick, forceInactive, locked }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-semibold text-slate-500 dark:text-slate-500">{item.label}</div>
-          <div className="truncate text-[11px] text-slate-400 [@media(max-height:780px)]:hidden">{item.subtitle}</div>
         </div>
         <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">Soon</span>
       </div>
@@ -211,7 +220,6 @@ function SidebarLink({ item, onClick, forceInactive, locked }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-semibold text-slate-500 dark:text-slate-500">{item.label}</div>
-          <div className="truncate text-[11px] text-slate-400 [@media(max-height:780px)]:hidden">{item.subtitle}</div>
         </div>
         <Icon name="lock" className="h-3.5 w-3.5 shrink-0 text-slate-400" />
       </div>
@@ -234,7 +242,6 @@ function SidebarLink({ item, onClick, forceInactive, locked }) {
       </div>
       <div className="min-w-0">
         <div className="truncate text-[13px] font-semibold">{item.label}</div>
-        <div className="truncate text-[11px] text-slate-500 dark:text-slate-400 [@media(max-height:780px)]:hidden">{item.subtitle}</div>
       </div>
     </NavLink>
   );
