@@ -1,431 +1,631 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import logoUrl from "../../public/logo.png";
 
 const APP_URL = import.meta.env.VITE_APP_URL || "https://enterprate.ai";
 
-const QUESTIONS = [
-  { icon: "💼", text: "What exactly does your business do?" },
-  { icon: "👥", text: "Who are your customers?" },
-  { icon: "📊", text: "Is there real demand?" },
-  { icon: "💰", text: "How will the business make money?" },
-  { icon: "🧾", text: "What are your costs?" },
-  { icon: "⚠️", text: "What risks should be considered?" },
-  { icon: "🏦", text: "How much funding do you need?" },
-  { icon: "📋", text: "How will the money be used?" },
-];
-
 const STEPS = [
-  {
-    n: "01",
-    icon: "✅",
-    title: "Validate Your Business Idea",
-    body: "Check whether your idea makes commercial sense before spending more time, money, or energy.",
-    detail: "Get scored on customer need, market opportunity, pricing, costs, demand evidence, risks, and growth potential.",
-    color: "from-emerald-500 to-teal-600",
-    light: "bg-emerald-50 border-emerald-100",
-    tag: "Start here",
-  },
-  {
-    n: "02",
-    icon: "📄",
-    title: "Generate Your Business Plan",
-    body: "EnterprateAI uses your validation data to instantly generate a structured, investor-ready business plan.",
-    bullets: ["No blank page.", "No confusing templates.", "No starting from scratch."],
-    detail: "Covering your business model, customers, pricing, operations, financial assumptions, risks, and growth direction.",
-    color: "from-brand-500 to-brand-700",
-    light: "bg-brand-50 border-brand-100",
-    tag: "Most popular",
-  },
-  {
-    n: "03",
-    icon: "🚀",
-    title: "Launch to Marketplace and Test Traction",
-    body: "List your product or service and start testing real visibility with UK businesses.",
-    detail: "Funders want to see clarity, preparation, and signs of market interest — not just ideas.",
-    color: "from-accent-500 to-rose-600",
-    light: "bg-rose-50 border-rose-100",
-    tag: "Go live",
-  },
+  { n: "1", title: "Input once", body: "Add your business, product, service, customer, vendor, financial, and marketplace information once." },
+  { n: "2", title: "Generate everywhere", body: "Use the same data to create business plans, proposals, sales letters, invoices, quotations, contracts, marketplace listings, and reports." },
+  { n: "3", title: "Simulate before acting", body: "Understand the likely impact of business decisions before making costly moves. A price change, new hire, cost increase, customer loss, product launch, supplier issue, or expansion decision can affect multiple areas of your business. EnterprateAI helps you see those connections before you act." },
+  { n: "4", title: "Grow with intelligence", body: "Discover risks, uncover opportunities, and make smarter decisions using Fragility Index and Adaptive Scenario Intelligence." },
 ];
 
-const PLAN_POINTS = [
-  { icon: "🏢", text: "What your business does" },
-  { icon: "👤", text: "Who your customers are" },
-  { icon: "🔍", text: "What problem you solve" },
-  { icon: "💸", text: "How your business makes money" },
-  { icon: "🧾", text: "What your costs are" },
-  { icon: "🏦", text: "What funding you need" },
-  { icon: "📌", text: "How the funding will be used" },
-  { icon: "⚠️", text: "What risks you understand" },
-  { icon: "📈", text: "How the business can grow" },
-];
-
-const WHO = [
-  { icon: "🌱", label: "New business owners" },
-  { icon: "💡", label: "Startup founders" },
-  { icon: "🏛️", label: "Grant applicants" },
-  { icon: "🏦", label: "Small businesses seeking loans" },
-  { icon: "📈", label: "Entrepreneurs preparing for investment" },
-  { icon: "🛎️", label: "Consultants and service providers" },
-  { icon: "⚡", label: "Founders who need a plan quickly" },
+const EXAMPLES = [
+  {
+    tagLabel: "Hiring Decision",
+    tagIcon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z",
+    title: "Should you hire a new team member?",
+    impacts: [
+      { type: "neg", text: "Cash runway reduces: 8 → 5 months" },
+      { type: "neg", text: "Break even shifts by +2 months" },
+      { type: "warn", text: "Risk increases under low revenue scenarios" },
+      { type: "neg", text: "Monthly burn rate increases by £3,500" },
+    ],
+    rec: "Delay hiring by 2 months or use a contractor to preserve cashflow stability. Safe to hire from Month 3.",
+  },
+  {
+    tagLabel: "Pricing Decision",
+    tagIcon: "M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z",
+    title: "Planning to raise your prices?",
+    impacts: [
+      { type: "pos", text: "Revenue increases by +12%" },
+      { type: "pos", text: "Profit margin improves by +18%" },
+      { type: "pos", text: "Remains profitable with up to 8% churn" },
+      { type: "pos", text: "Break even improves by 1.5 months" },
+    ],
+    rec: "Increase pricing by 15%. Revenue remains positive even under moderate churn. Implement with a 30 day notice period.",
+  },
+  {
+    tagLabel: "Cost Reduction",
+    tagIcon: "M13 17h8m0 0v-8m0 8l-8-8-4 4-6-6",
+    title: "Thinking of cutting marketing spend?",
+    impacts: [
+      { type: "pos", text: "Immediate cashflow improves by £2,100/mo" },
+      { type: "warn", text: "Pipeline impact: −22% leads by Month 3" },
+      { type: "neg", text: "Revenue dip: −£6,400 by Month 5" },
+      { type: "warn", text: "Net effect negative beyond Month 4" },
+    ],
+    rec: "Do not cut marketing budget. Short term saving creates a revenue hole in Month 4 to 6. Instead, reallocate £800/mo from offline to digital for better ROI.",
+  },
 ];
 
 const TESTIMONIALS = [
   {
-    quote: "I went from having a rough idea to a complete business plan in under 25 minutes. The validation score gave me the confidence to walk into my bank meeting prepared.",
-    name: "Sarah K.",
-    role: "Founder, UK Retail Business",
-    rating: 5,
-    init: "S",
+    quote: "I was about to hire a second developer. EnterprateAI ran the simulation and showed me my cash runway would drop to 4 months under two realistic revenue scenarios. I hired a contractor instead. Six months later, that decision saved my business.",
+    name: "Victor",
+    role: "Rhema Concept, London",
+    init: "V",
+    color: "bg-brand-500",
   },
   {
-    quote: "As a grant applicant, I had no idea how to structure my business case. EnterprateAI did it for me and I walked away with exactly what the council needed to see.",
-    name: "James O.",
-    role: "Social Enterprise Founder, London",
-    rating: 5,
-    init: "J",
+    quote: "We were debating a price increase for months. EnterprateAI modelled three scenarios in minutes and showed us we could raise by 18% and still retain 94% of customers. We raised prices within a week. Best decision we made this year.",
+    name: "Irene A.",
+    role: "Sombeauty London Ltd, UK",
+    init: "I",
+    color: "bg-accent-500",
   },
   {
-    quote: "I've tried three other tools. This is the only one that actually helped me think through the business properly, not just fill in a template.",
-    name: "Amina R.",
-    role: "Startup Founder, Manchester",
-    rating: 5,
-    init: "A",
+    quote: "As a solo founder I was making £40k decisions based on spreadsheets and gut feel. EnterprateAI gave me the confidence of a CFO without the cost of one. I now run every major decision through it before acting.",
+    name: "Gilbert C.",
+    role: "OIC3 Auto Services Ltd, UK",
+    init: "G",
+    color: "bg-emerald-500",
+  },
+];
+
+const PLANS = [
+  {
+    name: "Explorer",
+    monthly: 0,
+    annual: 0,
+    annualSaving: 0,
+    free: true,
+    desc: "",
+    features: [
+      "50 AI credits",
+      "Basic Idea Validation",
+      "Business Plan",
+      "Unlimited products, customers & vendors",
+      "Unlimited invoices & quotations",
+      "Business Registration Guide",
+      "1 marketplace listing",
+    ],
+    highlight: false,
+  },
+  {
+    name: "Starter",
+    tier: "Insight",
+    monthly: 19,
+    annual: 15.83,
+    annualTotal: 190,
+    annualSaving: 38,
+    free: false,
+    desc: "Solo founders & new service businesses.",
+    features: [
+      "500 AI credits",
+      "Basic & Comprehensive Idea Validation",
+      "Business Blueprints & Proposals",
+      "Scenario Simulation",
+      "Fragility Index",
+      "Adaptive Scenario Intelligence",
+      "Unlimited products, customers & vendors",
+      "Unlimited invoices & quotations",
+      "1 marketplace listing",
+      "1 user",
+    ],
+    highlight: true,
+    badge: "Best Value",
   },
 ];
 
 const FAQS = [
-  { q: "Do I need any business experience?", a: "No. EnterprateAI is built for everyone — from first-time founders to experienced operators. The platform guides you step by step through each part of the process." },
-  { q: "How long does it take to get a business plan?", a: "Most users complete their validation and generate a full business plan in under 20 minutes. The more detail you provide, the stronger the output." },
-  { q: "Is this really free to start?", a: "Yes. The Explorer plan is completely free with no credit card required. You get idea validation, a business plan, and financial tools with no upfront cost." },
-  { q: "Can I use this for a grant or loan application?", a: "Yes. The business plan output is structured specifically to answer the questions funders, grant bodies, and lenders ask. Many users take the output directly into their applications." },
-  { q: "Is my data secure?", a: "Absolutely. All data is encrypted in transit and at rest. We are ICO Registered and fully GDPR compliant. Your data is never shared or sold." },
-  { q: "What if my idea is still early stage?", a: "That is exactly the right time to use EnterprateAI. Validating early saves you months of effort in the wrong direction." },
+  { q: "Is my business data secure?", a: "Yes. All data is encrypted in transit (TLS 1.3) and at rest (AES-256). We are ICO Registered, GDPR compliant, and never share or sell your data. You can delete your data at any time." },
+  { q: "Do I need to connect my accounts?", a: "No. You can enter your data manually, upload a spreadsheet, or optionally connect Xero or QuickBooks for automatic updates. Manual entry works perfectly for most early stage businesses." },
+  { q: "How is this different from my accountant's spreadsheet?", a: "Your accountant shows you what already happened. EnterprateAI models your business as a live system and simulates what will happen next, across all your interconnected costs, revenues, and decisions, before you commit." },
+  { q: "What if my business is very small or early-stage?", a: "EnterprateAI is specifically designed for UK SMEs, including early stage businesses with as few as 2–3 months of trading data. The simpler your business, the faster the setup." },
+  { q: "Is there a free plan?", a: "Yes. The Explorer plan is free forever with no credit card required. You get basic idea validation, a business plan, unlimited financial tools, and more, all powered by AI credits. Upgrade to a paid plan whenever you are ready for comprehensive validation, proposals, and advanced features." },
+  { q: "Is EnterprateAI GDPR compliant?", a: "Yes, fully. We are ICO Registered (UK data protection authority), process all data within UK/EU jurisdictions, and provide a full Data Processing Agreement (DPA) on request for business customers." },
+  { q: "How quickly can I run my first simulation?", a: "Most users run their first decision simulation within 15 minutes of signing up. Our onboarding flow guides you through connecting your data and building your first business model step by step." },
+  { q: "Can I cancel anytime?", a: "Yes. No lock-in contracts, no cancellation fees. Cancel from your account settings in 30 seconds. Your data remains accessible for 30 days after cancellation." },
 ];
 
-function Star() {
+function BrandIcon({ d, d2 }) {
   return (
-    <svg className="h-4 w-4 text-amber-400" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.006z" />
-    </svg>
+    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+      <svg className="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <path d={d} />
+        {d2 && <path d={d2} />}
+      </svg>
+    </div>
   );
 }
 
 function FAQItem({ q, a }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className={`rounded-2xl border transition-all duration-200 ${open ? "border-brand-200 bg-brand-50" : "border-slate-100 bg-white"}`}>
-      <button type="button" onClick={() => setOpen(v => !v)} className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left">
+    <div className="border-b border-slate-100 last:border-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-start justify-between gap-4 py-4 text-left"
+      >
         <span className="text-sm font-semibold text-slate-800">{q}</span>
-        <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors ${open ? "bg-brand-600" : "bg-slate-100"}`}>
-          <svg className={`h-3.5 w-3.5 transition-transform duration-200 ${open ? "rotate-45 text-white" : "text-slate-500"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-        </div>
+        <span className={`mt-0.5 shrink-0 text-brand-500 transition-transform duration-200 ${open ? "rotate-45" : ""}`}>✕</span>
       </button>
-      {open && <p className="px-6 pb-5 text-sm leading-relaxed text-slate-600">{a}</p>}
+      {open && <p className="pb-4 text-sm leading-relaxed text-slate-500">{a}</p>}
     </div>
   );
 }
 
-function scrollTo(id) {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
-}
-
 export default function LandingPage() {
+  const [annualBilling, setAnnualBilling] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [scrolled, setScrolled] = useState(false);
+  const [heroZoomOpen, setHeroZoomOpen] = useState(false);
+  const [showExitPopup, setShowExitPopup] = useState(false);
+  const [exitDismissed, setExitDismissed] = useState(false);
+  const exitTimerRef = useRef(null);
 
   useEffect(() => {
     document.body.style.overflow = "auto";
-    document.body.style.overflowX = "hidden";
-    const onScroll = () => setScrolled(window.scrollY > 20);
-    window.addEventListener("scroll", onScroll);
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      document.body.style.overflow = "";
-      document.body.style.overflowX = "";
-    };
+    return () => { document.body.style.overflow = ""; };
   }, []);
 
+  useEffect(() => {
+    function onMouseLeave(e) {
+      if (e.clientY > 10) return;
+      clearTimeout(exitTimerRef.current);
+      if (!exitDismissed && !showExitPopup) {
+        exitTimerRef.current = setTimeout(() => setShowExitPopup(true), 400);
+      }
+    }
+    document.addEventListener("mouseleave", onMouseLeave);
+    return () => {
+      document.removeEventListener("mouseleave", onMouseLeave);
+      clearTimeout(exitTimerRef.current);
+    };
+  }, [exitDismissed, showExitPopup]);
+
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "Escape") setHeroZoomOpen(false);
+    }
+    if (heroZoomOpen) document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [heroZoomOpen]);
+
+  const goLogin = () => { window.location.href = `${APP_URL}/login`; };
+
   return (
-    <div className="min-h-screen overflow-x-hidden bg-white font-sans text-slate-900 antialiased">
+    <div className="min-h-screen overflow-x-hidden bg-white font-sans text-slate-800 antialiased">
 
-      {/* NAV */}
-      <header className={`sticky top-0 z-50 transition-all duration-300 ${scrolled ? "border-b border-slate-100 bg-white/95 shadow-sm backdrop-blur-sm" : "bg-transparent"}`}>
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <a href="/" className="flex items-center gap-2">
-            <img src="/logo.png" alt="EnterprateAI" className="h-8 w-auto" />
-          </a>
-
-          <nav className="hidden items-center gap-8 md:flex">
-            {[
-              { label: "How It Works", id: "how-it-works" },
-              { label: "Why It Matters", id: "why-plan" },
-              { label: "Who It's For", id: "who" },
-              { label: "FAQ", id: "faq" },
-            ].map(l => (
-              <button key={l.label} onClick={() => scrollTo(l.id)} className="text-sm font-medium text-slate-600 hover:text-brand-600 transition-colors">
-                {l.label}
-              </button>
-            ))}
-          </nav>
-
-          <div className="hidden items-center gap-3 md:flex">
-            <a href={`${APP_URL}/login`} className="text-sm font-semibold text-slate-600 hover:text-brand-600 transition-colors">Log in</a>
-            <a href={`${APP_URL}/login`} className="rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-brand-700 transition-all hover:shadow-md">
-              Get Started Free
-            </a>
-          </div>
-
-          <button type="button" className="md:hidden rounded-lg p-2 text-slate-500 hover:bg-slate-100" onClick={() => setMobileMenuOpen(v => !v)}>
-            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              {mobileMenuOpen
-                ? <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                : <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />}
-            </svg>
-          </button>
-        </div>
-
-        {mobileMenuOpen && (
-          <div className="border-t border-slate-100 bg-white px-4 pb-4 shadow-lg md:hidden">
-            {[
-              { label: "How It Works", id: "how-it-works" },
-              { label: "Why It Matters", id: "why-plan" },
-              { label: "Who It's For", id: "who" },
-              { label: "FAQ", id: "faq" },
-            ].map(l => (
-              <button key={l.label} onClick={() => { scrollTo(l.id); setMobileMenuOpen(false); }} className="block w-full py-3 text-left text-sm font-medium text-slate-700 border-b border-slate-50 last:border-0">
-                {l.label}
-              </button>
-            ))}
-            <div className="mt-4 flex gap-3">
-              <a href={`${APP_URL}/login`} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-center text-sm font-semibold text-slate-700">Log in</a>
-              <a href={`${APP_URL}/login`} className="flex-1 rounded-xl bg-brand-600 py-2.5 text-center text-sm font-bold text-white">Get Started Free</a>
+      {/* Exit-intent popup */}
+      {showExitPopup && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-sm">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 sm:p-8 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => { setShowExitPopup(false); setExitDismissed(true); }}
+              className="absolute right-4 top-4 text-slate-400 hover:text-slate-600"
+            >✕</button>
+            <div className="mb-1 flex items-center gap-2">
+              <span className="text-2xl">👋</span>
+              <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Before you go</span>
             </div>
+            <h3 className="mt-2 text-xl font-bold text-slate-900">Get started for free</h3>
+            <p className="mt-2 text-sm text-slate-500">
+              EnterprateAI gives you the business intelligence tools to validate ideas, run scenario simulations, and make smarter decisions - completely free to start.
+            </p>
+            <ul className="mt-4 space-y-2 text-sm text-slate-600">
+              {["Validate your business idea in minutes", "Run scenario simulations before committing", "Generate investor-ready business plans"].map((f) => (
+                <li key={f} className="flex items-center gap-2"><span className="text-emerald-500 font-bold">✓</span>{f}</li>
+              ))}
+            </ul>
+            <button type="button" onClick={goLogin} className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition">
+              Get Started Free →
+            </button>
+            <button type="button" onClick={() => { setShowExitPopup(false); setExitDismissed(true); }} className="mt-2 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">
+              Maybe later
+            </button>
+            <p className="mt-3 text-center text-xs text-slate-400">Free plan · No credit card required</p>
           </div>
-        )}
-      </header>
-
-      {/* HERO */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-brand-900 to-slate-900 py-24 sm:py-32 text-white">
-        {/* Background decoration */}
-        <div className="pointer-events-none absolute inset-0">
-          <div className="absolute top-0 left-1/4 h-96 w-96 rounded-full bg-brand-500/20 blur-3xl" />
-          <div className="absolute bottom-0 right-1/4 h-96 w-96 rounded-full bg-accent-500/15 blur-3xl" />
-          <div className="absolute inset-0" style={{backgroundImage: "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.05) 1px, transparent 0)", backgroundSize: "40px 40px"}} />
         </div>
+      )}
 
-        <div className="relative mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold text-white backdrop-blur-sm">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            Free to start · No credit card required · ICO Registered
-          </div>
-
-          <h1 className="text-4xl font-extrabold leading-tight tracking-tight sm:text-5xl lg:text-6xl">
-            Get Your Business{" "}
-            <span className="bg-gradient-to-r from-brand-300 to-accent-400 bg-clip-text text-transparent">
-              Funding-Ready
-            </span>
-            <br />in Under 20 Minutes
-          </h1>
-
-          <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-slate-300">
-            Before you apply for a grant, loan, investment, or partnership — validate your idea, generate a structured business plan, and launch to marketplace. All from one workspace.
-          </p>
-
-          <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
-            <a
-              href={`${APP_URL}/login`}
-              className="group inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-brand-900/40 transition-all hover:from-brand-400 hover:to-brand-500 hover:shadow-2xl sm:w-auto"
-            >
-              Create My Funding Plan Free
-              <svg className="h-4 w-4 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-              </svg>
-            </a>
-            <button onClick={() => scrollTo("how-it-works")} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-8 py-4 text-base font-semibold text-white backdrop-blur-sm hover:bg-white/20 transition-all sm:w-auto">
-              See How It Works
+      {/* Sticky navbar */}
+      <nav className="sticky top-0 z-50 border-b border-slate-100 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+          <a href="#hero" className="flex items-center gap-2">
+            <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" />
+          </a>
+          <ul className="hidden items-center gap-6 md:flex">
+            {[["#modules", "Features"], ["#how-it-works", "How It Works"], ["#examples", "See It Work"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
+              <li key={href}><a href={href} className="text-sm font-medium text-slate-600 transition hover:text-brand-600">{label}</a></li>
+            ))}
+          </ul>
+          <div className="flex items-center gap-2">
+            <a href={`${APP_URL}/login`} className="text-sm font-medium text-slate-600 hover:text-slate-900">Sign in</a>
+            <button type="button" onClick={goLogin} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">
+              Start Free
+            </button>
+            <button type="button" onClick={() => setMobileMenuOpen((v) => !v)} className="ml-1 flex h-9 w-9 flex-col items-center justify-center gap-1.5 md:hidden" aria-label="Menu">
+              <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "translate-y-2 rotate-45" : ""}`} />
+              <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "opacity-0" : ""}`} />
+              <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "-translate-y-2 -rotate-45" : ""}`} />
             </button>
           </div>
+        </div>
+        {mobileMenuOpen && (
+          <div className="border-t border-slate-100 bg-white px-4 pb-4 md:hidden">
+            <ul className="mt-3 flex flex-col gap-3">
+              {[["#modules", "Features"], ["#how-it-works", "How It Works"], ["#examples", "See It Work"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
+                <li key={href}><a href={href} onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">{label}</a></li>
+              ))}
+              <li><a href={`${APP_URL}/login`} className="block text-sm font-medium text-slate-700">Sign in</a></li>
+            </ul>
+          </div>
+        )}
+      </nav>
 
-          <p className="mt-5 text-sm text-slate-400">Free to start. No credit card. No commitment. Cancel anytime.</p>
-
-          {/* Stats */}
-          <div className="mt-14 grid grid-cols-3 gap-6 border-t border-white/10 pt-10">
-            {[
-              { n: "20 min", label: "Average time to a complete business plan" },
-              { n: "100%", label: "Free to start — no card required" },
-              { n: "3 steps", label: "From idea to marketplace launch" },
-            ].map(({ n, label }) => (
-              <div key={n} className="text-center">
-                <p className="text-2xl font-extrabold text-white sm:text-3xl">{n}</p>
-                <p className="mt-1 text-xs text-slate-400 leading-snug">{label}</p>
+      {/* HERO */}
+      <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-brand-900 via-brand-800 to-brand-900 pb-16 pt-14 sm:pt-20">
+        <div className="pointer-events-none absolute -right-32 -top-32 h-[500px] w-[500px] rounded-full bg-brand-500/25 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-20 -left-20 h-[400px] w-[400px] rounded-full bg-accent-500/15 blur-3xl" />
+        <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="grid gap-10 lg:grid-cols-2 lg:gap-16 lg:items-center">
+            <div>
+              <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-white sm:text-4xl xl:text-5xl drop-shadow-md">
+                Input data once. Generate everywhere.{" "}
+                <span className="text-white">Simulate before acting. Grow with intelligence.</span>
+              </h1>
+              <p className="mt-5 text-lg font-semibold leading-relaxed text-white">
+                The intelligent business workspace for small businesses that want to move faster.
+              </p>
+              <p className="mt-3 text-base leading-relaxed text-white/90">
+                EnterprateAI helps small businesses save time, reduce cost, discover risks, uncover opportunities, and move from idea to market faster.
+              </p>
+              <p className="mt-3 text-sm leading-relaxed text-white/70">
+                Turn one set of business data into business plans, proposals, invoices, quotations, marketplace listings, simulations, risk insights, and growth opportunities - all from one connected workspace.
+              </p>
+              <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+                <button type="button" onClick={goLogin} className="w-full rounded-xl bg-brand-500 px-7 py-3.5 text-base font-semibold text-white shadow-lg shadow-brand-900/60 transition hover:bg-brand-400 active:scale-95 sm:w-auto">
+                  Get Started Free →
+                </button>
+                <a href="#how-it-works" className="flex w-full items-center justify-center rounded-xl border border-white/20 px-7 py-3.5 text-base font-semibold text-slate-200 transition hover:border-white/40 hover:text-white sm:w-auto">
+                  See How It Works
+                </a>
               </div>
-            ))}
+              <div className="mt-5 flex flex-wrap gap-4 text-sm text-indigo-200">
+                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Free to start</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> No credit card required</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> One workspace for everything</span>
+              </div>
+            </div>
+            <div className="relative block">
+              <div className="overflow-hidden rounded-3xl max-w-full sm:max-w-2xl md:max-w-xl mx-auto lg:mx-0">
+                <img
+                  src="/hero-section-a.png"
+                  alt="EnterprateAI Platform"
+                  onClick={() => setHeroZoomOpen(true)}
+                  className="block w-full h-56 sm:h-72 md:h-[440px] lg:h-auto object-contain rounded-2xl cursor-zoom-in"
+                  style={{ background: "transparent" }}
+                />
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* TRUST BAR */}
-      <section className="border-b border-slate-100 bg-slate-50 py-5">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-wrap items-center justify-center gap-6 md:gap-10">
+      {/* Hero zoom modal */}
+      {heroZoomOpen && (
+        <div onClick={() => setHeroZoomOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" role="dialog" aria-modal="true">
+          <div className="max-w-4xl w-full">
+            <img src="/hero-section-a.png" alt="EnterprateAI Platform enlarged" className="w-full h-auto object-contain rounded-lg cursor-zoom-out shadow-2xl" onClick={(e) => e.stopPropagation()} />
+          </div>
+        </div>
+      )}
+
+      {/* PAIN SECTION */}
+      <section className="bg-slate-50/50 py-16 sm:py-20">
+        <div className="mx-auto max-w-2xl px-4 sm:px-6">
+          <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Stop repeating the same business information across different tools</h2>
+          <p className="mt-4 text-slate-600">Most small businesses waste valuable time entering the same information again and again.</p>
+          <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             {[
-              { icon: "🔒", text: "ICO Registered" },
-              { icon: "🛡️", text: "GDPR Compliant" },
-              { icon: "🇬🇧", text: "Built for UK SMEs" },
-              { icon: "🔐", text: "AES-256 Encrypted" },
-              { icon: "⭐", text: "Trusted by Founders" },
-            ].map(({ icon, text }) => (
-              <div key={text} className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                <span>{icon}</span>
-                {text}
+              { text: "You describe your business in one place.", icon: "→", active: true, indent: 0 },
+              { text: "Then repeat it for proposals.", icon: "↳", active: false, indent: 1 },
+              { text: "Then again for invoices.", icon: "↳", active: false, indent: 2 },
+              { text: "Then again for quotations.", icon: "↳", active: false, indent: 3 },
+              { text: "Then again for product listings, customer records, vendor records, financial documents, and business planning.", icon: "↳", active: false, indent: 3 },
+            ].map((item, i) => (
+              <div key={i} className={`flex items-start gap-3 border-b border-slate-100 px-5 py-3 text-sm last:border-0 ${item.active ? "bg-brand-50/60" : ""}`} style={{ paddingLeft: `${20 + item.indent * 18}px` }}>
+                <span className={`shrink-0 mt-0.5 font-bold ${item.active ? "text-brand-500" : "text-slate-300"}`}>{item.icon}</span>
+                <p className={item.active ? "font-semibold text-slate-800" : "text-slate-400 leading-relaxed"}>{item.text}</p>
               </div>
             ))}
+          </div>
+          <p className="mt-6 text-base font-bold text-slate-900">That slows you down.</p>
+          <div className="mt-5 rounded-2xl border border-brand-100 bg-brand-50 p-5">
+            <p className="font-semibold text-brand-700">EnterprateAI changes this.</p>
+            <p className="mt-1.5 text-sm leading-relaxed text-slate-600">With EnterprateAI, you input your business data once and use it across multiple business activities - from planning and proposals to marketplace visibility, quotations, invoices, simulations, and decision intelligence.</p>
           </div>
         </div>
       </section>
 
-      {/* PROBLEM */}
-      <section className="py-24 bg-white">
-        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+      {/* MODULES */}
+      <section id="modules" className="bg-slate-50 py-16 sm:py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-12 text-center">
-            <div className="mb-4 inline-block rounded-full bg-rose-50 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-rose-500">The Problem</div>
-            <h2 className="text-3xl font-extrabold text-slate-900 sm:text-4xl">
-              Most Funding Applications Fail<br />
-              <span className="text-rose-500">Before They Even Start</span>
-            </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-base text-slate-500 leading-relaxed">
-              Funders, lenders, and grant bodies ask the same important questions — and most business owners are not prepared to answer them clearly.
-            </p>
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">The Platform</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">One input. Multiple business outputs.</h2>
+            <p className="mt-3 text-slate-500">EnterprateAI turns your business data into practical tools you can use immediately.</p>
           </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            {QUESTIONS.map(({ icon, text }) => (
-              <div key={text} className="group flex items-start gap-4 rounded-2xl border border-slate-100 bg-slate-50 px-5 py-4 transition-all hover:border-rose-200 hover:bg-rose-50">
-                <span className="text-xl">{icon}</span>
-                <span className="text-sm font-medium text-slate-700 leading-relaxed group-hover:text-rose-700">{text}</span>
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              { icon: <BrandIcon d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />, name: "Create your business plan with one click", tag: "Available now", tagColor: "bg-emerald-100 text-emerald-700", desc: "Generate a structured business plan using your business information, idea, target market, services, financial assumptions, and growth goals." },
+              { icon: <BrandIcon d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />, name: "Create business proposals with one click", tag: "Available now", tagColor: "bg-emerald-100 text-emerald-700", desc: "Turn your products, services, customer needs, and business details into professional proposals faster." },
+              { icon: <BrandIcon d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />, name: "Launch your products and services on the marketplace with one click", tag: "Available now", tagColor: "bg-emerald-100 text-emerald-700", desc: "Publish your products and services on the EnterprateAI marketplace and make your business more visible to potential buyers." },
+              { icon: <BrandIcon d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />, name: "Validate business ideas before investing", tag: "Available now", tagColor: "bg-emerald-100 text-emerald-700", desc: "Assess whether an idea makes commercial sense before spending time, money, and resources." },
+              { icon: <BrandIcon d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />, name: "Simulate business decisions before taking action", tag: "Available now", tagColor: "bg-emerald-100 text-emerald-700", desc: "Test how pricing, cost, demand, capacity, customer dependency, and growth decisions may affect your business before you act. See how one decision from one business activity propagates across other business areas - from revenue and cashflow to operations, customer behaviour, risk exposure, profitability, and growth readiness." },
+              { icon: <BrandIcon d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />, name: "Create quick invoices and quotations", tag: "Available now", tagColor: "bg-emerald-100 text-emerald-700", desc: "Generate invoices and quotations from your business, customer, product, and service data without repeating manual work." },
+            ].map((m) => (
+              <div key={m.name} className="rounded-2xl border border-slate-200 bg-white p-6 transition hover:border-brand-200 hover:shadow-md">
+                <div className="flex items-start justify-between gap-3">
+                  {m.icon}
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${m.tagColor}`}>{m.tag}</span>
+                </div>
+                <h3 className="mt-3 font-bold text-slate-900">{m.name}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-slate-500">{m.desc}</p>
               </div>
             ))}
           </div>
-
-          <div className="mt-8 rounded-2xl bg-gradient-to-r from-brand-600 to-brand-800 p-7 text-white text-center">
-            <p className="text-lg font-bold mb-2">If you cannot answer these clearly, your funding conversation becomes weak.</p>
-            <p className="text-brand-200 text-sm">EnterprateAI helps you organise every answer before you apply — in under 20 minutes.</p>
-            <a href={`${APP_URL}/login`} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-bold text-brand-700 hover:bg-brand-50 transition-colors">
-              Get Prepared Now — It's Free
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
-            </a>
+          <div className="mt-10 text-center">
+            <button type="button" onClick={goLogin} className="rounded-xl bg-brand-600 px-7 py-3 text-sm font-semibold text-white shadow transition hover:bg-brand-700">
+              Try it now for free →
+            </button>
           </div>
         </div>
       </section>
 
-      {/* 3 STEPS */}
-      <section id="how-it-works" className="py-24 bg-slate-50">
-        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
-          <div className="mb-14 text-center">
-            <div className="mb-4 inline-block rounded-full bg-brand-50 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-brand-600">How It Works</div>
-            <h2 className="text-3xl font-extrabold text-slate-900 sm:text-4xl">Get Funding-Ready in 3 Simple Steps</h2>
-            <p className="mx-auto mt-4 max-w-xl text-base text-slate-500">No experience needed. No expensive consultants. Just clear answers that funders want to see.</p>
-          </div>
+      {/* FROM IDEA TO MARKET */}
+      <section className="py-14 sm:py-16">
+        <div className="mx-auto max-w-3xl px-4 sm:px-6 text-center">
+          <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">From idea to market - faster</h2>
+          <p className="mt-4 text-slate-600">Whether you are starting a new business, launching a service, responding to an opportunity, preparing a proposal, creating a quotation, or testing a strategic decision, EnterprateAI helps you move faster.</p>
+          <p className="mt-3 text-slate-600">Instead of using disconnected tools for every activity, you work from one intelligent business workspace.</p>
+          <p className="mt-3 text-slate-600">You can plan, create, publish, simulate, and make better decisions using the same business data.</p>
+        </div>
+      </section>
 
-          <div className="space-y-6">
-            {STEPS.map(({ n, icon, title, body, bullets, detail, color, light, tag }) => (
-              <div key={n} className={`relative rounded-3xl border ${light} bg-white overflow-hidden shadow-sm hover:shadow-md transition-shadow`}>
-                <div className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${color}`} />
-                <div className="p-7 pl-8">
-                  <div className="flex items-start gap-5">
-                    <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${color} text-2xl shadow-lg`}>
-                      {icon}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-3 mb-2">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{n}</span>
-                        <span className={`rounded-full bg-gradient-to-r ${color} px-3 py-0.5 text-xs font-bold text-white`}>{tag}</span>
-                      </div>
-                      <h3 className="text-lg font-extrabold text-slate-900 mb-2">{title}</h3>
-                      <p className="text-sm text-slate-600 leading-relaxed mb-3">{body}</p>
-                      {bullets && (
-                        <div className="mb-3 flex flex-wrap gap-2">
-                          {bullets.map(b => (
-                            <span key={b} className="rounded-lg bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{b}</span>
-                          ))}
-                        </div>
-                      )}
-                      <p className="text-sm text-slate-500 leading-relaxed">{detail}</p>
-                    </div>
+      {/* DIFFERENTIATOR */}
+      <section className="bg-slate-900 py-16 text-white sm:py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="mb-12 text-center">
+            <span className="rounded-full bg-brand-500/20 px-3 py-1 text-xs font-semibold text-brand-300">One workspace. Multiple business outputs.</span>
+            <h2 className="mt-3 text-2xl font-extrabold sm:text-3xl">EnterprateAI connects your business activities into one intelligent operating flow.</h2>
+            <p className="mt-3 text-slate-400">Input once. Generate everywhere. Simulate before acting. Grow with intelligence.</p>
+          </div>
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              { icon: <BrandIcon d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />, title: "Input once", body: "Add your business, product, customer, vendor, financial, and marketplace information once. No more repeating the same data across disconnected tools." },
+              { icon: <BrandIcon d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />, title: "Generate everywhere", body: "Use the same data to create plans, proposals, sales letters, invoices, quotations, contracts, listings, and reports without repeating manual work." },
+              { icon: <BrandIcon d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />, title: "Simulate before acting", body: "Understand the likely impact of business decisions before making costly moves. A pricing change, new hire, cost increase, customer loss, product launch, or expansion decision can affect multiple areas of your business. EnterprateAI helps you see those connections before you act." },
+              { icon: <BrandIcon d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />, title: "Grow with intelligence", body: "Discover risks, uncover opportunities, and make better decisions using Fragility Index and Adaptive Scenario Intelligence." },
+            ].map((c) => (
+              <div key={c.title} className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                <div className="mb-3">{c.icon}</div>
+                <h3 className="mb-2 font-semibold">{c.title}</h3>
+                <p className="text-sm leading-relaxed text-slate-400">{c.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* MORE THAN A DOCUMENT GENERATOR */}
+      <section className="py-16 sm:py-20">
+        <div className="mx-auto max-w-4xl px-4 sm:px-6">
+          <div className="mb-8 text-center">
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Why EnterprateAI</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">More than a document generator</h2>
+            <p className="mt-3 text-slate-500">Most tools help you complete one task. EnterprateAI helps you connect the full business journey.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm">
+            <p className="mb-4 text-sm font-semibold text-slate-700">Your business data becomes the foundation for:</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+              {["Business planning", "Proposals", "Sales letters", "Product and service listings", "Customer records", "Vendor records", "Invoices", "Quotations", "Expenses", "Contracts", "Marketplace visibility", "Decision simulations", "Risk discovery", "Opportunity discovery"].map((item) => (
+                <div key={item} className="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700">
+                  <span className="shrink-0 text-brand-500">✓</span>{item}
+                </div>
+              ))}
+            </div>
+            <p className="mt-6 text-center text-sm text-slate-500">The more you use EnterprateAI, the more useful your business data becomes for better decisions.</p>
+          </div>
+        </div>
+      </section>
+
+      {/* DISCOVER RISKS / FRAGILITY INDEX */}
+      <section className="bg-slate-50 py-16 sm:py-20">
+        <div className="mx-auto max-w-5xl px-4 sm:px-6">
+          <div className="grid gap-10 lg:grid-cols-2 lg:items-center">
+            <div>
+              <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">Fragility Index</span>
+              <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Discover risks before they become expensive</h2>
+              <p className="mt-3 text-slate-600">Small business problems rarely happen in isolation.</p>
+              <div className="mt-3 space-y-1 text-sm text-slate-500">
+                <p>A pricing decision can affect demand.</p>
+                <p>A customer loss can affect cashflow.</p>
+                <p>A supplier issue can affect delivery.</p>
+                <p>A hiring decision can affect cost.</p>
+                <p>A growth opportunity can affect capacity.</p>
+              </div>
+              <p className="mt-3 text-slate-600">EnterprateAI helps you understand what could weaken your business before it becomes expensive.</p>
+              <p className="mt-3 text-sm text-slate-500">Using Fragility Index, EnterprateAI helps identify areas such as:</p>
+              <ul className="mt-4 space-y-2">
+                {["Weak cash position", "Customer dependency", "Unstable revenue", "Operational bottlenecks", "Capacity constraints", "Low market readiness", "Poor scalability"].map((item) => (
+                  <li key={item} className="flex items-center gap-2 text-sm text-slate-600">
+                    <span className="shrink-0 text-rose-500">⚠</span>{item}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-4 text-sm text-slate-500">This helps you act earlier, protect your business, and make smarter decisions.</p>
+            </div>
+            <div className="rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
+              <p className="mb-4 text-xs font-bold uppercase tracking-widest text-rose-600">Fragility Index - Example</p>
+              {[
+                { label: "Cash Position", level: 2, max: 5, color: "bg-rose-500" },
+                { label: "Revenue Stability", level: 3, max: 5, color: "bg-amber-400" },
+                { label: "Customer Dependency", level: 1, max: 5, color: "bg-rose-600" },
+                { label: "Market Readiness", level: 4, max: 5, color: "bg-emerald-500" },
+                { label: "Scalability", level: 3, max: 5, color: "bg-amber-400" },
+              ].map((item) => (
+                <div key={item.label} className="mb-3">
+                  <div className="mb-1 flex justify-between text-xs">
+                    <span className="font-medium text-slate-600">{item.label}</span>
+                    <span className="text-slate-400">{item.level}/{item.max}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-100">
+                    <div className={`h-2 rounded-full ${item.color}`} style={{ width: `${(item.level / item.max) * 100}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* HOW IT WORKS */}
+      <section id="how-it-works" className="py-16 sm:py-20">
+        <div className="mx-auto max-w-3xl px-4 sm:px-6">
+          <div className="mb-12 text-center">
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">How It Works</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">How EnterprateAI works</h2>
+            <p className="mt-3 text-slate-500">One workspace. One set of data. Multiple business outputs.</p>
+          </div>
+          <div className="relative">
+            <div className="absolute left-5 top-5 bottom-5 w-0.5 bg-slate-100" aria-hidden="true" />
+            <div className="space-y-8">
+              {STEPS.map((s) => (
+                <div key={s.n} className="flex gap-5">
+                  <div className="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white shadow-md shadow-brand-200">{s.n}</div>
+                  <div className="pb-2 pt-1.5">
+                    <h3 className="font-semibold text-slate-900">{s.title}</h3>
+                    <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{s.body}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* EXAMPLES */}
+      <section id="examples" className="bg-slate-50 py-16 sm:py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="mb-12 text-center">
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Built for small businesses</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Simulate decisions before committing resources</h2>
+            <p className="mt-3 mx-auto max-w-2xl text-slate-500">Before increasing prices, hiring staff, launching a product, reducing costs, entering a new market, accepting a large order, or expanding operations, EnterprateAI helps you simulate the possible impact.</p>
+            <p className="mt-2 mx-auto max-w-2xl text-slate-500">You can test decisions before committing time, money, people, and resources. See how one decision from one business activity propagates across other business areas.</p>
+            <p className="mt-2 mx-auto max-w-2xl text-slate-500">For example, a pricing change may affect demand, revenue, cashflow, customer behaviour, profitability, risk exposure, operational capacity, and growth readiness. This helps you reduce guesswork, avoid avoidable mistakes, and choose a better path.</p>
+          </div>
+          <div className="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
+            {EXAMPLES.map((ex) => (
+              <div key={ex.tagLabel} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div className="border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-brand-600">
+                    <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={ex.tagIcon} /></svg>
+                    {ex.tagLabel}
+                  </span>
+                  <h3 className="mt-1 font-semibold text-slate-900">{ex.title}</h3>
+                </div>
+                <div className="px-5 py-4 space-y-3">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Impact Analysis</p>
+                  <ul className="space-y-1.5">
+                    {ex.impacts.map((imp) => (
+                      <li key={imp.text} className={`flex items-start gap-2 text-xs ${imp.type === "pos" ? "text-emerald-600" : imp.type === "warn" ? "text-amber-600" : "text-rose-500"}`}>
+                        <span className="mt-0.5 shrink-0">{imp.type === "pos" ? "↑" : imp.type === "warn" ? "⚠" : "↓"}</span>
+                        {imp.text}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="rounded-xl border border-brand-100 bg-brand-50 p-3">
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-brand-600">Recommendation</p>
+                    <p className="text-xs leading-relaxed text-slate-600">{ex.rec}</p>
                   </div>
                 </div>
               </div>
             ))}
           </div>
-
-          <div className="mt-10 text-center">
-            <a href={`${APP_URL}/login`} className="inline-flex items-center gap-2 rounded-2xl bg-brand-600 px-8 py-4 text-base font-bold text-white shadow-lg shadow-brand-200 hover:bg-brand-700 transition-all">
-              Start My 3 Steps Free
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
-            </a>
-            <p className="mt-3 text-xs text-slate-400">Free forever plan available. No credit card required.</p>
+          <p className="mt-6 text-center text-xs text-slate-400">Results are generated from <em>your actual business data</em> and update dynamically as conditions change.</p>
+          <div className="mt-10 rounded-2xl border border-brand-100 bg-brand-50 p-6">
+            <h3 className="text-base font-extrabold text-slate-900 text-center">Built for small businesses that want clarity, speed, and growth</h3>
+            <p className="mt-3 text-sm font-semibold text-slate-700">EnterprateAI is designed for:</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {["Founders", "Freelancers", "Consultants", "Service providers", "Suppliers", "Agencies", "Local businesses", "Early-stage startups", "Small teams", "Growing businesses"].map((t) => (
+                <span key={t} className="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">{t}</span>
+              ))}
+            </div>
+            <p className="mt-4 text-sm text-slate-600">Whether you are validating an idea, creating a business plan, preparing a proposal, responding to an RFQ, listing your services, generating invoices, or testing a business decision, EnterprateAI helps you work faster from one connected platform.</p>
           </div>
         </div>
       </section>
 
-      {/* WHY A BUSINESS PLAN */}
-      <section id="why-plan" className="py-24 bg-slate-900 text-white">
-        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
-          <div className="mb-12 text-center">
-            <div className="mb-4 inline-block rounded-full bg-white/10 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-slate-300">Why It Matters</div>
-            <h2 className="text-3xl font-extrabold sm:text-4xl">Why a Business Plan Matters for Funding</h2>
-            <p className="mx-auto mt-4 max-w-xl text-base text-slate-400 leading-relaxed">
-              It is not just a document. It is your business argument. A strong plan opens doors. A weak one closes them.
-            </p>
+      {/* WHY CHOOSE */}
+      <section className="py-16 sm:py-20">
+        <div className="mx-auto max-w-5xl px-4 sm:px-6">
+          <div className="mb-10 text-center">
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Why choose EnterprateAI</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Why small businesses choose EnterprateAI</h2>
           </div>
-
-          <div className="grid gap-3 sm:grid-cols-3 mb-10">
-            {PLAN_POINTS.map(({ icon, text }) => (
-              <div key={text} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 hover:bg-white/10 transition-colors">
-                <span className="text-lg">{icon}</span>
-                <span className="text-sm text-slate-300">{text}</span>
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              { icon: <BrandIcon d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />, title: "Save time", body: "Stop repeating the same information across different tools." },
+              { icon: <BrandIcon d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />, title: "Reduce cost", body: "Use one connected workspace instead of relying on multiple disconnected systems." },
+              { icon: <BrandIcon d="M17 8l4 4m0 0l-4 4m4-4H3" />, title: "Move faster", body: "Create plans, proposals, quotations, invoices, and listings in less time." },
+              { icon: <BrandIcon d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />, title: "Make better decisions", body: "Simulate decisions before acting and understand how one activity affects other areas of the business." },
+              { icon: <BrandIcon d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />, title: "Discover risks", body: "Identify weak points before they become serious business problems." },
+              { icon: <BrandIcon d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />, title: "Uncover opportunities", body: "Use your business data to spot growth potential and improve strategic direction." },
+            ].map((c) => (
+              <div key={c.title} className="rounded-2xl border border-slate-200 bg-white p-5 hover:border-brand-200 hover:shadow-sm transition">
+                <div className="mb-3">{c.icon}</div>
+                <h3 className="font-semibold text-slate-900">{c.title}</h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{c.body}</p>
               </div>
             ))}
           </div>
+        </div>
+      </section>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-6 text-center">
-              <p className="text-3xl mb-2">😟</p>
-              <p className="text-sm font-bold text-rose-400 mb-1">If your plan is weak</p>
-              <p className="text-sm text-slate-400">Your funding application may struggle. Funders move on to the next applicant.</p>
-            </div>
-            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-6 text-center">
-              <p className="text-3xl mb-2">😊</p>
-              <p className="text-sm font-bold text-emerald-400 mb-1">If your plan is clear</p>
-              <p className="text-sm text-slate-400">Your conversation becomes stronger. Funders take you seriously and engage further.</p>
-            </div>
-          </div>
+      {/* MID CTA */}
+      <section className="bg-gradient-to-r from-brand-600 to-brand-700 py-14 text-white">
+        <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
+          <h2 className="text-2xl font-extrabold sm:text-3xl">Start free today</h2>
+          <p className="mt-3 text-brand-100">Input data once. Generate everywhere. Simulate before acting. Grow with intelligence.</p>
+          <p className="mt-2 text-sm text-brand-200">EnterprateAI helps you turn one set of business data into business plans, proposals, invoices, quotations, marketplace listings, simulations, risk insights, and growth opportunities.</p>
+          <button type="button" onClick={goLogin} className="mt-7 rounded-xl bg-white px-8 py-3.5 text-sm font-bold text-brand-700 shadow transition hover:bg-brand-50 active:scale-95">
+            Get Started Free →
+          </button>
+          <p className="mt-3 text-xs text-brand-200">No credit card required · Free to start · Cancel anytime</p>
         </div>
       </section>
 
       {/* TESTIMONIALS */}
-      <section className="py-24 bg-white">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
+      <section id="testimonials" className="py-16 sm:py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-12 text-center">
-            <div className="mb-4 inline-block rounded-full bg-amber-50 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-amber-600">What Founders Say</div>
-            <h2 className="text-3xl font-extrabold text-slate-900 sm:text-4xl">Real Business Owners. Real Results.</h2>
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">What Users Say</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Business Owners Who Stopped Guessing</h2>
           </div>
-          <div className="grid gap-6 md:grid-cols-3">
-            {TESTIMONIALS.map(({ quote, name, role, rating, init }) => (
-              <div key={name} className="relative flex flex-col rounded-3xl border border-slate-100 bg-slate-50 p-7 shadow-sm hover:shadow-md transition-shadow">
-                <div className="mb-4 flex gap-0.5">
-                  {Array.from({ length: rating }).map((_, i) => <Star key={i} />)}
-                </div>
-                <p className="flex-1 text-sm leading-relaxed text-slate-600 mb-6">"{quote}"</p>
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white">
-                    {init}
-                  </div>
+          <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-3">
+            {TESTIMONIALS.map((t, i) => (
+              <div key={i} className={`rounded-2xl border p-6 ${i === 0 ? "border-brand-200 bg-brand-50" : "border-slate-100 bg-white"}`}>
+                <div className="mb-3 flex text-amber-400 text-sm">★★★★★</div>
+                <blockquote className="text-sm leading-relaxed text-slate-700 italic">"{t.quote}"</blockquote>
+                <div className="mt-5 flex items-center gap-3">
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white ${t.color}`}>{t.init}</div>
                   <div>
-                    <p className="text-sm font-bold text-slate-900">{name}</p>
-                    <p className="text-xs text-slate-400">{role}</p>
+                    <p className="text-sm font-semibold text-slate-900">{t.name}</p>
+                    <p className="text-xs text-slate-400">{t.role}</p>
                   </div>
                 </div>
               </div>
@@ -434,151 +634,115 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* WHO IT'S FOR */}
-      <section id="who" className="py-24 bg-gradient-to-br from-brand-600 to-brand-800 text-white">
-        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
-          <div className="mb-12 text-center">
-            <div className="mb-4 inline-block rounded-full bg-white/15 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-brand-100">Who It's For</div>
-            <h2 className="text-3xl font-extrabold sm:text-4xl">Built for Business Owners Who Need to Move Fast</h2>
-            <p className="mx-auto mt-4 max-w-xl text-base text-brand-100">Whether you are testing your first idea or preparing to speak to funders next week.</p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 mb-10">
-            {WHO.map(({ icon, label }, i) => (
-              <div
-                key={label}
-                className={`flex items-center gap-4 rounded-2xl border border-white/20 bg-white/10 px-5 py-4 backdrop-blur-sm hover:bg-white/20 transition-colors${i === WHO.length - 1 && WHO.length % 2 !== 0 ? " sm:col-span-2" : ""}`}
-              >
-                <span className="text-2xl">{icon}</span>
-                <span className="text-sm font-semibold text-white">{label}</span>
-              </div>
-            ))}
-          </div>
-          <div className="text-center">
-            <a href={`${APP_URL}/login`} className="inline-flex items-center gap-2 rounded-2xl bg-white px-8 py-4 text-base font-bold text-brand-700 shadow-xl hover:bg-brand-50 transition-colors">
-              This Is for Me — Get Started Free
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
-            </a>
-          </div>
-        </div>
-      </section>
-
-      {/* JOURNEY */}
-      <section className="py-24 bg-white">
-        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
-          <div className="mb-12 text-center">
-            <div className="mb-4 inline-block rounded-full bg-emerald-50 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-emerald-600">The Transformation</div>
-            <h2 className="text-3xl font-extrabold text-slate-900 sm:text-4xl">From Idea to Funding-Ready — Faster</h2>
-            <p className="mx-auto mt-4 max-w-xl text-base text-slate-500">Most business owners already have the idea. The problem is turning that idea into something clear, structured, and funder-friendly.</p>
-          </div>
-
-          <div className="relative rounded-3xl border border-slate-100 bg-slate-50 p-8 md:p-10">
-            <div className="flex flex-col gap-6 md:flex-row md:items-stretch md:gap-8">
-              <div className="flex-1 rounded-2xl border-2 border-rose-200 bg-rose-50 p-6 text-center">
-                <p className="text-3xl mb-3">😰</p>
-                <p className="text-xs font-bold uppercase tracking-widest text-rose-400 mb-3">Before EnterprateAI</p>
-                <p className="text-sm font-semibold text-rose-700 italic leading-relaxed">"I have an idea but I don't know how to present it. I don't have a business plan. I'm not sure if it will work."</p>
-                <div className="mt-4 space-y-1.5 text-left">
-                  {["No clear plan", "No validation", "Not funder-ready"].map(t => (
-                    <div key={t} className="flex items-center gap-2 text-xs text-rose-500">
-                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M5.47 5.47a.75.75 0 011.06 0L12 10.94l5.47-5.47a.75.75 0 111.06 1.06L13.06 12l5.47 5.47a.75.75 0 11-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 01-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 010-1.06z" clipRule="evenodd" /></svg>
-                      {t}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-center">
-                <div className="flex flex-col items-center gap-2 md:flex-col">
-                  <div className="h-8 w-0.5 bg-brand-200 md:h-0.5 md:w-8 rotate-90 md:rotate-0"></div>
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-600 shadow-lg">
-                    <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
-                  </div>
-                  <div className="h-8 w-0.5 bg-brand-200 md:h-0.5 md:w-8 rotate-90 md:rotate-0"></div>
-                </div>
-              </div>
-
-              <div className="flex-1 rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-6 text-center">
-                <p className="text-3xl mb-3">🚀</p>
-                <p className="text-xs font-bold uppercase tracking-widest text-emerald-500 mb-3">After EnterprateAI</p>
-                <p className="text-sm font-semibold text-emerald-700 italic leading-relaxed">"I've validated my idea, generated a business plan, launched my offer, and started testing traction — all from one workspace."</p>
-                <div className="mt-4 space-y-1.5 text-left">
-                  {["Idea validated", "Plan generated", "Funding-ready"].map(t => (
-                    <div key={t} className="flex items-center gap-2 text-xs text-emerald-600">
-                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z" clipRule="evenodd" /></svg>
-                      {t}
-                    </div>
-                  ))}
-                </div>
-              </div>
+      {/* PRICING */}
+      <section id="pricing" className="bg-slate-50 py-16 sm:py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="mb-10 text-center">
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Pricing</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Simple, Transparent Pricing</h2>
+            <p className="mt-3 text-slate-500">Start free on the Explorer plan. No credit card required.</p>
+            <div className="mt-5 inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
+              <button type="button" onClick={() => setAnnualBilling(false)} className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${!annualBilling ? "bg-brand-600 text-white" : "text-slate-500 hover:text-slate-700"}`}>Monthly</button>
+              <button type="button" onClick={() => setAnnualBilling(true)} className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${annualBilling ? "bg-brand-600 text-white" : "text-slate-500 hover:text-slate-700"}`}>
+                Annual <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${annualBilling ? "bg-white/20 text-white" : "bg-emerald-100 text-emerald-700"}`}>Save 17%</span>
+              </button>
             </div>
-            <p className="mt-6 text-center text-sm font-bold text-brand-600">All from one connected workspace. In under 20 minutes.</p>
           </div>
+          <div className="mx-auto grid max-w-3xl gap-5 sm:grid-cols-2">
+            {PLANS.map((plan) => (
+              <div key={plan.name} className={`relative overflow-hidden rounded-2xl border bg-white p-6 ${plan.highlight ? "border-brand-400 ring-2 ring-brand-200 shadow-xl shadow-brand-100" : "border-slate-200"}`}>
+                {plan.badge && <div className="absolute right-5 top-5 rounded-full bg-brand-600 px-2.5 py-0.5 text-[11px] font-bold text-white">{plan.badge}</div>}
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-slate-900">{plan.name}</h3>
+                  {plan.tier && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-600">{plan.tier}</span>}
+                </div>
+                <div className="mt-2 flex items-end gap-1">
+                  {plan.free ? (
+                    <span className="text-3xl font-extrabold text-slate-900">£0</span>
+                  ) : (
+                    <>
+                      <span className="text-3xl font-extrabold text-slate-900">£{annualBilling ? plan.annual : plan.monthly}</span>
+                      <span className="mb-1 text-sm text-slate-400">/mo</span>
+                    </>
+                  )}
+                </div>
+                {plan.free ? (
+                  <p className="text-xs font-medium text-emerald-600">No credit card required</p>
+                ) : annualBilling ? (
+                  <p className="text-xs text-emerald-600">Billed annually (save £{plan.annualSaving}/yr)</p>
+                ) : (
+                  <p className="text-xs text-slate-400">Billed monthly</p>
+                )}
+                <p className="mt-2 text-xs text-slate-500">{plan.desc}</p>
+                <ul className="mt-5 space-y-2.5">
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex items-start gap-2 text-sm text-slate-600">
+                      <span className="mt-0.5 shrink-0 text-emerald-500">✓</span>{f}
+                    </li>
+                  ))}
+                </ul>
+                <button type="button" onClick={goLogin} className={`mt-6 w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.highlight ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"}`}>
+                  {plan.free ? "Start Free" : "Subscribe"}
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="mt-6 text-center text-xs text-slate-400">All prices exclude VAT. Cancel anytime. No lock-in contracts, no cancellation fees.</p>
         </div>
       </section>
 
       {/* FAQ */}
-      <section id="faq" className="py-24 bg-slate-50">
-        <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-          <div className="mb-12 text-center">
-            <div className="mb-4 inline-block rounded-full bg-brand-50 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-brand-600">FAQ</div>
-            <h2 className="text-3xl font-extrabold text-slate-900 sm:text-4xl">Everything You Need to Know</h2>
+      <section id="faq" className="py-16 sm:py-20">
+        <div className="mx-auto max-w-2xl px-4 sm:px-6">
+          <div className="mb-10 text-center">
+            <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">FAQ</span>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Common Questions</h2>
           </div>
-          <div className="space-y-3">
-            {FAQS.map(({ q, a }) => <FAQItem key={q} q={q} a={a} />)}
+          <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white px-4 sm:px-6">
+            {FAQS.map((f) => <FAQItem key={f.q} q={f.q} a={f.a} />)}
           </div>
         </div>
       </section>
 
       {/* FINAL CTA */}
-      <section className="relative overflow-hidden py-28 bg-gradient-to-br from-slate-900 via-brand-900 to-slate-900 text-white">
-        <div className="pointer-events-none absolute inset-0">
-          <div className="absolute top-0 left-1/3 h-64 w-64 rounded-full bg-brand-500/20 blur-3xl" />
-          <div className="absolute bottom-0 right-1/3 h-64 w-64 rounded-full bg-accent-500/15 blur-3xl" />
-        </div>
-        <div className="relative mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 text-center">
-          <p className="text-xs font-bold uppercase tracking-widest text-brand-300 mb-4">Before You Apply, Get Ready</p>
-          <h2 className="text-3xl font-extrabold sm:text-5xl mb-4 leading-tight">
-            Funding Starts With<br />
-            <span className="bg-gradient-to-r from-brand-300 to-accent-400 bg-clip-text text-transparent">Preparation, Not Application</span>
-          </h2>
-          <p className="text-slate-400 text-base leading-relaxed mb-8 max-w-xl mx-auto">
-            Validate your idea. Generate your business plan. Launch to marketplace. Test traction. Get your business ready for funding in less than 20 minutes.
-          </p>
-
-          <div className="mb-10 grid grid-cols-2 gap-3 max-w-sm mx-auto text-left sm:grid-cols-2">
-            {["✅ Validate your idea", "📄 Generate your plan", "🚀 Launch to marketplace", "📊 Test traction"].map(step => (
-              <div key={step} className="text-sm font-medium text-slate-300">{step}</div>
-            ))}
+      <section className="bg-gradient-to-br from-slate-900 to-brand-900 py-16 text-white sm:py-20">
+        <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
+          <h2 className="text-2xl font-extrabold sm:text-3xl">Turn business activity into business intelligence</h2>
+          <p className="mt-4 text-slate-300">Every activity inside EnterprateAI helps build better business intelligence. Your plans, proposals, invoices, quotations, marketplace listings, customers, vendors, costs, and simulations all create useful data for better decisions.</p>
+          <p className="mt-3 text-slate-400">Not just reports. Not just documents. Not just automation.<br />A connected business workspace that helps you create, manage, simulate, and grow.</p>
+          <button type="button" onClick={goLogin} className="mt-8 rounded-xl bg-brand-500 px-10 py-4 text-base font-bold text-white shadow-xl shadow-brand-900/50 transition hover:bg-brand-400 active:scale-95">
+            Try EnterprateAI now for free →
+          </button>
+          <div className="mt-6 flex flex-wrap justify-center gap-4 text-xs text-slate-400">
+            <span>✓ Free to start</span>
+            <span>✓ No credit card required</span>
+            <span>✓ Cancel anytime</span>
+            <span>✓ GDPR compliant</span>
           </div>
-
-          <a
-            href={`${APP_URL}/login`}
-            className="group inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-10 py-5 text-lg font-bold text-white shadow-2xl shadow-brand-900/50 transition-all hover:from-brand-400 hover:to-brand-500"
-          >
-            Create My Funding Plan Free
-            <svg className="h-5 w-5 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-            </svg>
-          </a>
-          <p className="mt-5 text-sm text-slate-500">Free to start. No credit card. No commitment.</p>
         </div>
       </section>
 
       {/* FOOTER */}
       <footer className="border-t border-slate-100 bg-white py-10">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col items-center justify-between gap-5 sm:flex-row">
-            <img src="/logo.png" alt="EnterprateAI" className="h-8 w-auto" />
-            <div className="flex flex-wrap justify-center gap-6 text-xs text-slate-400">
-              <a href={`${APP_URL}/legal/privacy`} className="hover:text-brand-600 transition-colors">Privacy Policy</a>
-              <a href={`${APP_URL}/legal/terms`} className="hover:text-brand-600 transition-colors">Terms of Service</a>
-              <a href={`${APP_URL}/legal/disclaimer`} className="hover:text-brand-600 transition-colors">Disclaimer</a>
-              <a href={`${APP_URL}/marketplace`} className="hover:text-brand-600 transition-colors">Marketplace</a>
-              <a href={`${APP_URL}/login`} className="hover:text-brand-600 transition-colors">Log in</a>
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="flex flex-col items-center justify-between gap-6 sm:flex-row">
+            <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto" />
+            <div className="flex flex-wrap justify-center gap-5 text-xs text-slate-400">
+              <a href={`${APP_URL}/login`} className="hover:text-slate-600">Sign In</a>
+              <a href="mailto:support@enterprate.ai" className="hover:text-slate-600">support@enterprate.ai</a>
+              <span>Enterprate Limited · Registered in England &amp; Wales</span>
             </div>
           </div>
-          <p className="mt-6 text-center text-xs text-slate-300">
-            © {new Date().getFullYear()} EnterprateAI. All rights reserved. ICO Registered · GDPR Compliant · Built in the UK 🇬🇧
+          <div className="mt-4 flex flex-wrap justify-center gap-4 text-[11px] text-slate-400">
+            <a href={`${APP_URL}/legal/privacy`} className="hover:text-slate-600">Privacy Policy</a>
+            <span>·</span>
+            <a href={`${APP_URL}/legal/terms`} className="hover:text-slate-600">Terms of Service</a>
+            <span>·</span>
+            <a href={`${APP_URL}/legal/disclaimer`} className="hover:text-slate-600">Disclaimer</a>
+          </div>
+          <p className="mt-3 text-center text-[11px] text-slate-300">
+            © {new Date().getFullYear()} Enterprate Limited. All rights reserved.
+            ICO Registered · GDPR Compliant · SEIS Advance Assurance Approved
           </p>
         </div>
       </footer>

@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EnterprateAI — Input once. Generate everywhere. Simulate before acting.</title>
+  <meta name="description" content="The intelligent business workspace for small businesses that want to move faster. Input data once. Generate business plans, proposals, invoices, simulations, and more." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ["Plus Jakarta Sans", "ui-sans-serif", "system-ui", "sans-serif"]
+          },
+          colors: {
+            brand: {
+              50: "#eef2ff", 100: "#e0e7ff", 200: "#c7d2fe", 300: "#a5b4fc",
+              400: "#818cf8", 500: "#6366f1", 600: "#4f46e5", 700: "#4338ca",
+              800: "#3730a3", 900: "#312e81"
+            },
+            accent: {
+              50: "#fff1f6", 100: "#ffe4ef", 200: "#fecddf", 300: "#fda4c3",
+              400: "#fb6ea8", 500: "#f43f8f", 600: "#db2777"
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: "Plus Jakarta Sans", sans-serif; }
+    .faq-answer { display: none; }
+    .faq-answer.open { display: block; }
+    .faq-icon { transition: transform 0.2s; }
+    .faq-icon.open { transform: rotate(45deg); }
+    html { scroll-behavior: smooth; }
+  </style>
+</head>
+<body class="min-h-screen overflow-x-hidden bg-white text-slate-800 antialiased">
+
+  <!-- EXIT INTENT POPUP -->
+  <div id="exitPopup" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-sm">
+    <div class="relative w-full max-w-md rounded-2xl bg-white p-6 sm:p-8 shadow-2xl">
+      <button onclick="closeExitPopup()" class="absolute right-4 top-4 text-slate-400 hover:text-slate-600">✕</button>
+      <div class="mb-1 flex items-center gap-2">
+        <span class="text-2xl">👋</span>
+        <span class="text-xs font-semibold uppercase tracking-widest text-brand-600">Before you go</span>
+      </div>
+      <h3 class="mt-2 text-xl font-bold text-slate-900">Get started for free</h3>
+      <p class="mt-2 text-sm text-slate-500">EnterprateAI gives you the business intelligence tools to validate ideas, run scenario simulations, and make smarter decisions — completely free to start.</p>
+      <ul class="mt-4 space-y-2 text-sm text-slate-600">
+        <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span>Validate your business idea in minutes</li>
+        <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span>Run scenario simulations before committing</li>
+        <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span>Generate investor-ready business plans</li>
+      </ul>
+      <a href="https://enterprate.ai/login" class="mt-5 block w-full rounded-xl bg-brand-600 py-3 text-center text-sm font-semibold text-white hover:bg-brand-700 transition">Get Started Free →</a>
+      <button onclick="closeExitPopup()" class="mt-2 block w-full rounded-xl border border-slate-200 py-2.5 text-center text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Maybe later</button>
+      <p class="mt-3 text-center text-xs text-slate-400">Free plan · No credit card required</p>
+    </div>
+  </div>
+
+  <!-- NAV -->
+  <nav class="sticky top-0 z-50 border-b border-slate-100 bg-white/95 backdrop-blur">
+    <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+      <a href="#hero" class="flex items-center gap-2">
+        <img src="./logo.png" alt="EnterprateAI" class="h-7 w-auto sm:h-8" />
+      </a>
+      <ul class="hidden items-center gap-6 md:flex">
+        <li><a href="#modules" class="text-sm font-medium text-slate-600 hover:text-brand-600 transition">Features</a></li>
+        <li><a href="#how-it-works" class="text-sm font-medium text-slate-600 hover:text-brand-600 transition">How It Works</a></li>
+        <li><a href="#examples" class="text-sm font-medium text-slate-600 hover:text-brand-600 transition">See It Work</a></li>
+        <li><a href="#pricing" class="text-sm font-medium text-slate-600 hover:text-brand-600 transition">Pricing</a></li>
+        <li><a href="#faq" class="text-sm font-medium text-slate-600 hover:text-brand-600 transition">FAQ</a></li>
+      </ul>
+      <div class="flex items-center gap-2">
+        <a href="https://enterprate.ai/login" class="text-sm font-medium text-slate-600 hover:text-slate-900">Sign in</a>
+        <a href="https://enterprate.ai/login" class="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-700 transition">Start Free</a>
+        <button onclick="toggleMobileMenu()" class="ml-1 flex h-9 w-9 flex-col items-center justify-center gap-1.5 md:hidden" aria-label="Menu">
+          <span id="mb1" class="block h-0.5 w-5 bg-slate-700 transition-all duration-200"></span>
+          <span id="mb2" class="block h-0.5 w-5 bg-slate-700 transition-all duration-200"></span>
+          <span id="mb3" class="block h-0.5 w-5 bg-slate-700 transition-all duration-200"></span>
+        </button>
+      </div>
+    </div>
+    <div id="mobileMenu" class="hidden border-t border-slate-100 bg-white px-4 pb-4 md:hidden">
+      <ul class="mt-3 flex flex-col gap-3">
+        <li><a href="#modules" onclick="closeMobileMenu()" class="block text-sm font-medium text-slate-700">Features</a></li>
+        <li><a href="#how-it-works" onclick="closeMobileMenu()" class="block text-sm font-medium text-slate-700">How It Works</a></li>
+        <li><a href="#examples" onclick="closeMobileMenu()" class="block text-sm font-medium text-slate-700">See It Work</a></li>
+        <li><a href="#pricing" onclick="closeMobileMenu()" class="block text-sm font-medium text-slate-700">Pricing</a></li>
+        <li><a href="#faq" onclick="closeMobileMenu()" class="block text-sm font-medium text-slate-700">FAQ</a></li>
+        <li><a href="https://enterprate.ai/login" class="block text-sm font-medium text-slate-700">Sign in</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section id="hero" class="relative overflow-hidden bg-gradient-to-br from-brand-900 via-brand-800 to-brand-900 pb-16 pt-14 sm:pt-20">
+    <div class="pointer-events-none absolute -right-32 -top-32 h-[500px] w-[500px] rounded-full bg-brand-500/25 blur-3xl"></div>
+    <div class="pointer-events-none absolute -bottom-20 -left-20 h-[400px] w-[400px] rounded-full bg-accent-500/15 blur-3xl"></div>
+    <div class="relative mx-auto max-w-6xl px-4 sm:px-6">
+      <div class="grid gap-10 lg:grid-cols-2 lg:gap-16 lg:items-center">
+        <div>
+          <h1 class="text-3xl font-extrabold leading-tight tracking-tight text-white sm:text-4xl xl:text-5xl drop-shadow-md">
+            Input data once. Generate everywhere. <span class="text-white">Simulate before acting. Grow with intelligence.</span>
+          </h1>
+          <p class="mt-5 text-lg font-semibold leading-relaxed text-white">The intelligent business workspace for small businesses that want to move faster.</p>
+          <p class="mt-3 text-base leading-relaxed text-white/90">EnterprateAI helps small businesses save time, reduce cost, discover risks, uncover opportunities, and move from idea to market faster.</p>
+          <p class="mt-3 text-sm leading-relaxed text-white/70">Turn one set of business data into business plans, proposals, invoices, quotations, marketplace listings, simulations, risk insights, and growth opportunities — all from one connected workspace.</p>
+          <div class="mt-7 flex flex-col gap-3 sm:flex-row">
+            <a href="https://enterprate.ai/login" class="w-full rounded-xl bg-brand-500 px-7 py-3.5 text-base font-semibold text-white text-center shadow-lg shadow-brand-900/60 hover:bg-brand-400 transition sm:w-auto">Get Started Free →</a>
+            <a href="#how-it-works" class="flex w-full items-center justify-center rounded-xl border border-white/20 px-7 py-3.5 text-base font-semibold text-slate-200 hover:border-white/40 hover:text-white transition sm:w-auto">See How It Works</a>
+          </div>
+          <div class="mt-5 flex flex-wrap gap-4 text-sm text-indigo-200">
+            <span class="flex items-center gap-1.5"><span class="text-emerald-400">✓</span> Free to start</span>
+            <span class="flex items-center gap-1.5"><span class="text-emerald-400">✓</span> No credit card required</span>
+            <span class="flex items-center gap-1.5"><span class="text-emerald-400">✓</span> One workspace for everything</span>
+          </div>
+        </div>
+        <div class="relative block">
+          <div class="overflow-hidden rounded-3xl max-w-full sm:max-w-2xl md:max-w-xl mx-auto lg:mx-0">
+            <img src="https://enterprate.ai/hero-section-a.png" alt="EnterprateAI Platform" onclick="openHeroZoom()" class="block w-full h-56 sm:h-72 md:h-[440px] lg:h-auto object-contain rounded-2xl cursor-zoom-in" style="background:transparent" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HERO ZOOM MODAL -->
+  <div id="heroZoom" onclick="closeHeroZoom()" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
+    <div class="max-w-4xl w-full">
+      <img src="https://enterprate.ai/hero-section-a.png" alt="EnterprateAI Platform enlarged" class="w-full h-auto object-contain rounded-lg cursor-zoom-out shadow-2xl" onclick="event.stopPropagation()" />
+    </div>
+  </div>
+
+  <!-- PAIN SECTION -->
+  <section class="bg-slate-50/50 py-16 sm:py-20">
+    <div class="mx-auto max-w-2xl px-4 sm:px-6">
+      <h2 class="text-2xl font-extrabold text-slate-900 sm:text-3xl">Stop repeating the same business information across different tools</h2>
+      <p class="mt-4 text-slate-600">Most small businesses waste valuable time entering the same information again and again.</p>
+      <div class="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="flex items-start gap-3 border-b border-slate-100 px-5 py-3 text-sm bg-brand-50/60" style="padding-left:20px">
+          <span class="shrink-0 mt-0.5 font-bold text-brand-500">→</span>
+          <p class="font-semibold text-slate-800">You describe your business in one place.</p>
+        </div>
+        <div class="flex items-start gap-3 border-b border-slate-100 py-3 text-sm" style="padding-left:38px">
+          <span class="shrink-0 mt-0.5 font-bold text-slate-300">↳</span>
+          <p class="text-slate-400 leading-relaxed">Then repeat it for proposals.</p>
+        </div>
+        <div class="flex items-start gap-3 border-b border-slate-100 py-3 text-sm" style="padding-left:56px">
+          <span class="shrink-0 mt-0.5 font-bold text-slate-300">↳</span>
+          <p class="text-slate-400 leading-relaxed">Then again for invoices.</p>
+        </div>
+        <div class="flex items-start gap-3 border-b border-slate-100 py-3 text-sm" style="padding-left:74px">
+          <span class="shrink-0 mt-0.5 font-bold text-slate-300">↳</span>
+          <p class="text-slate-400 leading-relaxed">Then again for quotations.</p>
+        </div>
+        <div class="flex items-start gap-3 py-3 text-sm" style="padding-left:74px">
+          <span class="shrink-0 mt-0.5 font-bold text-slate-300">↳</span>
+          <p class="text-slate-400 leading-relaxed">Then again for product listings, customer records, vendor records, financial documents, and business planning.</p>
+        </div>
+      </div>
+      <p class="mt-6 text-base font-bold text-slate-900">That slows you down.</p>
+      <div class="mt-5 rounded-2xl border border-brand-100 bg-brand-50 p-5">
+        <p class="font-semibold text-brand-700">EnterprateAI changes this.</p>
+        <p class="mt-1.5 text-sm leading-relaxed text-slate-600">With EnterprateAI, you input your business data once and use it across multiple business activities — from planning and proposals to marketplace visibility, quotations, invoices, simulations, and decision intelligence.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- MODULES -->
+  <section id="modules" class="bg-slate-50 py-16 sm:py-20">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6">
+      <div class="mb-12 text-center">
+        <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">The Platform</span>
+        <h2 class="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">One input. Multiple business outputs.</h2>
+        <p class="mt-3 text-slate-500">EnterprateAI turns your business data into practical tools you can use immediately.</p>
+      </div>
+      <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <!-- Module cards -->
+        <div class="rounded-2xl border border-slate-200 bg-white p-6 hover:border-brand-200 hover:shadow-md transition">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+              <svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+            </div>
+            <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Available now</span>
+          </div>
+          <h3 class="mt-3 font-bold text-slate-900">Create your business plan with one click</h3>
+          <p class="mt-2 text-sm leading-relaxed text-slate-500">Generate a structured business plan using your business information, idea, target market, services, financial assumptions, and growth goals.</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-6 hover:border-brand-200 hover:shadow-md transition">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+              <svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            </div>
+            <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Available now</span>
+          </div>
+          <h3 class="mt-3 font-bold text-slate-900">Create business proposals with one click</h3>
+          <p class="mt-2 text-sm leading-relaxed text-slate-500">Turn your products, services, customer needs, and business details into professional proposals faster.</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-6 hover:border-brand-200 hover:shadow-md transition">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+              <svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/></svg>
+            </div>
+            <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Available now</span>
+          </div>
+          <h3 class="mt-3 font-bold text-slate-900">Launch your products and services on the marketplace with one click</h3>
+          <p class="mt-2 text-sm leading-relaxed text-slate-500">Publish your products and services on the EnterprateAI marketplace and make your business more visible to potential buyers.</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-6 hover:border-brand-200 hover:shadow-md transition">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+              <svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            </div>
+            <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Available now</span>
+          </div>
+          <h3 class="mt-3 font-bold text-slate-900">Validate business ideas before investing</h3>
+          <p class="mt-2 text-sm leading-relaxed text-slate-500">Assess whether an idea makes commercial sense before spending time, money, and resources.</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-6 hover:border-brand-200 hover:shadow-md transition">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+              <svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            </div>
+            <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Available now</span>
+          </div>
+          <h3 class="mt-3 font-bold text-slate-900">Simulate business decisions before taking action</h3>
+          <p class="mt-2 text-sm leading-relaxed text-slate-500">Test how pricing, cost, demand, capacity, customer dependency, and growth decisions may affect your business before you act. See how one decision from one business activity propagates across other business areas - from revenue and cashflow to operations, customer behaviour, risk exposure, profitability, and growth readiness.</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-6 hover:border-brand-200 hover:shadow-md transition">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+              <svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z"/></svg>
+            </div>
+            <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Available now</span>
+          </div>
+          <h3 class="mt-3 font-bold text-slate-900">Create quick invoices and quotations</h3>
+          <p class="mt-2 text-sm leading-relaxed text-slate-500">Generate invoices and quotations from your business, customer, product, and service data without repeating manual work.</p>
+        </div>
+      </div>
+      <div class="mt-10 text-center">
+        <a href="https://enterprate.ai/login" class="rounded-xl bg-brand-600 px-7 py-3 text-sm font-semibold text-white shadow hover:bg-brand-700 transition">Try it now for free →</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- FROM IDEA TO MARKET -->
+  <section class="py-14 sm:py-16">
+    <div class="mx-auto max-w-3xl px-4 sm:px-6 text-center">
+      <h2 class="text-2xl font-extrabold text-slate-900 sm:text-3xl">From idea to market — faster</h2>
+      <p class="mt-4 text-slate-600">Whether you are starting a new business, launching a service, responding to an opportunity, preparing a proposal, creating a quotation, or testing a strategic decision, EnterprateAI helps you move faster.</p>
+      <p class="mt-3 text-slate-600">Instead of using disconnected tools for every activity, you work from one intelligent business workspace.</p>
+      <p class="mt-3 text-slate-600">You can plan, create, publish, simulate, and make better decisions using the same business data.</p>
+    </div>
+  </section>
+
+  <!-- DIFFERENTIATOR -->
+  <section class="bg-slate-900 py-16 text-white sm:py-20">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6">
+      <div class="mb-12 text-center">
+        <span class="rounded-full bg-brand-500/20 px-3 py-1 text-xs font-semibold text-brand-300">One workspace. Multiple business outputs.</span>
+        <h2 class="mt-3 text-2xl font-extrabold sm:text-3xl">EnterprateAI connects your business activities into one intelligent operating flow.</h2>
+        <p class="mt-3 text-slate-400">Input once. Generate everywhere. Simulate before acting. Grow with intelligence.</p>
+      </div>
+      <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+          <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+            <svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+          </div>
+          <h3 class="mb-2 font-semibold">Input once</h3>
+          <p class="text-sm leading-relaxed text-slate-400">Add your business, product, customer, vendor, financial, and marketplace information once. No more repeating the same data across disconnected tools.</p>
+        </div>
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+          <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+            <svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+          </div>
+          <h3 class="mb-2 font-semibold">Generate everywhere</h3>
+          <p class="text-sm leading-relaxed text-slate-400">Use the same data to create plans, proposals, sales letters, invoices, quotations, contracts, listings, and reports without repeating manual work.</p>
+        </div>
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+          <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+            <svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+          </div>
+          <h3 class="mb-2 font-semibold">Simulate before acting</h3>
+          <p class="text-sm leading-relaxed text-slate-400">Understand the likely impact of business decisions before making costly moves. A pricing change, new hire, cost increase, customer loss, product launch, or expansion decision can affect multiple areas of your business. EnterprateAI helps you see those connections before you act.</p>
+        </div>
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+          <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50">
+            <svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+          </div>
+          <h3 class="mb-2 font-semibold">Grow with intelligence</h3>
+          <p class="text-sm leading-relaxed text-slate-400">Discover risks, uncover opportunities, and make better decisions using Fragility Index and Adaptive Scenario Intelligence.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MORE THAN A DOCUMENT GENERATOR -->
+  <section class="py-16 sm:py-20">
+    <div class="mx-auto max-w-4xl px-4 sm:px-6">
+      <div class="mb-8 text-center">
+        <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Why EnterprateAI</span>
+        <h2 class="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">More than a document generator</h2>
+        <p class="mt-3 text-slate-500">Most tools help you complete one task. EnterprateAI helps you connect the full business journey.</p>
+      </div>
+      <div class="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm">
+        <p class="mb-4 text-sm font-semibold text-slate-700">Your business data becomes the foundation for:</p>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+          <!-- items -->
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Business planning</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Proposals</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Sales letters</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Product and service listings</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Customer records</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Vendor records</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Invoices</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Quotations</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Expenses</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Contracts</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Marketplace visibility</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Decision simulations</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Risk discovery</div>
+          <div class="flex items-center gap-2 rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700"><span class="shrink-0 text-brand-500">✓</span>Opportunity discovery</div>
+        </div>
+        <p class="mt-6 text-center text-sm text-slate-500">The more you use EnterprateAI, the more useful your business data becomes for better decisions.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FRAGILITY INDEX -->
+  <section class="bg-slate-50 py-16 sm:py-20">
+    <div class="mx-auto max-w-5xl px-4 sm:px-6">
+      <div class="grid gap-10 lg:grid-cols-2 lg:items-center">
+        <div>
+          <span class="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">Fragility Index</span>
+          <h2 class="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Discover risks before they become expensive</h2>
+          <p class="mt-3 text-slate-600">Small business problems rarely happen in isolation.</p>
+          <div class="mt-3 space-y-1 text-sm text-slate-500">
+            <p>A pricing decision can affect demand.</p>
+            <p>A customer loss can affect cashflow.</p>
+            <p>A supplier issue can affect delivery.</p>
+            <p>A hiring decision can affect cost.</p>
+            <p>A growth opportunity can affect capacity.</p>
+          </div>
+          <p class="mt-3 text-slate-600">EnterprateAI helps you understand what could weaken your business before it becomes expensive.</p>
+          <p class="mt-3 text-sm text-slate-500">Using Fragility Index, EnterprateAI helps identify areas such as:</p>
+          <ul class="mt-4 space-y-2">
+            <li class="flex items-center gap-2 text-sm text-slate-600"><span class="shrink-0 text-rose-500">⚠</span>Weak cash position</li>
+            <li class="flex items-center gap-2 text-sm text-slate-600"><span class="shrink-0 text-rose-500">⚠</span>Customer dependency</li>
+            <li class="flex items-center gap-2 text-sm text-slate-600"><span class="shrink-0 text-rose-500">⚠</span>Unstable revenue</li>
+            <li class="flex items-center gap-2 text-sm text-slate-600"><span class="shrink-0 text-rose-500">⚠</span>Operational bottlenecks</li>
+            <li class="flex items-center gap-2 text-sm text-slate-600"><span class="shrink-0 text-rose-500">⚠</span>Capacity constraints</li>
+            <li class="flex items-center gap-2 text-sm text-slate-600"><span class="shrink-0 text-rose-500">⚠</span>Low market readiness</li>
+            <li class="flex items-center gap-2 text-sm text-slate-600"><span class="shrink-0 text-rose-500">⚠</span>Poor scalability</li>
+          </ul>
+          <p class="mt-4 text-sm text-slate-500">This helps you act earlier, protect your business, and make smarter decisions.</p>
+        </div>
+        <div class="rounded-2xl border border-rose-100 bg-white p-6 shadow-sm">
+          <p class="mb-4 text-xs font-bold uppercase tracking-widest text-rose-600">Fragility Index — Example</p>
+          <div class="mb-3">
+            <div class="mb-1 flex justify-between text-xs"><span class="font-medium text-slate-600">Cash Position</span><span class="text-slate-400">2/5</span></div>
+            <div class="h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-rose-500" style="width:40%"></div></div>
+          </div>
+          <div class="mb-3">
+            <div class="mb-1 flex justify-between text-xs"><span class="font-medium text-slate-600">Revenue Stability</span><span class="text-slate-400">3/5</span></div>
+            <div class="h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-amber-400" style="width:60%"></div></div>
+          </div>
+          <div class="mb-3">
+            <div class="mb-1 flex justify-between text-xs"><span class="font-medium text-slate-600">Customer Dependency</span><span class="text-slate-400">1/5</span></div>
+            <div class="h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-rose-600" style="width:20%"></div></div>
+          </div>
+          <div class="mb-3">
+            <div class="mb-1 flex justify-between text-xs"><span class="font-medium text-slate-600">Market Readiness</span><span class="text-slate-400">4/5</span></div>
+            <div class="h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-emerald-500" style="width:80%"></div></div>
+          </div>
+          <div class="mb-3">
+            <div class="mb-1 flex justify-between text-xs"><span class="font-medium text-slate-600">Scalability</span><span class="text-slate-400">3/5</span></div>
+            <div class="h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-amber-400" style="width:60%"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section id="how-it-works" class="py-16 sm:py-20">
+    <div class="mx-auto max-w-3xl px-4 sm:px-6">
+      <div class="mb-12 text-center">
+        <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">How It Works</span>
+        <h2 class="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">How EnterprateAI works</h2>
+        <p class="mt-3 text-slate-500">One workspace. One set of data. Multiple business outputs.</p>
+      </div>
+      <div class="relative">
+        <div class="absolute left-5 top-5 bottom-5 w-0.5 bg-slate-100"></div>
+        <div class="space-y-8">
+          <div class="flex gap-5">
+            <div class="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white shadow-md shadow-brand-200">1</div>
+            <div class="pb-2 pt-1.5"><h3 class="font-semibold text-slate-900">Input once</h3><p class="mt-1.5 text-sm leading-relaxed text-slate-500">Add your business, product, service, customer, vendor, financial, and marketplace information once.</p></div>
+          </div>
+          <div class="flex gap-5">
+            <div class="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white shadow-md shadow-brand-200">2</div>
+            <div class="pb-2 pt-1.5"><h3 class="font-semibold text-slate-900">Generate everywhere</h3><p class="mt-1.5 text-sm leading-relaxed text-slate-500">Use the same data to create business plans, proposals, sales letters, invoices, quotations, contracts, marketplace listings, and reports.</p></div>
+          </div>
+          <div class="flex gap-5">
+            <div class="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white shadow-md shadow-brand-200">3</div>
+            <div class="pb-2 pt-1.5"><h3 class="font-semibold text-slate-900">Simulate before acting</h3><p class="mt-1.5 text-sm leading-relaxed text-slate-500">Understand the likely impact of business decisions before making costly moves. A price change, new hire, cost increase, customer loss, product launch, supplier issue, or expansion decision can affect multiple areas of your business. EnterprateAI helps you see those connections before you act.</p></div>
+          </div>
+          <div class="flex gap-5">
+            <div class="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white shadow-md shadow-brand-200">4</div>
+            <div class="pb-2 pt-1.5"><h3 class="font-semibold text-slate-900">Grow with intelligence</h3><p class="mt-1.5 text-sm leading-relaxed text-slate-500">Discover risks, uncover opportunities, and make smarter decisions using Fragility Index and Adaptive Scenario Intelligence.</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- EXAMPLES -->
+  <section id="examples" class="bg-slate-50 py-16 sm:py-20">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6">
+      <div class="mb-12 text-center">
+        <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Built for small businesses</span>
+        <h2 class="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Simulate decisions before committing resources</h2>
+        <p class="mt-3 mx-auto max-w-2xl text-slate-500">Before increasing prices, hiring staff, launching a product, reducing costs, entering a new market, accepting a large order, or expanding operations, EnterprateAI helps you simulate the possible impact.</p>
+        <p class="mt-2 mx-auto max-w-2xl text-slate-500">You can test decisions before committing time, money, people, and resources. See how one decision from one business activity propagates across other business areas.</p>
+        <p class="mt-2 mx-auto max-w-2xl text-slate-500">For example, a pricing change may affect demand, revenue, cashflow, customer behaviour, profitability, risk exposure, operational capacity, and growth readiness. This helps you reduce guesswork, avoid avoidable mistakes, and choose a better path.</p>
+      </div>
+      <div class="grid gap-5 sm:grid-cols-2 md:grid-cols-3">
+        <!-- Hiring Decision -->
+        <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+          <div class="border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+            <span class="flex items-center gap-1.5 text-xs font-semibold text-brand-600">
+              <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+              Hiring Decision
+            </span>
+            <h3 class="mt-1 font-semibold text-slate-900">Should you hire a new team member?</h3>
+          </div>
+          <div class="px-5 py-4 space-y-3">
+            <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Impact Analysis</p>
+            <ul class="space-y-1.5">
+              <li class="flex items-start gap-2 text-xs text-rose-500"><span class="mt-0.5 shrink-0">↓</span>Cash runway reduces: 8 → 5 months</li>
+              <li class="flex items-start gap-2 text-xs text-rose-500"><span class="mt-0.5 shrink-0">↓</span>Break even shifts by +2 months</li>
+              <li class="flex items-start gap-2 text-xs text-amber-600"><span class="mt-0.5 shrink-0">⚠</span>Risk increases under low revenue scenarios</li>
+              <li class="flex items-start gap-2 text-xs text-rose-500"><span class="mt-0.5 shrink-0">↓</span>Monthly burn rate increases by £3,500</li>
+            </ul>
+            <div class="rounded-xl border border-brand-100 bg-brand-50 p-3">
+              <p class="mb-1 text-[10px] font-bold uppercase tracking-widest text-brand-600">Recommendation</p>
+              <p class="text-xs leading-relaxed text-slate-600">Delay hiring by 2 months or use a contractor to preserve cashflow stability. Safe to hire from Month 3.</p>
+            </div>
+          </div>
+        </div>
+        <!-- Pricing Decision -->
+        <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+          <div class="border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+            <span class="flex items-center gap-1.5 text-xs font-semibold text-brand-600">
+              <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
+              Pricing Decision
+            </span>
+            <h3 class="mt-1 font-semibold text-slate-900">Planning to raise your prices?</h3>
+          </div>
+          <div class="px-5 py-4 space-y-3">
+            <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Impact Analysis</p>
+            <ul class="space-y-1.5">
+              <li class="flex items-start gap-2 text-xs text-emerald-600"><span class="mt-0.5 shrink-0">↑</span>Revenue increases by +12%</li>
+              <li class="flex items-start gap-2 text-xs text-emerald-600"><span class="mt-0.5 shrink-0">↑</span>Profit margin improves by +18%</li>
+              <li class="flex items-start gap-2 text-xs text-emerald-600"><span class="mt-0.5 shrink-0">↑</span>Remains profitable with up to 8% churn</li>
+              <li class="flex items-start gap-2 text-xs text-emerald-600"><span class="mt-0.5 shrink-0">↑</span>Break even improves by 1.5 months</li>
+            </ul>
+            <div class="rounded-xl border border-brand-100 bg-brand-50 p-3">
+              <p class="mb-1 text-[10px] font-bold uppercase tracking-widest text-brand-600">Recommendation</p>
+              <p class="text-xs leading-relaxed text-slate-600">Increase pricing by 15%. Revenue remains positive even under moderate churn. Implement with a 30 day notice period.</p>
+            </div>
+          </div>
+        </div>
+        <!-- Cost Reduction -->
+        <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+          <div class="border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+            <span class="flex items-center gap-1.5 text-xs font-semibold text-brand-600">
+              <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 17h8m0 0v-8m0 8l-8-8-4 4-6-6"/></svg>
+              Cost Reduction
+            </span>
+            <h3 class="mt-1 font-semibold text-slate-900">Thinking of cutting marketing spend?</h3>
+          </div>
+          <div class="px-5 py-4 space-y-3">
+            <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Impact Analysis</p>
+            <ul class="space-y-1.5">
+              <li class="flex items-start gap-2 text-xs text-emerald-600"><span class="mt-0.5 shrink-0">↑</span>Immediate cashflow improves by £2,100/mo</li>
+              <li class="flex items-start gap-2 text-xs text-amber-600"><span class="mt-0.5 shrink-0">⚠</span>Pipeline impact: −22% leads by Month 3</li>
+              <li class="flex items-start gap-2 text-xs text-rose-500"><span class="mt-0.5 shrink-0">↓</span>Revenue dip: −£6,400 by Month 5</li>
+              <li class="flex items-start gap-2 text-xs text-amber-600"><span class="mt-0.5 shrink-0">⚠</span>Net effect negative beyond Month 4</li>
+            </ul>
+            <div class="rounded-xl border border-brand-100 bg-brand-50 p-3">
+              <p class="mb-1 text-[10px] font-bold uppercase tracking-widest text-brand-600">Recommendation</p>
+              <p class="text-xs leading-relaxed text-slate-600">Do not cut marketing budget. Short term saving creates a revenue hole in Month 4 to 6. Instead, reallocate £800/mo from offline to digital for better ROI.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="mt-6 text-center text-xs text-slate-400">Results are generated from <em>your actual business data</em> and update dynamically as conditions change.</p>
+      <div class="mt-10 rounded-2xl border border-brand-100 bg-brand-50 p-6">
+        <h3 class="text-base font-extrabold text-slate-900 text-center">Built for small businesses that want clarity, speed, and growth</h3>
+        <p class="mt-3 text-sm font-semibold text-slate-700">EnterprateAI is designed for:</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <span class="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">Founders</span>
+          <span class="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">Freelancers</span>
+          <span class="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">Consultants</span>
+          <span class="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">Service providers</span>
+          <span class="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">Suppliers</span>
+          <span class="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">Agencies</span>
+          <span class="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">Local businesses</span>
+          <span class="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">Early-stage startups</span>
+          <span class="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">Small teams</span>
+          <span class="rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-brand-700">Growing businesses</span>
+        </div>
+        <p class="mt-4 text-sm text-slate-600">Whether you are validating an idea, creating a business plan, preparing a proposal, responding to an RFQ, listing your services, generating invoices, or testing a business decision, EnterprateAI helps you work faster from one connected platform.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHY CHOOSE -->
+  <section class="py-16 sm:py-20">
+    <div class="mx-auto max-w-5xl px-4 sm:px-6">
+      <div class="mb-10 text-center">
+        <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Why choose EnterprateAI</span>
+        <h2 class="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Why small businesses choose EnterprateAI</h2>
+      </div>
+      <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 hover:border-brand-200 hover:shadow-sm transition">
+          <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50"><svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+          <h3 class="font-semibold text-slate-900">Save time</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-slate-500">Stop repeating the same information across different tools.</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 hover:border-brand-200 hover:shadow-sm transition">
+          <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50"><svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg></div>
+          <h3 class="font-semibold text-slate-900">Reduce cost</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-slate-500">Use one connected workspace instead of relying on multiple disconnected systems.</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 hover:border-brand-200 hover:shadow-sm transition">
+          <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50"><svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg></div>
+          <h3 class="font-semibold text-slate-900">Move faster</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-slate-500">Create plans, proposals, quotations, invoices, and listings in less time.</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 hover:border-brand-200 hover:shadow-sm transition">
+          <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50"><svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+          <h3 class="font-semibold text-slate-900">Make better decisions</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-slate-500">Simulate decisions before acting and understand how one activity affects other areas of the business.</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 hover:border-brand-200 hover:shadow-sm transition">
+          <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50"><svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg></div>
+          <h3 class="font-semibold text-slate-900">Discover risks</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-slate-500">Identify weak points before they become serious business problems.</p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 hover:border-brand-200 hover:shadow-sm transition">
+          <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50"><svg class="h-6 w-6 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg></div>
+          <h3 class="font-semibold text-slate-900">Uncover opportunities</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-slate-500">Use your business data to spot growth potential and improve strategic direction.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MID-PAGE CTA -->
+  <section class="bg-gradient-to-r from-brand-600 to-brand-700 py-14 text-white">
+    <div class="mx-auto max-w-2xl px-4 text-center sm:px-6">
+      <h2 class="text-2xl font-extrabold sm:text-3xl">Start free today</h2>
+      <p class="mt-3 text-brand-100">Input data once. Generate everywhere. Simulate before acting. Grow with intelligence.</p>
+      <p class="mt-2 text-sm text-brand-200">EnterprateAI helps you turn one set of business data into business plans, proposals, invoices, quotations, marketplace listings, simulations, risk insights, and growth opportunities.</p>
+      <a href="https://enterprate.ai/login" class="mt-7 inline-block rounded-xl bg-white px-8 py-3.5 text-sm font-bold text-brand-700 shadow hover:bg-brand-50 transition">Get Started Free →</a>
+      <p class="mt-3 text-xs text-brand-200">No credit card required · Free to start · Cancel anytime</p>
+    </div>
+  </section>
+
+  <!-- TESTIMONIALS -->
+  <section id="testimonials" class="py-16 sm:py-20">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6">
+      <div class="mb-12 text-center">
+        <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">What Users Say</span>
+        <h2 class="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Business Owners Who Stopped Guessing</h2>
+      </div>
+      <div class="grid gap-6 sm:grid-cols-2 md:grid-cols-3">
+        <div class="rounded-2xl border border-brand-200 bg-brand-50 p-6">
+          <div class="mb-3 flex text-amber-400 text-sm">★★★★★</div>
+          <blockquote class="text-sm leading-relaxed text-slate-700 italic">"I was about to hire a second developer. EnterprateAI ran the simulation and showed me my cash runway would drop to 4 months under two realistic revenue scenarios. I hired a contractor instead. Six months later, that decision saved my business."</blockquote>
+          <div class="mt-5 flex items-center gap-3">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-500 text-sm font-bold text-white">V</div>
+            <div><p class="text-sm font-semibold text-slate-900">Victor</p><p class="text-xs text-slate-400">Rhema Concept, London</p></div>
+          </div>
+        </div>
+        <div class="rounded-2xl border border-slate-100 bg-white p-6">
+          <div class="mb-3 flex text-amber-400 text-sm">★★★★★</div>
+          <blockquote class="text-sm leading-relaxed text-slate-700 italic">"We were debating a price increase for months. EnterprateAI modelled three scenarios in minutes and showed us we could raise by 18% and still retain 94% of customers. We raised prices within a week. Best decision we made this year."</blockquote>
+          <div class="mt-5 flex items-center gap-3">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white" style="background-color:#f43f8f">I</div>
+            <div><p class="text-sm font-semibold text-slate-900">Irene A.</p><p class="text-xs text-slate-400">Sombeauty London Ltd, UK</p></div>
+          </div>
+        </div>
+        <div class="rounded-2xl border border-slate-100 bg-white p-6">
+          <div class="mb-3 flex text-amber-400 text-sm">★★★★★</div>
+          <blockquote class="text-sm leading-relaxed text-slate-700 italic">"As a solo founder I was making £40k decisions based on spreadsheets and gut feel. EnterprateAI gave me the confidence of a CFO without the cost of one. I now run every major decision through it before acting."</blockquote>
+          <div class="mt-5 flex items-center gap-3">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-sm font-bold text-white">G</div>
+            <div><p class="text-sm font-semibold text-slate-900">Gilbert C.</p><p class="text-xs text-slate-400">OIC3 Auto Services Ltd, UK</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRICING -->
+  <section id="pricing" class="bg-slate-50 py-16 sm:py-20">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6">
+      <div class="mb-10 text-center">
+        <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">Pricing</span>
+        <h2 class="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Simple, Transparent Pricing</h2>
+        <p class="mt-3 text-slate-500">Start free on the Explorer plan. No credit card required.</p>
+        <div class="mt-5 inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
+          <button onclick="setBilling('monthly')" id="btnMonthly" class="rounded-lg px-4 py-2 text-sm font-semibold transition text-slate-500 hover:text-slate-700">Monthly</button>
+          <button onclick="setBilling('annual')" id="btnAnnual" class="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition bg-brand-600 text-white">Annual <span id="saveBadge" class="rounded-full px-1.5 py-0.5 text-[10px] font-bold bg-white/20 text-white">Save 17%</span></button>
+        </div>
+      </div>
+      <div class="mx-auto grid max-w-3xl gap-5 sm:grid-cols-2">
+        <!-- Explorer -->
+        <div class="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6">
+          <div class="flex items-center gap-2"><h3 class="font-bold text-slate-900">Explorer</h3></div>
+          <div class="mt-2 flex items-end gap-1"><span class="text-3xl font-extrabold text-slate-900">£0</span></div>
+          <p class="text-xs font-medium text-emerald-600">No credit card required</p>
+          <ul class="mt-5 space-y-2.5">
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>50 AI credits</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Basic Idea Validation</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Business Plan</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Unlimited products, customers &amp; vendors</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Unlimited invoices &amp; quotations</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Business Registration Guide</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>1 marketplace listing</li>
+          </ul>
+          <a href="https://enterprate.ai/login" class="mt-6 block w-full rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-center text-sm font-semibold text-brand-700 hover:bg-brand-100 transition">Start Free</a>
+        </div>
+        <!-- Starter -->
+        <div class="relative overflow-hidden rounded-2xl border border-brand-400 bg-white p-6 ring-2 ring-brand-200 shadow-xl shadow-brand-100">
+          <div class="absolute right-5 top-5 rounded-full bg-brand-600 px-2.5 py-0.5 text-[11px] font-bold text-white">Best Value</div>
+          <div class="flex items-center gap-2">
+            <h3 class="font-bold text-slate-900">Starter</h3>
+            <span class="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-600">Insight</span>
+          </div>
+          <div class="mt-2 flex items-end gap-1">
+            <span id="starterPrice" class="text-3xl font-extrabold text-slate-900">£15.83</span>
+            <span class="mb-1 text-sm text-slate-400">/mo</span>
+          </div>
+          <p id="starterNote" class="text-xs text-emerald-600">Billed annually (save £38/yr)</p>
+          <p class="mt-2 text-xs text-slate-500">Solo founders &amp; new service businesses.</p>
+          <ul class="mt-5 space-y-2.5">
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>500 AI credits</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Basic &amp; Comprehensive Idea Validation</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Business Blueprints &amp; Proposals</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Scenario Simulation</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Fragility Index</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Adaptive Scenario Intelligence</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Unlimited products, customers &amp; vendors</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>Unlimited invoices &amp; quotations</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>1 marketplace listing</li>
+            <li class="flex items-start gap-2 text-sm text-slate-600"><span class="mt-0.5 shrink-0 text-emerald-500">✓</span>1 user</li>
+          </ul>
+          <a href="https://enterprate.ai/login" class="mt-6 block w-full rounded-xl bg-brand-600 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-brand-700 transition">Subscribe</a>
+        </div>
+      </div>
+      <p class="mt-6 text-center text-xs text-slate-400">All prices exclude VAT. Cancel anytime. No lock-in contracts, no cancellation fees.</p>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq" class="py-16 sm:py-20">
+    <div class="mx-auto max-w-2xl px-4 sm:px-6">
+      <div class="mb-10 text-center">
+        <span class="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">FAQ</span>
+        <h2 class="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Common Questions</h2>
+      </div>
+      <div class="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white px-4 sm:px-6">
+        <div class="border-b border-slate-100">
+          <button onclick="toggleFaq(this)" class="flex w-full items-start justify-between gap-4 py-4 text-left">
+            <span class="text-sm font-semibold text-slate-800">Is my business data secure?</span>
+            <span class="faq-icon mt-0.5 shrink-0 text-brand-500">✕</span>
+          </button>
+          <p class="faq-answer pb-4 text-sm leading-relaxed text-slate-500">Yes. All data is encrypted in transit (TLS 1.3) and at rest (AES-256). We are ICO Registered, GDPR compliant, and never share or sell your data. You can delete your data at any time.</p>
+        </div>
+        <div class="border-b border-slate-100">
+          <button onclick="toggleFaq(this)" class="flex w-full items-start justify-between gap-4 py-4 text-left">
+            <span class="text-sm font-semibold text-slate-800">Do I need to connect my accounts?</span>
+            <span class="faq-icon mt-0.5 shrink-0 text-brand-500">✕</span>
+          </button>
+          <p class="faq-answer pb-4 text-sm leading-relaxed text-slate-500">No. You can enter your data manually, upload a spreadsheet, or optionally connect Xero or QuickBooks for automatic updates. Manual entry works perfectly for most early stage businesses.</p>
+        </div>
+        <div class="border-b border-slate-100">
+          <button onclick="toggleFaq(this)" class="flex w-full items-start justify-between gap-4 py-4 text-left">
+            <span class="text-sm font-semibold text-slate-800">How is this different from my accountant's spreadsheet?</span>
+            <span class="faq-icon mt-0.5 shrink-0 text-brand-500">✕</span>
+          </button>
+          <p class="faq-answer pb-4 text-sm leading-relaxed text-slate-500">Your accountant shows you what already happened. EnterprateAI models your business as a live system and simulates what will happen next, across all your interconnected costs, revenues, and decisions, before you commit.</p>
+        </div>
+        <div class="border-b border-slate-100">
+          <button onclick="toggleFaq(this)" class="flex w-full items-start justify-between gap-4 py-4 text-left">
+            <span class="text-sm font-semibold text-slate-800">What if my business is very small or early-stage?</span>
+            <span class="faq-icon mt-0.5 shrink-0 text-brand-500">✕</span>
+          </button>
+          <p class="faq-answer pb-4 text-sm leading-relaxed text-slate-500">EnterprateAI is specifically designed for UK SMEs, including early stage businesses with as few as 2–3 months of trading data. The simpler your business, the faster the setup.</p>
+        </div>
+        <div class="border-b border-slate-100">
+          <button onclick="toggleFaq(this)" class="flex w-full items-start justify-between gap-4 py-4 text-left">
+            <span class="text-sm font-semibold text-slate-800">Is there a free plan?</span>
+            <span class="faq-icon mt-0.5 shrink-0 text-brand-500">✕</span>
+          </button>
+          <p class="faq-answer pb-4 text-sm leading-relaxed text-slate-500">Yes. The Explorer plan is free forever with no credit card required. You get basic idea validation, a business plan, unlimited financial tools, and more, all powered by AI credits. Upgrade to a paid plan whenever you are ready for comprehensive validation, proposals, and advanced features.</p>
+        </div>
+        <div class="border-b border-slate-100">
+          <button onclick="toggleFaq(this)" class="flex w-full items-start justify-between gap-4 py-4 text-left">
+            <span class="text-sm font-semibold text-slate-800">Is EnterprateAI GDPR compliant?</span>
+            <span class="faq-icon mt-0.5 shrink-0 text-brand-500">✕</span>
+          </button>
+          <p class="faq-answer pb-4 text-sm leading-relaxed text-slate-500">Yes, fully. We are ICO Registered (UK data protection authority), process all data within UK/EU jurisdictions, and provide a full Data Processing Agreement (DPA) on request for business customers.</p>
+        </div>
+        <div class="border-b border-slate-100">
+          <button onclick="toggleFaq(this)" class="flex w-full items-start justify-between gap-4 py-4 text-left">
+            <span class="text-sm font-semibold text-slate-800">How quickly can I run my first simulation?</span>
+            <span class="faq-icon mt-0.5 shrink-0 text-brand-500">✕</span>
+          </button>
+          <p class="faq-answer pb-4 text-sm leading-relaxed text-slate-500">Most users run their first decision simulation within 15 minutes of signing up. Our onboarding flow guides you through connecting your data and building your first business model step by step.</p>
+        </div>
+        <div>
+          <button onclick="toggleFaq(this)" class="flex w-full items-start justify-between gap-4 py-4 text-left">
+            <span class="text-sm font-semibold text-slate-800">Can I cancel anytime?</span>
+            <span class="faq-icon mt-0.5 shrink-0 text-brand-500">✕</span>
+          </button>
+          <p class="faq-answer pb-4 text-sm leading-relaxed text-slate-500">Yes. No lock-in contracts, no cancellation fees. Cancel from your account settings in 30 seconds. Your data remains accessible for 30 days after cancellation.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINAL CTA -->
+  <section class="bg-gradient-to-br from-slate-900 to-brand-900 py-16 text-white sm:py-20">
+    <div class="mx-auto max-w-2xl px-4 text-center sm:px-6">
+      <h2 class="text-2xl font-extrabold sm:text-3xl">Turn business activity into business intelligence</h2>
+      <p class="mt-4 text-slate-300">Every activity inside EnterprateAI helps build better business intelligence. Your plans, proposals, invoices, quotations, marketplace listings, customers, vendors, costs, and simulations all create useful data for better decisions.</p>
+      <p class="mt-3 text-slate-400">Not just reports. Not just documents. Not just automation.<br />A connected business workspace that helps you create, manage, simulate, and grow.</p>
+      <a href="https://enterprate.ai/login" class="mt-8 inline-block rounded-xl bg-brand-500 px-10 py-4 text-base font-bold text-white shadow-xl shadow-brand-900/50 hover:bg-brand-400 transition">Try EnterprateAI now for free →</a>
+      <div class="mt-6 flex flex-wrap justify-center gap-4 text-xs text-slate-400">
+        <span>✓ Free to start</span>
+        <span>✓ No credit card required</span>
+        <span>✓ Cancel anytime</span>
+        <span>✓ GDPR compliant</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="border-t border-slate-100 bg-white py-10">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6">
+      <div class="flex flex-col items-center justify-between gap-6 sm:flex-row">
+        <img src="./logo.png" alt="EnterprateAI" class="h-7 w-auto" />
+        <div class="flex flex-wrap justify-center gap-5 text-xs text-slate-400">
+          <a href="https://enterprate.ai/login" class="hover:text-slate-600">Sign In</a>
+          <a href="mailto:support@enterprate.ai" class="hover:text-slate-600">support@enterprate.ai</a>
+          <span>Enterprate Limited · Registered in England &amp; Wales</span>
+        </div>
+      </div>
+      <div class="mt-4 flex flex-wrap justify-center gap-4 text-[11px] text-slate-400">
+        <a href="https://enterprate.ai/legal/privacy" class="hover:text-slate-600">Privacy Policy</a>
+        <span>·</span>
+        <a href="https://enterprate.ai/legal/terms" class="hover:text-slate-600">Terms of Service</a>
+        <span>·</span>
+        <a href="https://enterprate.ai/legal/disclaimer" class="hover:text-slate-600">Disclaimer</a>
+      </div>
+      <p class="mt-3 text-center text-[11px] text-slate-300">© 2025 Enterprate Limited. All rights reserved. ICO Registered · GDPR Compliant · SEIS Advance Assurance Approved</p>
+    </div>
+  </footer>
+
+  <script>
+    // Mobile menu
+    let menuOpen = false;
+    function toggleMobileMenu() {
+      menuOpen = !menuOpen;
+      document.getElementById('mobileMenu').classList.toggle('hidden', !menuOpen);
+      const mb1 = document.getElementById('mb1');
+      const mb2 = document.getElementById('mb2');
+      const mb3 = document.getElementById('mb3');
+      if (menuOpen) {
+        mb1.style.transform = 'translateY(8px) rotate(45deg)';
+        mb2.style.opacity = '0';
+        mb3.style.transform = 'translateY(-8px) rotate(-45deg)';
+      } else {
+        mb1.style.transform = ''; mb2.style.opacity = ''; mb3.style.transform = '';
+      }
+    }
+    function closeMobileMenu() {
+      menuOpen = false;
+      document.getElementById('mobileMenu').classList.add('hidden');
+      document.getElementById('mb1').style.transform = '';
+      document.getElementById('mb2').style.opacity = '';
+      document.getElementById('mb3').style.transform = '';
+    }
+
+    // FAQ accordion
+    function toggleFaq(btn) {
+      const answer = btn.nextElementSibling;
+      const icon = btn.querySelector('.faq-icon');
+      answer.classList.toggle('open');
+      icon.classList.toggle('open');
+    }
+
+    // Pricing toggle
+    function setBilling(type) {
+      const isAnnual = type === 'annual';
+      document.getElementById('btnAnnual').className = `flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${isAnnual ? 'bg-brand-600 text-white' : 'text-slate-500 hover:text-slate-700'}`;
+      document.getElementById('btnMonthly').className = `rounded-lg px-4 py-2 text-sm font-semibold transition ${!isAnnual ? 'bg-brand-600 text-white' : 'text-slate-500 hover:text-slate-700'}`;
+      document.getElementById('saveBadge').className = `rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isAnnual ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'}`;
+      document.getElementById('starterPrice').textContent = isAnnual ? '£15.83' : '£19';
+      document.getElementById('starterNote').textContent = isAnnual ? 'Billed annually (save £38/yr)' : 'Billed monthly';
+      document.getElementById('starterNote').className = `text-xs ${isAnnual ? 'text-emerald-600' : 'text-slate-400'}`;
+    }
+
+    // Hero zoom
+    function openHeroZoom() { document.getElementById('heroZoom').classList.remove('hidden'); }
+    function closeHeroZoom() { document.getElementById('heroZoom').classList.add('hidden'); }
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHeroZoom(); });
+
+    // Exit intent popup
+    let exitDismissed = false;
+    let exitTimer = null;
+    function closeExitPopup() {
+      document.getElementById('exitPopup').classList.add('hidden');
+      exitDismissed = true;
+    }
+    document.addEventListener('mouseleave', (e) => {
+      if (e.clientY > 10 || exitDismissed || !document.getElementById('exitPopup').classList.contains('hidden')) return;
+      clearTimeout(exitTimer);
+      exitTimer = setTimeout(() => {
+        document.getElementById('exitPopup').classList.remove('hidden');
+      }, 400);
+    });
+  </script>
+</body>
+</html>
