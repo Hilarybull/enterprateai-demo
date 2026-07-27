@@ -276,7 +276,7 @@ export default function ReferralPage() {
       )}
 
       {/* Referral link */}
-      <SectionCard title="Your referral link" subtitle="Share this link — earn 5% when someone subscribes.">
+      <SectionCard title="Your referral link" subtitle="Share this link and earn 5% when someone subscribes.">
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
           <span className="min-w-0 flex-1 truncate font-mono text-sm text-slate-700 dark:text-slate-300">{referral_link}</span>
           <CopyButton value={referral_link} />
