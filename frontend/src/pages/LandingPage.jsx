@@ -402,7 +402,7 @@ export default function LandingPage() {
           </div>
           <div className="mx-auto grid max-w-3xl gap-5 sm:grid-cols-2 sm:items-stretch">
             {PLANS.map(plan => (
-              <div key={plan.name} className={`relative flex flex-col overflow-hidden rounded-2xl border bg-white p-6 ${plan.highlight ? "border-brand-400 ring-2 ring-brand-200 shadow-xl shadow-brand-100" : "border-slate-200"}`}>
+              <div key={plan.name} className={`relative flex flex-col rounded-2xl border bg-white p-6 ${plan.highlight ? "border-brand-400 ring-2 ring-brand-200 shadow-xl shadow-brand-100" : "border-slate-200"}`}>
                 {plan.badge && <div className="absolute left-1/2 -top-3.5 -translate-x-1/2 rounded-full bg-brand-600 px-3 py-1 text-xs font-bold text-white">{plan.badge}</div>}
                 <div className="mt-2 text-center">
                   <h3 className="text-lg font-bold text-slate-900">{plan.name}</h3>
