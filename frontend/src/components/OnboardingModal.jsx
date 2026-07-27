@@ -23,7 +23,7 @@ const STEPS = [
       </svg>
     ),
     title: "Validate your idea",
-    desc: "AI scores your business concept for market fit, viability and risk — so you know what you're working with before spending a penny.",
+    desc: "AI scores your business concept for market fit, viability and risk so you know what you are working with before spending a penny.",
   },
   {
     icon: (
@@ -34,7 +34,7 @@ const STEPS = [
       </svg>
     ),
     title: "Run financial simulations",
-    desc: "Model what-if scenarios — pricing changes, new hires, market shifts — and see the impact on your bottom line before you commit.",
+    desc: "Model scenarios like pricing changes, new hires and market shifts to see the impact on your bottom line before you commit.",
   },
   {
     icon: (
@@ -100,7 +100,7 @@ export default function OnboardingModal({ onDismiss }) {
             <img src={logoUrl} alt="EnterprateAI" className="mb-4 h-8 w-auto brightness-0 invert" />
             <h2 className="text-2xl font-bold tracking-tight">Welcome to EnterprateAI</h2>
             <p className="mt-1.5 text-sm text-white/80">
-              Your AI-powered business operating system. Let's get you set up in four steps.
+              Your AI powered business operating system. Let's get you set up in four steps.
             </p>
           </div>
         </div>
