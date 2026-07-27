@@ -172,7 +172,7 @@ export default function LandingPage() {
       )}
 
       {/* NAV */}
-      <nav className="sticky top-0 z-50 border-b border-slate-100 bg-white/95 backdrop-blur">
+      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-slate-100 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <a href="#hero"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" /></a>
           <ul className="hidden items-center gap-6 md:flex">
@@ -202,10 +202,12 @@ export default function LandingPage() {
         )}
       </nav>
 
+      <div className="h-[57px]" />
+
       {/* HERO */}
       <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-brand-700 via-brand-600 to-brand-800 pb-20 pt-16 sm:pt-24 text-white">
-        <div className="pointer-events-none absolute inset-0 flex items-end justify-center overflow-hidden">
-          <img src="/hero-section-a.png" alt="" aria-hidden="true" className="w-full max-w-5xl translate-y-1/4 opacity-10 select-none" />
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <img src="/her0.png" alt="" aria-hidden="true" className="h-full w-full object-cover object-center opacity-20 select-none" />
         </div>
         <div className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "32px 32px" }} />
         <div className="pointer-events-none absolute -right-40 -top-40 h-[600px] w-[600px] rounded-full bg-white/10 blur-3xl" />
@@ -398,9 +400,9 @@ export default function LandingPage() {
               </button>
             </div>
           </div>
-          <div className="mx-auto grid max-w-3xl gap-5 sm:grid-cols-2">
+          <div className="mx-auto grid max-w-3xl gap-5 sm:grid-cols-2 sm:items-stretch">
             {PLANS.map(plan => (
-              <div key={plan.name} className={`relative overflow-hidden rounded-2xl border bg-white p-6 ${plan.highlight ? "border-brand-400 ring-2 ring-brand-200 shadow-xl shadow-brand-100" : "border-slate-200"}`}>
+              <div key={plan.name} className={`relative flex flex-col overflow-hidden rounded-2xl border bg-white p-6 ${plan.highlight ? "border-brand-400 ring-2 ring-brand-200 shadow-xl shadow-brand-100" : "border-slate-200"}`}>
                 {plan.badge && <div className="absolute left-1/2 -top-3.5 -translate-x-1/2 rounded-full bg-brand-600 px-3 py-1 text-xs font-bold text-white">{plan.badge}</div>}
                 <div className="mt-2 text-center">
                   <h3 className="text-lg font-bold text-slate-900">{plan.name}</h3>
@@ -417,7 +419,7 @@ export default function LandingPage() {
                 <button type="button" onClick={() => navigate("/login")} className={`mt-5 w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.free ? "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
                   {plan.free ? "Start Free" : `Get Started - £${plan.monthly}/month`}
                 </button>
-                <ul className="mt-5 space-y-2.5">
+                <ul className="mt-5 flex-1 space-y-2.5">
                   {plan.features.map(f => (
                     <li key={f} className="flex items-start gap-2 text-sm text-slate-600"><span className="mt-0.5 shrink-0 text-brand-500">✓</span>{f}</li>
                   ))}
