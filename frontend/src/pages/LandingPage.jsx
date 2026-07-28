@@ -205,11 +205,12 @@ export default function LandingPage() {
       <div className="h-[57px]" />
 
       {/* HERO */}
-      <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-brand-900 via-brand-800 to-brand-950 pb-20 pt-16 sm:pt-24 text-white">
+      <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-brand-900 via-brand-700 to-brand-800 pb-20 pt-16 sm:pt-24 text-white">
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <img src="/her0.png" alt="" aria-hidden="true" className="h-full w-full object-cover object-center opacity-10 select-none" />
+          <img src="/her0.png" alt="" aria-hidden="true" className="h-full w-full object-cover object-center opacity-[0.18] select-none" />
         </div>
-        <div className="pointer-events-none absolute inset-0 opacity-[0.07]" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "32px 32px" }} />
+        <div className="pointer-events-none absolute inset-0 bg-brand-900/40" />
+        <div className="pointer-events-none absolute inset-0 opacity-[0.08]" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "32px 32px" }} />
         <div className="pointer-events-none absolute -right-40 -top-40 h-[600px] w-[600px] rounded-full bg-white/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-20 -left-20 h-[400px] w-[400px] rounded-full bg-accent-500/20 blur-3xl" />
         <div className="relative mx-auto max-w-4xl px-4 text-center sm:px-6">
