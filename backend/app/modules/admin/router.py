@@ -324,16 +324,26 @@ async def get_workspace_detail(workspace_id: str, user=Depends(require_admin)) -
     raw_data = ws.get("data") or {}
     data = raw_data if isinstance(raw_data, dict) else {}
 
+    raw_profile = data.get("workspace_profile") or {}
+    decision_status = (data.get("decision") or {}).get("status") or None
+
+    # Strip the logo (too large for the detail response) but flag its presence
+    profile_out = {k: v for k, v in raw_profile.items() if k != "logo_data_url"}
+    profile_out["has_logo"] = bool(raw_profile.get("logo_data_url"))
+    profile_out["decision_status"] = decision_status
+
     return {
         "id": ws["id"],
         "name": ws.get("name") or "Unnamed",
         "created_at": ws.get("created_at"),
+        "updated_at": ws.get("updated_at"),
         "owner_id": ws.get("user_id"),
         "owner_email": owner.get("email") if owner else None,
         "member_count": len(members),
         "invitation_count": len(invitations),
         "has_validation": bool(data.get("decision") or data.get("idea_validation")),
         "has_simulation": bool(data.get("simulations")),
+        "profile": profile_out if raw_profile else None,
         "members": [
             {
                 "id": m["id"],
@@ -654,19 +664,102 @@ async def rename_workspace(
 async def list_workspace_snapshots(workspace_id: str, user=Depends(require_admin)) -> list:
     try:
         from app.core.database import get_mongo_db
-        from bson import ObjectId
         db = get_mongo_db()
         col = db["workspace_snapshots"]
-        docs = await col.find(
-            {"workspace_id": workspace_id},
-            {"_id": 1, "workspace_name": 1, "created_at": 1},
-        ).sort("created_at", -1).to_list(length=50)
+        # Use aggregation to extract only data keys (not values) — avoids loading large blobs
+        pipeline = [
+            {"$match": {"workspace_id": workspace_id}},
+            {"$sort": {"created_at": -1}},
+            {"$limit": 50},
+            {"$project": {
+                "workspace_name": 1,
+                "created_at": 1,
+                "has_profile": {
+                    "$and": [
+                        {"$ne": [{"$type": "$data.workspace_profile"}, "missing"]},
+                        {"$ne": ["$data.workspace_profile", None]},
+                        {"$ne": ["$data.workspace_profile", {}]},
+                    ]
+                },
+                "data_keys": {
+                    "$filter": {
+                        "input": {
+                            "$map": {
+                                "input": {"$objectToArray": {"$ifNull": ["$data", {}]}},
+                                "as": "kv",
+                                "in": {
+                                    "$cond": [
+                                        {"$and": [
+                                            {"$ne": ["$$kv.v", None]},
+                                            {"$ne": ["$$kv.v", ""]},
+                                            {"$ne": ["$$kv.v", {}]},
+                                            {"$ne": ["$$kv.k", "logo_data_url"]},
+                                        ]},
+                                        "$$kv.k",
+                                        "$$REMOVE",
+                                    ]
+                                },
+                            }
+                        },
+                        "as": "k",
+                        "cond": {"$ne": ["$$k", None]},
+                    }
+                },
+            }},
+        ]
+        docs = await col.aggregate(pipeline).to_list(length=50)
         return [
-            {"snapshot_id": str(d["_id"]), "ws_name": d.get("workspace_name") or "Unnamed", "saved_at": d.get("created_at")}
+            {
+                "snapshot_id": str(d["_id"]),
+                "ws_name": d.get("workspace_name") or "Unnamed",
+                "saved_at": d.get("created_at"),
+                "has_profile": bool(d.get("has_profile")),
+                "data_keys": d.get("data_keys") or [],
+            }
             for d in docs
         ]
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"MongoDB unavailable: {exc}")
+
+
+@router.get("/workspaces/{workspace_id}/data-diagnostic")
+async def workspace_data_diagnostic(workspace_id: str, user=Depends(require_admin)) -> dict:
+    """Returns a summary of what's actually stored in Supabase and MongoDB for this workspace."""
+    ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found in Supabase.")
+
+    data = ws.get("data") or {}
+    supabase_summary = {
+        "data_is_null": ws.get("data") is None,
+        "data_keys": [k for k, v in data.items() if v] if isinstance(data, dict) else [],
+        "has_workspace_profile": bool(data.get("workspace_profile")),
+        "workspace_profile_keys": list((data.get("workspace_profile") or {}).keys()),
+        "has_financials": bool(data.get("financials")),
+        "has_idea_validation": bool(data.get("idea_validation")),
+        "has_inputs": bool(data.get("inputs") or data.get("assumptions")),
+        "updated_at": ws.get("updated_at"),
+    }
+
+    mongo_summary = {}
+    try:
+        from app.core.database import get_mongo_db
+        db = get_mongo_db()
+        col = db["workspace_snapshots"]
+        count = await col.count_documents({"workspace_id": workspace_id})
+        latest = await col.find({"workspace_id": workspace_id}).sort("created_at", -1).limit(1).to_list(1)
+        snapshots_with_profile = await col.count_documents({"workspace_id": workspace_id, "data.workspace_profile": {"$exists": True, "$ne": None}})
+        mongo_summary = {
+            "total_snapshots": count,
+            "snapshots_with_profile_data": snapshots_with_profile,
+            "latest_snapshot_saved_at": latest[0].get("created_at") if latest else None,
+            "latest_snapshot_has_profile": bool((latest[0].get("data") or {}).get("workspace_profile")) if latest else False,
+            "latest_snapshot_data_keys": [k for k, v in (latest[0].get("data") or {}).items() if v and k != "logo_data_url"] if latest else [],
+        }
+    except Exception as exc:
+        mongo_summary = {"error": str(exc)}
+
+    return {"workspace_id": workspace_id, "supabase": supabase_summary, "mongodb": mongo_summary}
 
 
 @router.post("/workspaces/{workspace_id}/restore")
@@ -712,14 +805,27 @@ async def restore_workspace_snapshot(
     except Exception:
         pass
 
-    restored_data = snap.get("data") or {}
+    import json
+
+    raw_data = snap.get("data") or {}
+    # MongoDB may return datetime objects and other BSON types that aren't
+    # JSON-serializable. Round-trip through JSON (using str fallback) to
+    # produce a plain dict that Supabase can accept.
+    try:
+        restored_data = json.loads(json.dumps(raw_data, default=str))
+    except Exception:
+        restored_data = raw_data
+
     restored_name = snap.get("workspace_name") or ws.get("name") or "Unnamed"
 
-    await sb_update(
+    result = await sb_update(
         "workspaces",
         payload={"data": restored_data, "name": restored_name, "updated_at": now},
         filters=[("id", "eq", workspace_id)],
     )
+    if not result:
+        raise HTTPException(status_code=500, detail="Restore wrote to MongoDB but Supabase update returned no rows — workspace ID may not exist in Supabase.")
+
     return {"restored": True, "ws_name": restored_name, "saved_at": snap.get("created_at")}
 
 

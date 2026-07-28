@@ -205,19 +205,19 @@ export default function LandingPage() {
       <div className="h-[57px]" />
 
       {/* HERO */}
-      <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-brand-700 via-brand-600 to-brand-800 pb-20 pt-16 sm:pt-24 text-white">
+      <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-brand-900 via-brand-800 to-brand-950 pb-20 pt-16 sm:pt-24 text-white">
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <img src="/her0.png" alt="" aria-hidden="true" className="h-full w-full object-cover object-center opacity-20 select-none" />
+          <img src="/her0.png" alt="" aria-hidden="true" className="h-full w-full object-cover object-center opacity-10 select-none" />
         </div>
-        <div className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "32px 32px" }} />
+        <div className="pointer-events-none absolute inset-0 opacity-[0.07]" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "32px 32px" }} />
         <div className="pointer-events-none absolute -right-40 -top-40 h-[600px] w-[600px] rounded-full bg-white/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-20 -left-20 h-[400px] w-[400px] rounded-full bg-accent-500/20 blur-3xl" />
         <div className="relative mx-auto max-w-4xl px-4 text-center sm:px-6">
           <h1 className="mt-5 text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl lg:text-5xl">
             Run your small business with more clarity, less cost, and better decisions.
           </h1>
-          <p className="mt-3 text-sm font-semibold text-white/90 sm:text-base">Your Business Operating System</p>
-          <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-white/80 sm:text-base">
+          <p className="mt-3 text-sm font-semibold text-white sm:text-base">Your Business Operating System</p>
+          <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-white/90 sm:text-base">
             Input your business data once. Use it everywhere. Plan, operate, sell, simulate decisions, and grow with intelligence.
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -228,7 +228,7 @@ export default function LandingPage() {
               See How It Works
             </a>
           </div>
-          <p className="mt-4 text-xs text-white/60">Free to start. No credit card required.</p>
+          <p className="mt-4 text-xs text-white/80">Free to start. No credit card required.</p>
 
           {/* Pillar cards */}
           <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">

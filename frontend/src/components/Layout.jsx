@@ -258,7 +258,7 @@ export default function Layout() {
   const [search, setSearch] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [onboardingOpen, setOnboardingOpen] = useState(() => !hasSeenOnboarding());
+  const [onboardingOpen, setOnboardingOpen] = useState(true);
   const [theme, setTheme] = useState(() => localStorage.getItem("ea_theme") || "system");
   const profileRef = useRef(null);
   const notifRef = useRef(null);
@@ -319,6 +319,11 @@ export default function Layout() {
     ? (memberWorkspaceName || "Shared workspace")
     : (workspaceCompanyName || workspaceName || "My workspace");
   const email = useAuthStore((s) => s.email);
+
+  useEffect(() => {
+    if (email && hasSeenOnboarding(email)) setOnboardingOpen(false);
+  }, [email]);
+
   const userName = useAuthStore((s) => s.name);
   const userPicture = useAuthStore((s) => s.picture);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
@@ -1246,7 +1251,7 @@ export default function Layout() {
       </div>
       {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}
       {onboardingOpen && !workspaceId && (
-        <OnboardingModal onDismiss={() => setOnboardingOpen(false)} />
+        <OnboardingModal onDismiss={() => setOnboardingOpen(false)} userId={email} />
       )}
     </div>
   );

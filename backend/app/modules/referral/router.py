@@ -14,6 +14,7 @@ from app.modules.referral import service as svc
 from app.modules.referral.schemas import (
     AdminAdjustmentRequest,
     AdminPayoutDecision,
+    AdminSetRateRequest,
     EnrolRequest,
     PayoutProfileRequest,
     PayoutRequestCreate,
@@ -198,6 +199,7 @@ async def get_my_referral(user=Depends(get_current_user)):
     config = await svc.get_active_config()
     frontend = _frontend_url()
     code = participant["referral_code"]
+    effective_rate_bps = participant.get("custom_rate_bps") if participant.get("custom_rate_bps") is not None else config["rate_bps"]
 
     # Funnel stats
     clicks = await sb_select(
@@ -238,6 +240,7 @@ async def get_my_referral(user=Depends(get_current_user)):
         },
         "balances": balances,
         "threshold_minor": config["threshold_minor"],
+        "rate_bps": effective_rate_bps,
         "payout_profile": _mask_profile(payout_profile) if payout_profile else None,
     }
 
@@ -599,6 +602,43 @@ async def admin_decide_payout(
         reason=body.reason,
     )
     return {"payout_id": payout_id, "new_status": new_status}
+
+
+@router.patch("/admin/participants/{user_id}/rate")
+async def admin_set_participant_rate(
+    user_id: str,
+    body: AdminSetRateRequest,
+    admin=Depends(_require_admin),
+):
+    """Set or clear a custom commission rate for a referral participant."""
+    participant = await sb_select(
+        "referral_participants",
+        filters=[("user_id", "eq", user_id)],
+        single=True,
+    )
+    if not participant:
+        raise HTTPException(status_code=404, detail="Participant not found")
+
+    if body.rate_bps is not None and not (0 <= body.rate_bps <= 10000):
+        raise HTTPException(status_code=400, detail="rate_bps must be between 0 and 10000")
+
+    await sb_update(
+        "referral_participants",
+        filters=[("user_id", "eq", user_id)],
+        payload={"custom_rate_bps": body.rate_bps},
+    )
+    await svc.write_audit_log(
+        actor_user_id=admin["id"],
+        actor_role="admin",
+        action="set_custom_rate",
+        entity_type="referral_participant",
+        entity_id=user_id,
+        before_state={"custom_rate_bps": participant.get("custom_rate_bps")},
+        after_state={"custom_rate_bps": body.rate_bps},
+    )
+    config = await svc.get_active_config()
+    effective = body.rate_bps if body.rate_bps is not None else config["rate_bps"]
+    return {"user_id": user_id, "custom_rate_bps": body.rate_bps, "effective_rate_bps": effective}
 
 
 @router.post("/admin/adjustments")

@@ -998,6 +998,7 @@ async def market_fit(
 
 
 MAX_SNAPSHOTS = 50
+SNAPSHOT_INTERVAL_MINUTES = 30
 
 
 async def _save_snapshot_to_mongo(workspace_id: str, workspace_name: str, data: Dict[str, Any], now_iso: str) -> None:
@@ -1005,6 +1006,22 @@ async def _save_snapshot_to_mongo(workspace_id: str, workspace_name: str, data: 
         from app.core.database import get_mongo_db
         db = get_mongo_db()
         col = db["workspace_snapshots"]
+
+        # Rate-limit: skip if a snapshot already exists within the interval window
+        latest = await col.find_one(
+            {"workspace_id": workspace_id},
+            sort=[("created_at", -1)],
+            projection={"created_at": 1},
+        )
+        if latest:
+            try:
+                last_dt = datetime.fromisoformat(latest["created_at"].replace("Z", "+00:00"))
+                now_dt = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+                if (now_dt - last_dt).total_seconds() < SNAPSHOT_INTERVAL_MINUTES * 60:
+                    return
+            except Exception:
+                pass
+
         await col.insert_one({
             "workspace_id": workspace_id,
             "workspace_name": workspace_name,

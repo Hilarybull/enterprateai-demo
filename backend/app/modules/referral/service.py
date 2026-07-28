@@ -31,7 +31,7 @@ async def get_active_config() -> dict:
         "rate_bps": 500,
         "threshold_minor": 5000,
         "hold_days": 30,
-        "attribution_days": 30,
+        "attribution_days": 60,
         "recurring": True,
     }
 

@@ -50,22 +50,23 @@ const STEPS = [
   },
 ];
 
-const STORAGE_KEY = "ea_onboarded";
+const storageKey = (userId) => userId ? `ea_onboarded_${userId}` : "ea_onboarded";
 
-export function markOnboarded() {
-  try { localStorage.setItem(STORAGE_KEY, "1"); } catch (_) {}
+export function markOnboarded(userId) {
+  try { localStorage.setItem(storageKey(userId), "1"); } catch (_) {}
 }
 
-export function hasSeenOnboarding() {
-  try { return !!localStorage.getItem(STORAGE_KEY); } catch (_) { return false; }
+export function hasSeenOnboarding(userId) {
+  if (!userId) return false;
+  try { return !!localStorage.getItem(storageKey(userId)); } catch (_) { return false; }
 }
 
-export default function OnboardingModal({ onDismiss }) {
+export default function OnboardingModal({ onDismiss, userId }) {
   const navigate = useNavigate();
   const [leaving, setLeaving] = useState(false);
 
   function handleCreate() {
-    markOnboarded();
+    markOnboarded(userId);
     setLeaving(true);
     setTimeout(() => {
       onDismiss?.();
@@ -74,7 +75,7 @@ export default function OnboardingModal({ onDismiss }) {
   }
 
   function handleSkip() {
-    markOnboarded();
+    markOnboarded(userId);
     onDismiss?.();
   }
 

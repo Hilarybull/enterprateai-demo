@@ -113,6 +113,31 @@ function StatusBadge({ status }) {
   );
 }
 
+function ProfileSection({ title, children }) {
+  const hasContent = Array.isArray(children)
+    ? children.some((c) => c && c.props && (c.props.value || c.props.children))
+    : !!children;
+  if (!hasContent) return null;
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+      <div className="border-b border-slate-200 bg-slate-100 px-3 py-1.5">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{title}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ProfileRow({ label, value, long = false, italic = false }) {
+  if (!value && value !== 0) return null;
+  return (
+    <div className="flex items-start gap-2 border-b border-slate-100 px-3 py-2 last:border-0">
+      <span className="w-24 shrink-0 pt-px text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className={`min-w-0 break-words text-[12px] leading-relaxed ${italic ? "italic text-slate-500" : "text-slate-800"} ${long ? "whitespace-pre-wrap" : ""}`}>{value}</span>
+    </div>
+  );
+}
+
 function PermBadge({ type }) {
   const cls = type === "module" ? "bg-brand-100 text-brand-700"
     : type === "feature" ? "bg-violet-100 text-violet-700"
@@ -227,6 +252,8 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
   const [snapshots, setSnapshots] = useState(null);
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [dataDiag, setDataDiag] = useState(null);
+  const [dataDiagLoading, setDataDiagLoading] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
@@ -242,11 +269,25 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
     if (!detail?.id) return;
     setSnapshots(null);
     setSnapshotsLoading(true);
+    setDataDiag(null);
     apiRequest(`/admin/workspaces/${detail.id}/snapshots`, "GET")
       .then(setSnapshots)
       .catch(() => setSnapshots([]))
       .finally(() => setSnapshotsLoading(false));
   }, [detail?.id]);
+
+  async function handleDiagnose() {
+    setDataDiagLoading(true);
+    setDataDiag(null);
+    try {
+      const res = await apiRequest(`/admin/workspaces/${detail.id}/data-diagnostic`, "GET");
+      setDataDiag(res);
+    } catch (e) {
+      setDataDiag({ error: e.message || "Failed to load diagnostic." });
+    } finally {
+      setDataDiagLoading(false);
+    }
+  }
 
   function handleRestore(snap) {
     const snapTime = snap.saved_at ? new Date(snap.saved_at).toLocaleString() : "unknown time";
@@ -337,15 +378,104 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
             ))}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {detail.has_validation && (
               <span className="rounded-full bg-teal-100 px-2.5 py-1 text-[11px] font-semibold text-teal-700">✓ Validated</span>
             )}
             {detail.has_simulation && (
               <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-700">✓ Simulated</span>
             )}
+            {detail.profile?.decision_status === "accepted" && (
+              <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">✓ Idea accepted</span>
+            )}
+            {detail.profile?.decision_status === "rejected" && (
+              <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-semibold text-rose-700">✗ Idea rejected</span>
+            )}
             {!detail.has_validation && !detail.has_simulation && (
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500">No activity</span>
+            )}
+          </div>
+
+          {/* Workspace profile */}
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Workspace profile</h3>
+            {!detail.profile ? (
+              <p className="text-xs text-slate-400">No profile saved yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {/* Identity */}
+                <ProfileSection title="Company identity">
+                  <ProfileRow label="Company" value={detail.profile.company_name} />
+                  <ProfileRow label="Legal name" value={detail.profile.legal_name} />
+                  <ProfileRow label="Reg. number" value={detail.profile.registration_number} />
+                  <ProfileRow label="Business type" value={detail.profile.business_type} />
+                  <ProfileRow label="Industry" value={detail.profile.primary_industry} />
+                  <ProfileRow label="Other industries" value={(detail.profile.secondary_industries || []).join(", ")} />
+                  <ProfileRow label="Logo" value={detail.profile.has_logo ? "Uploaded" : null} />
+                  <ProfileRow label="Last saved" value={detail.updated_at ? new Date(detail.updated_at).toLocaleString() : null} />
+                </ProfileSection>
+
+                {/* Description */}
+                <ProfileSection title="Description">
+                  <ProfileRow label="Tagline" value={detail.profile.tagline} italic />
+                  <ProfileRow label="About" value={detail.profile.about_company} long />
+                  <ProfileRow label="Year est." value={detail.profile.year_established} />
+                  <ProfileRow label="Company size" value={detail.profile.company_size} />
+                </ProfileSection>
+
+                {/* Services */}
+                {(detail.profile.services || []).length > 0 && (
+                  <ProfileSection title={`Services (${detail.profile.services.length})`}>
+                    {detail.profile.services.map((s, i) => (
+                      <div key={i} className="border-b border-slate-100 px-3 py-2 last:border-0">
+                        <div className="text-[13px] font-semibold text-slate-800">{s.service_name}</div>
+                        <div className="text-[11px] text-slate-400">{s.service_category}</div>
+                        {s.service_description && <div className="mt-0.5 text-[12px] text-slate-600 leading-relaxed">{s.service_description}</div>}
+                      </div>
+                    ))}
+                  </ProfileSection>
+                )}
+
+                {/* Location */}
+                <ProfileSection title="Location">
+                  <ProfileRow label="Country" value={detail.profile.country} />
+                  <ProfileRow label="City" value={detail.profile.city} />
+                  <ProfileRow label="Region" value={detail.profile.state_or_region} />
+                  <ProfileRow label="Postcode" value={detail.profile.postcode} />
+                  <ProfileRow label="Address" value={[detail.profile.address_line_1, detail.profile.address_line_2].filter(Boolean).join(", ")} />
+                </ProfileSection>
+
+                {/* Contact */}
+                <ProfileSection title="Contact">
+                  <ProfileRow label="Email" value={detail.profile.email} />
+                  <ProfileRow label="Phone" value={detail.profile.phone_number} />
+                  <ProfileRow label="Website" value={detail.profile.website} />
+                  <ProfileRow label="LinkedIn" value={detail.profile.linkedin_url} />
+                  <ProfileRow label="Twitter/X" value={detail.profile.twitter_url} />
+                  <ProfileRow label="Instagram" value={detail.profile.instagram_url} />
+                  <ProfileRow label="Facebook" value={detail.profile.facebook_url} />
+                </ProfileSection>
+
+                {/* Operations */}
+                <ProfileSection title="Operations">
+                  <ProfileRow label="Stage" value={detail.profile.operating_stage} />
+                  <ProfileRow label="Revenue range" value={detail.profile.monthly_revenue_range} />
+                  <ProfileRow label="Employees" value={detail.profile.employee_count != null ? String(detail.profile.employee_count) : null} />
+                  <ProfileRow label="Delivery" value={detail.profile.delivery_model} />
+                  <ProfileRow label="Revenue model" value={detail.profile.primary_revenue_model} />
+                  <ProfileRow label="Target customer" value={detail.profile.target_customer_type} />
+                  <ProfileRow label="Key offering" value={detail.profile.key_offering_focus} />
+                </ProfileSection>
+
+                {/* Vision */}
+                {(detail.profile.vision || detail.profile.mission || (detail.profile.core_values || []).length > 0) && (
+                  <ProfileSection title="Vision & mission">
+                    <ProfileRow label="Vision" value={detail.profile.vision} long />
+                    <ProfileRow label="Mission" value={detail.profile.mission} long />
+                    <ProfileRow label="Core values" value={(detail.profile.core_values || []).join(", ")} />
+                  </ProfileSection>
+                )}
+              </div>
             )}
           </div>
 
@@ -406,22 +536,100 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
             ) : (
               <div className="divide-y divide-slate-50 overflow-hidden rounded-xl border border-slate-200">
                 {snapshots.map((snap) => (
-                  <div key={snap.snapshot_id} className="flex items-center gap-3 px-3 py-2.5">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-medium text-slate-800">{snap.ws_name}</div>
-                      <div className="mt-0.5 text-[10px] text-slate-400">{snap.saved_at ? new Date(snap.saved_at).toLocaleString() : "Unknown time"}</div>
+                  <div key={snap.snapshot_id} className="px-3 py-2.5">
+                    <div className="flex items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-medium text-slate-800">{snap.ws_name}</div>
+                        <div className="mt-0.5 flex items-center gap-2 text-[10px] text-slate-400">
+                          <span>{snap.saved_at ? new Date(snap.saved_at).toLocaleString() : "Unknown time"}</span>
+                          {snap.has_profile ? (
+                            <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-700">Has profile</span>
+                          ) : (
+                            <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-rose-600">No profile</span>
+                          )}
+                        </div>
+                        {snap.data_keys && snap.data_keys.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {snap.data_keys.map((k) => (
+                              <span key={k} className="rounded bg-slate-100 px-1 py-0.5 text-[9px] text-slate-500">{k}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => handleRestore(snap)}
+                        disabled={restoring}
+                        className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 transition"
+                      >
+                        {restoring ? "…" : "Restore"}
+                      </button>
                     </div>
-                    <button
-                      onClick={() => handleRestore(snap)}
-                      disabled={restoring}
-                      className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 transition"
-                    >
-                      {restoring ? "…" : "Restore"}
-                    </button>
                   </div>
                 ))}
               </div>
             )}
+
+            {/* Live data diagnostic */}
+            <div className="mt-4">
+              <div className="mb-2 flex items-center gap-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Live data diagnostic</h3>
+                <button
+                  onClick={handleDiagnose}
+                  disabled={dataDiagLoading}
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition"
+                >
+                  {dataDiagLoading ? "Checking…" : "Run check"}
+                </button>
+              </div>
+              {dataDiag && (
+                dataDiag.error ? (
+                  <p className="text-[11px] text-rose-600">{dataDiag.error}</p>
+                ) : (
+                  <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px]">
+                    <div className="font-semibold text-slate-600 uppercase tracking-wide text-[9px]">Supabase (live)</div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-slate-700">
+                      <span>Data null: <strong className={dataDiag.supabase?.data_is_null ? "text-rose-600" : "text-emerald-600"}>{dataDiag.supabase?.data_is_null ? "YES" : "no"}</strong></span>
+                      <span>Has profile: <strong className={dataDiag.supabase?.has_workspace_profile ? "text-emerald-600" : "text-rose-600"}>{dataDiag.supabase?.has_workspace_profile ? "YES" : "NO"}</strong></span>
+                      <span>Has financials: <strong>{dataDiag.supabase?.has_financials ? "yes" : "no"}</strong></span>
+                    </div>
+                    {dataDiag.supabase?.workspace_profile_keys?.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        <span className="text-slate-400 text-[9px] uppercase">Profile fields:</span>
+                        {dataDiag.supabase.workspace_profile_keys.map((k) => (
+                          <span key={k} className="rounded bg-white px-1 py-0.5 text-[9px] text-slate-600 border border-slate-200">{k}</span>
+                        ))}
+                      </div>
+                    )}
+                    {dataDiag.supabase?.updated_at && (
+                      <div className="text-slate-400 text-[9px]">Last updated: {new Date(dataDiag.supabase.updated_at).toLocaleString()}</div>
+                    )}
+                    <div className="mt-2 border-t border-slate-200 pt-2 font-semibold text-slate-600 uppercase tracking-wide text-[9px]">MongoDB snapshots</div>
+                    {dataDiag.mongodb?.error ? (
+                      <p className="text-rose-500">{dataDiag.mongodb.error}</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-slate-700">
+                        <span>Total: <strong>{dataDiag.mongodb?.total_snapshots ?? "?"}</strong></span>
+                        <span>With profile: <strong className={dataDiag.mongodb?.snapshots_with_profile_data > 0 ? "text-emerald-600" : "text-rose-600"}>{dataDiag.mongodb?.snapshots_with_profile_data ?? "?"}</strong></span>
+                        {dataDiag.mongodb?.latest_snapshot_saved_at && (
+                          <span>Latest: {new Date(dataDiag.mongodb.latest_snapshot_saved_at).toLocaleString()}</span>
+                        )}
+                        {dataDiag.mongodb?.latest_snapshot_has_profile != null && (
+                          <span>Latest has profile: <strong className={dataDiag.mongodb.latest_snapshot_has_profile ? "text-emerald-600" : "text-rose-600"}>{dataDiag.mongodb.latest_snapshot_has_profile ? "YES" : "NO"}</strong></span>
+                        )}
+                      </div>
+                    )}
+                    {dataDiag.mongodb?.latest_snapshot_data_keys?.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        <span className="text-slate-400 text-[9px] uppercase">Latest snapshot keys:</span>
+                        {dataDiag.mongodb.latest_snapshot_data_keys.map((k) => (
+                          <span key={k} className="rounded bg-white px-1 py-0.5 text-[9px] text-slate-600 border border-slate-200">{k}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1474,6 +1682,9 @@ export default function AdminPage() {
   const [refActionReason, setRefActionReason] = useState("");
   const [refActionRef, setRefActionRef] = useState("");
   const [refActionBusy, setRefActionBusy] = useState(false);
+  const [refRateEdit, setRefRateEdit] = useState(null); // { userId, current_rate_bps }
+  const [refRateInput, setRefRateInput] = useState("");
+  const [refRateBusy, setRefRateBusy] = useState(false);
 
   const loadReferrals = useCallback(async () => {
     if (refLoaded) return;
@@ -1520,6 +1731,46 @@ export default function AdminPage() {
       showToast("error", e.message || "Action failed.");
     } finally {
       setRefActionBusy(false);
+    }
+  }
+
+  async function submitRefRate() {
+    if (!refRateEdit) return;
+    const pct = parseFloat(refRateInput);
+    if (isNaN(pct) || pct < 0 || pct > 100) {
+      showToast("error", "Enter a rate between 0 and 100.");
+      return;
+    }
+    const rate_bps = Math.round(pct * 100);
+    setRefRateBusy(true);
+    try {
+      await apiRequest(`/referrals/admin/participants/${encodeURIComponent(refRateEdit.userId)}/rate`, "PATCH", { rate_bps });
+      setRefParticipants((prev) =>
+        (prev || []).map((p) =>
+          p.user_id === refRateEdit.userId ? { ...p, custom_rate_bps: rate_bps } : p
+        )
+      );
+      showToast("success", "Commission rate updated.");
+      setRefRateEdit(null);
+      setRefRateInput("");
+    } catch (e) {
+      showToast("error", e.message || "Failed to update rate.");
+    } finally {
+      setRefRateBusy(false);
+    }
+  }
+
+  async function clearRefRate(userId) {
+    try {
+      await apiRequest(`/referrals/admin/participants/${encodeURIComponent(userId)}/rate`, "PATCH", { rate_bps: null });
+      setRefParticipants((prev) =>
+        (prev || []).map((p) =>
+          p.user_id === userId ? { ...p, custom_rate_bps: null } : p
+        )
+      );
+      showToast("success", "Rate reset to default.");
+    } catch (e) {
+      showToast("error", e.message || "Failed to reset rate.");
     }
   }
 
@@ -2951,32 +3202,106 @@ export default function AdminPage() {
                   <table className="w-full text-left text-sm">
                     <thead>
                       <tr className="border-b border-slate-100">
-                        {["User", "Code", "Status", "Joined"].map((h) => (
+                        {["User", "Code", "Status", "Commission Rate", "Joined"].map((h) => (
                           <th key={h} className="pb-2 pr-4 text-xs font-semibold text-slate-500">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {refParticipants.map((p) => (
-                        <tr key={p.id} className="border-b border-slate-50">
-                          <td className="py-2 pr-4 text-xs text-slate-600">{p.user_id}</td>
-                          <td className="py-2 pr-4 font-mono text-xs text-slate-700">{p.referral_code}</td>
-                          <td className="py-2 pr-4">
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                              p.status === "active" ? "bg-emerald-100 text-emerald-700" :
-                              p.status === "suspended" ? "bg-rose-100 text-rose-700" :
-                              "bg-slate-100 text-slate-600"
-                            }`}>{p.status}</span>
-                          </td>
-                          <td className="py-2 text-xs text-slate-400">{fmtAdminDate(p.joined_at)}</td>
-                        </tr>
-                      ))}
+                      {refParticipants.map((p) => {
+                        const rateBps = p.custom_rate_bps ?? 500;
+                        const ratePct = (rateBps / 100).toFixed(2).replace(/\.?0+$/, "");
+                        const isCustom = p.custom_rate_bps != null;
+                        return (
+                          <tr key={p.id} className="border-b border-slate-50">
+                            <td className="py-2 pr-4 text-xs text-slate-600">{p.user_id}</td>
+                            <td className="py-2 pr-4 font-mono text-xs text-slate-700">{p.referral_code}</td>
+                            <td className="py-2 pr-4">
+                              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                p.status === "active" ? "bg-emerald-100 text-emerald-700" :
+                                p.status === "suspended" ? "bg-rose-100 text-rose-700" :
+                                "bg-slate-100 text-slate-600"
+                              }`}>{p.status}</span>
+                            </td>
+                            <td className="py-2 pr-4">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs font-semibold ${isCustom ? "text-brand-700" : "text-slate-500"}`}>
+                                  {ratePct}%
+                                  {isCustom && <span className="ml-1 text-[9px] font-bold uppercase tracking-wide text-brand-500">custom</span>}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => { setRefRateEdit({ userId: p.user_id, current_rate_bps: rateBps }); setRefRateInput(ratePct); }}
+                                  className="rounded-lg border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50"
+                                >
+                                  Edit
+                                </button>
+                                {isCustom && (
+                                  <button
+                                    type="button"
+                                    onClick={() => clearRefRate(p.user_id)}
+                                    className="text-[10px] text-slate-400 hover:text-rose-500"
+                                    title="Reset to default (5%)"
+                                  >
+                                    Reset
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-2 text-xs text-slate-400">{fmtAdminDate(p.joined_at)}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               )}
             </div>
 
+          </div>
+        )}
+
+        {/* Set commission rate modal */}
+        {refRateEdit && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60" onClick={() => setRefRateEdit(null)} />
+            <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+              <h3 className="mb-1 text-base font-semibold text-slate-900">Set commission rate</h3>
+              <p className="mb-4 text-xs text-slate-500 break-all">{refRateEdit.userId}</p>
+              <label className="mb-1 block text-xs font-medium text-slate-700">
+                Rate (%) <span className="text-slate-400">— default is 5%</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={refRateInput}
+                  onChange={(e) => setRefRateInput(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none"
+                  placeholder="e.g. 7.5"
+                />
+                <span className="text-sm font-semibold text-slate-500">%</span>
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRefRateEdit(null)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={submitRefRate}
+                  disabled={refRateBusy || refRateInput === ""}
+                  className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {refRateBusy ? "Saving…" : "Save rate"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

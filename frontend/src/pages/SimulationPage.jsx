@@ -1166,7 +1166,7 @@ export default function SimulationPage() {
                         <div className="mt-1 font-semibold text-slate-900">{formatCurrency(stateSnapshot?.costs_monthly || 0, currency || "GBP")}</div>
                       </div>
                       <div className={`rounded-lg px-2 py-2 ${(stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0) >= 0 ? "bg-emerald-50" : "bg-rose-50"}`}>
-                        <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly net profit</div>
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">Monthly gross profit</div>
                         <div className={`mt-1 font-semibold ${(stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
                           {formatCurrency((stateSnapshot?.revenue_monthly || 0) - (stateSnapshot?.costs_monthly || 0), currency || "GBP")}
                         </div>
@@ -1288,15 +1288,16 @@ export default function SimulationPage() {
                     const actualExp = expensesByMonth[monthKey];
                     exp = actualExp != null ? actualExp : Number(row.expenses || 0);
                   } else {
-                    // Future: keep revenue/CoS/expenses at current actual (even if 0)
-                    rev = currentActualRev;
-                    cos = currentActualCoS;
-                    rec = currentActualRec;
-                    exp = currentActualExp;
+                    // Future: use scenario/projection values from the timeline row
+                    rev = row.revenue != null ? Number(row.revenue) : currentActualRev;
+                    cos = row.cost_of_sales != null ? Number(row.cost_of_sales) : currentActualCoS;
+                    rec = row.receivables != null ? Number(row.receivables) : currentActualRec;
+                    exp = row.expenses != null ? Number(row.expenses) : currentActualExp;
                   }
                   const grossProfit = Number((rev - cos).toFixed(2));
                   const isFuture = !isCurrent && !isPast;
-                  const useCarryForward = isFuture && !currentMonthHasData;
+                  const hasRowData = row.revenue != null || row.cost_of_sales != null;
+                  const useCarryForward = isFuture && !currentMonthHasData && !hasRowData;
                   const gpForCum = useCarryForward ? lastActualGP : grossProfit;
                   const cashForCum = useCarryForward ? lastActualCashFlow : (rev - cos - exp);
                   cumGross = Number((cumGross + gpForCum).toFixed(2));
@@ -2376,7 +2377,7 @@ function MetricCard({ title, metrics, currency, isDelta, info }) {
     ["Monthly expenses", metrics.monthly_expenses],
     ["Cost of sales", metrics.monthly_cost_of_sales],
     ["Total costs", metrics.monthly_costs],
-    ["Net Profit", metrics.net_profit],
+    ["Gross Profit", metrics.net_profit],
   ].filter(([, v]) => v != null);
 
   function renderValue(label, value) {

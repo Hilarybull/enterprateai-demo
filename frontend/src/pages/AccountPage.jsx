@@ -73,6 +73,7 @@ function Alert({ type, message }) {
   );
 }
 
+
 export default function AccountPage() {
   const email = useAuthStore((s) => s.email);
   const name = useAuthStore((s) => s.name);
@@ -90,6 +91,7 @@ export default function AccountPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState(null);
+
 
   const initials = initialsFromName(name, email);
   const isGoogleOnly = !hasPassword;

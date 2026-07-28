@@ -42,3 +42,7 @@ class AdminAdjustmentRequest(BaseModel):
     amount_minor: int   # pence; negative to reverse
     reason: str
     category: str       # correction | goodwill | fraud_reversal
+
+
+class AdminSetRateRequest(BaseModel):
+    rate_bps: Optional[int] = None  # None = revert to global default; 0-10000 valid range

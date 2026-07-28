@@ -386,7 +386,12 @@ async def _create_referral_reward(
     if eligible_base <= 0:
         return
 
-    commission = ref_svc.calculate_commission(eligible_base, config["rate_bps"])
+    effective_rate = (
+        participant_row.get("custom_rate_bps")
+        if participant_row.get("custom_rate_bps") is not None
+        else config["rate_bps"]
+    )
+    commission = ref_svc.calculate_commission(eligible_base, effective_rate)
     if commission <= 0:
         return
 
@@ -400,7 +405,8 @@ async def _create_referral_reward(
             "eligible_base_minor": eligible_base,
             "subtotal_minor": subtotal_minor,
             "discount_minor": discount_minor,
-            "rate_bps": config["rate_bps"],
+            "rate_bps": effective_rate,
+            "custom_rate": participant_row.get("custom_rate_bps") is not None,
             "commission_minor": commission,
             "referred_user_id": referred_user_id,
         },
