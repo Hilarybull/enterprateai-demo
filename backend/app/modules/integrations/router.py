@@ -50,6 +50,12 @@ def _redirect_uri(provider: str) -> str:
     return f"{_backend_url()}/integrations/{provider}/callback"
 
 
+_PROVIDER_ENV_NAMES: dict[str, tuple[str, str]] = {
+    "quickbooks": ("QB_CLIENT_ID", "QB_CLIENT_SECRET"),
+    "xero":       ("XERO_CLIENT_ID", "XERO_CLIENT_SECRET"),
+    "zoho_crm":   ("ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET"),
+}
+
 def _get_credentials(provider: str) -> tuple[str, str]:
     settings = get_settings()
     if provider == "quickbooks":
@@ -97,7 +103,8 @@ async def connect(provider: Provider, user=Depends(get_current_user)) -> dict:
         raise HTTPException(status_code=400, detail="Unknown provider.")
     client_id, client_secret = _get_credentials(provider)
     if not client_id or not client_secret:
-        raise HTTPException(status_code=503, detail=f"{PROVIDERS[provider]['label']} OAuth credentials not configured. Add {provider.upper()}_CLIENT_ID and {provider.upper()}_CLIENT_SECRET to your environment.")
+        id_name, secret_name = _PROVIDER_ENV_NAMES.get(provider, (f"{provider.upper()}_CLIENT_ID", f"{provider.upper()}_CLIENT_SECRET"))
+        raise HTTPException(status_code=503, detail=f"{PROVIDERS[provider]['label']} OAuth credentials not configured. Add {id_name} and {secret_name} to your environment.")
 
     # Embed user identity in state so we can identify them in the callback
     state = create_access_token(subject=user["id"], extra={"provider": provider, "type": "oauth_state"})

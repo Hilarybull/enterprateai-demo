@@ -8,10 +8,23 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-ZOHO_AUTH_URL = "https://accounts.zoho.com/oauth/v2/auth"
-ZOHO_TOKEN_URL = "https://accounts.zoho.com/oauth/v2/token"
-ZOHO_API_BASE = "https://www.zohoapis.com/crm/v3"
 ZOHO_SCOPES = "ZohoCRM.modules.ALL,ZohoCRM.settings.ALL"
+
+
+def _zoho_domain() -> str:
+    from app.core.config import get_settings
+    region = (get_settings().zoho_region or "com").lower().strip(".")
+    return "eu" if region == "eu" else "com"
+
+
+def _auth_base() -> str:
+    d = _zoho_domain()
+    return f"https://accounts.zoho.{d}/oauth/v2"
+
+
+def _api_base() -> str:
+    d = _zoho_domain()
+    return f"https://www.zohoapis.{d}/crm/v3"
 
 
 def auth_url(client_id: str, redirect_uri: str, state: str) -> str:
@@ -24,13 +37,13 @@ def auth_url(client_id: str, redirect_uri: str, state: str) -> str:
         "redirect_uri": redirect_uri,
         "state": state,
     }
-    return f"{ZOHO_AUTH_URL}?{urlencode(params)}"
+    return f"{_auth_base()}/auth?{urlencode(params)}"
 
 
 async def exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict:
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            ZOHO_TOKEN_URL,
+            f"{_auth_base()}/token",
             params={
                 "grant_type": "authorization_code",
                 "client_id": client_id,
@@ -46,7 +59,7 @@ async def exchange_code(client_id: str, client_secret: str, code: str, redirect_
 async def _refresh(client_id: str, client_secret: str, token: str) -> dict:
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            ZOHO_TOKEN_URL,
+            f"{_auth_base()}/token",
             params={
                 "grant_type": "refresh_token",
                 "client_id": client_id,
@@ -101,7 +114,7 @@ async def sync_products(meta: dict, products: list[dict], client_id: str, client
             }
             try:
                 resp = await client.post(
-                    f"{ZOHO_API_BASE}/Products",
+                    f"{_api_base()}/Products",
                     json={"data": [body]},
                     headers=_headers(access),
                 )
@@ -134,7 +147,7 @@ async def sync_contacts(meta: dict, customers: list[dict], client_id: str, clien
             }
             try:
                 resp = await client.post(
-                    f"{ZOHO_API_BASE}/Contacts",
+                    f"{_api_base()}/Contacts",
                     json={"data": [body]},
                     headers=_headers(access),
                 )
@@ -165,7 +178,7 @@ async def sync_vendors(meta: dict, vendors: list[dict], client_id: str, client_s
             }
             try:
                 resp = await client.post(
-                    f"{ZOHO_API_BASE}/Vendors",
+                    f"{_api_base()}/Vendors",
                     json={"data": [body]},
                     headers=_headers(access),
                 )
