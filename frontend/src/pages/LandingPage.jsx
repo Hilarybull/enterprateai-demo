@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import logoUrl from "../enterprate-logo.png";
+import { apiRequest } from "../api/client";
 
 const PROBLEMS = [
   {
@@ -21,17 +22,17 @@ const PROBLEMS = [
 ];
 
 const PILLARS = [
-  { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2", label: "Plan" },
-  { icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z", label: "Operate" },
-  { icon: "M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z", label: "Sell" },
-  { icon: "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z", label: "Decide" },
+  { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2", label: "Plan", path: "/blueprint" },
+  { icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z", label: "Operate", path: "/catalogue" },
+  { icon: "M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z", label: "Sell", path: "/financials" },
+  { icon: "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z", label: "Decide", path: "/simulation" },
 ];
 
 const FEATURES = [
-  { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2", label: "Plan", body: "Validate ideas, create business plans, and build a solid foundation for growth, all in one intelligent workspace." },
-  { icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z", label: "Operate", body: "Manage products, customers, vendors, and business data seamlessly with tools designed for efficiency." },
-  { icon: "M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z", label: "Sell", body: "Generate proposals, invoices, quotations, and marketplace listings instantly from your business data." },
-  { icon: "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z", label: "Decide", body: "Simulate scenarios, assess fragility, and make data-driven decisions with adaptive intelligence before committing resources." },
+  { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2", label: "Plan", body: "Validate ideas, create business plans, and build a solid foundation for growth, all in one intelligent workspace.", path: "/blueprint" },
+  { icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z", label: "Operate", body: "Manage products, customers, vendors, and business data seamlessly with tools designed for efficiency.", path: "/catalogue" },
+  { icon: "M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z", label: "Sell", body: "Generate proposals, invoices, quotations, and marketplace listings instantly from your business data.", path: "/financials" },
+  { icon: "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z", label: "Decide", body: "Simulate scenarios, assess fragility, and make data-driven decisions with adaptive intelligence before committing resources.", path: "/simulation" },
 ];
 
 const BENEFITS = [
@@ -51,13 +52,13 @@ const HOW_IT_WORKS = [
 ];
 
 const ACTIVITIES = [
-  { icon: "M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z", label: "Validate a business idea", desc: "Test your concept with structured validation frameworks before investing time and money." },
-  { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01", label: "Create a business plan", desc: "Build comprehensive, professional business plans using your workspace data and intelligent templates." },
-  { icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z", label: "Generate a proposal", desc: "Create winning business proposals and sales letters automatically from your business information." },
-  { icon: "M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z", label: "Create invoices and quotations", desc: "Generate professional invoices and quotations instantly from your products and customer data." },
-  { icon: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z", label: "Launch to marketplace", desc: "List your services on the EnterprateAI marketplace and connect with potential clients." },
-  { icon: "M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z M21 12a9 9 0 11-18 0 9 9 0 0118 0z", label: "Simulate a decision", desc: "Test business decisions and scenarios with adaptive scenario intelligence before committing." },
-  { icon: "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z", label: "Discover business risks", desc: "Assess your business fragility index and identify hidden vulnerabilities before they impact you." },
+  { icon: "M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z", label: "Validate a business idea", desc: "Test your concept with structured validation frameworks before investing time and money.", path: "/validation" },
+  { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01", label: "Create a business plan", desc: "Build comprehensive, professional business plans using your workspace data and intelligent templates.", path: "/blueprint" },
+  { icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z", label: "Generate a proposal", desc: "Create winning business proposals and sales letters automatically from your business information.", path: "/blueprint" },
+  { icon: "M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z", label: "Create invoices and quotations", desc: "Generate professional invoices and quotations instantly from your products and customer data.", path: "/financials" },
+  { icon: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z", label: "Launch to marketplace", desc: "List your services on the EnterprateAI marketplace and connect with potential clients.", path: "/marketplace" },
+  { icon: "M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z M21 12a9 9 0 11-18 0 9 9 0 0118 0z", label: "Simulate a decision", desc: "Test business decisions and scenarios with adaptive scenario intelligence before committing.", path: "/simulation" },
+  { icon: "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z", label: "Discover business risks", desc: "Assess your business fragility index and identify hidden vulnerabilities before they impact you.", path: "/simulation" },
 ];
 
 const TESTIMONIALS = [
@@ -125,6 +126,47 @@ function FAQItem({ q, a }) {
 export default function LandingPage() {
   const [annualBilling, setAnnualBilling] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [featuresOpen, setFeaturesOpen] = useState(false);
+  const [articlesOpen, setArticlesOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const featuresRef = useRef(null);
+  const articlesRef = useRef(null);
+
+  const [blogCategories, setBlogCategories] = useState([]);
+
+  useEffect(() => {
+    function onScroll() { setScrolled(window.scrollY > 10); }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    apiRequest("/blog/categories", "GET")
+      .then((data) => { if (Array.isArray(data)) setBlogCategories(data); })
+      .catch(() => {});
+  }, []);
+
+  // Navigate to an in-app feature — skip login if already authenticated
+  function goToFeature(path) {
+    setFeaturesOpen(false);
+    setArticlesOpen(false);
+    const token = localStorage.getItem("ea_token");
+    navigate(token ? path : "/login");
+  }
+
+  // Generic CTA — go to dashboard if logged in, login otherwise
+  function goToApp() {
+    const token = localStorage.getItem("ea_token");
+    navigate(token ? "/dashboard" : "/login");
+  }
+  useEffect(() => {
+    function handleClick(e) {
+      if (featuresRef.current && !featuresRef.current.contains(e.target)) setFeaturesOpen(false);
+      if (articlesRef.current && !articlesRef.current.contains(e.target)) setArticlesOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
   const [showExitPopup, setShowExitPopup] = useState(false);
   const [exitDismissed, setExitDismissed] = useState(false);
   const exitTimerRef = useRef(null);
@@ -164,7 +206,7 @@ export default function LandingPage() {
                 <li key={f} className="flex items-center gap-2"><span className="text-emerald-500 font-bold">✓</span>{f}</li>
               ))}
             </ul>
-            <button type="button" onClick={() => navigate("/login")} className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition">Get Started Free →</button>
+            <button type="button" onClick={() => goToApp()} className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition">Get Started Free →</button>
             <button type="button" onClick={() => { setShowExitPopup(false); setExitDismissed(true); }} className="mt-2 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Maybe later</button>
             <p className="mt-3 text-center text-xs text-slate-400">Free plan · No credit card required</p>
           </div>
@@ -172,18 +214,129 @@ export default function LandingPage() {
       )}
 
       {/* NAV */}
-      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-slate-100 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <a href="#hero"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" /></a>
-          <ul className="hidden items-center gap-6 md:flex">
+      <nav className={`fixed top-0 left-0 right-0 z-50 border-b border-slate-100 bg-white/95 backdrop-blur transition-all duration-200 ${scrolled ? "shadow-sm" : ""}`}>
+        <div className={`mx-auto flex max-w-[1280px] items-center justify-between px-4 sm:px-6 transition-all duration-200 ${scrolled ? "py-2" : "py-3"}`}>
+          <a href="#hero" className="shrink-0"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" /></a>
+          <ul className="hidden items-center gap-5 xl:flex">
+            {/* Features mega-dropdown */}
+            <li ref={featuresRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setFeaturesOpen(v => !v)}
+                className="flex items-center gap-1 whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600"
+              >
+                Features
+                <svg className={`h-3.5 w-3.5 transition-transform ${featuresOpen ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="currentColor"><path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
+              {featuresOpen && (
+                <div className="absolute left-1/2 top-full z-50 mt-3 w-[720px] -translate-x-1/2 rounded-2xl border border-slate-200 bg-white shadow-xl ring-1 ring-black/5">
+                  <div className="grid grid-cols-4 gap-0 p-6">
+                    {[
+                      {
+                        heading: "Plan & Prepare", desc: "Validate ideas and create business documents faster.",
+                        items: [
+                          { label: "Idea Validation", path: "/validation" },
+                          { label: "One-Click Business Plan Generator", path: "/blueprint?doc=business_plan" },
+                          { label: "One-Click Business Proposal Generator", path: "/blueprint?doc=client_proposal" },
+                          { label: "One-Click Sales Letter Generator", path: "/blueprint?doc=sales_letter" },
+                        ],
+                      },
+                      {
+                        heading: "Operate & Manage", desc: "Create invoices, quotations, receipts, expenses, and contracts.",
+                        items: [
+                          { label: "Free Invoice Generator", path: "/financials?tab=invoices" },
+                          { label: "Free Quotation Generator", path: "/financials?tab=quotes" },
+                          { label: "Free Receipt Generator", path: "/financials?tab=receipts" },
+                          { label: "Expense Tracking", path: "/financials?tab=expenses" },
+                          { label: "Contract Management", path: "/financials?tab=contracts" },
+                        ],
+                      },
+                      {
+                        heading: "Sell & Grow", desc: "Launch to marketplace and increase visibility.",
+                        items: [
+                          { label: "One-Click Marketplace Listing", path: "/marketplace" },
+                          { label: "RFQ to Quotation", path: "/financials?tab=quotes" },
+                          { label: "Marketplace Visibility", path: "/marketplace" },
+                        ],
+                      },
+                      {
+                        heading: "Decision Intelligence", desc: "Simulate decisions and get business recommendations.",
+                        items: [
+                          { label: "Business Scenario Simulation", path: "/simulation" },
+                          { label: "Business Intelligence Recommendations", path: "/simulation" },
+                          { label: "Fragility Index", path: "/simulation" },
+                          { label: "Adaptive Scenario Intelligence", path: "/simulation" },
+                        ],
+                      },
+                    ].map((col) => (
+                      <div key={col.heading} className="px-3 first:pl-0 last:pr-0 border-r border-slate-100 last:border-r-0">
+                        <p className="text-[11px] font-bold uppercase tracking-wider text-brand-600">{col.heading}</p>
+                        <p className="mt-0.5 mb-3 text-[11px] text-slate-400 leading-snug">{col.desc}</p>
+                        <ul className="space-y-2">
+                          {col.items.map((item) => (
+                            <li key={item.label}>
+                              <button type="button" onClick={() => goToFeature(item.path)} className="block text-left text-[12.5px] text-slate-600 hover:text-brand-600 transition leading-snug">{item.label}</button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </li>
+            {/* Articles dropdown */}
+            <li ref={articlesRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setArticlesOpen(v => !v)}
+                className="flex items-center gap-1 whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600"
+              >
+                Articles
+                <svg className={`h-3.5 w-3.5 transition-transform ${articlesOpen ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="currentColor"><path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
+              {articlesOpen && (
+                <div className="absolute left-1/2 top-full z-50 mt-3 w-[480px] -translate-x-1/2 rounded-2xl border border-slate-200 bg-white shadow-xl ring-1 ring-black/5">
+                  <div className="p-5">
+                    <button
+                      type="button"
+                      onClick={() => { setArticlesOpen(false); navigate("/blog"); }}
+                      className="mb-4 flex w-full items-start justify-between rounded-xl bg-brand-50 px-4 py-3 text-left hover:bg-brand-100 transition"
+                    >
+                      <div>
+                        <p className="text-sm font-bold text-brand-700">Articles Hub</p>
+                        <p className="mt-0.5 text-[11px] text-slate-500 leading-snug max-w-[300px]">Insights to help small businesses plan, operate, sell, reduce risk, and grow with intelligence.</p>
+                      </div>
+                      <span className="text-brand-500 text-lg">→</span>
+                    </button>
+                    {blogCategories.length > 0 ? (
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                        {blogCategories.map((cat) => (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => { setArticlesOpen(false); navigate(`/blog?category=${cat.slug}`); }}
+                            className="text-left text-[12.5px] text-slate-600 hover:text-brand-600 transition py-0.5"
+                          >
+                            {cat.name}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[12px] text-slate-400">No categories yet.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </li>
             {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
-              <li key={href}><a href={href} className="text-sm font-medium text-slate-600 transition hover:text-brand-600">{label}</a></li>
+              <li key={href}><a href={href} className="whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600">{label}</a></li>
             ))}
           </ul>
-          <div className="flex items-center gap-3">
-            <Link to="/login" className="text-sm font-medium text-slate-600 hover:text-slate-900">Sign in</Link>
-            <button type="button" onClick={() => navigate("/login")} className="hidden rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 sm:block">Create My Free Business Workspace</button>
-            <button type="button" onClick={() => setMobileMenuOpen(v => !v)} className="ml-1 flex h-9 w-9 flex-col items-center justify-center gap-1.5 md:hidden" aria-label="Menu">
+          <div className="flex shrink-0 items-center gap-3">
+            <Link to="/login" className="hidden whitespace-nowrap text-sm font-medium text-slate-600 hover:text-slate-900 xl:block">Sign in</Link>
+            <button type="button" onClick={() => goToApp()} className="hidden whitespace-nowrap rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 xl:block">Create My Free Business Workspace</button>
+            <button type="button" onClick={() => setMobileMenuOpen(v => !v)} className="ml-1 flex h-9 w-9 flex-col items-center justify-center gap-1.5 xl:hidden" aria-label="Menu">
               <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "translate-y-2 rotate-45" : ""}`} />
               <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "opacity-0" : ""}`} />
               <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "-translate-y-2 -rotate-45" : ""}`} />
@@ -191,18 +344,41 @@ export default function LandingPage() {
           </div>
         </div>
         {mobileMenuOpen && (
-          <div className="border-t border-slate-100 bg-white px-4 pb-4 md:hidden">
+          <div className="border-t border-slate-100 bg-white px-4 pb-4 xl:hidden">
             <ul className="mt-3 flex flex-col gap-3">
               {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
                 <li key={href}><a href={href} onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">{label}</a></li>
               ))}
               <li><Link to="/login" className="block text-sm font-medium text-slate-700">Sign in</Link></li>
             </ul>
+            <div className="mt-4 border-t border-slate-100 pt-4">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Features</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                {[
+                  { label: "Idea Validation", path: "/validation" },
+                  { label: "Business Plan", path: "/blueprint?doc=business_plan" },
+                  { label: "Business Proposal", path: "/blueprint?doc=client_proposal" },
+                  { label: "Sales Letter", path: "/blueprint?doc=sales_letter" },
+                  { label: "Invoice Generator", path: "/financials?tab=invoices" },
+                  { label: "Quotation Generator", path: "/financials?tab=quotes" },
+                  { label: "Receipt Generator", path: "/financials?tab=receipts" },
+                  { label: "Expense Tracking", path: "/financials?tab=expenses" },
+                  { label: "Contract Management", path: "/financials?tab=contracts" },
+                  { label: "Marketplace Listing", path: "/marketplace" },
+                  { label: "RFQ to Quotation", path: "/financials?tab=quotes" },
+                  { label: "Scenario Simulation", path: "/simulation" },
+                  { label: "BI Recommendations", path: "/simulation" },
+                  { label: "Fragility Index", path: "/simulation" },
+                ].map(f => (
+                  <button key={f.label} type="button" onClick={() => { setMobileMenuOpen(false); goToFeature(f.path); }} className="py-0.5 text-left text-xs text-slate-600 hover:text-brand-600">{f.label}</button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </nav>
 
-      <div className="h-[57px]" />
+      <div className="h-[61px]" />
 
       {/* HERO */}
       <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-brand-900 via-brand-700 to-brand-800 pb-20 pt-16 sm:pt-24 text-white">
@@ -222,7 +398,7 @@ export default function LandingPage() {
             Input your business data once. Use it everywhere. Plan, operate, sell, simulate decisions, and grow with intelligence.
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <button type="button" onClick={() => navigate("/login")} className="w-full rounded-xl border border-white/40 bg-white/10 px-8 py-3.5 text-sm font-bold text-white transition hover:bg-white/20 active:scale-95 sm:w-auto">
+            <button type="button" onClick={() => goToApp()} className="w-full rounded-xl border border-white/40 bg-white/10 px-8 py-3.5 text-sm font-bold text-white transition hover:bg-white/20 active:scale-95 sm:w-auto">
               Create My Free Business Workspace
             </button>
             <a href="#how-it-works" className="flex w-full items-center justify-center rounded-xl bg-slate-800/80 px-8 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-900 sm:w-auto">
@@ -234,12 +410,12 @@ export default function LandingPage() {
           {/* Pillar cards */}
           <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {PILLARS.map(p => (
-              <div key={p.label} className="flex flex-col items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-5 backdrop-blur-sm">
+              <button key={p.label} type="button" onClick={() => goToFeature(p.path)} className="flex flex-col items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-5 backdrop-blur-sm transition hover:bg-white/20 active:scale-95">
                 <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500">
                   <Icon d={p.icon} className="h-6 w-6 text-white" />
                 </div>
                 <span className="text-sm font-bold text-white">{p.label}</span>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -276,12 +452,15 @@ export default function LandingPage() {
           </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {FEATURES.map(f => (
-              <div key={f.label} className="rounded-2xl border border-slate-200 bg-white p-6 hover:border-brand-200 hover:shadow-md transition">
+              <div key={f.label} className="flex flex-col rounded-2xl border border-slate-200 bg-white p-6 hover:border-brand-200 hover:shadow-md transition">
                 <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500">
                   <Icon d={f.icon} className="h-6 w-6 text-white" />
                 </div>
                 <h3 className="font-bold text-slate-900">{f.label}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-slate-500">{f.body}</p>
+                <p className="mt-2 flex-1 text-sm leading-relaxed text-slate-500">{f.body}</p>
+                <button type="button" onClick={() => goToFeature(f.path)} className="mt-4 text-left text-sm font-semibold text-brand-600 hover:text-brand-700 transition">
+                  Explore {f.label} →
+                </button>
               </div>
             ))}
           </div>
@@ -346,7 +525,7 @@ export default function LandingPage() {
                 </div>
                 <h3 className="font-semibold text-slate-900">{a.label}</h3>
                 <p className="mt-1.5 flex-1 text-sm leading-relaxed text-slate-500">{a.desc}</p>
-                <button type="button" onClick={() => navigate("/login")} className="mt-5 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700">
+                <button type="button" onClick={() => goToFeature(a.path)} className="mt-5 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700">
                   Start here →
                 </button>
               </div>
@@ -417,7 +596,7 @@ export default function LandingPage() {
                 </div>
                 <p className="mt-1 text-center text-xs text-slate-400">{plan.free ? "Free forever" : annualBilling ? `Billed annually (save £${plan.annualSaving}/yr)` : "Billed monthly"}</p>
                 {plan.desc && <p className="mt-3 text-center text-xs text-slate-500">{plan.desc}</p>}
-                <button type="button" onClick={() => navigate("/login")} className={`mt-5 w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.free ? "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
+                <button type="button" onClick={() => goToApp()} className={`mt-5 w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.free ? "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
                   {plan.free ? "Start Free" : `Get Started - £${plan.monthly}/month`}
                 </button>
                 <ul className="mt-5 flex-1 space-y-2.5">
@@ -464,7 +643,7 @@ export default function LandingPage() {
         <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
           <h2 className="text-2xl font-extrabold sm:text-3xl lg:text-4xl">Start building a clearer, stronger business today.</h2>
           <p className="mt-4 text-base text-white/80">Input your business data once. Use it to plan, operate, sell, simulate, and grow with intelligence.</p>
-          <button type="button" onClick={() => navigate("/login")} className="mt-8 rounded-xl border border-white/40 bg-white/10 px-10 py-4 text-base font-semibold text-white transition hover:bg-white/20 active:scale-95">
+          <button type="button" onClick={() => goToApp()} className="mt-8 rounded-xl border border-white/40 bg-white/10 px-10 py-4 text-base font-semibold text-white transition hover:bg-white/20 active:scale-95">
             Create My Free Business Workspace
           </button>
           <p className="mt-4 text-sm text-white/70">Free to start. No credit card required.</p>

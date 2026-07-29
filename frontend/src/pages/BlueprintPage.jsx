@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import DocumentEditor from "../components/DocumentEditor";
 import DocumentShareModal from "../components/DocumentShareModal";
 import Input from "../components/Input";
@@ -333,6 +333,11 @@ export default function BlueprintPage() {
     return !isMemberMode || hasFeatureAccess("blueprint", featureKey, memberPermissionType, memberPermissions);
   }
   const [selectedDoc, setSelectedDoc] = useState(null);
+  const [bpSearchParams, setBpSearchParams] = useSearchParams();
+  useEffect(() => {
+    const d = bpSearchParams.get("doc");
+    if (d) { setSelectedDoc(d); setBpSearchParams({}, { replace: true }); }
+  }, []); // eslint-disable-line
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showInputs, setShowInputs] = useState(true);
   const [inputsTab, setInputsTab] = useState("inputs");

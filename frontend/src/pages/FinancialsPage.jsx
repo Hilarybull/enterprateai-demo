@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import html2pdf from "html2pdf.js";
 import Button from "../components/Button";
 import DocumentShareModal from "../components/DocumentShareModal";
@@ -171,7 +171,13 @@ export default function FinancialsPage() {
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [editingContractId, setEditingContractId] = useState(null);
   const [activeTab, setActiveTab] = useState(() => firstAccessibleFinancialsTab());
+  const [searchParams, setSearchParams] = useSearchParams();
   const [overviewDrill, setOverviewDrill] = useState(null); // { label, type, items }
+
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t) { setActiveTab(t); setSearchParams({}, { replace: true }); }
+  }, []); // eslint-disable-line
   const [statusDateModal, setStatusDateModal] = useState(null); // { type, id, status, label }
   const [pendingFinancialReport, setPendingFinancialReport] = useState(null);
   const [reportFilter, setReportFilter] = useState({ kpis: true, invoices: true, quotes: true, expenses: true, contracts: true });

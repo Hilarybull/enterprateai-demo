@@ -1560,6 +1560,7 @@ const TABS = [
   { key: "mailing-list", label: "Mailing List" },
   { key: "support", label: "Support Messages" },
   { key: "referrals", label: "Referrals" },
+  { key: "blog", label: "Blog" },
 ];
 
 const INV_FILTERS = ["all", "pending", "accepted", "revoked"];
@@ -1706,6 +1707,143 @@ export default function AdminPage() {
   useEffect(() => {
     if (tab === "referrals") loadReferrals();
   }, [tab, loadReferrals]);
+
+  // ── Blog state ────────────────────────────────────────────────────────────
+
+  const [blogTab, setBlogTab] = useState("articles");
+  const [blogArticles, setBlogArticles] = useState([]);
+  const [blogCategories, setBlogCategories] = useState([]);
+  const [blogTags, setBlogTags] = useState([]);
+  const [blogLoaded, setBlogLoaded] = useState(false);
+  const [blogLoading, setBlogLoading] = useState(false);
+  const [blogForm, setBlogForm] = useState(null); // null = closed, {} = new, {...} = edit
+  const [blogFormBusy, setBlogFormBusy] = useState(false);
+  const [catForm, setCatForm] = useState(null);
+  const [catFormBusy, setCatFormBusy] = useState(false);
+  const [tagForm, setTagForm] = useState(null);
+  const [tagFormBusy, setTagFormBusy] = useState(false);
+
+  const loadBlog = useCallback(async () => {
+    setBlogLoading(true);
+    try {
+      const [arts, cats, tgs] = await Promise.all([
+        apiRequest("/blog/admin/articles", "GET"),
+        apiRequest("/blog/categories", "GET"),
+        apiRequest("/blog/tags", "GET"),
+      ]);
+      setBlogArticles(arts || []);
+      setBlogCategories(cats || []);
+      setBlogTags(tgs || []);
+      setBlogLoaded(true);
+    } catch (e) {
+      showToast("error", e.message || "Failed to load blog data.");
+    } finally {
+      setBlogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "blog" && !blogLoaded) loadBlog();
+  }, [tab, blogLoaded, loadBlog]);
+
+  async function saveBlogArticle(data) {
+    setBlogFormBusy(true);
+    try {
+      if (data.id) {
+        const updated = await apiRequest(`/blog/admin/articles/${data.id}`, "PUT", data);
+        setBlogArticles((prev) => prev.map((a) => a.id === data.id ? { ...a, ...updated } : a));
+        showToast("success", "Article updated.");
+      } else {
+        const created = await apiRequest("/blog/admin/articles", "POST", data);
+        setBlogArticles((prev) => [created, ...prev]);
+        showToast("success", "Article created.");
+      }
+      setBlogForm(null);
+    } catch (e) {
+      showToast("error", e.message || "Failed to save article.");
+    } finally {
+      setBlogFormBusy(false);
+    }
+  }
+
+  async function deleteBlogArticle(id, title) {
+    askConfirm({
+      title: "Delete article?",
+      description: `Permanently delete "${title}". This cannot be undone.`,
+      label: "Delete",
+      successMsg: "Article deleted.",
+      action: async () => {
+        await apiRequest(`/blog/admin/articles/${id}`, "DELETE");
+        setBlogArticles((prev) => prev.filter((a) => a.id !== id));
+      },
+    });
+  }
+
+  async function saveBlogCategory(data) {
+    setCatFormBusy(true);
+    try {
+      if (data.id) {
+        const updated = await apiRequest(`/blog/admin/categories/${data.id}`, "PUT", data);
+        setBlogCategories((prev) => prev.map((c) => c.id === data.id ? { ...c, ...updated } : c));
+        showToast("success", "Category updated.");
+      } else {
+        const created = await apiRequest("/blog/admin/categories", "POST", data);
+        setBlogCategories((prev) => [...prev, created]);
+        showToast("success", "Category created.");
+      }
+      setCatForm(null);
+    } catch (e) {
+      showToast("error", e.message || "Failed to save category.");
+    } finally {
+      setCatFormBusy(false);
+    }
+  }
+
+  async function deleteBlogCategory(id, name) {
+    askConfirm({
+      title: "Delete category?",
+      description: `Delete category "${name}".`,
+      label: "Delete",
+      successMsg: "Category deleted.",
+      action: async () => {
+        await apiRequest(`/blog/admin/categories/${id}`, "DELETE");
+        setBlogCategories((prev) => prev.filter((c) => c.id !== id));
+      },
+    });
+  }
+
+  async function saveBlogTag(data) {
+    setTagFormBusy(true);
+    try {
+      if (data.id) {
+        const updated = await apiRequest(`/blog/admin/tags/${data.id}`, "PUT", data);
+        setBlogTags((prev) => prev.map((t) => t.id === data.id ? { ...t, ...updated } : t));
+        showToast("success", "Tag updated.");
+      } else {
+        const created = await apiRequest("/blog/admin/tags", "POST", data);
+        setBlogTags((prev) => [...prev, created]);
+        showToast("success", "Tag created.");
+      }
+      setTagForm(null);
+    } catch (e) {
+      showToast("error", e.message || "Failed to save tag.");
+    } finally {
+      setTagFormBusy(false);
+    }
+  }
+
+  async function deleteBlogTag(id, name) {
+    askConfirm({
+      title: "Delete tag?",
+      description: `Delete tag "#${name}".`,
+      label: "Delete",
+      successMsg: "Tag deleted.",
+      action: async () => {
+        await apiRequest(`/blog/admin/tags/${id}`, "DELETE");
+        setBlogTags((prev) => prev.filter((t) => t.id !== id));
+      },
+    });
+  }
 
   async function submitRefPayoutAction() {
     if (!refPayoutAction || !refActionReason.trim()) return;
@@ -3359,7 +3497,619 @@ export default function AdminPage() {
           </div>
         )}
 
+        {/* ── Blog ── */}
+        {tab === "blog" && (
+          <div className="space-y-5">
+            {/* Sub-tab nav */}
+            <div className="flex gap-2 rounded-xl border border-slate-200 bg-white p-1 w-fit">
+              {[["articles", "Articles"], ["categories", "Categories"], ["tags", "Tags"]].map(([k, l]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setBlogTab(k)}
+                  className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition ${blogTab === k ? "bg-brand-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+
+            {blogLoading && <div className="py-8 text-center text-sm text-slate-400">Loading…</div>}
+
+            {/* ── Articles sub-tab ── */}
+            {!blogLoading && blogTab === "articles" && (
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-slate-800">Articles ({blogArticles.length})</h2>
+                  <button
+                    type="button"
+                    onClick={() => setBlogForm({ title: "", excerpt: "", content: "", cover_image_url: "", status: "draft", author_name: "EnterprateAI Team", category_id: "", tag_ids: [] })}
+                    className="rounded-xl bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 transition"
+                  >
+                    + New Article
+                  </button>
+                </div>
+                {blogArticles.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-slate-400">No articles yet. Create your first one.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-max text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                          <th className="pb-2 pr-4">Title</th>
+                          <th className="pb-2 pr-4">Category</th>
+                          <th className="pb-2 pr-4">Status</th>
+                          <th className="pb-2 pr-4">Published</th>
+                          <th className="pb-2" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {blogArticles.map((a) => (
+                          <tr key={a.id} className="group hover:bg-slate-50/50">
+                            <td className="py-2.5 pr-4 font-medium text-slate-800 max-w-xs truncate">{a.title}</td>
+                            <td className="py-2.5 pr-4 text-slate-500 text-xs">{a.category_name || "—"}</td>
+                            <td className="py-2.5 pr-4">
+                              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${a.status === "published" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                                {a.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 pr-4 text-xs text-slate-400">{a.published_at ? new Date(a.published_at).toLocaleDateString() : "—"}</td>
+                            <td className="py-2.5">
+                              <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                                <button
+                                  type="button"
+                                  onClick={() => setBlogForm({ ...a, tag_ids: [] })}
+                                  className="text-xs text-brand-600 hover:underline"
+                                >Edit</button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteBlogArticle(a.id, a.title)}
+                                  className="text-xs text-rose-500 hover:underline"
+                                >Delete</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* ── Categories sub-tab ── */}
+            {!blogLoading && blogTab === "categories" && (
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-slate-800">Categories ({blogCategories.length})</h2>
+                  <button
+                    type="button"
+                    onClick={() => setCatForm({ name: "", slug: "", description: "" })}
+                    className="rounded-xl bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 transition"
+                  >
+                    + New Category
+                  </button>
+                </div>
+                {blogCategories.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-slate-400">No categories yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {blogCategories.map((c) => (
+                      <div key={c.id} className="group flex items-center justify-between rounded-xl border border-slate-100 px-4 py-3 hover:bg-slate-50">
+                        <div>
+                          <p className="text-sm font-medium text-slate-800">{c.name}</p>
+                          <p className="text-xs text-slate-400">{c.description || c.slug}</p>
+                        </div>
+                        <div className="flex gap-3 opacity-0 group-hover:opacity-100 transition">
+                          <button type="button" onClick={() => setCatForm({ ...c })} className="text-xs text-brand-600 hover:underline">Edit</button>
+                          <button type="button" onClick={() => deleteBlogCategory(c.id, c.name)} className="text-xs text-rose-500 hover:underline">Delete</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* ── Tags sub-tab ── */}
+            {!blogLoading && blogTab === "tags" && (
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-slate-800">Tags ({blogTags.length})</h2>
+                  <button
+                    type="button"
+                    onClick={() => setTagForm({ name: "", slug: "" })}
+                    className="rounded-xl bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 transition"
+                  >
+                    + New Tag
+                  </button>
+                </div>
+                {blogTags.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-slate-400">No tags yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {blogTags.map((t) => (
+                      <div key={t.id} className="group flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">
+                        <span className="text-xs font-medium text-slate-700">#{t.name}</span>
+                        <button type="button" onClick={() => setTagForm({ ...t })} className="text-[10px] text-brand-600 hover:underline opacity-0 group-hover:opacity-100 transition">edit</button>
+                        <button type="button" onClick={() => deleteBlogTag(t.id, t.name)} className="text-[10px] text-rose-500 hover:underline opacity-0 group-hover:opacity-100 transition">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* Article form modal */}
+            {blogForm !== null && (
+              <BlogArticleModal
+                form={blogForm}
+                categories={blogCategories}
+                tags={blogTags}
+                busy={blogFormBusy}
+                onSave={saveBlogArticle}
+                onClose={() => setBlogForm(null)}
+              />
+            )}
+
+            {/* Category form modal */}
+            {catForm !== null && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-slate-900/60" onClick={() => setCatForm(null)} />
+                <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+                  <h3 className="mb-4 text-base font-semibold">{catForm.id ? "Edit" : "New"} Category</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Name</label>
+                      <input value={catForm.name} onChange={(e) => setCatForm((f) => ({ ...f, name: e.target.value }))}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Slug</label>
+                      <input value={catForm.slug} onChange={(e) => setCatForm((f) => ({ ...f, slug: e.target.value }))}
+                        placeholder="auto-generated if empty"
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Description</label>
+                      <input value={catForm.description || ""} onChange={(e) => setCatForm((f) => ({ ...f, description: e.target.value }))}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+                    </div>
+                  </div>
+                  <div className="mt-5 flex justify-end gap-2">
+                    <button onClick={() => setCatForm(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+                    <button onClick={() => saveBlogCategory(catForm)} disabled={!catForm.name.trim() || catFormBusy}
+                      className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+                      {catFormBusy ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tag form modal */}
+            {tagForm !== null && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-slate-900/60" onClick={() => setTagForm(null)} />
+                <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+                  <h3 className="mb-4 text-base font-semibold">{tagForm.id ? "Edit" : "New"} Tag</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Name</label>
+                      <input value={tagForm.name} onChange={(e) => setTagForm((f) => ({ ...f, name: e.target.value }))}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Slug</label>
+                      <input value={tagForm.slug} onChange={(e) => setTagForm((f) => ({ ...f, slug: e.target.value }))}
+                        placeholder="auto-generated if empty"
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+                    </div>
+                  </div>
+                  <div className="mt-5 flex justify-end gap-2">
+                    <button onClick={() => setTagForm(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+                    <button onClick={() => saveBlogTag(tagForm)} disabled={!tagForm.name.trim() || tagFormBusy}
+                      className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+                      {tagFormBusy ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
       </main>
+      </div>
+    </div>
+  );
+}
+
+// ── Rich text editor ─────────────────────────────────────────────────────────
+
+function RichEditor({ value, onChange }) {
+  const editorRef = useRef(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [popover, setPopover] = useState(null); // { type: "link"|"image", url: "" }
+  const savedRangeRef = useRef(null);
+
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    if (el.innerHTML !== (value || "")) el.innerHTML = value || "";
+  }, [value]);
+
+  useEffect(() => {
+    function onKey(e) { if (e.key === "Escape") { if (popover) { setPopover(null); } else if (fullscreen) { setFullscreen(false); } } }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [fullscreen, popover]);
+
+  function exec(cmd, val = null) {
+    editorRef.current?.focus();
+    document.execCommand(cmd, false, val);
+    onChange(editorRef.current?.innerHTML || "");
+  }
+
+  function saveSelection() {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+  }
+
+  function restoreSelection() {
+    const sel = window.getSelection();
+    if (savedRangeRef.current && sel) {
+      sel.removeAllRanges();
+      sel.addRange(savedRangeRef.current);
+    }
+  }
+
+  function openPopover(type) {
+    saveSelection();
+    setPopover({ type, url: "" });
+  }
+
+  function applyPopover() {
+    restoreSelection();
+    editorRef.current?.focus();
+    if (popover.type === "link" && popover.url) {
+      document.execCommand("createLink", false, popover.url);
+      editorRef.current?.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
+    } else if (popover.type === "image" && popover.url) {
+      document.execCommand("insertImage", false, popover.url);
+    }
+    onChange(editorRef.current?.innerHTML || "");
+    setPopover(null);
+  }
+
+  function handleInput() { onChange(editorRef.current?.innerHTML || ""); }
+
+  function handleKeyDown(e) {
+    if (e.key === "Tab") { e.preventDefault(); exec("insertHTML", "&nbsp;&nbsp;&nbsp;&nbsp;"); }
+  }
+
+  const BTN = "flex h-7 w-7 items-center justify-center rounded text-slate-600 hover:bg-slate-100 text-sm font-medium";
+  const SEP = "w-px h-5 bg-slate-200 mx-1";
+
+  const editorClass = "overflow-y-auto px-4 py-3 text-sm text-slate-800 leading-relaxed focus:outline-none [&_h2]:text-xl [&_h2]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1 [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-3 [&_li]:mb-1 [&_blockquote]:border-l-4 [&_blockquote]:border-brand-200 [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-slate-500 [&_strong]:font-semibold [&_em]:italic [&_u]:underline [&_a]:text-brand-600 [&_a]:underline [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-2";
+
+  const toolbar = (
+    <div className="relative flex flex-wrap items-center gap-0.5 border-b border-slate-200 bg-slate-50 px-2 py-1.5 shrink-0">
+      <button type="button" className={BTN} title="Bold" onMouseDown={(e) => { e.preventDefault(); exec("bold"); }}><strong>B</strong></button>
+      <button type="button" className={BTN} title="Italic" onMouseDown={(e) => { e.preventDefault(); exec("italic"); }}><em>I</em></button>
+      <button type="button" className={BTN} title="Underline" onMouseDown={(e) => { e.preventDefault(); exec("underline"); }}><u>U</u></button>
+      <div className={SEP} />
+      <button type="button" className={`${BTN} w-auto px-2 text-xs`} title="Heading 2" onMouseDown={(e) => { e.preventDefault(); exec("formatBlock", "h2"); }}>H2</button>
+      <button type="button" className={`${BTN} w-auto px-2 text-xs`} title="Heading 3" onMouseDown={(e) => { e.preventDefault(); exec("formatBlock", "h3"); }}>H3</button>
+      <button type="button" className={`${BTN} w-auto px-2 text-xs`} title="Paragraph" onMouseDown={(e) => { e.preventDefault(); exec("formatBlock", "p"); }}>P</button>
+      <div className={SEP} />
+      <button type="button" className={BTN} title="Bullet list" onMouseDown={(e) => { e.preventDefault(); exec("insertUnorderedList"); }}>
+        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><circle cx="2" cy="4" r="1.5"/><rect x="5" y="3" width="10" height="2" rx="1"/><circle cx="2" cy="8" r="1.5"/><rect x="5" y="7" width="10" height="2" rx="1"/><circle cx="2" cy="12" r="1.5"/><rect x="5" y="11" width="10" height="2" rx="1"/></svg>
+      </button>
+      <button type="button" className={BTN} title="Numbered list" onMouseDown={(e) => { e.preventDefault(); exec("insertOrderedList"); }}>
+        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><text x="0" y="5" fontSize="5" fontFamily="monospace">1.</text><rect x="5" y="3" width="10" height="2" rx="1"/><text x="0" y="9" fontSize="5" fontFamily="monospace">2.</text><rect x="5" y="7" width="10" height="2" rx="1"/><text x="0" y="13" fontSize="5" fontFamily="monospace">3.</text><rect x="5" y="11" width="10" height="2" rx="1"/></svg>
+      </button>
+      <div className={SEP} />
+      <button type="button" className={BTN} title="Blockquote" onMouseDown={(e) => { e.preventDefault(); exec("formatBlock", "blockquote"); }}>
+        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><rect x="1" y="2" width="2" height="12" rx="1"/><rect x="5" y="4" width="9" height="2" rx="1"/><rect x="5" y="7" width="7" height="2" rx="1"/><rect x="5" y="10" width="8" height="2" rx="1"/></svg>
+      </button>
+      <button type="button" className={BTN} title="Remove formatting" onMouseDown={(e) => { e.preventDefault(); exec("removeFormat"); }}>
+        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 3l10 10M6 3h7M4 13h8"/></svg>
+      </button>
+      <div className={SEP} />
+      <button type="button" className={`${BTN} ${popover?.type === "link" ? "bg-brand-50 text-brand-600" : ""}`} title="Insert link" onMouseDown={(e) => { e.preventDefault(); openPopover(popover?.type === "link" ? null : "link"); }}>
+        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6.5 9.5a3.5 3.5 0 005 0l2-2a3.5 3.5 0 00-5-5L7.5 3.5"/><path d="M9.5 6.5a3.5 3.5 0 00-5 0l-2 2a3.5 3.5 0 005 5l1-1"/></svg>
+      </button>
+      <button type="button" className={`${BTN} ${popover?.type === "image" ? "bg-brand-50 text-brand-600" : ""}`} title="Insert image" onMouseDown={(e) => { e.preventDefault(); openPopover(popover?.type === "image" ? null : "image"); }}>
+        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="3" width="14" height="10" rx="2"/><circle cx="5.5" cy="6.5" r="1"/><path d="M1 11l4-3 3 2.5 2-1.5 5 4"/></svg>
+      </button>
+      <div className="flex-1" />
+      <button type="button" className={BTN} title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen"} onMouseDown={(e) => { e.preventDefault(); setFullscreen(v => !v); }}>
+        {fullscreen
+          ? <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M5 1v4H1M11 1v4h4M5 15v-4H1M11 15v-4h4"/></svg>
+          : <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M1 5V1h4M15 5V1h-4M1 11v4h4M15 11v4h-4"/></svg>
+        }
+      </button>
+
+      {/* Inline popover for link / image */}
+      {popover && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-xl border border-slate-200 bg-white p-3 shadow-lg">
+          <p className="mb-2 text-xs font-semibold text-slate-700">
+            {popover.type === "link" ? "Insert Link" : "Insert Image URL"}
+          </p>
+          <div className="flex gap-2">
+            <input
+              autoFocus
+              type="url"
+              placeholder={popover.type === "link" ? "https://example.com" : "https://example.com/image.png"}
+              value={popover.url}
+              onChange={(e) => setPopover((p) => ({ ...p, url: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyPopover(); } }}
+              className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:border-brand-400 focus:outline-none"
+            />
+            <button type="button" onClick={applyPopover}
+              className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 transition">
+              Insert
+            </button>
+            <button type="button" onClick={() => setPopover(null)}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 transition">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  if (fullscreen) {
+    return (
+      <div className="fixed inset-0 z-[200] flex flex-col bg-white">
+        {toolbar}
+        <div
+          ref={editorRef}
+          contentEditable
+          suppressContentEditableWarning
+          onInput={handleInput}
+          onKeyDown={handleKeyDown}
+          className={`flex-1 ${editorClass}`}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 focus-within:border-brand-400 overflow-hidden flex flex-col">
+      {toolbar}
+      <div
+        ref={editorRef}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={handleInput}
+        onKeyDown={handleKeyDown}
+        className={`${editorClass} min-h-[260px] max-h-[400px]`}
+      />
+    </div>
+  );
+}
+
+// ── Blog article editor modal ─────────────────────────────────────────────────
+
+function BlogArticleModal({ form, categories, tags, busy, onSave, onClose }) {
+  const [f, setF] = useState({ ...form });
+  const [imgUploading, setImgUploading] = useState(false);
+  const [imgError, setImgError] = useState("");
+  const [preview, setPreview] = useState(false);
+  const fileRef = useRef(null);
+
+  function toggle(tagId) {
+    setF((prev) => ({
+      ...prev,
+      tag_ids: prev.tag_ids.includes(tagId)
+        ? prev.tag_ids.filter((id) => id !== tagId)
+        : [...prev.tag_ids, tagId],
+    }));
+  }
+
+  async function handleImagePick(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImgError("");
+    setImgUploading(true);
+    try {
+      const token = localStorage.getItem("ea_token");
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:8001"}/blog/admin/upload-image`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Upload failed.");
+      }
+      const { url } = await res.json();
+      setF((p) => ({ ...p, cover_image_url: url }));
+    } catch (err) {
+      setImgError(err.message || "Upload failed.");
+    } finally {
+      setImgUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 pt-10">
+      <div className="relative z-10 w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-900/10">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="text-base font-semibold text-slate-900">{f.id ? "Edit Article" : "New Article"}</h3>
+          <div className="flex items-center gap-2 ml-auto">
+            <button
+              type="button"
+              onClick={() => setPreview(v => !v)}
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${preview ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+            >
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="3"/><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/></svg>
+              {preview ? "Edit" : "Preview"}
+            </button>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-lg leading-none">✕</button>
+          </div>
+        </div>
+
+        {/* ── Preview pane ── */}
+        {preview && (
+          <div className="rounded-xl border border-slate-200 bg-white overflow-y-auto max-h-[70vh] p-6">
+            {f.cover_image_url && (
+              <img src={f.cover_image_url} alt={f.title} className="mb-6 w-full rounded-xl object-cover" style={{ maxHeight: 280 }} />
+            )}
+            {f.title && <h1 className="text-2xl font-extrabold text-slate-900 leading-tight">{f.title}</h1>}
+            {f.excerpt && <p className="mt-3 text-base text-slate-500 leading-relaxed">{f.excerpt}</p>}
+            <div
+              className="mt-6 text-sm text-slate-700 leading-relaxed [&_h2]:text-xl [&_h2]:font-bold [&_h2]:text-slate-900 [&_h2]:mt-6 [&_h2]:mb-3 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:mb-4 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-4 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-4 [&_li]:mb-1.5 [&_a]:text-brand-600 [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-brand-200 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-slate-500 [&_img]:rounded-xl [&_img]:max-w-full [&_strong]:font-semibold"
+              dangerouslySetInnerHTML={{ __html: f.content || "<p class='text-slate-400'>No content yet.</p>" }}
+            />
+          </div>
+        )}
+
+        <div className={`space-y-4 ${preview ? "hidden" : ""}`}>
+          <div className="grid grid-cols-2 gap-4">
+
+            {/* Title */}
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">Title <span className="text-rose-500">*</span></label>
+              <input value={f.title} onChange={(e) => setF((p) => ({ ...p, title: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+            </div>
+
+            {/* Slug */}
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Slug</label>
+              <input value={f.slug || ""} onChange={(e) => setF((p) => ({ ...p, slug: e.target.value }))}
+                placeholder="auto-generated"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+            </div>
+
+            {/* Author */}
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Author</label>
+              <input value={f.author_name} onChange={(e) => setF((p) => ({ ...p, author_name: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+            </div>
+
+            {/* Category */}
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Category</label>
+              <select value={f.category_id || ""} onChange={(e) => setF((p) => ({ ...p, category_id: e.target.value || null }))}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none">
+                <option value="">No category</option>
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+
+            {/* Status */}
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Status</label>
+              <select value={f.status} onChange={(e) => setF((p) => ({ ...p, status: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none">
+                <option value="draft">Draft</option>
+                <option value="published">Published</option>
+              </select>
+            </div>
+
+            {/* Cover image — upload + URL fallback */}
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">Cover Image</label>
+              <div className="flex flex-col gap-2">
+                {/* Preview */}
+                {f.cover_image_url && (
+                  <div className="relative w-full overflow-hidden rounded-xl border border-slate-200">
+                    <img src={f.cover_image_url} alt="Cover" className="h-40 w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setF((p) => ({ ...p, cover_image_url: "" }))}
+                      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/70 text-white text-xs hover:bg-slate-900 transition"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+                {/* Upload button */}
+                <div className="flex items-center gap-2">
+                  <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+                    className="hidden" onChange={handleImagePick} />
+                  <button
+                    type="button"
+                    disabled={imgUploading}
+                    onClick={() => fileRef.current?.click()}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 transition disabled:opacity-50"
+                  >
+                    {imgUploading ? (
+                      <><span className="animate-spin inline-block h-3 w-3 rounded-full border border-slate-400 border-t-transparent" /> Uploading…</>
+                    ) : (
+                      <><svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5"><path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" /></svg> Upload image</>
+                    )}
+                  </button>
+                  <span className="text-xs text-slate-400">or paste URL below</span>
+                </div>
+                {/* URL input */}
+                <input
+                  value={f.cover_image_url || ""}
+                  onChange={(e) => setF((p) => ({ ...p, cover_image_url: e.target.value }))}
+                  placeholder="https://…"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none"
+                />
+                {imgError && <p className="text-xs text-rose-500">{imgError}</p>}
+              </div>
+            </div>
+
+            {/* Excerpt */}
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">Excerpt</label>
+              <textarea value={f.excerpt || ""} onChange={(e) => setF((p) => ({ ...p, excerpt: e.target.value }))}
+                rows={2}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none resize-none" />
+            </div>
+
+            {/* Content */}
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">Content</label>
+              <RichEditor value={f.content || ""} onChange={(html) => setF((p) => ({ ...p, content: html }))} />
+            </div>
+
+            {/* Tags */}
+            {tags.length > 0 && (
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-slate-700 mb-2">Tags</label>
+                <div className="flex flex-wrap gap-2">
+                  {tags.map((t) => {
+                    const sel = (f.tag_ids || []).includes(t.id);
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => toggle(t.id)}
+                        className={`rounded-full px-3 py-1 text-xs font-medium transition ${sel ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                      >
+                        #{t.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button
+            onClick={() => onSave(f)}
+            disabled={!f.title.trim() || busy || imgUploading}
+            className="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {busy ? "Saving…" : f.id ? "Save Changes" : "Create Article"}
+          </button>
+        </div>
       </div>
     </div>
   );

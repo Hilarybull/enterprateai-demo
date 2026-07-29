@@ -41,6 +41,8 @@ import DisclaimerPage from "./pages/DisclaimerPage";
 import CreditsPage from "./pages/CreditsPage";
 import ReferralPage from "./pages/ReferralPage";
 import ReferralClickPage from "./pages/ReferralClickPage";
+import BlogPage from "./pages/BlogPage";
+import BlogArticlePage from "./pages/BlogArticlePage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -83,6 +85,8 @@ export default function App() {
       <Route path="/legal/terms" element={<TermsOfServicePage />} />
       <Route path="/legal/disclaimer" element={<DisclaimerPage />} />
       <Route path="/r/:code" element={<ReferralClickPage />} />
+      <Route path="/blog" element={<BlogPage />} />
+      <Route path="/blog/:slug" element={<BlogArticlePage />} />
       <Route path="/share/:token" element={<SharedBlueprintPage />} />
       <Route path="/join/:token" element={<JoinPage />} />
       <Route

@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import html2pdf from "html2pdf.js";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
@@ -59,7 +59,13 @@ export default function CataloguePage() {
   const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [editingVendorId, setEditingVendorId] = useState(null);
   const [activeTab, setActiveTab] = useState(() => firstAccessibleCatalogueTab());
+  const [searchParams, setSearchParams] = useSearchParams();
   const [catalogueDrill, setCatalogueDrill] = useState(null); // { label, type, items }
+
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t) { setActiveTab(t); setSearchParams({}, { replace: true }); }
+  }, []); // eslint-disable-line
   const [reportFinancials, setReportFinancials] = useState({ invoices: [], expenses: [] });
   const [pendingCatalogueReport, setPendingCatalogueReport] = useState(null);
   const [reportFilter, setReportFilter] = useState({ products: true, customers: true, vendors: true });
