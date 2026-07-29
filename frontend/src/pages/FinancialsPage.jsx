@@ -2156,6 +2156,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             ...(canFinancialsFeature("contracts") ? [{ value: "contracts", label: "Contracts" }] : []),
             { value: "receipts", label: "Receipts" },
             { value: "report", label: "Report" },
+            { value: "integrations", label: "Integrations" },
           ]}
         />
       </div>
@@ -4394,6 +4395,16 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               </div>
             </SectionCard>
           )}
+        </div>
+      )}
+
+      {activeTab === "integrations" && (
+        <div className="mt-6">
+          <SectionCard title="Financial Integrations" subtitle="Connect QuickBooks or Xero to sync your invoices, expenses, customers and vendors.">
+            <div className="mt-3">
+              <IntegrationPanel providers={["quickbooks", "xero"]} />
+            </div>
+          </SectionCard>
         </div>
       )}
 

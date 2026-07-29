@@ -766,6 +766,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
             ...(canCatalogueFeature("manage_customers") ? [{ value: "customers", label: "Customers" }] : []),
             ...(canCatalogueFeature("manage_vendors") ? [{ value: "vendors", label: "Vendors" }] : []),
             { value: "report", label: "Report" },
+            { value: "integrations", label: "Integrations" },
           ]}
         />
       </div>
@@ -1610,6 +1611,16 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               </div>
             </SectionCard>
           )}
+        </div>
+      )}
+
+      {activeTab === "integrations" && (
+        <div className="mt-6">
+          <SectionCard title="Catalogue Integrations" subtitle="Connect Zoho CRM to sync your products, customers and vendors.">
+            <div className="mt-3">
+              <IntegrationPanel providers={["zoho_crm"]} />
+            </div>
+          </SectionCard>
         </div>
       )}
 
