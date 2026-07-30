@@ -285,6 +285,9 @@ export default function LandingPage() {
                 </div>
               )}
             </li>
+            {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"]].map(([href, label]) => (
+              <li key={href}><a href={href} className="whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600">{label}</a></li>
+            ))}
             {/* Articles dropdown */}
             <li ref={articlesRef} className="relative">
               <button
@@ -329,7 +332,7 @@ export default function LandingPage() {
                 </div>
               )}
             </li>
-            {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
+            {[["#faq", "FAQ"]].map(([href, label]) => (
               <li key={href}><a href={href} className="whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600">{label}</a></li>
             ))}
           </ul>
@@ -346,9 +349,11 @@ export default function LandingPage() {
         {mobileMenuOpen && (
           <div className="border-t border-slate-100 bg-white px-4 pb-4 xl:hidden">
             <ul className="mt-3 flex flex-col gap-3">
-              {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
+              {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"]].map(([href, label]) => (
                 <li key={href}><a href={href} onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">{label}</a></li>
               ))}
+              <li><Link to="/blog" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">Articles</Link></li>
+              <li><a href="#faq" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">FAQ</a></li>
               <li><Link to="/login" className="block text-sm font-medium text-slate-700">Sign in</Link></li>
             </ul>
             <div className="mt-4 border-t border-slate-100 pt-4">
