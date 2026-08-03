@@ -772,11 +772,11 @@ export default function FinancialsPage() {
         };
       }
       const product = resolveProducts([id])[0];
-      if (!product) return null;
       const existing = existingItems.find((item) => item?.product_id === id);
+      if (!product && !existing) return null;
       return {
-        product_id: product.id,
-        product_name: product.name,
+        product_id: id,
+        product_name: product?.name || existing?.product_name || "Product / Service",
         quantity: Number(existing?.quantity || 1),
         unit_price: existing?.unit_price != null ? Number(existing.unit_price) : Number(getProductPrice(product)),
         unit_cost_of_sales: existing?.unit_cost_of_sales != null ? Number(existing.unit_cost_of_sales) : Number(getProductDefaultCost(product)),
@@ -819,9 +819,8 @@ export default function FinancialsPage() {
 
   function getDocumentGrandTotal(record) {
     const subtotal = Number(record?.subtotal_amount || 0);
-    const costOfSales = Number(record?.cost_of_sales || 0);
     const vatAmount = Number(record?.vat_amount || 0);
-    return Number((subtotal + costOfSales + vatAmount).toFixed(2));
+    return Number((subtotal + vatAmount).toFixed(2));
   }
 
   function renderShareStatus(status) {
@@ -884,7 +883,7 @@ export default function FinancialsPage() {
     <div class="muted">Bill to</div>
     <div><strong>${customer?.name || "Customer"}</strong></div>
     ${customer?.address ? `<div class="muted">${customer.address}</div>` : ""}
-    <div class="muted" style="margin-top:6px;">Payment terms: ${formatPaymentTerms(customer?.payment_terms)}</div>
+    ${customer?.payment_terms ? `<div class="muted" style="margin-top:6px;">Payment terms: ${formatPaymentTerms(customer?.payment_terms)}</div>` : ""}
     ${invoice?.due_date ? `<div class="muted" style="margin-top:6px;">Due date: ${new Date(invoice.due_date).toLocaleDateString()}</div>` : ""}
   </div>
   <table>
@@ -893,21 +892,21 @@ export default function FinancialsPage() {
     </thead>
     <tbody>
       ${items.map((item) => {
-        const unitFull = Number(item?.unit_price || 0) + Number(item?.unit_cost_of_sales || 0);
+        const unitPrice = Number(item?.unit_price || 0);
         const qty = Number(item?.quantity || 0);
-        const subtotalFull = unitFull * qty;
+        const subtotalFull = unitPrice * qty;
         return `
       <tr>
         <td>${item?.product_name || "Product / Service"}</td>
         <td class="right">${qty}</td>
-        <td class="right">${formatMoney(unitFull)}</td>
+        <td class="right">${formatMoney(unitPrice)}</td>
         <td class="right"><strong>${formatMoney(subtotalFull)}</strong></td>
       </tr>`;
       }).join("")}
     </tbody>
   </table>
   <div class="card">
-    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatMoney(Number(invoice?.subtotal_amount || 0) + Number(invoice?.cost_of_sales || 0))}</span></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatMoney(Number(invoice?.subtotal_amount || 0))}</span></div>
     ${Number(invoice?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatMoney(Number(invoice?.vat_amount || 0))}</span></div>` : ""}
     <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
   </div>
@@ -967,7 +966,7 @@ export default function FinancialsPage() {
     <div class="muted">Prepared for</div>
     <div><strong>${customer?.name || "Customer"}</strong></div>
     ${customer?.address ? `<div class="muted">${customer.address}</div>` : ""}
-    <div class="muted" style="margin-top:6px;">Payment terms: ${formatPaymentTerms(customer?.payment_terms)}</div>
+    ${customer?.payment_terms ? `<div class="muted" style="margin-top:6px;">Payment terms: ${formatPaymentTerms(customer?.payment_terms)}</div>` : ""}
     ${quote?.due_date ? `<div class="muted" style="margin-top:6px;">Due date: ${new Date(quote.due_date).toLocaleDateString()}</div>` : ""}
   </div>
   <table>
@@ -977,7 +976,7 @@ export default function FinancialsPage() {
     <tbody>
       ${items.map((item) => {
         const qty = Number(item?.quantity || 0);
-        const unitCost = Number(item?.unit_price || 0) + Number(item?.unit_cost_of_sales || 0);
+        const unitCost = Number(item?.unit_price || 0);
         const lineTotal = unitCost * qty;
         return `
       <tr>
@@ -990,7 +989,7 @@ export default function FinancialsPage() {
     </tbody>
   </table>
   <div class="card">
-    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatMoney(Number(quote?.subtotal_amount || 0) + Number(quote?.cost_of_sales || 0))}</span></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatMoney(Number(quote?.subtotal_amount || 0))}</span></div>
     ${Number(quote?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${quote.vat_rate}%)</span><span>${formatMoney(Number(quote?.vat_amount || 0))}</span></div>` : ""}
     <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
   </div>
@@ -1023,7 +1022,7 @@ export default function FinancialsPage() {
       `${isReceipt ? "Receipt" : isInvoice ? "Invoice" : "Quotation"} ${reference}`,
       `Customer: ${customer?.name || "Customer"}`,
       `Items: ${itemName}`,
-      `Subtotal: ${formatMoney(Number(record?.subtotal_amount || 0) + Number(record?.cost_of_sales || 0))}`,
+      `Subtotal: ${formatMoney(Number(record?.subtotal_amount || 0))}`,
       ...(Number(record?.vat_rate) > 0 ? [`VAT (${Number(record.vat_rate)}%): ${formatMoney(Number(record?.vat_amount || 0))}`] : []),
       `Grand total: ${formatMoney(grandTotal)}`,
       `Status: ${record?.status || "paid"}`,
@@ -1111,7 +1110,10 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
 
   function buildReceiptHtml(invoice, customer, product) {
     const grandTotal = getDocumentGrandTotal(invoice);
-    const preTaxTotal = Number(invoice?.subtotal_amount || 0) + Number(invoice?.cost_of_sales || 0);
+    const preTaxTotal = Number(invoice?.subtotal_amount || 0);
+    const isPartial = invoice?.payment_type === "partial" && invoice?.paid_amount != null;
+    const amountPaid = isPartial ? Number(invoice.paid_amount) : grandTotal;
+    const balanceDue = isPartial ? Number((grandTotal - amountPaid).toFixed(2)) : 0;
     const receiptId = invoice?.invoice_id ? `RCP-${invoice.invoice_id}` : (invoice?.id ? `RCP-${invoice.id.substring(0, 8).toUpperCase()}` : "RCP-DRAFT");
     const paidDate = invoice?.paid_at || invoice?.updated_at || new Date().toISOString();
     const items = Array.isArray(invoice?.items) && invoice.items.length
@@ -1151,7 +1153,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       <div class="muted">Payment Receipt</div>
     </div>
     <div style="text-align:right;">
-      <div class="badge">PAID</div>
+      <div class="badge">${isPartial ? "PARTIAL" : "PAID"}</div>
       <div class="muted" style="margin-top:8px;">Receipt: ${receiptId}</div>
       <div class="muted">Date: ${new Date(paidDate).toLocaleDateString()}</div>
     </div>
@@ -1169,7 +1171,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     <tbody>
       ${items.map((item) => {
         const qty = Number(item?.quantity || 0);
-        const unitFull = Number(item?.unit_price || 0) + Number(item?.unit_cost_of_sales || 0);
+        const unitFull = Number(item?.unit_price || 0);
         return `<tr>
           <td>${item?.product_name || "Product / Service"}</td>
           <td class="right">${qty}</td>
@@ -1182,7 +1184,11 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   <div class="totals">
     <div class="totals-row"><span class="muted">Total</span><span>${formatMoney(preTaxTotal)}</span></div>
     ${Number(invoice?.vat_rate) > 0 ? `<div class="totals-row"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatMoney(Number(invoice?.vat_amount || 0))}</span></div>` : ""}
-    <div class="totals-row grand"><span>Grand Total</span><span>${formatMoney(grandTotal)}</span></div>
+    ${isPartial ? `
+    <div class="totals-row" style="border-top:1px solid #e2e8f0; margin-top:6px; padding-top:8px;"><span class="muted">Invoice Total</span><span>${formatMoney(grandTotal)}</span></div>
+    <div class="totals-row grand"><span>Amount Paid</span><span>${formatMoney(amountPaid)}</span></div>
+    <div class="totals-row"><span class="muted">Balance Due</span><span>${formatMoney(balanceDue)}</span></div>
+    ` : `<div class="totals-row grand"><span>Grand Total</span><span>${formatMoney(grandTotal)}</span></div>`}
   </div>
   <hr class="divider"/>
   <div class="muted" style="font-size:11px; text-align:center;">Thank you for your payment. This is your official receipt.</div>
@@ -1542,10 +1548,9 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     }
     const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-    const preTaxTotal = Number((subtotal + totalCostOfSales).toFixed(2));
     const vatRate = Number(invoiceForm.vat_rate || 0);
-    const vatAmount = Number((preTaxTotal * vatRate / 100).toFixed(2));
-    const grandTotal = Number((preTaxTotal + vatAmount).toFixed(2));
+    const vatAmount = Number((subtotal * vatRate / 100).toFixed(2));
+    const grandTotal = Number((subtotal + vatAmount).toFixed(2));
     if (invoiceForm.contract_id) {
       const contract = activeContracts.find((c) => c.id === invoiceForm.contract_id);
       if (contract) {
@@ -1760,7 +1765,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     resetContractForm();
   }
 
-  async function updateStatus(type, id, status, dateStr) {
+  async function updateStatus(type, id, status, dateStr, extraData = {}) {
     const ts = dateStr ? new Date(dateStr).toISOString() : new Date().toISOString();
     if (type === "invoice") {
       const next = invoices.map((i) =>
@@ -1769,6 +1774,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
           paid_at: status === "paid" ? ts : (status === "pending" ? null : i.paid_at),
           issued_at: status === "delivered" ? ts : i.issued_at,
           updated_at: new Date().toISOString(),
+          ...(status === "paid" ? { payment_type: extraData.payment_type || "full", paid_amount: extraData.paid_amount ?? null } : {}),
         } : i
       );
       setInvoices(next);
@@ -2063,7 +2069,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
   const invoiceSubtotal = Number(allInvoiceItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceCostOfSalesTotal = Number(allInvoiceItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceVatRate = Number(invoiceForm.vat_rate || 0);
-  const invoicePreTaxTotal = Number((invoiceSubtotal + invoiceCostOfSalesTotal).toFixed(2));
+  const invoicePreTaxTotal = invoiceSubtotal;
   const invoiceVatAmount = Number((invoicePreTaxTotal * invoiceVatRate / 100).toFixed(2));
   const invoiceGrandTotal = Number((invoicePreTaxTotal + invoiceVatAmount).toFixed(2));
   const linkedContract = invoiceForm.contract_id ? activeContracts.find((c) => c.id === invoiceForm.contract_id) : null;
@@ -2604,7 +2610,6 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             </div>
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
               <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(invoiceSubtotal)}</span></div>
-              {invoiceCostOfSalesTotal > 0 && <div className="flex justify-between"><span>Cost of sales</span><span>{formatMoney(invoiceCostOfSalesTotal)}</span></div>}
               {invoiceVatAmount > 0 && <div className="flex justify-between"><span>VAT ({invoiceVatRate}%)</span><span>{formatMoney(invoiceVatAmount)}</span></div>}
               <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(invoiceGrandTotal)}</span></div>
             </div>
@@ -2717,7 +2722,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                             </div>
                             <div className="mt-0.5 text-xs text-slate-500">
                               Qty {inv.quantity} · {formatMoney(inv.total_amount)} · Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"}
-                              {inv.status === "paid" && inv.paid_at ? ` · Paid ${new Date(inv.paid_at).toLocaleDateString()}` : inv.status === "delivered" && inv.issued_at ? ` · Delivered ${new Date(inv.issued_at).toLocaleDateString()}` : null}
+                              {inv.status === "paid" && inv.paid_at ? ` · Paid ${new Date(inv.paid_at).toLocaleDateString()}${inv.payment_type === "partial" && inv.paid_amount != null ? ` (${formatMoney(inv.paid_amount)})` : ""}` : inv.status === "delivered" && inv.issued_at ? ` · Delivered ${new Date(inv.issued_at).toLocaleDateString()}` : null}
                             </div>
                           </div>
                           <ActionMenu
@@ -3987,7 +3992,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                         Add item
                       </button>
                       <div>
-                        <div className="ea-label">VAT / Tax rate (%) — optional</div>
+                        <div className="ea-label">VAT / Tax rate (%) (optional)</div>
                         <Input
                           type="number"
                           min="0"
@@ -4431,8 +4436,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             </div>
             <StatusDateForm
               modal={statusDateModal}
-              onConfirm={(dateStr) => {
-                updateStatus(statusDateModal.type, statusDateModal.id, statusDateModal.status, dateStr);
+              onConfirm={(dateStr, extraData) => {
+                updateStatus(statusDateModal.type, statusDateModal.id, statusDateModal.status, dateStr, extraData);
                 setStatusDateModal(null);
               }}
               onCancel={() => setStatusDateModal(null)}
@@ -4984,7 +4989,18 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 function StatusDateForm({ modal, onConfirm, onCancel }) {
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
-  const label = modal.status === "paid" ? "Date of payment" : "Date of delivery";
+  const [paymentType, setPaymentType] = useState("full");
+  const [paidAmount, setPaidAmount] = useState("");
+  const isPaid = modal.status === "paid";
+  const label = isPaid ? "Date of payment" : "Date of delivery";
+
+  function handleConfirm() {
+    const extraData = isPaid
+      ? { payment_type: paymentType, paid_amount: paymentType === "partial" ? Number(paidAmount) || null : null }
+      : {};
+    onConfirm(date || today, extraData);
+  }
+
   return (
     <div className="px-6 py-5 space-y-4">
       <div>
@@ -4998,9 +5014,43 @@ function StatusDateForm({ modal, onConfirm, onCancel }) {
         />
         <p className="mt-1 text-xs text-slate-400">Defaults to today if left unchanged.</p>
       </div>
+      {isPaid && (
+        <div className="space-y-3">
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Payment type</label>
+          <div className="flex gap-4">
+            {["full", "partial"].map((opt) => (
+              <label key={opt} className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-300">
+                <input
+                  type="radio"
+                  name="payment_type"
+                  value={opt}
+                  checked={paymentType === opt}
+                  onChange={() => setPaymentType(opt)}
+                  className="accent-brand-600"
+                />
+                {opt.charAt(0).toUpperCase() + opt.slice(1)} payment
+              </label>
+            ))}
+          </div>
+          {paymentType === "partial" && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Amount paid</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={paidAmount}
+                onChange={(e) => setPaidAmount(e.target.value)}
+                placeholder="0.00"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex gap-2 justify-end">
         <button type="button" onClick={onCancel} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">Cancel</button>
-        <button type="button" onClick={() => onConfirm(date || today)} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Confirm</button>
+        <button type="button" onClick={handleConfirm} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Confirm</button>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import DocumentEditor from "../components/DocumentEditor";
+import DocumentEditor, { markdownToHtml } from "../components/DocumentEditor";
 import DocumentShareModal from "../components/DocumentShareModal";
 import Input from "../components/Input";
 import PageHeader from "../components/PageHeader";
@@ -334,9 +334,21 @@ export default function BlueprintPage() {
   }
   const [selectedDoc, setSelectedDoc] = useState(null);
   const [bpSearchParams, setBpSearchParams] = useSearchParams();
+  const autoGenerateRef = useRef(false);
+  const [fromValidation, setFromValidation] = useState(false);
   useEffect(() => {
     const d = bpSearchParams.get("doc");
-    if (d) { setSelectedDoc(d); setBpSearchParams({}, { replace: true }); }
+    const vws = bpSearchParams.get("validation_workspace");
+    if (d) { setSelectedDoc(d); }
+    if (vws) {
+      setWorkspaceId(vws);
+      setSelectedDoc("business_plan");
+      setIsModalOpen(true);
+      setShowInputs(true);
+      setFromValidation(true);
+      autoGenerateRef.current = true;
+    }
+    if (d || vws) setBpSearchParams({}, { replace: true });
   }, []); // eslint-disable-line
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showInputs, setShowInputs] = useState(true);
@@ -419,6 +431,20 @@ export default function BlueprintPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [creditModal, setCreditModal] = useState(null);
+  function getBlueprintCreditCost(docType, sections) {
+    const isSection = Array.isArray(sections) && sections.length === 1;
+    if (docType === "business_plan") return isSection ? 3 : 40;
+    if (docType === "client_proposal") return isSection ? 2 : 25;
+    if (docType === "sales_letter") return isSection ? 1 : 10;
+    return 40;
+  }
+  function getBlueprintFeatureName(docType, sections) {
+    const isSection = Array.isArray(sections) && sections.length === 1;
+    if (docType === "business_plan") return isSection ? "Business Plan Section" : "Business Plan";
+    if (docType === "client_proposal") return isSection ? "Proposal Section" : "Business Proposal";
+    if (docType === "sales_letter") return isSection ? "Sales Letter Section" : "Sales Letter";
+    return "Document Generation";
+  }
   const [savedNotice, setSavedNotice] = useState(null);
   const [shareNotice, setShareNotice] = useState(null);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
@@ -553,10 +579,10 @@ export default function BlueprintPage() {
 
   function expectedDocumentTitle(docId, company) {
     const name = String(company || "").trim() || "Untitled";
-    if (docId === "business_plan") return `Business Plan — ${name}`;
-    if (docId === "client_proposal") return `Business Proposal — ${name}`;
-    if (docId === "sales_letter") return `Sales Letter — ${name}`;
-    return `Document — ${name}`;
+    if (docId === "business_plan") return `Business Plan: ${name}`;
+    if (docId === "client_proposal") return `Business Proposal: ${name}`;
+    if (docId === "sales_letter") return `Sales Letter: ${name}`;
+    return `Document: ${name}`;
   }
 
   function buildCachedDocEntry(docId, docState, documentId = null) {
@@ -674,6 +700,20 @@ export default function BlueprintPage() {
       setSelectedServices([v.idea_name]);
     }
   }, [decisionStatus, v4Validation, companyName, dirtyFields, industry, targetMarket, problem, solution, valueProp, selectedServices]);
+
+  // Auto-generate when arriving from "Generate Business Plan" in the Results modal
+  useEffect(() => {
+    if (!autoGenerateRef.current) return;
+    // Wait until we have a company name populated (from workspace store) before firing
+    const resolvedName = companyName || workspaceProfile?.company_name || "";
+    if (!resolvedName.trim()) return;
+    autoGenerateRef.current = false;
+    setCreditModal({
+      featureName: getBlueprintFeatureName("business_plan", null),
+      creditCost: getBlueprintCreditCost("business_plan", null),
+      onConfirm: () => { setCreditModal(null); generateSelected(); },
+    });
+  }, [companyName, workspaceProfile]); // eslint-disable-line
 
   // When a validated product is selected from the catalogue, populate blueprint fields from its snapshot
   const prevSelectedRef = useRef([]);
@@ -874,6 +914,7 @@ export default function BlueprintPage() {
   }
 
   async function openSavedDocument(docItem) {
+    setFromValidation(false);
     setIsLoading(true);
     setError(null);
     if (docItem?.type) {
@@ -975,6 +1016,7 @@ export default function BlueprintPage() {
   }
 
   function openDoc(docId) {
+    setFromValidation(false);
     const saved = visibleSavedDocs.find((d) => d.type === docId && !String(d.id || "").startsWith("local:"));
     if (saved) {
       openSavedDocument(saved);
@@ -998,6 +1040,7 @@ export default function BlueprintPage() {
     setIsModalOpen(false);
     setIsLoading(false);
     setError(null);
+    setFromValidation(false);
   }
 
   function addItemLine() {
@@ -1202,6 +1245,325 @@ export default function BlueprintPage() {
       .trim();
   }
 
+  // ── Blueprint chart helpers ──────────────────────────────────────────────
+  function _bpFmt(v) {
+    if (v == null || isNaN(v)) return "";
+    if (v >= 1e9) return `£${(v / 1e9).toFixed(1)}B`;
+    if (v >= 1e6) return `£${(v / 1e6).toFixed(1)}M`;
+    if (v >= 1e3) return `£${(v / 1e3).toFixed(0)}K`;
+    return `£${Math.round(v).toLocaleString()}`;
+  }
+
+  function _bpParseCurrency(s) {
+    if (!s) return null;
+    const clean = s.replace(/,/g, "");
+    const m = clean.match(/([\d.]+)\s*([kKmMbB](?:illion|n)?)?(?![a-zA-Z])/i);
+    if (!m) return null;
+    let v = parseFloat(m[1]);
+    const suf = (m[2] || "").toLowerCase();
+    if (suf.startsWith("b")) v *= 1e9;
+    else if (suf.startsWith("m")) v *= 1e6;
+    else if (suf.startsWith("k")) v *= 1e3;
+    return isNaN(v) ? null : v;
+  }
+
+  function _bpCard(titleText, svg) {
+    // Collapse newlines so the div is always a single line — markdownToHtml detects it by startsWith
+    const svgInline = (svg || "").replace(/\n\s*/g, "");
+    return `<div class="ea-bp-chart" style="margin-top:18pt;padding:12pt 14pt;background:#f8fafc;border:1pt solid #e2e8f0;border-radius:8pt;page-break-inside:avoid;"><p style="text-align:center;font-size:10pt;font-weight:700;color:#1e293b;margin:0 0 8pt;">${titleText}</p>${svgInline}</div>`;
+  }
+
+  function _bpRevenueChart(body) {
+    const vals = [1, 2, 3].map(y => {
+      // Match "Year 1" with currency anywhere within 80 chars, or on the same line
+      const re1 = new RegExp(`year\\s*${y}[^\\n]{0,80}?[£$€]\\s*([\\d,]+(?:\\.\\d+)?\\s*[kKmMbB]?)`, "i");
+      const re2 = new RegExp(`[£$€]\\s*([\\d,]+(?:\\.\\d+)?\\s*[kKmMbB]?)[^\\n]{0,80}?year\\s*${y}`, "i");
+      const m = body.match(re1) || body.match(re2);
+      return m ? _bpParseCurrency(m[1]) : null;
+    });
+    if (!vals.some(v => v)) return "";
+    const data = [
+      vals[0] || 0,
+      vals[1] || (vals[0] ? vals[0] * 2 : 0),
+      vals[2] || (vals[1] ? vals[1] * 1.7 : 0),
+    ];
+    if (data.every(v => v === 0)) return "";
+    const labels = ["Year 1", "Year 2", "Year 3"];
+    const colors = ["#818cf8", "#6366f1", "#4f46e5"];
+    const W = 360, H = 170;
+    const PL = 58, PR = 16, PT = 28, PB = 36;
+    const cW = W - PL - PR, cH = H - PT - PB;
+    const max = Math.max(...data, 1);
+    const bW = cW / 3 * 0.52;
+    const bars = data.map((v, i) => {
+      const bh = (v / max) * cH;
+      const x = PL + (i + 0.5) * (cW / 3) - bW / 2;
+      const y = PT + cH - bh;
+      return [
+        `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bW.toFixed(1)}" height="${bh.toFixed(1)}" fill="${colors[i]}" rx="3"/>`,
+        v > 0 ? `<text x="${(x + bW / 2).toFixed(1)}" y="${(y - 5).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${colors[i]}" font-weight="700">${_bpFmt(v)}</text>` : "",
+        `<text x="${(x + bW / 2).toFixed(1)}" y="${(PT + cH + 14).toFixed(1)}" text-anchor="middle" font-size="9" fill="#64748b">${labels[i]}</text>`,
+      ].join("");
+    });
+    const grid = [0, 0.5, 1].map(f => {
+      const y = (PT + cH - f * cH).toFixed(1);
+      return `<line x1="${PL}" y1="${y}" x2="${W - PR}" y2="${y}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="${f ? "3,3" : "0"}"/><text x="${PL - 5}" y="${(PT + cH - f * cH + 3.5).toFixed(1)}" text-anchor="end" font-size="8" fill="#94a3b8">${_bpFmt(f * max)}</text>`;
+    });
+    const svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;display:block;margin:0 auto;">${grid.join("")}${bars.join("")}<line x1="${PL}" y1="${PT}" x2="${PL}" y2="${PT + cH}" stroke="#e2e8f0" stroke-width="1"/></svg>`;
+    return _bpCard("Projected Revenue", svg);
+  }
+
+  function _bpMarketChart(body) {
+    const parse = (acronym, longForm) => {
+      // Try acronym first (e.g. "TAM"), then long form (e.g. "total addressable market")
+      const aliases = [acronym, longForm].filter(Boolean);
+      for (const lbl of aliases) {
+        const re = new RegExp(`${lbl}[^0-9£$€\\n]{0,80}[£$€]?\\s*([\\d,]+(?:\\.\\d+)?\\s*[kKmMbB]?(?:illion)?)`, "i");
+        const m = body.match(re);
+        if (m) return _bpParseCurrency(m[1]);
+      }
+      return null;
+    };
+    const tam = parse("TAM", "total addressable market");
+    const sam = parse("SAM", "serviceable addressable market");
+    const som = parse("SOM", "serviceable obtainable market");
+    if (!tam && !sam && !som) return "";
+    const topVal = tam || sam || som;
+    const rows = [
+      { label: "TAM – Total Addressable Market", val: tam, w: 1.0, col: "#6366f1" },
+      { label: "SAM – Serviceable Available Market", val: sam, w: sam && tam ? sam / tam : 0.62, col: "#818cf8" },
+      { label: "SOM – Serviceable Obtainable Market", val: som, w: som && (tam || sam) ? som / (tam || sam) : 0.30, col: "#a5b4fc" },
+    ];
+    const W = 380, bH = 28, gap = 8, PT = 6, cx = W / 2;
+    const totalH = PT + rows.length * (bH + gap) + 10;
+    const svgRows = rows.map((r, i) => {
+      const rw = Math.max(r.w, 0.15) * (W - 20);
+      const x = cx - rw / 2;
+      const y = PT + i * (bH + gap);
+      const valText = r.val ? `  ${_bpFmt(r.val)}` : "";
+      return `<rect x="${x.toFixed(1)}" y="${y}" width="${rw.toFixed(1)}" height="${bH}" fill="${r.col}" rx="4"/><text x="${cx}" y="${(y + bH / 2 + 4).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="white" font-weight="600">${r.label}${valText}</text>`;
+    }).join("");
+    const svg = `<svg viewBox="0 0 ${W} ${totalH}" style="width:100%;max-width:${W}px;display:block;margin:0 auto;">${svgRows}</svg>`;
+    return _bpCard("Market Opportunity (TAM / SAM / SOM)", svg);
+  }
+
+  function _bpCompetitiveMatrix(body) {
+    const names = [];
+    body.split("\n").forEach(line => {
+      const m = line.match(/^[\s\-•*]+([A-Z][A-Za-z0-9\s&]{2,30})(?:[\s\-–—:|,]|$)/);
+      if (m) {
+        const n = m[1].trim();
+        if (!/(your|we |our |this |the |key |main |major )/i.test(n) && n.length < 35 && n.length > 2) names.push(n);
+      }
+    });
+    const competitors = [...new Set(names)].slice(0, 4);
+    const W = 300, H = 260;
+    const cx = W / 2, cy = H / 2 + 8;
+    const r = 96;
+    const positions = [
+      { dx: -0.65, dy: 0.55 }, { dx: 0.65, dy: 0.60 },
+      { dx: -0.55, dy: -0.58 }, { dx: 0.62, dy: -0.62 },
+    ];
+    const dots = competitors.map((name, i) => {
+      const p = positions[i] || { dx: (i % 2 ? 0.4 : -0.4), dy: (i < 2 ? 0.4 : -0.4) };
+      const px = cx + p.dx * r, py = cy + p.dy * r;
+      const short = name.length > 14 ? name.slice(0, 13) + "…" : name;
+      return `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="5" fill="#94a3b8"/><text x="${px.toFixed(1)}" y="${(py - 9).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="#64748b">${short}</text>`;
+    }).join("");
+    const yx = cx - 0.12 * r, yy = cy - 0.68 * r;
+    const compName = (companyName || "Your Business").slice(0, 16);
+    const svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;display:block;margin:0 auto;">
+      <line x1="${cx}" y1="24" x2="${cx}" y2="${H - 18}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+      <line x1="18" y1="${cy}" x2="${W - 18}" y2="${cy}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+      <text x="${cx - 8}" y="22" text-anchor="end" font-size="8" fill="#94a3b8">Lower Price</text>
+      <text x="${cx + 8}" y="22" text-anchor="start" font-size="8" fill="#94a3b8">Higher Price</text>
+      <text x="20" y="${cy - 8}" text-anchor="start" font-size="8" fill="#94a3b8">Higher Value</text>
+      <text x="20" y="${cy + 18}" text-anchor="start" font-size="8" fill="#94a3b8">Lower Value</text>
+      ${dots}
+      <circle cx="${yx.toFixed(1)}" cy="${yy.toFixed(1)}" r="7" fill="#6366f1"/>
+      <text x="${yx.toFixed(1)}" y="${(yy - 11).toFixed(1)}" text-anchor="middle" font-size="8" fill="#6366f1" font-weight="700">${compName}</text>
+    </svg>`;
+    return _bpCard("Competitive Positioning", svg);
+  }
+
+  function _bpRiskMatrix(body) {
+    const seen = new Set();
+    const risks = [];
+
+    function addRisk(r) {
+      const clean = r.replace(/[.:,;]+$/, "").trim();
+      const key = clean.toLowerCase();
+      if (clean.length >= 4 && clean.split(" ").length <= 5 && !seen.has(key)) {
+        seen.add(key);
+        risks.push(clean);
+      }
+    }
+
+    // Words that signal a sentence opener, not a risk label
+    const SKIP = /^(finally|however|therefore|additionally|moreover|furthermore|while|although|despite|when|where|if|as |since|because|the |this |these |those |it |its |they |their |there |taken |in |on |for |by |with |such )/i;
+
+    body.split("\n").forEach(line => {
+      const s = line.replace(/^[\s\-–•*#>]+/, "").trim();
+      if (!s || s.length < 5 || SKIP.test(s)) return;
+
+      // "X risk / pressure / challenge / threat / concern / failure / disruption"
+      let m = s.match(/^((?:\w+\s+){0,3}\w+)\s+(?:risk|pressure|challenge|threat|concern|failure|disruption|liability)\b/i);
+      if (m && m[1].split(" ").length <= 4 && !SKIP.test(m[1])) { addRisk(m[1].trim()); return; }
+
+      // "Something is/are/also/represents/warrants..." — subject must look like a noun phrase
+      m = s.match(/^([A-Z][a-z]+(?:\s+[a-z]+){0,3})\s+(?:is\b|are\b|also\b|represents?\b|warrants?\b|poses?\b)/);
+      if (m && m[1].split(" ").length <= 4 && !SKIP.test(m[1])) { addRisk(m[1].trim()); return; }
+
+      // "risk of X"
+      m = s.match(/\brisk\s+of\s+((?:[a-z]+\s*){1,3})/i);
+      if (m) { addRisk(m[1].trim()); return; }
+
+      // "Label: description" colon-separated
+      m = s.match(/^([^:–\-]{4,35})[:\-–]/);
+      if (m && m[1].split(" ").length <= 5 && !SKIP.test(m[1])) { addRisk(m[1].trim()); }
+    });
+
+    if (risks.length < 2) return "";
+
+    function svgWrap(text, cx, cy, maxW, fontSize, fill, bold) {
+      const words = text.split(" ");
+      const lines = [];
+      let cur = "";
+      const approxCharW = fontSize * 0.55;
+      const maxChars = Math.floor(maxW / approxCharW);
+      for (const w of words) {
+        if ((cur ? cur + " " + w : w).length <= maxChars) {
+          cur = cur ? cur + " " + w : w;
+        } else {
+          if (cur) lines.push(cur);
+          cur = w;
+        }
+      }
+      if (cur) lines.push(cur);
+      const lineH = fontSize * 1.3;
+      const totalH = lines.length * lineH;
+      const startY = cy - totalH / 2 + lineH * 0.75;
+      return lines.map((l, i) =>
+        `<text x="${cx.toFixed(1)}" y="${(startY + i * lineH).toFixed(1)}" text-anchor="middle" font-size="${fontSize}" fill="${fill}"${bold ? ' font-weight="600"' : ""}>${l}</text>`
+      ).join("");
+    }
+
+    const slots = [
+      { ri: 0, ci: 2 }, { ri: 0, ci: 1 }, { ri: 1, ci: 2 },
+      { ri: 1, ci: 1 }, { ri: 0, ci: 0 }, { ri: 2, ci: 2 },
+      { ri: 1, ci: 0 }, { ri: 2, ci: 1 }, { ri: 2, ci: 0 },
+    ];
+
+    const W = 440, H = 240;
+    const PL = 56, PT = 46, cellW = (W - PL - 10) / 3, cellH = (H - PT - 10) / 3;
+    const rowLabels = ["High", "Med", "Low"];
+    const colLabels = ["Low", "Med", "High"];
+    const cellFills = [
+      ["#fef9c3", "#fed7aa", "#fca5a5"],
+      ["#d1fae5", "#fef9c3", "#fed7aa"],
+      ["#d1fae5", "#d1fae5", "#fef9c3"],
+    ];
+
+    const placed = risks.slice(0, slots.length).map((r, i) => ({ r, ...slots[i] }));
+
+    const cells = rowLabels.map((rl, ri) =>
+      colLabels.map((cl, ci) => {
+        const x = PL + ci * cellW, y = PT + ri * cellH;
+        const cx = x + cellW / 2, cy = y + cellH / 2;
+        const item = placed.find(p => p.ri === ri && p.ci === ci);
+        const txt = item ? svgWrap(item.r, cx, cy, cellW - 8, 9, "#1e293b", true) : "";
+        return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${cellW.toFixed(1)}" height="${cellH.toFixed(1)}" fill="${cellFills[ri][ci]}" stroke="#fff" stroke-width="2"/>${txt}`;
+      }).join("")
+    ).join("");
+
+    const colH = colLabels.map((c, i) => `<text x="${(PL + (i + 0.5) * cellW).toFixed(1)}" y="38" text-anchor="middle" font-size="9.5" fill="#475569" font-weight="600">${c}</text>`).join("");
+    const rowH = rowLabels.map((r, i) => `<text x="${PL - 8}" y="${(PT + (i + 0.5) * cellH + 4).toFixed(1)}" text-anchor="end" font-size="9.5" fill="#475569" font-weight="600">${r}</text>`).join("");
+
+    const svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;display:block;margin:0 auto;">
+      <text x="${PL - 8}" y="16" text-anchor="end" font-size="8.5" fill="#94a3b8" font-weight="700">IMPACT</text>
+      <text x="${(PL + 1.5 * cellW).toFixed(1)}" y="16" text-anchor="middle" font-size="8.5" fill="#94a3b8" font-weight="700">PROBABILITY →</text>
+      ${colH}${rowH}${cells}
+    </svg>`;
+    return _bpCard("Risk Assessment Matrix", svg);
+  }
+
+  function _bpMarketingFunnel() {
+    const stages = [
+      { label: "Awareness", sub: "Reach & visibility", col: "#6366f1", wf: 0.95 },
+      { label: "Interest", sub: "Engagement & education", col: "#818cf8", wf: 0.73 },
+      { label: "Consideration", sub: "Evaluation & trust", col: "#a5b4fc", wf: 0.53 },
+      { label: "Conversion", sub: "Purchase decision", col: "#c7d2fe", wf: 0.36 },
+    ];
+    const W = 340, bH = 34, gap = 6, PT = 4, cx = W / 2;
+    const totalH = PT + stages.length * (bH + gap);
+    const svgStages = stages.map((s, i) => {
+      const bw = s.wf * W;
+      const x = cx - bw / 2;
+      const y = PT + i * (bH + gap);
+      return `<rect x="${x.toFixed(1)}" y="${y}" width="${bw.toFixed(1)}" height="${bH}" fill="${s.col}" rx="4"/><text x="${cx}" y="${(y + 13).toFixed(1)}" text-anchor="middle" font-size="9.5" fill="${i >= 2 ? "#1e293b" : "white"}" font-weight="700">${s.label}</text><text x="${cx}" y="${(y + 25).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="${i >= 2 ? "#475569" : "rgba(255,255,255,0.85)"}">${s.sub}</text>`;
+    }).join("");
+    const svg = `<svg viewBox="0 0 ${W} ${totalH}" style="width:100%;max-width:${W}px;display:block;margin:0 auto;">${svgStages}</svg>`;
+    return _bpCard("Marketing & Sales Funnel", svg);
+  }
+
+  function _bpBusinessModelFlow() {
+    const mkt = (targetMarket || "Target Market").slice(0, 18);
+    const sol = (solution || "Your Offering").slice(0, 18);
+    const rev = pricingModel || "Revenue Model";
+    const W = 360, H = 90;
+    const bW = 100, bH = 52, gap = 20;
+    const totalBW = 3 * bW + 2 * gap;
+    const startX = (W - totalBW) / 2;
+    const boxes = [
+      { label: mkt, sub: "Target Market", col: "#ddd6fe", x: startX },
+      { label: sol, sub: "Offering", col: "#bfdbfe", x: startX + bW + gap },
+      { label: rev, sub: "Revenue", col: "#bbf7d0", x: startX + 2 * (bW + gap) },
+    ];
+    const bY = (H - bH) / 2;
+    const svgBoxes = boxes.map(b => `<rect x="${b.x.toFixed(1)}" y="${bY}" width="${bW}" height="${bH}" fill="${b.col}" rx="6"/><text x="${(b.x + bW / 2).toFixed(1)}" y="${(bY + 20).toFixed(1)}" text-anchor="middle" font-size="8" fill="#1e293b" font-weight="700">${b.label}</text><text x="${(b.x + bW / 2).toFixed(1)}" y="${(bY + 34).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="#64748b">${b.sub}</text>`).join("");
+    const arrows = [1, 2].map(i => `<text x="${(startX + i * (bW + gap) - gap / 2).toFixed(1)}" y="${(bY + bH / 2 + 5).toFixed(1)}" text-anchor="middle" font-size="14" fill="#94a3b8">→</text>`).join("");
+    const svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;display:block;margin:0 auto;">${svgBoxes}${arrows}</svg>`;
+    return _bpCard("Business Model Flow", svg);
+  }
+
+  function _bpSectionChart(titleRaw, body) {
+    if (selectedDoc !== "business_plan") return "";
+    const t = (titleRaw || "").toLowerCase();
+    if (t.includes("financial snapshot")) return _bpRevenueChart(body);
+    if (t.includes("market analysis")) return _bpMarketChart(body);
+    if (t.includes("risk analysis")) return _bpRiskMatrix(body);
+    return "";
+  }
+  function injectChartsIntoMarkdown(markdown) {
+    if (!markdown || selectedDoc !== "business_plan") return markdown;
+    const lines = markdown.split("\n");
+    const out = [];
+    let currentHeading = "";
+    let bodyLines = [];
+
+    function flush() {
+      out.push(...bodyLines);
+      if (currentHeading) {
+        const chart = _bpSectionChart(currentHeading, bodyLines.join("\n"));
+        if (chart) out.push(chart);
+      }
+      bodyLines = [];
+    }
+
+    for (const line of lines) {
+      if (line.startsWith("## ")) {
+        flush();
+        currentHeading = line.slice(3).trim();
+        out.push(line);
+      } else {
+        bodyLines.push(line);
+      }
+    }
+    flush();
+    return out.join("\n");
+  }
+  // ── End blueprint chart helpers ──────────────────────────────────────────
+
   function buildSectionPreviewHtml(title, body) {
     const isSalesLetter = selectedDoc === "sales_letter";
     const heading = isSalesLetter ? "" : stripMarkdown(title || "");
@@ -1212,7 +1574,7 @@ export default function BlueprintPage() {
       .replace(/^cover_page\s*$/gim, "")
       .trim();
     if (!heading && !cleaned) return "";
-    if (cleaned.includes('<div class="cover-page">')) return cleaned;
+    if (cleaned.includes('<div class="cover-page">')) return markdownToHtml(cleaned);
     const paragraphs = cleaned.split(/\n{2,}/g).map((p) => p.trim()).filter(Boolean);
     const parts = [];
     if (heading) {
@@ -1231,7 +1593,7 @@ export default function BlueprintPage() {
         parts.push(`<p>${stripMarkdown(para)}</p>`);
       }
     });
-    return parts.join("");
+    return parts.join("") + _bpSectionChart(heading, cleaned);
   }
 
   function getObjectiveValue(docId) {
@@ -1857,9 +2219,12 @@ export default function BlueprintPage() {
       .replace(/<p>&nbsp;<\/p>/gi, "")
       .replace(/(<br\s*\/?>\s*){3,}/gi, "<br>");
     const title = filename.replace(/\.pdf$/i, "");
-    const win = window.open("", "_blank");
-    if (!win) { setError("Allow pop-ups for this site to download the PDF."); return; }
-    win.document.write(`<!DOCTYPE html>
+    const iframe = document.createElement("iframe");
+    iframe.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;border:0;visibility:hidden;";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument || iframe.contentWindow.document;
+    doc.open();
+    doc.write(`<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
 <title>${title}</title>
@@ -1881,23 +2246,73 @@ export default function BlueprintPage() {
   .cover-page p { margin: 3pt 0; }
   .document-logo { display: block; max-width: 90pt; max-height: 45pt; width: auto; height: auto; margin: 0 auto 14pt; object-fit: contain; }
   .page-break { page-break-after: always; break-after: page; }
-  @media screen { body { background: #e5e7eb; } .pdf-doc { background: #fff; box-shadow: 0 0 24px rgba(0,0,0,.12); padding: 16mm 14mm; } }
+  .ea-bp-chart { margin-top: 14pt; padding: 10pt 12pt; background: #f8fafc; border: 1pt solid #e2e8f0; border-radius: 6pt; page-break-inside: avoid; }
+  .ea-bp-chart p { text-align: center; font-size: 10pt; font-weight: 700; color: #1e293b; margin: 0 0 8pt; }
+  .ea-bp-chart svg { display: block; width: 100%; max-width: 380pt; margin: 0 auto; }
   @media print {
     html, body { margin: 0; background: #fff; }
-    .pdf-doc { max-width: 100%; padding: 0; box-shadow: none; }
+    .pdf-doc { max-width: 100%; padding: 0; }
     h1, h2, h3 { page-break-after: avoid; break-after: avoid; }
     h2 + p, h3 + p, h2 + ul, h3 + ul { page-break-before: avoid; break-before: avoid; }
     p { orphans: 3; widows: 3; }
     table { page-break-inside: avoid; }
     ul, ol { page-break-inside: avoid; }
+    .ea-bp-chart { page-break-inside: avoid; }
   }
   @page { size: A4; margin: 16mm 18mm; }
 </style>
 </head><body>
 <div class="pdf-doc">${source}</div>
-<script>setTimeout(function(){ window.print(); }, 400);<\/script>
 </body></html>`);
-    win.document.close();
+    doc.close();
+    setTimeout(() => {
+      iframe.contentWindow.print();
+      setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 2000);
+    }, 400);
+  }
+
+  async function rasterizeSvgs(htmlString) {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "position:fixed;left:-9999px;top:0;width:600px;visibility:hidden;pointer-events:none;";
+    document.body.appendChild(wrap);
+    wrap.innerHTML = htmlString;
+    const svgs = Array.from(wrap.querySelectorAll("svg"));
+    for (const svg of svgs) {
+      try {
+        const vb = svg.getAttribute("viewBox") || "";
+        const [, , vbW, vbH] = (vb.split(/\s+/).map(Number));
+        const W = vbW || 480;
+        const H = vbH || 220;
+        const xml = new XMLSerializer().serializeToString(svg);
+        const blob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const dataUrl = await new Promise((res) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement("canvas");
+            canvas.width = W * 2; canvas.height = H * 2;
+            const ctx = canvas.getContext("2d");
+            ctx.scale(2, 2);
+            ctx.fillStyle = "#f8fafc";
+            ctx.fillRect(0, 0, W, H);
+            ctx.drawImage(img, 0, 0, W, H);
+            URL.revokeObjectURL(url);
+            res(canvas.toDataURL("image/png"));
+          };
+          img.onerror = () => { URL.revokeObjectURL(url); res(null); };
+          img.src = url;
+        });
+        if (dataUrl) {
+          const imgEl = document.createElement("img");
+          imgEl.src = dataUrl;
+          imgEl.setAttribute("style", "display:block;width:100%;max-width:480px;margin:0 auto;");
+          svg.parentNode.replaceChild(imgEl, svg);
+        }
+      } catch (_) { /* leave svg as-is */ }
+    }
+    const result = wrap.innerHTML;
+    document.body.removeChild(wrap);
+    return result;
   }
 
   async function downloadExport(format) {
@@ -1908,8 +2323,40 @@ export default function BlueprintPage() {
     }
     setError(null);
     try {
-      const token = localStorage.getItem("ea_token");
       await syncSelectedDocumentForExport();
+
+      if (format === "pdf") {
+        const { html } = getSelectedDocumentPayload();
+        const rasterized = await rasterizeSvgs(html || "");
+        const title = companyName || "Business Plan";
+        const token = localStorage.getItem("ea_token");
+        const res = await fetch(`${getApiBaseUrl()}/blueprint/documents/export-pdf`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ html: rasterized, title, document_id: docId }),
+        });
+        if (!res.ok) {
+          if (res.status === 403) throw new Error("Downloading a business plan requires a paid plan. Upgrade to export.");
+          const text = await res.text().catch(() => "");
+          throw new Error(text || "PDF export failed");
+        }
+        const blob = await res.blob();
+        if (!blob || blob.size === 0) throw new Error("Downloaded file is empty");
+        const safe = title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `${safe}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(link.href), 100);
+        return;
+      }
+
+      const token = localStorage.getItem("ea_token");
       const url = `${getApiBaseUrl()}/blueprint/documents/${docId}/export?format=${format}`;
       const res = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
@@ -2131,7 +2578,7 @@ export default function BlueprintPage() {
                     }}
                     className="min-w-0 flex-1 text-left"
                   >
-                    <div className="truncate text-sm font-semibold text-slate-900">{d.title}</div>
+                    <div className="truncate text-sm font-semibold text-slate-900">{String(d.title || "").replace(" — ", ": ")}</div>
                     <div className="mt-0.5 truncate text-xs text-slate-600">{d.company_name}</div>
                   </button>
                   <div className="shrink-0 text-[11px] font-semibold text-slate-500">{fmtDate(d.updated_at)}</div>
@@ -2184,7 +2631,7 @@ export default function BlueprintPage() {
                 >
                   {showInputs ? "Hide inputs" : "Edit inputs"}
                 </Button>
-                <Button disabled={isLoading} onClick={() => setCreditModal({ featureName: "Business Plan Generation", creditCost: 40, onConfirm: () => { setCreditModal(null); generateSelected(); } })}>
+                <Button disabled={isLoading} onClick={() => { const secs = sectionsByDoc[selectedDoc]; setCreditModal({ featureName: getBlueprintFeatureName(selectedDoc, secs), creditCost: getBlueprintCreditCost(selectedDoc, secs), onConfirm: () => { setCreditModal(null); generateSelected(); } }); }}>
                   {isLoading ? <Spinner size={16} /> : null}
                   {isLoading ? "Generating..." : hasGenerated ? "Regenerate" : "Generate"}
                 </Button>
@@ -2311,8 +2758,8 @@ export default function BlueprintPage() {
                       )}
                       <DocumentEditor
                         title={selectedMeta.title}
-                        markdown={selectedDocResult.document_markdown}
-                        initialHtml={selectedDocResult.document_html || ""}
+                        markdown={injectChartsIntoMarkdown(selectedDocResult.document_markdown)}
+                        initialHtml={selectedDoc === "business_plan" ? "" : (selectedDocResult.document_html || "")}
                         onHtmlChange={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : (h) => setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: h }))}
                         onDownload={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : downloadExport}
                         onSave={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : saveEdits}

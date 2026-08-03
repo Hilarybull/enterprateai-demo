@@ -159,7 +159,7 @@ export default function CataloguePage() {
     price: ""
   });
 
-  const paymentTermOptions = ["7", "14", "30", "45", "60", "90", "Other"];
+  const paymentTermOptions = ["Immediate", "7", "14", "30", "45", "60", "90", "Other"];
   const INDUSTRY_OPTIONS = [
     "IT",
     "Marketing",
@@ -174,13 +174,13 @@ export default function CataloguePage() {
     "Healthcare",
     "Education",
     "Construction",
+    "Individual",
     "Other"
   ];
-  const customerIndustryCategory = INDUSTRY_OPTIONS.includes(customerForm.industry)
-    ? customerForm.industry
-    : customerForm.industry
-      ? "Other"
-      : "";
+  const [customerIndustryOther, setCustomerIndustryOther] = useState(false);
+  const [vendorIndustryOther, setVendorIndustryOther] = useState(false);
+  const customerIndustryCategory = customerIndustryOther ? "Other" : (customerForm.industry || "");
+  const vendorIndustryCategory = vendorIndustryOther ? "Other" : (vendorForm.industry || "");
 
   function CardIcon({ tone = "bg-brand-50 text-brand-600", children }) {
     return (
@@ -501,6 +501,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
   }
   function resetCustomerForm() {
     setCustomerForm({ name: "", address: "", email: "", phone_number: "", payment_terms: "14", industry: "" });
+    setCustomerIndustryOther(false);
     setEditingCustomerId(null);
   }
   function resetVendorForm() {
@@ -515,6 +516,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       product_name: "",
       price: ""
     });
+    setVendorIndustryOther(false);
     setEditingVendorId(null);
   }
 
@@ -1089,7 +1091,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   >
                     {paymentTermOptions.map((term) => (
                       <option key={term} value={term}>
-                        {term === "Other" ? "Other" : `${term} days`}
+                        {term === "Other" ? "Other" : term === "Immediate" ? "Immediate" : `${term} days`}
                       </option>
                     ))}
                   </select>
@@ -1109,12 +1111,15 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                 <select
                   className="ea-input"
                   value={customerIndustryCategory}
-                  onChange={(e) =>
-                    setCustomerForm((c) => ({
-                      ...c,
-                      industry: e.target.value === "Other" ? "" : e.target.value
-                    }))
-                  }
+                  onChange={(e) => {
+                    if (e.target.value === "Other") {
+                      setCustomerIndustryOther(true);
+                      if (INDUSTRY_OPTIONS.includes(customerForm.industry)) setCustomerForm((c) => ({ ...c, industry: "" }));
+                    } else {
+                      setCustomerIndustryOther(false);
+                      setCustomerForm((c) => ({ ...c, industry: e.target.value }));
+                    }
+                  }}
                 >
                   <option value="" disabled>
                     Select industry
@@ -1125,7 +1130,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                     </option>
                   ))}
                 </select>
-                {customerIndustryCategory === "Other" ? (
+                {customerIndustryOther ? (
                   <Input
                     value={customerForm.industry}
                     onChange={(e) => setCustomerForm((c) => ({ ...c, industry: e.target.value }))}
@@ -1185,6 +1190,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                       <Button
                         variant="secondary"
                         onClick={() => {
+                          const industryVal = c.industry || "";
                           setEditingCustomerId(c.id);
                           setCustomerForm({
                             name: c.name,
@@ -1192,8 +1198,9 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             email: c.email || "",
                             phone_number: c.phone_number || "",
                             payment_terms: String(c.payment_terms || "14"),
-                            industry: c.industry || ""
+                            industry: industryVal
                           });
+                          setCustomerIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal));
                         }}
                       >
                         Edit
@@ -1309,7 +1316,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   >
                     {paymentTermOptions.map((term) => (
                       <option key={term} value={term}>
-                        {term === "Other" ? "Other" : `${term} days`}
+                        {term === "Other" ? "Other" : term === "Immediate" ? "Immediate" : `${term} days`}
                       </option>
                     ))}
                   </select>
@@ -1325,7 +1332,30 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                 </div>
               <div>
                 <div className="ea-label">Industry</div>
-                <Input value={vendorForm.industry} onChange={(e) => setVendorForm((v) => ({ ...v, industry: e.target.value }))} />
+                <select
+                  className="ea-input"
+                  value={vendorIndustryCategory}
+                  onChange={(e) => {
+                    if (e.target.value === "Other") {
+                      setVendorIndustryOther(true);
+                      if (INDUSTRY_OPTIONS.includes(vendorForm.industry)) setVendorForm((v) => ({ ...v, industry: "" }));
+                    } else {
+                      setVendorIndustryOther(false);
+                      setVendorForm((v) => ({ ...v, industry: e.target.value }));
+                    }
+                  }}
+                >
+                  <option value="">Select industry</option>
+                  {INDUSTRY_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+                {vendorIndustryOther && (
+                  <Input
+                    className="mt-2"
+                    placeholder="Specify industry"
+                    value={vendorForm.industry}
+                    onChange={(e) => setVendorForm((v) => ({ ...v, industry: e.target.value }))}
+                  />
+                )}
               </div>
             </div>
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
@@ -1404,6 +1434,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                       <Button
                         variant="secondary"
                         onClick={() => {
+                          const industryVal = v.industry || "";
                           setEditingVendorId(v.id);
                           setVendorForm({
                             name: v.name,
@@ -1411,11 +1442,12 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             email: v.email || "",
                             phone_number: v.phone_number || "",
                             payment_terms: String(v.payment_terms || "14"),
-                            industry: v.industry || "",
+                            industry: industryVal,
                             product_type: v.product_type || "product",
                             product_name: v.product_name || "",
                             price: String(v.price ?? "")
                           });
+                          setVendorIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal));
                         }}
                       >
                         Edit

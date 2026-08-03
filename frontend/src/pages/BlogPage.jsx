@@ -109,27 +109,19 @@ export default function BlogPage() {
               <Link
                 key={a.id}
                 to={`/blog/${a.slug}`}
-                className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
+                className="group flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
               >
-                {a.cover_image_url ? (
-                  <img src={a.cover_image_url} alt={a.title} className="h-48 w-full object-cover" />
-                ) : (
-                  <div className="flex h-48 w-full items-center justify-center bg-gradient-to-br from-brand-50 to-brand-100">
-                    <span className="text-4xl text-brand-300">📄</span>
-                  </div>
+                {a.category_name && (
+                  <span className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-brand-600">{a.category_name}</span>
                 )}
-                <div className="flex flex-1 flex-col p-5">
-                  {a.category_name && (
-                    <span className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-brand-600">{a.category_name}</span>
-                  )}
-                  <h3 className="font-bold text-slate-900 group-hover:text-brand-600 transition line-clamp-2 text-sm">{a.title}</h3>
-                  {a.excerpt && <p className="mt-1.5 flex-1 text-xs leading-relaxed text-slate-500 line-clamp-3">{a.excerpt}</p>}
-                  <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-400">
-                    <span>{a.author_name}</span>
-                    <span>·</span>
-                    <span>{fmt(a.published_at)}</span>
-                  </div>
+                <h3 className="font-bold text-slate-900 group-hover:text-brand-600 transition line-clamp-2 text-sm">{a.title}</h3>
+                {a.excerpt && <p className="mt-1.5 flex-1 text-xs leading-relaxed text-slate-500 line-clamp-3">{a.excerpt}</p>}
+                <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-400">
+                  <span>{a.author_name}</span>
+                  <span>·</span>
+                  <span>{fmt(a.published_at)}</span>
                 </div>
+                <span className="mt-3 text-xs font-semibold text-brand-600 group-hover:underline">Read Article →</span>
               </Link>
             ))}
           </div>

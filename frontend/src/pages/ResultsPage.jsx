@@ -658,8 +658,8 @@ export default function ResultsPage() {
           {verdictInterp && <p className={`text-sm leading-relaxed ${vText}`}>{verdictInterp}</p>}
         </div>
 
-        {/* Recommendations after acceptance */}
-        {(
+        {/* Recommendations after acceptance — comprehensive validation only */}
+        {!isBasic && (
           decision === "accepted" || decisionStatus === "accepted" || serviceDecisionStatus === "accepted"
         ) && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 mt-4">
@@ -693,31 +693,41 @@ export default function ResultsPage() {
 
         {/* Recommendation modal (popup) */}
         {recOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/40" onClick={() => setRecOpen(false)} />
-            <div className="relative z-10 w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-900">Next steps</h2>
-                  <p className="mt-1 text-sm text-slate-600">Your validation has been accepted — here are recommended next steps to turn this into an offer.</p>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setRecOpen(false)} />
+            <div className="relative z-10 w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden">
+              {/* Header */}
+              <div className="bg-gradient-to-br from-brand-600 to-brand-700 px-6 py-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-white">What's next?</h2>
+                    <p className="mt-1 text-sm text-brand-100">Your idea has been accepted. Here are the recommended next steps to turn it into an offer.</p>
+                  </div>
+                  <button onClick={() => setRecOpen(false)} className="mt-0.5 text-brand-200 hover:text-white transition-colors text-sm font-medium">✕</button>
                 </div>
-                <button onClick={() => setRecOpen(false)} className="text-slate-400 hover:text-slate-600">Close</button>
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <div className="rounded-lg border border-slate-100 p-4">
-                  <div className="mb-2 text-sm font-semibold">Generate Business Plan</div>
-                  <p className="text-xs text-slate-500 mb-3">This business plan will be generated using the data from this validation (service/idea only). To create a different plan, use the <Link to="/blueprint" className="text-brand-600 underline">Business Blueprints</Link> module.</p>
-                  <div className="flex gap-2">
-                    <button onClick={() => { setRecOpen(false); navigate(`/blueprint?validation_workspace=${workspaceId}`); }} className="rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white">Generate</button>
-                    <button onClick={() => setRecOpen(false)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Maybe later</button>
+              {/* Cards */}
+              <div className="p-5 grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-1 flex items-center gap-2">
+                    <svg className="h-5 w-5 text-brand-600 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                    <span className="text-sm font-semibold text-slate-800">Generate Business Plan</span>
+                  </div>
+                  <p className="text-xs text-slate-500 mb-4 flex-1">Generated from this validation's data. To create a different plan, use the <Link to="/blueprint" className="text-brand-600 underline">Business Blueprints</Link> module.</p>
+                  <div className="flex gap-2 mt-auto">
+                    <button onClick={() => { setRecOpen(false); navigate(`/blueprint?validation_workspace=${workspaceId}`); }} className="flex-1 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-700 transition-colors">Generate</button>
+                    <button onClick={() => setRecOpen(false)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors">Later</button>
                   </div>
                 </div>
-                <div className="rounded-lg border border-slate-100 p-4">
-                  <div className="mb-2 text-sm font-semibold">List on Marketplace</div>
-                  <p className="text-xs text-slate-500 mb-3">Create a marketplace listing prefilled from this validation so customers can discover your offering.</p>
-                  <div className="flex gap-2">
-                    <button onClick={() => { setRecOpen(false); navigate(`/marketplace?validation_workspace=${workspaceId}`); }} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Create listing</button>
-                    <button onClick={() => setRecOpen(false)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Maybe later</button>
+                <div className="flex flex-col rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-1 flex items-center gap-2">
+                    <svg className="h-5 w-5 text-brand-600 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/></svg>
+                    <span className="text-sm font-semibold text-slate-800">List on Marketplace</span>
+                  </div>
+                  <p className="text-xs text-slate-500 mb-4 flex-1">Create a marketplace listing prefilled from this validation so customers can discover your offering.</p>
+                  <div className="flex gap-2 mt-auto">
+                    <button onClick={() => { setRecOpen(false); navigate(`/marketplace?validation_workspace=${workspaceId}`); }} className="flex-1 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-700 transition-colors">Create listing</button>
+                    <button onClick={() => setRecOpen(false)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors">Later</button>
                   </div>
                 </div>
               </div>

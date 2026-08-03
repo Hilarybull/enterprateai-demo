@@ -96,16 +96,6 @@ export default function BlogArticlePage() {
             <span>{fmt(article.published_at)}</span>
           </div>
 
-          {/* Cover image */}
-          {article.cover_image_url && (
-            <img
-              src={article.cover_image_url}
-              alt={article.title}
-              className="mt-8 w-full rounded-2xl object-cover shadow-sm"
-              style={{ maxHeight: 420 }}
-            />
-          )}
-
           {/* Content */}
           <div
             className="mt-10 max-w-none text-slate-700 leading-relaxed [&_h1]:text-3xl [&_h1]:font-bold [&_h1]:text-slate-900 [&_h1]:mt-8 [&_h1]:mb-4 [&_h2]:text-2xl [&_h2]:font-bold [&_h2]:text-slate-900 [&_h2]:mt-8 [&_h2]:mb-4 [&_h3]:text-xl [&_h3]:font-bold [&_h3]:text-slate-900 [&_h3]:mt-6 [&_h3]:mb-3 [&_p]:mb-5 [&_p]:text-base [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:mb-5 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:mb-5 [&_li]:mb-2 [&_a]:text-brand-600 [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-brand-200 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-slate-500 [&_blockquote]:my-6 [&_img]:rounded-xl [&_img]:max-w-full [&_img]:my-6 [&_code]:bg-slate-100 [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-sm [&_pre]:bg-slate-900 [&_pre]:text-slate-100 [&_pre]:rounded-xl [&_pre]:p-4 [&_pre]:overflow-x-auto [&_pre]:my-6 [&_strong]:font-semibold [&_strong]:text-slate-900"
@@ -136,22 +126,14 @@ export default function BlogArticlePage() {
                   <Link
                     key={a.id}
                     to={`/blog/${a.slug}`}
-                    className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
+                    className="group flex flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md"
                   >
-                    {a.cover_image_url ? (
-                      <img src={a.cover_image_url} alt={a.title} className="h-36 w-full object-cover" />
-                    ) : (
-                      <div className="flex h-36 w-full items-center justify-center bg-gradient-to-br from-brand-50 to-brand-100">
-                        <span className="text-3xl text-brand-300">📄</span>
-                      </div>
+                    {a.category_name && (
+                      <span className="mb-1 text-[10px] font-bold uppercase tracking-wider text-brand-600">{a.category_name}</span>
                     )}
-                    <div className="flex flex-1 flex-col p-4">
-                      {a.category_name && (
-                        <span className="mb-1 text-[10px] font-bold uppercase tracking-wider text-brand-600">{a.category_name}</span>
-                      )}
-                      <h4 className="text-sm font-bold text-slate-900 group-hover:text-brand-600 transition line-clamp-2">{a.title}</h4>
-                      <p className="mt-2 text-[11px] text-slate-400">{fmt(a.published_at)}</p>
-                    </div>
+                    <h4 className="text-sm font-bold text-slate-900 group-hover:text-brand-600 transition line-clamp-2">{a.title}</h4>
+                    <p className="mt-2 text-[11px] text-slate-400">{fmt(a.published_at)}</p>
+                    <span className="mt-2 text-xs font-semibold text-brand-600 group-hover:underline">Read More →</span>
                   </Link>
                 ))}
               </div>

@@ -43,6 +43,7 @@ import ReferralPage from "./pages/ReferralPage";
 import ReferralClickPage from "./pages/ReferralClickPage";
 import BlogPage from "./pages/BlogPage";
 import BlogArticlePage from "./pages/BlogArticlePage";
+import ResearchPage from "./pages/ResearchPage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -87,6 +88,7 @@ export default function App() {
       <Route path="/r/:code" element={<ReferralClickPage />} />
       <Route path="/blog" element={<BlogPage />} />
       <Route path="/blog/:slug" element={<BlogArticlePage />} />
+      <Route path="/research" element={<ResearchPage />} />
       <Route path="/share/:token" element={<SharedBlueprintPage />} />
       <Route path="/join/:token" element={<JoinPage />} />
       <Route

@@ -677,6 +677,14 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   const [subscriptionLoading, setSubscriptionLoading] = useState(false);
   const [trialLoading, setTrialLoading] = useState(false);
 
+  // Credits state
+  const [credits, setCredits] = useState(null);
+  const [creditsLoading, setCreditsLoading] = useState(false);
+  const [grantAmount, setGrantAmount] = useState("");
+  const [grantReason, setGrantReason] = useState("");
+  const [grantLoading, setGrantLoading] = useState(false);
+  const [provisionLoading, setProvisionLoading] = useState(false);
+
   // Activity tab state
   const [fullData, setFullData] = useState(null);
   const [fullDataLoading, setFullDataLoading] = useState(false);
@@ -697,9 +705,13 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     setGrants([]);
     setShowBlockForm(false);
     setBlockReasonInput("");
+    setCredits(null);
+    setGrantAmount("");
+    setGrantReason("");
     loadRestrictions(user.id);
     loadSubscription(user.id);
     loadGrants(user.id);
+    loadCredits(user.id);
   }, [user?.id]);
 
   useEffect(() => {
@@ -783,6 +795,53 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
       showToast("error", e.message || "Failed to renew trial.");
     } finally {
       setTrialLoading(false);
+    }
+  }
+
+  async function loadCredits(userId) {
+    setCreditsLoading(true);
+    try {
+      const data = await apiRequest(`/admin/users/${userId}/credits`, "GET");
+      setCredits(data);
+    } catch {
+      setCredits(null);
+    } finally {
+      setCreditsLoading(false);
+    }
+  }
+
+  async function handleGrantCredits() {
+    const amount = parseInt(grantAmount, 10);
+    if (!amount || amount <= 0 || grantLoading) return;
+    setGrantLoading(true);
+    try {
+      await apiRequest(`/admin/users/${user.id}/credits/grant`, "POST", {
+        amount,
+        reason: grantReason.trim() || "Admin credit grant",
+        grant_type: "admin_adjustment",
+      });
+      showToast("success", `${amount} credits granted.`);
+      setGrantAmount("");
+      setGrantReason("");
+      loadCredits(user.id);
+    } catch (e) {
+      showToast("error", e.message || "Failed to grant credits.");
+    } finally {
+      setGrantLoading(false);
+    }
+  }
+
+  async function handleProvisionCredits() {
+    if (provisionLoading) return;
+    setProvisionLoading(true);
+    try {
+      const res = await apiRequest(`/admin/users/${user.id}/credits/provision`, "POST");
+      showToast("success", `Plan allocation issued for ${res.plan_code || "user"}.`);
+      loadCredits(user.id);
+    } catch (e) {
+      showToast("error", e.message || "Failed to provision credits.");
+    } finally {
+      setProvisionLoading(false);
     }
   }
 
@@ -1166,6 +1225,78 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                   </div>
                 );
               })() : null}
+            </div>
+
+            {/* AI Credits */}
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">AI Credits</h3>
+                {creditsLoading && <div className="h-3.5 w-3.5 animate-spin rounded-full border border-slate-300 border-t-slate-600" />}
+              </div>
+              <p className="mb-3 text-[11px] text-slate-500 leading-relaxed">
+                Explorer plan users receive 50 credits once. Only admin can allocate more or renew the plan allocation.
+              </p>
+
+              {credits ? (
+                <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Available</p>
+                      <p className="text-xl font-bold text-slate-800">{credits.available_credits ?? 0}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[11px] text-slate-400">Held: {credits.held_credits ?? 0}</p>
+                      <p className="text-[11px] text-slate-400">Used: {credits.lifetime_credits_used ?? 0}</p>
+                      <p className="text-[11px] text-slate-400 capitalize">Plan: {credits.plan_code ?? "explorer"}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : !creditsLoading && (
+                <p className="mb-3 text-[11px] text-slate-400 italic">No wallet found — user has not used AI features yet.</p>
+              )}
+
+              {/* Grant credits form */}
+              <div className="flex items-end gap-2 mb-2">
+                <div className="flex-1 min-w-0">
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Amount</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={grantAmount}
+                    onChange={(e) => setGrantAmount(e.target.value)}
+                    placeholder="e.g. 50"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 placeholder-slate-300 focus:border-brand-400 focus:outline-none"
+                  />
+                </div>
+                <div className="flex-[2] min-w-0">
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reason (optional)</label>
+                  <input
+                    type="text"
+                    value={grantReason}
+                    onChange={(e) => setGrantReason(e.target.value)}
+                    placeholder="e.g. Support top-up"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 placeholder-slate-300 focus:border-brand-400 focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  disabled={!grantAmount || parseInt(grantAmount) <= 0 || grantLoading}
+                  onClick={handleGrantCredits}
+                  className="shrink-0 rounded-xl bg-brand-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-700 disabled:opacity-40"
+                >
+                  {grantLoading ? "…" : "Grant"}
+                </button>
+              </div>
+
+              {/* Provision plan allocation */}
+              <button
+                type="button"
+                disabled={provisionLoading}
+                onClick={handleProvisionCredits}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+              >
+                {provisionLoading ? "Provisioning…" : "Renew plan allocation"}
+              </button>
             </div>
 
             {/* Platform restrictions */}
@@ -1561,6 +1692,7 @@ const TABS = [
   { key: "support", label: "Support Messages" },
   { key: "referrals", label: "Referrals" },
   { key: "blog", label: "Blog" },
+  { key: "research", label: "Research & Development" },
 ];
 
 const INV_FILTERS = ["all", "pending", "accepted", "revoked"];
@@ -1841,6 +1973,64 @@ export default function AdminPage() {
       action: async () => {
         await apiRequest(`/blog/admin/tags/${id}`, "DELETE");
         setBlogTags((prev) => prev.filter((t) => t.id !== id));
+      },
+    });
+  }
+
+  // ── Research & Development state ──────────────────────────────────────────
+
+  const [rdItems, setRdItems] = useState([]);
+  const [rdLoaded, setRdLoaded] = useState(false);
+  const [rdLoading, setRdLoading] = useState(false);
+  const [rdForm, setRdForm] = useState(null);
+  const [rdFormBusy, setRdFormBusy] = useState(false);
+
+  const loadRd = useCallback(async () => {
+    setRdLoading(true);
+    try {
+      const items = await apiRequest("/research/admin/items", "GET");
+      setRdItems(items || []);
+      setRdLoaded(true);
+    } catch (e) {
+      showToast("error", e.message || "Failed to load R&D items.");
+    } finally {
+      setRdLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "research" && !rdLoaded) loadRd();
+  }, [tab, rdLoaded, loadRd]);
+
+  async function saveRdItem(data) {
+    setRdFormBusy(true);
+    try {
+      if (data.id) {
+        const updated = await apiRequest(`/research/admin/items/${data.id}`, "PUT", data);
+        setRdItems((prev) => prev.map((i) => i.id === data.id ? { ...i, ...updated } : i));
+        showToast("success", "Item updated.");
+      } else {
+        const created = await apiRequest("/research/admin/items", "POST", data);
+        setRdItems((prev) => [created, ...prev]);
+        showToast("success", "Item created.");
+      }
+      setRdForm(null);
+    } catch (e) {
+      showToast("error", e.message || "Failed to save item.");
+    } finally {
+      setRdFormBusy(false);
+    }
+  }
+
+  async function deleteRdItem(id, title) {
+    askConfirm({
+      title: "Delete R&D item?",
+      description: `Permanently delete "${title}". This cannot be undone.`,
+      label: "Delete",
+      successMsg: "Item deleted.",
+      action: async () => {
+        await apiRequest(`/research/admin/items/${id}`, "DELETE");
+        setRdItems((prev) => prev.filter((i) => i.id !== id));
       },
     });
   }
@@ -2251,8 +2441,66 @@ export default function AdminPage() {
         </div>
       </header>
 
-      <div className="ea-scroll flex-1 overflow-y-auto overflow-x-hidden">
-      <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 pb-10 sm:px-6 lg:px-8">
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* Sidebar nav */}
+        <aside className="hidden w-52 shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
+          <div className="flex-1 overflow-y-auto py-4 px-2">
+            <nav className="space-y-0.5">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => goToTab(t.key)}
+                  className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition text-left ${
+                    tab === t.key
+                      ? "bg-brand-600 text-white shadow-sm"
+                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                  }`}
+                >
+                  <span className="truncate">{t.label}</span>
+                  {tabCounts[t.key] !== undefined && (
+                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+                      tab === t.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"
+                    }`}>
+                      {tabCounts[t.key]}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </nav>
+          </div>
+        </aside>
+
+        {/* Mobile tab strip (visible only < lg) */}
+        <div className="absolute left-0 right-0 top-[57px] z-20 border-b border-slate-200 bg-white px-3 py-1.5 lg:hidden">
+          <div className="overflow-x-auto">
+            <div className="flex min-w-max gap-1">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => goToTab(t.key)}
+                  className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
+                    tab === t.key ? "bg-brand-600 text-white" : "text-slate-500 hover:bg-slate-100"
+                  }`}
+                >
+                  {t.label}
+                  {tabCounts[t.key] !== undefined && (
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+                      tab === t.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"
+                    }`}>
+                      {tabCounts[t.key]}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="ea-scroll flex-1 overflow-y-auto overflow-x-hidden">
+        <main className="mx-auto max-w-6xl space-y-5 px-4 py-6 pb-10 pt-16 sm:px-6 lg:pt-6">
 
         {/* Stat tiles — clickable where a target tab exists */}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
@@ -2264,31 +2512,6 @@ export default function AdminPage() {
               onClick={cfg.targetTab ? () => goToTab(cfg.targetTab) : undefined}
             />
           ))}
-        </div>
-
-        {/* Tab nav */}
-        <div className="overflow-x-auto">
-          <div className="flex min-w-max gap-1 rounded-2xl border border-slate-200 bg-white p-1">
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => { goToTab(t.key); }}
-                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition whitespace-nowrap ${
-                  tab === t.key ? "bg-brand-600 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                }`}
-              >
-                {t.label}
-                {tabCounts[t.key] !== undefined ? (
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
-                    tab === t.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"
-                  }`}>
-                    {tabCounts[t.key]}
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* ── Overview ── */}
@@ -3523,7 +3746,7 @@ export default function AdminPage() {
                   <h2 className="text-sm font-semibold text-slate-800">Articles ({blogArticles.length})</h2>
                   <button
                     type="button"
-                    onClick={() => setBlogForm({ title: "", excerpt: "", content: "", cover_image_url: "", status: "draft", author_name: "EnterprateAI Team", category_id: "", tag_ids: [] })}
+                    onClick={() => setBlogForm({ title: "", excerpt: "", content: "", status: "draft", author_name: "EnterprateAI Team", category_id: "", tag_ids: [] })}
                     className="rounded-xl bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 transition"
                   >
                     + New Article
@@ -3719,7 +3942,125 @@ export default function AdminPage() {
           </div>
         )}
 
-      </main>
+        {/* ── Research & Development ── */}
+        {tab === "research" && (
+          <div className="space-y-5">
+            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-slate-800">Research &amp; Development ({rdItems.length})</h2>
+                <button
+                  type="button"
+                  onClick={() => setRdForm({ title: "", description: "", type: "Research", content: "", status: "draft" })}
+                  className="rounded-xl bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 transition"
+                >
+                  + New Item
+                </button>
+              </div>
+              {rdLoading && <div className="py-8 text-center text-sm text-slate-400">Loading…</div>}
+              {!rdLoading && rdItems.length === 0 && (
+                <p className="py-6 text-center text-sm text-slate-400">No R&amp;D items yet. Add white papers, research notes, or technical updates.</p>
+              )}
+              {!rdLoading && rdItems.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-max text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                        <th className="pb-2 pr-4">Title</th>
+                        <th className="pb-2 pr-4">Type</th>
+                        <th className="pb-2 pr-4">Status</th>
+                        <th className="pb-2" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {rdItems.map((item) => (
+                        <tr key={item.id} className="group hover:bg-slate-50/50">
+                          <td className="py-2.5 pr-4">
+                            <p className="font-medium text-slate-800 line-clamp-1">{item.title}</p>
+                            {item.description && <p className="text-[11px] text-slate-400 line-clamp-1">{item.description}</p>}
+                          </td>
+                          <td className="py-2.5 pr-4 text-xs text-slate-500">{item.type}</td>
+                          <td className="py-2.5 pr-4">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${item.status === "published" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                              {item.status}
+                            </span>
+                          </td>
+                          <td className="py-2.5 text-right">
+                            <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition">
+                              <button type="button" onClick={() => setRdForm({ ...item })} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 transition">Edit</button>
+                              <button type="button" onClick={() => deleteRdItem(item.id, item.title)} className="rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-1 text-[11px] font-medium text-rose-600 hover:bg-rose-100 transition">Delete</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            {/* R&D form modal */}
+            {rdForm !== null && (
+              <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 pt-10">
+                <div className="absolute inset-0 bg-slate-900/60" onClick={() => setRdForm(null)} />
+                <div className="relative z-10 w-full max-w-3xl rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-900/10">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-base font-semibold text-slate-900">{rdForm.id ? "Edit R&D Item" : "New R&D Item"}</h3>
+                    <button onClick={() => setRdForm(null)} className="text-slate-400 hover:text-slate-700 text-lg leading-none">✕</button>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="col-span-2">
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Title <span className="text-rose-500">*</span></label>
+                        <input value={rdForm.title || ""} onChange={(e) => setRdForm((p) => ({ ...p, title: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Type</label>
+                        <select value={rdForm.type || "Research"} onChange={(e) => setRdForm((p) => ({ ...p, type: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none">
+                          {["Research", "White Paper", "Case Study", "Technical Deep-Dive", "Product Update"].map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Status</label>
+                        <select value={rdForm.status || "draft"} onChange={(e) => setRdForm((p) => ({ ...p, status: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none">
+                          <option value="draft">Draft</option>
+                          <option value="published">Published</option>
+                        </select>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Description / Excerpt</label>
+                        <textarea value={rdForm.description || ""} onChange={(e) => setRdForm((p) => ({ ...p, description: e.target.value }))}
+                          rows={2} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none resize-none" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Content</label>
+                        <RichEditor value={rdForm.content || ""} onChange={(html) => setRdForm((p) => ({ ...p, content: html }))} />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-5 flex justify-end gap-2">
+                    <button type="button" onClick={() => setRdForm(null)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+                    <button
+                      type="button"
+                      disabled={rdFormBusy || !rdForm.title?.trim()}
+                      onClick={() => saveRdItem(rdForm)}
+                      className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 transition disabled:opacity-50"
+                    >
+                      {rdFormBusy ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        </main>
+        </div>
       </div>
     </div>
   );
@@ -3896,10 +4237,7 @@ function RichEditor({ value, onChange }) {
 
 function BlogArticleModal({ form, categories, tags, busy, onSave, onClose }) {
   const [f, setF] = useState({ ...form });
-  const [imgUploading, setImgUploading] = useState(false);
-  const [imgError, setImgError] = useState("");
   const [preview, setPreview] = useState(false);
-  const fileRef = useRef(null);
 
   function toggle(tagId) {
     setF((prev) => ({
@@ -3908,34 +4246,6 @@ function BlogArticleModal({ form, categories, tags, busy, onSave, onClose }) {
         ? prev.tag_ids.filter((id) => id !== tagId)
         : [...prev.tag_ids, tagId],
     }));
-  }
-
-  async function handleImagePick(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setImgError("");
-    setImgUploading(true);
-    try {
-      const token = localStorage.getItem("ea_token");
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:8001"}/blog/admin/upload-image`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: fd,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Upload failed.");
-      }
-      const { url } = await res.json();
-      setF((p) => ({ ...p, cover_image_url: url }));
-    } catch (err) {
-      setImgError(err.message || "Upload failed.");
-    } finally {
-      setImgUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
   }
 
   return (
@@ -3959,9 +4269,6 @@ function BlogArticleModal({ form, categories, tags, busy, onSave, onClose }) {
         {/* ── Preview pane ── */}
         {preview && (
           <div className="rounded-xl border border-slate-200 bg-white overflow-y-auto max-h-[70vh] p-6">
-            {f.cover_image_url && (
-              <img src={f.cover_image_url} alt={f.title} className="mb-6 w-full rounded-xl object-cover" style={{ maxHeight: 280 }} />
-            )}
             {f.title && <h1 className="text-2xl font-extrabold text-slate-900 leading-tight">{f.title}</h1>}
             {f.excerpt && <p className="mt-3 text-base text-slate-500 leading-relaxed">{f.excerpt}</p>}
             <div
@@ -4014,52 +4321,6 @@ function BlogArticleModal({ form, categories, tags, busy, onSave, onClose }) {
                 <option value="draft">Draft</option>
                 <option value="published">Published</option>
               </select>
-            </div>
-
-            {/* Cover image — upload + URL fallback */}
-            <div className="col-span-2">
-              <label className="block text-xs font-medium text-slate-700 mb-1">Cover Image</label>
-              <div className="flex flex-col gap-2">
-                {/* Preview */}
-                {f.cover_image_url && (
-                  <div className="relative w-full overflow-hidden rounded-xl border border-slate-200">
-                    <img src={f.cover_image_url} alt="Cover" className="h-40 w-full object-cover" />
-                    <button
-                      type="button"
-                      onClick={() => setF((p) => ({ ...p, cover_image_url: "" }))}
-                      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/70 text-white text-xs hover:bg-slate-900 transition"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                )}
-                {/* Upload button */}
-                <div className="flex items-center gap-2">
-                  <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
-                    className="hidden" onChange={handleImagePick} />
-                  <button
-                    type="button"
-                    disabled={imgUploading}
-                    onClick={() => fileRef.current?.click()}
-                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 transition disabled:opacity-50"
-                  >
-                    {imgUploading ? (
-                      <><span className="animate-spin inline-block h-3 w-3 rounded-full border border-slate-400 border-t-transparent" /> Uploading…</>
-                    ) : (
-                      <><svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5"><path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" /></svg> Upload image</>
-                    )}
-                  </button>
-                  <span className="text-xs text-slate-400">or paste URL below</span>
-                </div>
-                {/* URL input */}
-                <input
-                  value={f.cover_image_url || ""}
-                  onChange={(e) => setF((p) => ({ ...p, cover_image_url: e.target.value }))}
-                  placeholder="https://…"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none"
-                />
-                {imgError && <p className="text-xs text-rose-500">{imgError}</p>}
-              </div>
             </div>
 
             {/* Excerpt */}

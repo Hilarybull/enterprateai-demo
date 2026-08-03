@@ -909,6 +909,55 @@ async def get_user_subscription(user_id: str, user=Depends(require_admin)) -> di
         return {"user_id": user_id, "plan_key": "explorer", "status": "expired", "_derived": True}
 
 
+@router.get("/users/{user_id}/credits")
+async def get_user_credits(user_id: str, user=Depends(require_admin)) -> dict:
+    from app.modules.credits import service as credit_svc
+    wallet = await credit_svc.get_wallet(user_id)
+    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+    plan_code = (sub or {}).get("plan_key") or "explorer"
+    return {
+        "available_credits": (wallet or {}).get("available_credits", 0),
+        "held_credits": (wallet or {}).get("held_credits", 0),
+        "lifetime_credits_issued": (wallet or {}).get("lifetime_credits_issued", 0),
+        "lifetime_credits_used": (wallet or {}).get("lifetime_credits_used", 0),
+        "plan_code": plan_code,
+        "wallet_exists": wallet is not None,
+    }
+
+
+class CreditGrantPayload(BaseModel):
+    amount: int
+    reason: Optional[str] = "Admin credit grant"
+    grant_type: Optional[str] = "admin_adjustment"
+
+
+@router.post("/users/{user_id}/credits/grant")
+async def admin_grant_user_credits(user_id: str, payload: CreditGrantPayload, user=Depends(require_admin)) -> dict:
+    from app.modules.credits import service as credit_svc
+    if payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive.")
+    result = await credit_svc.grant_credits(
+        user_id,
+        payload.amount,
+        grant_type=payload.grant_type or "admin_adjustment",
+        reason=payload.reason or "Admin credit grant",
+    )
+    return result
+
+
+@router.post("/users/{user_id}/credits/provision")
+async def admin_provision_user_credits(user_id: str, user=Depends(require_admin)) -> dict:
+    """Re-issue the plan's full credit allocation for this user (admin-only renewal)."""
+    from app.modules.credits import service as credit_svc
+    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+    plan_code = (sub or {}).get("plan_key") or "explorer"
+    result = await credit_svc.provision_plan_credits(
+        user_id, plan_code,
+        reason=f"Admin-initiated {plan_code} credit renewal",
+    )
+    return {**result, "plan_code": plan_code}
+
+
 @router.post("/users/{user_id}/renew-trial")
 async def renew_user_trial(user_id: str, user=Depends(require_admin)) -> dict:
     user_row = await sb_select("users", filters=[("id", "eq", user_id)], single=True)

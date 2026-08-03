@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
@@ -48,6 +49,17 @@ def _frontend_url() -> str:
 
 def _redirect_uri(provider: str) -> str:
     return f"{_backend_url()}/integrations/{provider}/callback"
+
+
+def _redact_state_param(url: str) -> str:
+    parts = urlsplit(url)
+    query = []
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        if key == "state":
+            query.append((key, "<redacted>"))
+        else:
+            query.append((key, value))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 _PROVIDER_ENV_NAMES: dict[str, tuple[str, str]] = {
@@ -117,6 +129,13 @@ async def connect(provider: Provider, user=Depends(get_current_user)) -> dict:
     else:
         url = zoho_mod.auth_url(client_id, redirect_uri, state)
 
+    if provider == "zoho_crm":
+        logger.info(
+            "Zoho OAuth connect prepared redirect_uri=%s auth_url=%s",
+            redirect_uri,
+            _redact_state_param(url),
+        )
+
     return {"auth_url": url, "provider": provider}
 
 
@@ -142,6 +161,8 @@ async def callback(provider: Provider, code: str = "", state: str = "", error: s
     redirect_uri = _redirect_uri(provider)
 
     try:
+        if provider == "zoho_crm":
+            logger.info("Zoho OAuth callback starting redirect_uri=%s", redirect_uri)
         if provider == "quickbooks":
             # QB also sends realmId in the callback query string — we receive it via **kwargs
             # It's accessible via the request; for now store it from the token response

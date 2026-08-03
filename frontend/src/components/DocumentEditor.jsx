@@ -31,7 +31,7 @@ function isTableSeparator(line) {
   return cells.every((c) => /^:?-{3,}:?$/.test(c));
 }
 
-function markdownToHtml(md) {
+export function markdownToHtml(md) {
   const lines = String(md || "").replaceAll("\r\n", "\n").split("\n");
   let html = "";
   let inList = false;
@@ -67,6 +67,12 @@ function markdownToHtml(md) {
     if (trimmed === "<div class=\"page-break\"></div>" || trimmed === "<div class='page-break'></div>") {
       closeList();
       html += `<div class="page-break"></div>`;
+      continue;
+    }
+
+    if (trimmed.startsWith('<div class="ea-bp-chart"')) {
+      closeList();
+      html += trimmed;
       continue;
     }
 

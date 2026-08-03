@@ -10,11 +10,26 @@ logger = logging.getLogger(__name__)
 
 ZOHO_SCOPES = "ZohoCRM.modules.ALL,ZohoCRM.settings.ALL"
 
+_ZOHO_DOMAIN_ALIASES = {
+    "com": "com",
+    "us": "com",
+    "eu": "eu",
+    "in": "in",
+    "au": "com.au",
+    "com.au": "com.au",
+    "jp": "jp",
+    "ca": "zohocloud.ca",
+    "zohocloud.ca": "zohocloud.ca",
+    "sa": "sa",
+    "cn": "com.cn",
+    "com.cn": "com.cn",
+}
+
 
 def _zoho_domain() -> str:
     from app.core.config import get_settings
     region = (get_settings().zoho_region or "com").lower().strip(".")
-    return "eu" if region == "eu" else "com"
+    return _ZOHO_DOMAIN_ALIASES.get(region, "com")
 
 
 def _auth_base() -> str:

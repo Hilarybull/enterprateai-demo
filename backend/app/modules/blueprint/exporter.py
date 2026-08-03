@@ -76,6 +76,12 @@ def markdown_to_html(markdown_text: str) -> str:
             idx += 1
             continue
 
+        if trimmed.startswith('<div class="ea-bp-chart"'):
+            close_list()
+            html.append(trimmed)
+            idx += 1
+            continue
+
         if re.match(r"^<img\b", trimmed, re.IGNORECASE):
             close_list()
             html.append(trimmed)
@@ -225,6 +231,9 @@ def render_export_html(title: str, body_html: str) -> str:
       }}
       .cover-page p {{ margin: 6px 0; }}
       .document-logo {{ display: block; max-width: 180px; max-height: 90px; width: auto; height: auto; margin: 0 auto 20px; object-fit: contain; }}
+      .ea-bp-chart {{ margin-top: 18px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; page-break-inside: avoid; }}
+      .ea-bp-chart p {{ text-align: center; font-size: 11px; font-weight: 700; color: #1e293b; margin: 0 0 8px; }}
+      .ea-bp-chart svg {{ display: block; width: 100%; max-width: 480px; margin: 0 auto; }}
       @media print {{
         .page-wrap {{ padding: 0; }}
         .page {{ border: none; border-radius: 0; width: auto; min-height: auto; padding: 16mm; }}
@@ -248,9 +257,15 @@ def split_pages(body_html: str) -> str:
     return "".join([f'<div class="page">{p}</div>' for p in pages])
 
 
+def _strip_svg(html: str) -> str:
+    """Remove SVG elements so ReportLab doesn't choke on chart markup."""
+    return re.sub(r"<svg[\s\S]*?</svg>", "", html or "", flags=re.IGNORECASE)
+
+
 def render_pdf_html(title: str, body_html: str) -> str:
     safe_title = title or "EnterprateAI Document"
     html = _normalize_breaks(body_html or "")
+    html = _strip_svg(html)
     html = html.replace('<div class="page-break"></div>', "<pdf:nextpage/>")
     return f"""<!doctype html>
 <html>
@@ -497,11 +512,19 @@ def html_to_pdf(html: str) -> bytes:
             try:
                 if src.startswith("data:image/"):
                     _, b64 = src.split(",", 1)
-                    img = Image(BytesIO(base64.b64decode(b64)), width=100, height=50, kind="proportional")
+                    img_io = BytesIO(base64.b64decode(b64))
+                    img = Image(img_io)
                 else:
-                    img = Image(src, width=100, height=50, kind="proportional")
+                    img = Image(src)
+                # Scale to full available width, preserving aspect ratio
+                iw, ih = img.imageWidth, img.imageHeight
+                if iw and ih:
+                    img._restrictSize(avail_w, avail_w * ih / iw)
+                else:
+                    img.drawWidth = avail_w
+                    img.drawHeight = 40 * mm
                 img.hAlign = "CENTER"
-                self.flows.extend([Spacer(1, 4), img, Spacer(1, 8)])
+                self.flows.extend([Spacer(1, 6), img, Spacer(1, 10)])
             except Exception:
                 pass
 

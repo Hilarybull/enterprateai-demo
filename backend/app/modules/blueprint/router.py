@@ -91,6 +91,17 @@ _FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
 _LIFETIME_BLUEPRINT_LIMIT = 1
 
 
+def _blueprint_feature_code(doc_type: str, sections: list[str] | None) -> str:
+    is_section = bool(sections and len(sections) == 1)
+    if doc_type == "business_plan":
+        return "business_plan_section" if is_section else "business_plan_full"
+    if doc_type == "client_proposal":
+        return "proposal_section" if is_section else "proposal_full"
+    if doc_type == "sales_letter":
+        return "sales_letter_section" if is_section else "sales_letter_full"
+    return "business_plan_full"
+
+
 @router.post("/generate", response_model=BlueprintGenerateResponse)
 async def blueprint_generate(
     payload: BlueprintGenerateRequest,
@@ -108,7 +119,9 @@ async def blueprint_generate(
                     detail="You have used your free lifetime business plan. Upgrade to generate more.",
                 )
 
-    return await generate_blueprint(payload, user_id=user_id)
+    feature_code = _blueprint_feature_code(payload.type, payload.sections)
+    async with credit_guard(user_id, feature_code):
+        return await generate_blueprint(payload, user_id=user_id)
 
 
 @router.get("/documents", response_model=list[BlueprintDocumentListItem])
@@ -399,6 +412,45 @@ async def blueprint_documents_export(
     pdf_bytes = html_to_pdf(pdf_html)
     if not pdf_bytes:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="PDF export failed")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.pdf"'},
+    )
+
+
+class ExportPdfFromHtmlRequest(BaseModel):
+    html: str
+    title: str = "Business Plan"
+    document_id: str = ""
+
+
+@router.post("/documents/export-pdf")
+async def blueprint_export_pdf_from_html(
+    body: ExportPdfFromHtmlRequest,
+    user=Depends(get_current_user),
+):
+    """Accept pre-rasterized HTML from the frontend and return a PDF blob."""
+    user_id: str = user["id"]
+
+    if body.document_id:
+        doc = await get_document(user_id=user_id, document_id=body.document_id)
+        if doc and doc.type == "business_plan":
+            plan_key, plan_status = await get_user_plan_info(user_id)
+            if plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Downloading a business plan requires a paid plan. Upgrade to export.",
+                )
+
+    body_html = extract_export_body(body.html)
+    pdf_html = render_pdf_html(title=body.title, body_html=body_html)
+    pdf_bytes = html_to_pdf(pdf_html)
+    if not pdf_bytes:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="PDF export failed")
+
+    safe_name = "".join(ch for ch in body.title.lower().replace(" ", "-") if ch.isalnum() or ch in "-_")
+    safe_name = safe_name or "document"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

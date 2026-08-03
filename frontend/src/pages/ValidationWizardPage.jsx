@@ -3604,7 +3604,7 @@ export default function ValidationWizardPage() {
                           <span className="text-lg font-bold text-violet-900">Comprehensive</span>
                           <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">15–25 min</span>
                         </div>
-                        <p className="text-sm text-violet-800">A full assessment covering all dimensions — customer, solution, market, competition, pricing, unit economics, operations, founder readiness and regulatory risk.</p>
+                        <p className="text-sm text-violet-800">A full assessment covering all dimensions: customer, solution, market, competition, pricing, unit economics, operations, founder readiness and regulatory risk.</p>
                         <ul className="mt-1 space-y-1">
                           {["Everything in Basic", "Customer & Solution", "Market & Competition", "Pricing & Revenue Model", "Unit Economics", "Founder & Operational Readiness", "Regulatory Risk"].map((l) => (
                             <li key={l} className="flex items-center gap-2 text-xs text-violet-700">
@@ -3630,7 +3630,7 @@ export default function ValidationWizardPage() {
                           onClick={() => setContentTab("history")}
                           className="text-xs font-semibold text-brand-600 hover:text-brand-700"
                         >
-                          View all →
+                          View all
                         </button>
                       ) : null}
                     >

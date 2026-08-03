@@ -56,6 +56,12 @@ class TagIn(BaseModel):
     slug: Optional[str] = None
 
 
+class FaqIn(BaseModel):
+    question: str
+    answer: str
+    order: int = 0
+
+
 class ArticleIn(BaseModel):
     title: str
     slug: Optional[str] = None
@@ -270,3 +276,40 @@ async def admin_update_tag(tag_id: str, body: TagIn, _=Depends(_require_admin)):
 @router.delete("/admin/tags/{tag_id}", status_code=204)
 async def admin_delete_tag(tag_id: str, _=Depends(_require_admin)):
     await sb_delete("blog_tags", filters=[("id", "eq", tag_id)])
+
+
+# ── FAQ endpoints ─────────────────────────────────────────────────────────────
+
+@router.get("/faqs")
+async def list_faqs():
+    try:
+        return await sb_select("faqs", order="order")
+    except Exception:
+        return []
+
+
+@router.post("/admin/faqs", status_code=201)
+async def admin_create_faq(body: FaqIn, _=Depends(_require_admin)):
+    row = {
+        "id": str(uuid4()),
+        "question": body.question,
+        "answer": body.answer,
+        "order": body.order,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    result = await sb_insert("faqs", row)
+    return result[0] if result else row
+
+
+@router.put("/admin/faqs/{faq_id}")
+async def admin_update_faq(faq_id: str, body: FaqIn, _=Depends(_require_admin)):
+    updates = {"question": body.question, "answer": body.answer, "order": body.order}
+    result = await sb_update("faqs", payload=updates, filters=[("id", "eq", faq_id)])
+    if not result:
+        raise HTTPException(status_code=404, detail="FAQ not found.")
+    return result[0]
+
+
+@router.delete("/admin/faqs/{faq_id}", status_code=204)
+async def admin_delete_faq(faq_id: str, _=Depends(_require_admin)):
+    await sb_delete("faqs", filters=[("id", "eq", faq_id)])

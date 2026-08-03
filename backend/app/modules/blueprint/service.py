@@ -1,10 +1,13 @@
 ﻿from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from html import escape
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, status
 
@@ -1950,6 +1953,24 @@ async def generate_blueprint(
         # Handle financial snapshot logic
         if payload.include_validation_snapshot and not snapshot_text:
             raw_inputs["financial_snapshot"] = "Financial data has not been provided for this section."
+
+        # Fetch real market + risk data from SERP/Claude for chart sections
+        chart_data_block = ""
+        try:
+            from app.modules.blueprint.chart_data_service import fetch_chart_data, format_chart_data_for_prompt
+            location = raw_inputs.get("location") or ""
+            chart_data = await fetch_chart_data(
+                industry=raw_inputs.get("primary_industry") or industry,
+                target_market=raw_inputs.get("target_customer_type") or target,
+                problem=problem,
+                location=location,
+                validation_data=validation,
+            )
+            if chart_data:
+                chart_data_block = format_chart_data_for_prompt(chart_data)
+                raw_inputs["chart_data"] = chart_data_block
+        except Exception as exc:
+            logger.warning("chart_data_service error (non-fatal): %s", exc)
 
         # Full-document generation first, then backfill any missing sections deterministically.
         doc, provider, model = await _enrich_and_generate(
