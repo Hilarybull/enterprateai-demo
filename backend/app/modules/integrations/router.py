@@ -338,18 +338,30 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
             total_imported = len(imported.get("products", [])) + len(imported.get("customers", [])) + len(imported.get("vendors", []))
         else:
-            products = catalogue.get("products", [])
-            customers = catalogue.get("customers", [])
-            vendors = catalogue.get("vendors", [])
+            products = list(catalogue.get("products", []))
+            customers = list(catalogue.get("customers", []))
+            vendors = list(catalogue.get("vendors", []))
+            source_updates = {"products": {}, "customers": {}, "vendors": {}}
 
-            s, e = await zoho_mod.sync_products(meta, products, client_id, client_secret)
+            s, e, updates = await zoho_mod.sync_products(meta, products, client_id, client_secret)
             total_synced += s; all_errors += e
+            source_updates["products"] = updates
 
-            s, e = await zoho_mod.sync_contacts(meta, customers, client_id, client_secret)
+            s, e, updates = await zoho_mod.sync_contacts(meta, customers, client_id, client_secret)
             total_synced += s; all_errors += e
+            source_updates["customers"] = updates
 
-            s, e = await zoho_mod.sync_vendors(meta, vendors, client_id, client_secret)
+            s, e, updates = await zoho_mod.sync_vendors(meta, vendors, client_id, client_secret)
             total_synced += s; all_errors += e
+            source_updates["vendors"] = updates
+
+            if any(source_updates.get(kind) for kind in ("products", "customers", "vendors")):
+                updated_catalogue = {
+                    "products": zoho_mod._apply_source_record_ids(products, kind="products", source_updates=source_updates["products"]),
+                    "customers": zoho_mod._apply_source_record_ids(customers, kind="customers", source_updates=source_updates["customers"]),
+                    "vendors": zoho_mod._apply_source_record_ids(vendors, kind="vendors", source_updates=source_updates["vendors"]),
+                }
+                await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": updated_catalogue})
 
     # Update last_sync_at
     try:

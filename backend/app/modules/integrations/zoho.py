@@ -90,14 +90,23 @@ def _dedupe_catalogue_items(items: list[dict], key_fn) -> list[dict]:
 
 
 def _product_key(item: dict) -> str:
+    source_id = _source_record_id(item)
+    if source_id:
+        return f"zoho:{source_id}"
     return _casefold_key(item.get("name") or item.get("Product_Name"))
 
 
 def _customer_key(item: dict) -> str:
+    source_id = _source_record_id(item)
+    if source_id:
+        return f"zoho:{source_id}"
     return _casefold_key(item.get("email") or item.get("Email") or item.get("name") or item.get("First_Name"))
 
 
 def _vendor_key(item: dict) -> str:
+    source_id = _source_record_id(item)
+    if source_id:
+        return f"zoho:{source_id}"
     return _casefold_key(item.get("email") or item.get("Email") or item.get("name") or item.get("Vendor_Name"))
 
 
@@ -107,6 +116,15 @@ def _catalogue_key(kind: str, item: dict) -> str:
     if kind == "customers":
         return _customer_key(item)
     return _vendor_key(item)
+
+
+def _source_record_id(item: dict) -> str:
+    return _clean_text(
+        item.get("source_record_id")
+        or item.get("external_id")
+        or item.get("zoho_id")
+        or item.get("integration_record_id")
+    )
 
 
 _IMPORT_FIELDS = {
@@ -145,6 +163,8 @@ def _normalize_imported_product(item: dict, now_iso: str) -> dict:
         "freight_cost": 0,
         "description": description,
         "archived": False,
+        "source_system": "zoho_crm",
+        "source_record_id": _clean_text(item.get("id")),
         "created_at": now_iso,
         "updated_at": now_iso,
     }
@@ -169,6 +189,8 @@ def _normalize_imported_contact(item: dict, now_iso: str) -> dict:
         "first_name": first_name,
         "last_name": last_name or "Imported",
         "archived": False,
+        "source_system": "zoho_crm",
+        "source_record_id": _clean_text(item.get("id")),
         "created_at": now_iso,
         "updated_at": now_iso,
     }
@@ -188,6 +210,8 @@ def _normalize_imported_vendor(item: dict, now_iso: str) -> dict:
         "product_name": name or "Imported from Zoho",
         "price": 0,
         "archived": False,
+        "source_system": "zoho_crm",
+        "source_record_id": _clean_text(item.get("id")),
         "created_at": now_iso,
         "updated_at": now_iso,
     }
@@ -232,12 +256,13 @@ async def _upsert_records(
     records: list[dict],
     duplicate_check_fields: list[str],
     access_token: str,
-) -> tuple[int, list[str]]:
+) -> tuple[int, list[str], list[dict]]:
     if not records:
-        return 0, []
+        return 0, [], []
 
     synced = 0
     errors: list[str] = []
+    results: list[dict] = []
     async with httpx.AsyncClient(timeout=30) as client:
         for batch in _chunked(records, 100):
             payload: dict[str, Any] = {"data": batch}
@@ -250,6 +275,7 @@ async def _upsert_records(
             )
             resp.raise_for_status()
             data = resp.json().get("data") or []
+            results.extend(data)
             for idx, result in enumerate(data):
                 item = batch[idx] if idx < len(batch) else {}
                 label = _clean_text(item.get("Product_Name") or item.get("Vendor_Name") or item.get("Email") or item.get("Last_Name") or item.get("name") or "Record")
@@ -258,7 +284,7 @@ async def _upsert_records(
                 else:
                     message = result.get("message") or result.get("code") or "Unknown error"
                     errors.append(f"{label}: {message}")
-    return synced, errors
+    return synced, errors, results
 
 
 async def _fetch_records(module: str, access_token: str) -> list[dict]:
@@ -360,7 +386,7 @@ def _headers(access_token: str) -> dict:
     return {"Authorization": f"Zoho-oauthtoken {access_token}", "Content-Type": "application/json"}
 
 
-async def sync_products(meta: dict, products: list[dict], client_id: str, client_secret: str) -> tuple[int, list[str]]:
+async def sync_products(meta: dict, products: list[dict], client_id: str, client_secret: str) -> tuple[int, list[str], dict[str, str]]:
     access, _ = await _ensure_fresh(meta, client_id, client_secret)
     outgoing = _dedupe_catalogue_items(
         [p for p in products if not p.get("archived")],
@@ -376,11 +402,20 @@ async def sync_products(meta: dict, products: list[dict], client_id: str, client
             "Unit_Price": float(p.get("base_price", 0) or 0),
             "Product_Category": _clean_text(p.get("category") or p.get("type")) or "product",
             "Description": _clean_text(p.get("description")) or f"Cost of sales: {p.get('cost_of_sales', 0)}",
+            **({"id": _source_record_id(p)} if _source_record_id(p) else {}),
         })
-    return await _upsert_records(module="Products", records=records, duplicate_check_fields=["Product_Name"], access_token=access)
+    synced, errors, results = await _upsert_records(module="Products", records=records, duplicate_check_fields=["Product_Name"], access_token=access)
+    source_updates = {}
+    for item, result in zip(outgoing, results):
+        if result.get("status") != "success":
+            continue
+        zoho_id = _clean_text((result.get("details") or {}).get("id"))
+        if zoho_id:
+            source_updates[_catalogue_key("products", item)] = zoho_id
+    return synced, errors, source_updates
 
 
-async def sync_contacts(meta: dict, customers: list[dict], client_id: str, client_secret: str) -> tuple[int, list[str]]:
+async def sync_contacts(meta: dict, customers: list[dict], client_id: str, client_secret: str) -> tuple[int, list[str], dict[str, str]]:
     access, _ = await _ensure_fresh(meta, client_id, client_secret)
     outgoing = _dedupe_catalogue_items(
         [c for c in customers if not c.get("archived")],
@@ -399,11 +434,20 @@ async def sync_contacts(meta: dict, customers: list[dict], client_id: str, clien
             "Phone": _clean_text(c.get("phone_number")),
             "Mailing_Street": _clean_text(c.get("address")),
             "Industry": _clean_text(c.get("industry")),
+            **({"id": _source_record_id(c)} if _source_record_id(c) else {}),
         })
-    return await _upsert_records(module="Contacts", records=records, duplicate_check_fields=["Email", "Phone"], access_token=access)
+    synced, errors, results = await _upsert_records(module="Contacts", records=records, duplicate_check_fields=["Email", "Phone"], access_token=access)
+    source_updates = {}
+    for item, result in zip(outgoing, results):
+        if result.get("status") != "success":
+            continue
+        zoho_id = _clean_text((result.get("details") or {}).get("id"))
+        if zoho_id:
+            source_updates[_catalogue_key("customers", item)] = zoho_id
+    return synced, errors, source_updates
 
 
-async def sync_vendors(meta: dict, vendors: list[dict], client_id: str, client_secret: str) -> tuple[int, list[str]]:
+async def sync_vendors(meta: dict, vendors: list[dict], client_id: str, client_secret: str) -> tuple[int, list[str], dict[str, str]]:
     access, _ = await _ensure_fresh(meta, client_id, client_secret)
     outgoing = _dedupe_catalogue_items(
         [v for v in vendors if not v.get("archived")],
@@ -420,8 +464,35 @@ async def sync_vendors(meta: dict, vendors: list[dict], client_id: str, client_s
             "Phone": _clean_text(v.get("phone_number")),
             "Street": _clean_text(v.get("address")),
             "Category": _clean_text(v.get("industry")),
+            **({"id": _source_record_id(v)} if _source_record_id(v) else {}),
         })
-    return await _upsert_records(module="Vendors", records=records, duplicate_check_fields=["Email", "Phone", "Vendor_Name"], access_token=access)
+    synced, errors, results = await _upsert_records(module="Vendors", records=records, duplicate_check_fields=["Email", "Phone", "Vendor_Name"], access_token=access)
+    source_updates = {}
+    for item, result in zip(outgoing, results):
+        if result.get("status") != "success":
+            continue
+        zoho_id = _clean_text((result.get("details") or {}).get("id"))
+        if zoho_id:
+            source_updates[_catalogue_key("vendors", item)] = zoho_id
+    return synced, errors, source_updates
+
+
+def _apply_source_record_ids(items: list[dict], *, kind: str, source_updates: dict[str, str]) -> list[dict]:
+    if not source_updates:
+        return [dict(item) for item in items if isinstance(item, dict)]
+
+    patched: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        key = _catalogue_key(kind, row)
+        source_id = _clean_text(source_updates.get(key) or _source_record_id(row))
+        if source_id:
+            row["source_system"] = row.get("source_system") or "zoho_crm"
+            row["source_record_id"] = source_id
+        patched.append(row)
+    return patched
 
 
 async def import_catalogue(meta: dict, client_id: str, client_secret: str) -> tuple[dict[str, list[dict]], list[str]]:
