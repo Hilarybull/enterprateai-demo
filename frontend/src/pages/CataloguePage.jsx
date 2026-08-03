@@ -1656,7 +1656,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
         <div className="mt-6">
           <SectionCard title="Catalogue Integrations" subtitle="Connect Zoho CRM to sync your products, customers and vendors.">
             <div className="mt-3">
-              <IntegrationPanel providers={["zoho_crm"]} />
+              <IntegrationPanel providers={["zoho_crm"]} onWorkspaceRefresh={refreshWorkspaceData} />
             </div>
           </SectionCard>
         </div>

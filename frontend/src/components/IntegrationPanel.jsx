@@ -116,7 +116,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onSync,
   );
 }
 
-export default function IntegrationPanel({ providers }) {
+export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
   const [statuses, setStatuses] = useState({});
   const [actionLoading, setActionLoading] = useState(null);
   const [syncResult, setSyncResult] = useState(null);
@@ -174,6 +174,9 @@ export default function IntegrationPanel({ providers }) {
       const body = direction === "import" ? { direction: "import" } : { direction: "push" };
       const res = await apiRequest(`/integrations/${provider}/sync`, "POST", body, { timeoutMs: 120000 });
       setSyncResult(res);
+      if (onWorkspaceRefresh) {
+        await onWorkspaceRefresh();
+      }
       await loadStatuses();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
