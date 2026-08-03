@@ -109,6 +109,13 @@ def _catalogue_key(kind: str, item: dict) -> str:
     return _vendor_key(item)
 
 
+_IMPORT_FIELDS = {
+    "Products": "Product_Name,Unit_Price,Product_Category,Description",
+    "Contacts": "First_Name,Last_Name,Full_Name,Email,Phone,Mailing_Street,Industry",
+    "Vendors": "Vendor_Name,Email,Phone,Street,Category",
+}
+
+
 def _merge_non_empty(existing: dict, incoming: dict, *, keep_existing_keys: set[str] | None = None) -> dict:
     merged = dict(existing)
     keep_existing_keys = keep_existing_keys or set()
@@ -259,9 +266,13 @@ async def _fetch_records(module: str, access_token: str) -> list[dict]:
     async with httpx.AsyncClient(timeout=30) as client:
         page = 1
         while True:
+            params = {"page": page, "per_page": 200}
+            fields = _IMPORT_FIELDS.get(module)
+            if fields:
+                params["fields"] = fields
             resp = await client.get(
                 f"{_api_base_v8()}/{module}",
-                params={"page": page, "per_page": 200},
+                params=params,
                 headers=_headers(access_token),
             )
             resp.raise_for_status()
