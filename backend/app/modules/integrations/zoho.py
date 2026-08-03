@@ -178,11 +178,18 @@ def _normalize_imported_contact(item: dict, now_iso: str) -> dict:
         _, last_name = _display_name_parts(full_name)
     if not first_name and full_name:
         first_name, _ = _display_name_parts(full_name)
+    email = _clean_text(
+        item.get("Email")
+        or item.get("Email_Address")
+        or item.get("EmailAddress")
+        or item.get("Secondary_Email")
+        or item.get("mail")
+    )
     return {
         "id": item.get("id") or str(uuid4()),
         "name": _clean_text(item.get("Full_Name") or item.get("name") or full_name) or "Imported Contact",
         "address": _clean_text(item.get("Mailing_Street") or item.get("Street") or item.get("Mailing Street")),
-        "email": _clean_text(item.get("Email")),
+        "email": email,
         "phone_number": _clean_text(item.get("Phone")),
         "payment_terms": 14,
         "industry": _clean_text(item.get("Industry")),
@@ -198,11 +205,12 @@ def _normalize_imported_contact(item: dict, now_iso: str) -> dict:
 
 def _normalize_imported_vendor(item: dict, now_iso: str) -> dict:
     name = _clean_text(item.get("Vendor_Name") or item.get("name"))
+    email = _clean_text(item.get("Email") or item.get("Email_Address") or item.get("EmailAddress"))
     return {
         "id": item.get("id") or str(uuid4()),
         "name": name or "Imported Vendor",
         "address": _clean_text(item.get("Street")),
-        "email": _clean_text(item.get("Email")),
+        "email": email,
         "phone_number": _clean_text(item.get("Phone")),
         "payment_terms": 14,
         "industry": _clean_text(item.get("Category")),
@@ -302,7 +310,15 @@ async def _fetch_records(module: str, access_token: str) -> list[dict]:
                 headers=_headers(access_token),
             )
             resp.raise_for_status()
-            payload = resp.json()
+            if resp.status_code == 204 or not resp.text.strip():
+                break
+            try:
+                payload = resp.json()
+            except ValueError as exc:
+                body = resp.text.strip()
+                if not body:
+                    break
+                raise ValueError(f"{module}: invalid response from Zoho: {body[:120]}") from exc
             batch = payload.get("data") or []
             if not batch:
                 break

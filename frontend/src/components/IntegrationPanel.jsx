@@ -67,7 +67,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onSync,
             <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">Last synced: {fmtDate(status.last_sync_at)}</p>
           )}
           {connected && !status?.last_sync_at && (
-            <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">Never synced — click Sync Now to push your data.</p>
+            <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">Never synced. Click Sync Now to push your data.</p>
           )}
         </div>
         <div className="flex shrink-0 flex-col gap-2">
@@ -79,7 +79,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onSync,
                 onClick={() => onSync(provider)}
                 className="rounded-xl bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50"
               >
-                {isSyncing ? "Syncing…" : syncLabel}
+                {isSyncing ? "Syncing..." : syncLabel}
               </button>
               {provider === "zoho_crm" && onImport && (
                 <button
@@ -88,7 +88,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onSync,
                   onClick={() => onImport(provider, "import")}
                   className="rounded-xl border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-950/50"
                 >
-                  {isImporting ? "Importing…" : "Import from Zoho"}
+                  {isImporting ? "Importing..." : "Import from Zoho"}
                 </button>
               )}
               <button
@@ -107,7 +107,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onSync,
               onClick={() => onConnect(provider)}
               className="rounded-xl bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
             >
-              {loading ? "Connecting…" : "Connect"}
+              {loading ? "Connecting..." : "Connect"}
             </button>
           )}
         </div>
@@ -127,7 +127,7 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
       const data = await apiRequest("/integrations/status", "GET");
       setStatuses(data);
     } catch (e) {
-      // silently fail — integrations are optional
+      // silently fail - integrations are optional
     }
   }, []);
 
@@ -199,7 +199,7 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
           {PROVIDER_INFO[syncResult.provider]?.label}.
           {syncResult.errors?.length > 0 && (
             <ul className="mt-1 space-y-0.5 text-[11px]">
-              {syncResult.errors.map((e, i) => <li key={i}>⚠ {e}</li>)}
+              {syncResult.errors.map((e, i) => <li key={i}>{"⚠"} {e}</li>)}
             </ul>
           )}
         </div>

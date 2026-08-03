@@ -196,6 +196,18 @@ export default function CataloguePage() {
     return Math.floor((Date.now() - ts) / (1000 * 60 * 60 * 24));
   }
 
+  function isZohoImported(item) {
+    return String(item?.source_system || "").toLowerCase() === "zoho_crm" || Boolean(item?.source_record_id);
+  }
+
+  function importBadge(item) {
+    return isZohoImported(item) ? (
+      <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
+        Imported from Zoho
+      </span>
+    ) : null;
+  }
+
   function normalizeHeader(value) {
     return String(value || "")
       .trim()
@@ -958,6 +970,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                       <div className="flex items-center gap-2">
                         <div className="text-sm font-semibold text-slate-900">{p.name}</div>
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${p.type === "product" ? "bg-sky-50 text-sky-700" : "bg-violet-50 text-violet-700"}`}>{p.type}</span>
+                        {importBadge(p)}
                       </div>
                       <div className="mt-0.5 text-xs text-slate-500">
                         {formatCurrency(p.base_price, currency)} base · {formatCurrency(p.cost_of_sales || 0, currency)} CoS{p.discount ? ` · ${formatCurrency(p.discount, currency)} off` : ""}{p.freight_cost ? ` · ${formatCurrency(p.freight_cost, currency)} freight` : ""}
@@ -1179,7 +1192,10 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                 activeCustomers.map((c) => (
                   <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-900">{c.name}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-semibold text-slate-900">{c.name}</div>
+                        {importBadge(c)}
+                      </div>
                       <div className="text-xs text-slate-500">
                         {c.industry || "Industry"} • {formatPaymentTerms(c.payment_terms)} • {c.address || "Address on file"}
                         {c.email ? ` • ${c.email}` : ""}
@@ -1423,6 +1439,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                       <div className="flex items-center gap-2">
                         <div className="text-sm font-semibold text-slate-900">{v.name}</div>
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${v.product_type === "product" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>{v.product_type}</span>
+                        {importBadge(v)}
                       </div>
                       <div className="mt-0.5 text-xs text-slate-500">
                                 {v.product_name} · {formatCurrency(v.price, currency)} · {formatPaymentTerms(v.payment_terms)}
