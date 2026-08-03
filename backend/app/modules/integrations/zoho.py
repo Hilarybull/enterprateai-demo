@@ -10,36 +10,38 @@ logger = logging.getLogger(__name__)
 
 ZOHO_SCOPES = "ZohoCRM.modules.ALL,ZohoCRM.settings.ALL"
 
-_ZOHO_DOMAIN_ALIASES = {
-    "com": "com",
-    "us": "com",
-    "eu": "eu",
-    "in": "in",
-    "au": "com.au",
-    "com.au": "com.au",
-    "jp": "jp",
-    "ca": "zohocloud.ca",
-    "zohocloud.ca": "zohocloud.ca",
-    "sa": "sa",
-    "cn": "com.cn",
-    "com.cn": "com.cn",
+_ZOHO_ENDPOINTS = {
+    "com": ("accounts.zoho.com", "www.zohoapis.com"),
+    "us": ("accounts.zoho.com", "www.zohoapis.com"),
+    "eu": ("accounts.zoho.eu", "www.zohoapis.eu"),
+    "in": ("accounts.zoho.in", "www.zohoapis.in"),
+    "au": ("accounts.zoho.com.au", "www.zohoapis.com.au"),
+    "com.au": ("accounts.zoho.com.au", "www.zohoapis.com.au"),
+    "sg": ("accounts.zoho.sg", "www.zohoapis.sg"),
+    "jp": ("accounts.zoho.jp", "www.zohoapis.jp"),
+    "ca": ("accounts.zohocloud.ca", "www.zohoapis.ca"),
+    "zohocloud.ca": ("accounts.zohocloud.ca", "www.zohoapis.ca"),
+    "sa": ("accounts.zoho.sa", "www.zohoapis.sa"),
+    "uk": ("accounts.zoho.uk", "www.zohoapis.uk"),
+    "cn": ("accounts.zoho.com.cn", "www.zohoapis.com.cn"),
+    "com.cn": ("accounts.zoho.com.cn", "www.zohoapis.com.cn"),
 }
 
 
-def _zoho_domain() -> str:
+def _zoho_hosts() -> tuple[str, str]:
     from app.core.config import get_settings
     region = (get_settings().zoho_region or "com").lower().strip(".")
-    return _ZOHO_DOMAIN_ALIASES.get(region, "com")
+    return _ZOHO_ENDPOINTS.get(region, _ZOHO_ENDPOINTS["com"])
 
 
 def _auth_base() -> str:
-    d = _zoho_domain()
-    return f"https://accounts.zoho.{d}/oauth/v2"
+    accounts_host, _ = _zoho_hosts()
+    return f"https://{accounts_host}/oauth/v2"
 
 
 def _api_base() -> str:
-    d = _zoho_domain()
-    return f"https://www.zohoapis.{d}/crm/v3"
+    _, api_host = _zoho_hosts()
+    return f"https://{api_host}/crm/v3"
 
 
 def auth_url(client_id: str, redirect_uri: str, state: str) -> str:
