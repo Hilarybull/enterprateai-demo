@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 from typing import Any
 
 import httpx
@@ -42,6 +44,237 @@ def _auth_base() -> str:
 def _api_base() -> str:
     _, api_host = _zoho_hosts()
     return f"https://{api_host}/crm/v3"
+
+
+def _api_base_v8() -> str:
+    _, api_host = _zoho_hosts()
+    return f"https://{api_host}/crm/v8"
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _casefold_key(value: Any) -> str:
+    return _clean_text(value).casefold()
+
+
+def _chunked(items: Sequence[dict], size: int) -> list[list[dict]]:
+    return [list(items[i : i + size]) for i in range(0, len(items), size)]
+
+
+def _display_name_parts(full_name: str) -> tuple[str, str]:
+    parts = [part for part in _clean_text(full_name).split() if part]
+    if not parts:
+        return "", "Unknown"
+    if len(parts) == 1:
+        return "", parts[0]
+    return " ".join(parts[:-1]), parts[-1]
+
+
+def _dedupe_catalogue_items(items: list[dict], key_fn) -> list[dict]:
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = key_fn(item)
+        if not key:
+            deduped.append(item)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _product_key(item: dict) -> str:
+    return _casefold_key(item.get("name") or item.get("Product_Name"))
+
+
+def _customer_key(item: dict) -> str:
+    return _casefold_key(item.get("email") or item.get("Email") or item.get("name") or item.get("First_Name"))
+
+
+def _vendor_key(item: dict) -> str:
+    return _casefold_key(item.get("email") or item.get("Email") or item.get("name") or item.get("Vendor_Name"))
+
+
+def _catalogue_key(kind: str, item: dict) -> str:
+    if kind == "products":
+        return _product_key(item)
+    if kind == "customers":
+        return _customer_key(item)
+    return _vendor_key(item)
+
+
+def _merge_non_empty(existing: dict, incoming: dict, *, keep_existing_keys: set[str] | None = None) -> dict:
+    merged = dict(existing)
+    keep_existing_keys = keep_existing_keys or set()
+    for key, value in incoming.items():
+        if key in keep_existing_keys:
+            continue
+        if value in (None, "", [], {}):
+            continue
+        merged[key] = value
+    return merged
+
+
+def _normalize_imported_product(item: dict, now_iso: str) -> dict:
+    name = _clean_text(item.get("Product_Name") or item.get("name"))
+    price = item.get("Unit_Price")
+    category = _clean_text(item.get("Product_Category") or item.get("category") or item.get("type"))
+    description = _clean_text(item.get("Description"))
+    return {
+        "id": item.get("id") or str(uuid4()),
+        "name": name or "Unknown",
+        "type": "product",
+        "product_type": "product",
+        "category": category or "Imported from Zoho",
+        "base_price": float(price or 0),
+        "cost_of_sales": 0,
+        "discount": 0,
+        "freight_cost": 0,
+        "description": description,
+        "archived": False,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+
+def _normalize_imported_contact(item: dict, now_iso: str) -> dict:
+    first_name = _clean_text(item.get("First_Name"))
+    last_name = _clean_text(item.get("Last_Name"))
+    full_name = _clean_text(item.get("Full_Name") or item.get("Full Name") or item.get("name"))
+    if not last_name:
+        _, last_name = _display_name_parts(full_name)
+    if not first_name and full_name:
+        first_name, _ = _display_name_parts(full_name)
+    return {
+        "id": item.get("id") or str(uuid4()),
+        "name": _clean_text(item.get("Full_Name") or item.get("name") or full_name) or "Imported Contact",
+        "address": _clean_text(item.get("Mailing_Street") or item.get("Street") or item.get("Mailing Street")),
+        "email": _clean_text(item.get("Email")),
+        "phone_number": _clean_text(item.get("Phone")),
+        "payment_terms": 14,
+        "industry": _clean_text(item.get("Industry")),
+        "first_name": first_name,
+        "last_name": last_name or "Imported",
+        "archived": False,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+
+def _normalize_imported_vendor(item: dict, now_iso: str) -> dict:
+    name = _clean_text(item.get("Vendor_Name") or item.get("name"))
+    return {
+        "id": item.get("id") or str(uuid4()),
+        "name": name or "Imported Vendor",
+        "address": _clean_text(item.get("Street")),
+        "email": _clean_text(item.get("Email")),
+        "phone_number": _clean_text(item.get("Phone")),
+        "payment_terms": 14,
+        "industry": _clean_text(item.get("Category")),
+        "product_type": "product",
+        "product_name": name or "Imported from Zoho",
+        "price": 0,
+        "archived": False,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+
+def _merge_catalogue_lists(existing: list[dict], imported: list[dict], *, kind: str, now_iso: str) -> list[dict]:
+    current = [dict(item) for item in existing if isinstance(item, dict)]
+    index: dict[str, int] = {}
+    for i, item in enumerate(current):
+        key = _catalogue_key(kind, item)
+        if key:
+            index[key] = i
+
+    normalizer = {
+        "products": _normalize_imported_product,
+        "customers": _normalize_imported_contact,
+        "vendors": _normalize_imported_vendor,
+    }[kind]
+
+    merged = list(current)
+    for raw_item in imported:
+        item = normalizer(raw_item, now_iso)
+        key = _catalogue_key(kind, item)
+        if key and key in index:
+            existing_idx = index[key]
+            merged[existing_idx] = _merge_non_empty(merged[existing_idx], item, keep_existing_keys={"id", "created_at"})
+            merged[existing_idx]["archived"] = False
+            merged[existing_idx]["updated_at"] = now_iso
+        else:
+            merged.insert(0, item)
+            if key:
+                index[key] = 0
+                for k in list(index.keys()):
+                    if k != key and index[k] >= 0:
+                        index[k] += 1
+    return _dedupe_catalogue_items(merged, lambda row: _catalogue_key(kind, row))
+
+
+async def _upsert_records(
+    *,
+    module: str,
+    records: list[dict],
+    duplicate_check_fields: list[str],
+    access_token: str,
+) -> tuple[int, list[str]]:
+    if not records:
+        return 0, []
+
+    synced = 0
+    errors: list[str] = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        for batch in _chunked(records, 100):
+            payload: dict[str, Any] = {"data": batch}
+            if duplicate_check_fields:
+                payload["duplicate_check_fields"] = duplicate_check_fields
+            resp = await client.post(
+                f"{_api_base_v8()}/{module}/upsert",
+                json=payload,
+                headers=_headers(access_token),
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data") or []
+            for idx, result in enumerate(data):
+                item = batch[idx] if idx < len(batch) else {}
+                label = _clean_text(item.get("Product_Name") or item.get("Vendor_Name") or item.get("Email") or item.get("Last_Name") or item.get("name") or "Record")
+                if result.get("status") == "success":
+                    synced += 1
+                else:
+                    message = result.get("message") or result.get("code") or "Unknown error"
+                    errors.append(f"{label}: {message}")
+    return synced, errors
+
+
+async def _fetch_records(module: str, access_token: str) -> list[dict]:
+    records: list[dict] = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        page = 1
+        while True:
+            resp = await client.get(
+                f"{_api_base_v8()}/{module}",
+                params={"page": page, "per_page": 200},
+                headers=_headers(access_token),
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            batch = payload.get("data") or []
+            if not batch:
+                break
+            records.extend(batch)
+            info = payload.get("info") or {}
+            if not info.get("more_records") or len(batch) < 200:
+                break
+            page += 1
+    return records
 
 
 def auth_url(client_id: str, redirect_uri: str, state: str) -> str:
@@ -118,93 +351,89 @@ def _headers(access_token: str) -> dict:
 
 async def sync_products(meta: dict, products: list[dict], client_id: str, client_secret: str) -> tuple[int, list[str]]:
     access, _ = await _ensure_fresh(meta, client_id, client_secret)
-    synced, errors = 0, []
-    async with httpx.AsyncClient(timeout=20) as client:
-        for p in products:
-            if p.get("archived"):
-                continue
-            body: dict[str, Any] = {
-                "Product_Name": p.get("name", "Unknown"),
-                "Unit_Price": float(p.get("base_price", 0)),
-                "Product_Category": p.get("category") or p.get("type", ""),
-                "Description": f"Cost of sales: {p.get('cost_of_sales', 0)}",
-            }
-            try:
-                resp = await client.post(
-                    f"{_api_base()}/Products",
-                    json={"data": [body]},
-                    headers=_headers(access),
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                if data.get("data", [{}])[0].get("status") == "error":
-                    errors.append(f"Product '{p.get('name')}': {data['data'][0].get('message', 'Unknown error')}")
-                else:
-                    synced += 1
-            except httpx.HTTPStatusError as e:
-                errors.append(f"Product '{p.get('name')}': {e.response.text[:120]}")
-    return synced, errors
+    outgoing = _dedupe_catalogue_items(
+        [p for p in products if not p.get("archived")],
+        _product_key,
+    )
+    records: list[dict[str, Any]] = []
+    for p in outgoing:
+        name = _clean_text(p.get("name"))
+        if not name:
+            continue
+        records.append({
+            "Product_Name": name,
+            "Unit_Price": float(p.get("base_price", 0) or 0),
+            "Product_Category": _clean_text(p.get("category") or p.get("type")) or "product",
+            "Description": _clean_text(p.get("description")) or f"Cost of sales: {p.get('cost_of_sales', 0)}",
+        })
+    return await _upsert_records(module="Products", records=records, duplicate_check_fields=["Product_Name"], access_token=access)
 
 
 async def sync_contacts(meta: dict, customers: list[dict], client_id: str, client_secret: str) -> tuple[int, list[str]]:
     access, _ = await _ensure_fresh(meta, client_id, client_secret)
-    synced, errors = 0, []
-    async with httpx.AsyncClient(timeout=20) as client:
-        for c in customers:
-            if c.get("archived"):
-                continue
-            name_parts = (c.get("name", "Unknown")).split(" ", 1)
-            body: dict[str, Any] = {
-                "Last_Name": name_parts[-1],
-                "First_Name": name_parts[0] if len(name_parts) > 1 else "",
-                "Email": c.get("email", ""),
-                "Phone": c.get("phone_number", ""),
-                "Mailing_Street": c.get("address", ""),
-                "Industry": c.get("industry", ""),
-            }
-            try:
-                resp = await client.post(
-                    f"{_api_base()}/Contacts",
-                    json={"data": [body]},
-                    headers=_headers(access),
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                if data.get("data", [{}])[0].get("status") == "error":
-                    errors.append(f"Contact '{c.get('name')}': {data['data'][0].get('message', 'Unknown error')}")
-                else:
-                    synced += 1
-            except httpx.HTTPStatusError as e:
-                errors.append(f"Contact '{c.get('name')}': {e.response.text[:120]}")
-    return synced, errors
+    outgoing = _dedupe_catalogue_items(
+        [c for c in customers if not c.get("archived")],
+        _customer_key,
+    )
+    records: list[dict[str, Any]] = []
+    for c in outgoing:
+        name = _clean_text(c.get("name"))
+        if not name and not _clean_text(c.get("email")):
+            continue
+        first_name, last_name = _display_name_parts(name or _clean_text(c.get("email")) or "Imported Contact")
+        records.append({
+            "First_Name": _clean_text(c.get("first_name")) or first_name,
+            "Last_Name": _clean_text(c.get("last_name")) or last_name,
+            "Email": _clean_text(c.get("email")),
+            "Phone": _clean_text(c.get("phone_number")),
+            "Mailing_Street": _clean_text(c.get("address")),
+            "Industry": _clean_text(c.get("industry")),
+        })
+    return await _upsert_records(module="Contacts", records=records, duplicate_check_fields=["Email", "Phone"], access_token=access)
 
 
 async def sync_vendors(meta: dict, vendors: list[dict], client_id: str, client_secret: str) -> tuple[int, list[str]]:
     access, _ = await _ensure_fresh(meta, client_id, client_secret)
-    synced, errors = 0, []
-    async with httpx.AsyncClient(timeout=20) as client:
-        for v in vendors:
-            if v.get("archived"):
-                continue
-            body: dict[str, Any] = {
-                "Vendor_Name": v.get("name", "Unknown"),
-                "Email": v.get("email", ""),
-                "Phone": v.get("phone_number", ""),
-                "Street": v.get("address", ""),
-                "Category": v.get("industry", ""),
-            }
-            try:
-                resp = await client.post(
-                    f"{_api_base()}/Vendors",
-                    json={"data": [body]},
-                    headers=_headers(access),
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                if data.get("data", [{}])[0].get("status") == "error":
-                    errors.append(f"Vendor '{v.get('name')}': {data['data'][0].get('message', 'Unknown error')}")
-                else:
-                    synced += 1
-            except httpx.HTTPStatusError as e:
-                errors.append(f"Vendor '{v.get('name')}': {e.response.text[:120]}")
-    return synced, errors
+    outgoing = _dedupe_catalogue_items(
+        [v for v in vendors if not v.get("archived")],
+        _vendor_key,
+    )
+    records: list[dict[str, Any]] = []
+    for v in outgoing:
+        name = _clean_text(v.get("name"))
+        if not name:
+            continue
+        records.append({
+            "Vendor_Name": name,
+            "Email": _clean_text(v.get("email")),
+            "Phone": _clean_text(v.get("phone_number")),
+            "Street": _clean_text(v.get("address")),
+            "Category": _clean_text(v.get("industry")),
+        })
+    return await _upsert_records(module="Vendors", records=records, duplicate_check_fields=["Email", "Phone", "Vendor_Name"], access_token=access)
+
+
+async def import_catalogue(meta: dict, client_id: str, client_secret: str) -> tuple[dict[str, list[dict]], list[str]]:
+    access, _ = await _ensure_fresh(meta, client_id, client_secret)
+    errors: list[str] = []
+    imported: dict[str, list[dict]] = {"products": [], "customers": [], "vendors": []}
+
+    try:
+        products = await _fetch_records("Products", access)
+        imported["products"] = [_normalize_imported_product(row, datetime.now(timezone.utc).isoformat()) for row in products]
+    except Exception as e:
+        errors.append(f"Products: {str(e)[:160]}")
+
+    try:
+        customers = await _fetch_records("Contacts", access)
+        imported["customers"] = [_normalize_imported_contact(row, datetime.now(timezone.utc).isoformat()) for row in customers]
+    except Exception as e:
+        errors.append(f"Contacts: {str(e)[:160]}")
+
+    try:
+        vendors = await _fetch_records("Vendors", access)
+        imported["vendors"] = [_normalize_imported_vendor(row, datetime.now(timezone.utc).isoformat()) for row in vendors]
+    except Exception as e:
+        errors.append(f"Vendors: {str(e)[:160]}")
+
+    return imported, errors

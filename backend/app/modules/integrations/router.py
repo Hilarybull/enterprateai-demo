@@ -7,11 +7,13 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.core.supabase import sb_select, sb_upsert, sb_update
 from app.shared.auth.deps import get_current_user
 from app.shared.auth.security import create_access_token, decode_token
+from app.modules.idea_validation.service import get_user_workspace, upsert_user_workspace
 from app.modules.integrations import quickbooks as qb
 from app.modules.integrations import xero as xero_mod
 from app.modules.integrations import zoho as zoho_mod
@@ -21,6 +23,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 Provider = Literal["quickbooks", "xero", "zoho_crm"]
+SyncDirection = Literal["push", "import"]
+
+
+class SyncRequest(BaseModel):
+    direction: SyncDirection = "push"
 
 PROVIDERS: dict[str, dict] = {
     "quickbooks": {"label": "QuickBooks", "group": "financial"},
@@ -253,9 +260,10 @@ async def disconnect(provider: Provider, user=Depends(get_current_user)) -> dict
 # ── Sync ──────────────────────────────────────────────────────────────────────
 
 @router.post("/{provider}/sync")
-async def sync(provider: Provider, user=Depends(get_current_user)) -> dict:
+async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depends(get_current_user)) -> dict:
     if provider not in PROVIDERS:
         raise HTTPException(status_code=400, detail="Unknown provider.")
+    direction = (payload.direction if payload else "push").lower()
 
     row = await _load_token_row(user["id"], provider)
     if not row or not row.get("access_token"):
@@ -271,13 +279,13 @@ async def sync(provider: Provider, user=Depends(get_current_user)) -> dict:
     }
 
     # Load workspace data
-    from app.modules.idea_validation.service import get_user_workspace
     ws = await get_user_workspace(user_id=user["id"])
     ws_data = (ws.data or {}) if ws else {}
     financials = ws_data.get("financials", {})
     catalogue = ws_data.get("catalogue", {})
 
     total_synced = 0
+    total_imported = 0
     all_errors: list[str] = []
 
     if provider == "quickbooks":
@@ -317,18 +325,31 @@ async def sync(provider: Provider, user=Depends(get_current_user)) -> dict:
         total_synced += s; all_errors += e
 
     elif provider == "zoho_crm":
-        products = catalogue.get("products", [])
-        customers = catalogue.get("customers", [])
-        vendors = catalogue.get("vendors", [])
+        if direction == "import":
+            imported, import_errors = await zoho_mod.import_catalogue(meta, client_id, client_secret)
+            all_errors += import_errors
+            now = datetime.now(timezone.utc).isoformat()
+            existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
+            merged_catalogue = {
+                "products": zoho_mod._merge_catalogue_lists(existing_catalogue.get("products", []), imported.get("products", []), kind="products", now_iso=now),
+                "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now),
+                "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now),
+            }
+            await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
+            total_imported = len(imported.get("products", [])) + len(imported.get("customers", [])) + len(imported.get("vendors", []))
+        else:
+            products = catalogue.get("products", [])
+            customers = catalogue.get("customers", [])
+            vendors = catalogue.get("vendors", [])
 
-        s, e = await zoho_mod.sync_products(meta, products, client_id, client_secret)
-        total_synced += s; all_errors += e
+            s, e = await zoho_mod.sync_products(meta, products, client_id, client_secret)
+            total_synced += s; all_errors += e
 
-        s, e = await zoho_mod.sync_contacts(meta, customers, client_id, client_secret)
-        total_synced += s; all_errors += e
+            s, e = await zoho_mod.sync_contacts(meta, customers, client_id, client_secret)
+            total_synced += s; all_errors += e
 
-        s, e = await zoho_mod.sync_vendors(meta, vendors, client_id, client_secret)
-        total_synced += s; all_errors += e
+            s, e = await zoho_mod.sync_vendors(meta, vendors, client_id, client_secret)
+            total_synced += s; all_errors += e
 
     # Update last_sync_at
     try:
@@ -342,6 +363,8 @@ async def sync(provider: Provider, user=Depends(get_current_user)) -> dict:
 
     return {
         "synced": total_synced,
+        "imported": total_imported,
         "errors": all_errors,
         "provider": provider,
+        "direction": direction,
     }

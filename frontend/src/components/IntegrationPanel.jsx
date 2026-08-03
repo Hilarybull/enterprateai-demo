@@ -41,10 +41,12 @@ function fmtDate(iso) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function ProviderCard({ provider, info, status, onConnect, onDisconnect, onSync, actionLoading }) {
+function ProviderCard({ provider, info, status, onConnect, onDisconnect, onSync, onImport, actionLoading }) {
   const connected = status?.connected;
   const isSyncing = actionLoading === `sync_${provider}`;
-  const loading = actionLoading === provider || isSyncing;
+  const isImporting = actionLoading === `import_${provider}`;
+  const loading = actionLoading === provider || isSyncing || isImporting;
+  const syncLabel = provider === "zoho_crm" ? "Push to Zoho" : "Sync Now";
 
   return (
     <div className={`rounded-2xl border p-5 transition ${connected ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-900/10" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
@@ -77,8 +79,18 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onSync,
                 onClick={() => onSync(provider)}
                 className="rounded-xl bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50"
               >
-                {isSyncing ? "Syncing…" : "Sync Now"}
+                {isSyncing ? "Syncing…" : syncLabel}
               </button>
+              {provider === "zoho_crm" && onImport && (
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => onImport(provider, "import")}
+                  className="rounded-xl border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-950/50"
+                >
+                  {isImporting ? "Importing…" : "Import from Zoho"}
+                </button>
+              )}
               <button
                 type="button"
                 disabled={loading}
@@ -154,12 +166,13 @@ export default function IntegrationPanel({ providers }) {
     }
   }
 
-  async function handleSync(provider) {
-    setActionLoading(`sync_${provider}`);
+  async function handleSync(provider, direction = "push") {
+    setActionLoading(`${direction}_${provider}`);
     setSyncResult(null);
     setError("");
     try {
-      const res = await apiRequest(`/integrations/${provider}/sync`, "POST", undefined, { timeoutMs: 120000 });
+      const body = direction === "import" ? { direction: "import" } : { direction: "push" };
+      const res = await apiRequest(`/integrations/${provider}/sync`, "POST", body, { timeoutMs: 120000 });
       setSyncResult(res);
       await loadStatuses();
     } catch (e) {
@@ -178,7 +191,9 @@ export default function IntegrationPanel({ providers }) {
       )}
       {syncResult && (
         <div className={`rounded-xl border px-4 py-3 text-xs ${syncResult.errors?.length ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400" : "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400"}`}>
-          <strong>{syncResult.synced} records synced</strong> to {PROVIDER_INFO[syncResult.provider]?.label}.
+          <strong>{syncResult.direction === "import" ? `${syncResult.imported || 0} records imported` : `${syncResult.synced || 0} records synced`}</strong>
+          {syncResult.direction === "import" ? " from " : " to "}
+          {PROVIDER_INFO[syncResult.provider]?.label}.
           {syncResult.errors?.length > 0 && (
             <ul className="mt-1 space-y-0.5 text-[11px]">
               {syncResult.errors.map((e, i) => <li key={i}>⚠ {e}</li>)}
@@ -198,6 +213,7 @@ export default function IntegrationPanel({ providers }) {
             onConnect={handleConnect}
             onDisconnect={handleDisconnect}
             onSync={handleSync}
+            onImport={handleSync}
             actionLoading={actionLoading}
           />
         );
