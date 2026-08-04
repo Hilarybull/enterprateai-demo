@@ -312,6 +312,8 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         imported, import_errors = await zoho_mod.import_catalogue(meta, client_id, client_secret)
         all_errors += import_errors
         now = datetime.now(timezone.utc).isoformat()
+
+        # Merge catalogue (products, customers, vendors)
         existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
         merged_catalogue = {
             "products": zoho_mod._merge_catalogue_lists(existing_catalogue.get("products", []), imported.get("products", []), kind="products", now_iso=now),
@@ -319,7 +321,22 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now),
         }
         await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
-        total_imported = len(imported.get("products", [])) + len(imported.get("customers", [])) + len(imported.get("vendors", []))
+
+        # Merge financials (invoices, quotes)
+        existing_financials = financials if isinstance(financials, dict) else {}
+        merged_financials = dict(existing_financials)
+        if imported.get("invoices"):
+            merged_financials["invoices"] = zoho_mod._merge_financials_list(
+                existing_financials.get("invoices", []), imported["invoices"]
+            )
+        if imported.get("quotes"):
+            merged_financials["quotes"] = zoho_mod._merge_financials_list(
+                existing_financials.get("quotes", []), imported["quotes"]
+            )
+        if imported.get("invoices") or imported.get("quotes"):
+            await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
+
+        total_imported = sum(len(imported.get(k, [])) for k in ("products", "customers", "vendors", "invoices", "quotes"))
 
     # Update last_sync_at
     try:

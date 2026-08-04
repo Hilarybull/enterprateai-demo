@@ -44,6 +44,7 @@ import ReferralClickPage from "./pages/ReferralClickPage";
 import BlogPage from "./pages/BlogPage";
 import BlogArticlePage from "./pages/BlogArticlePage";
 import ResearchPage from "./pages/ResearchPage";
+import IntegrationsPage from "./pages/IntegrationsPage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -111,6 +112,7 @@ export default function App() {
         <Route path="account" element={<AccountPage />} />
         <Route path="credits" element={<CreditsPage />} />
         <Route path="referrals" element={<ReferralPage />} />
+        <Route path="integrations" element={<IntegrationsPage />} />
       </Route>
       <Route
         path="ent-admin"

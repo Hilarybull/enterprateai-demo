@@ -131,6 +131,8 @@ _IMPORT_FIELDS = {
     "Products": "Product_Name,Unit_Price,Product_Category,Description",
     "Contacts": "First_Name,Last_Name,Full_Name,Email,Phone,Mailing_Street,Industry",
     "Vendors": "Vendor_Name,Email,Phone,Street,Category",
+    "Invoices": "Subject,Invoice_Number,Account_Name,Status,Grand_Total,Due_Date,Invoice_Date,Sub_Total,Tax",
+    "Quotes": "Subject,Quote_Number,Account_Name,Quote_Stage,Grand_Total,Valid_Until,Quotation_Date,Sub_Total,Tax",
 }
 
 
@@ -223,6 +225,106 @@ def _normalize_imported_vendor(item: dict, now_iso: str) -> dict:
         "created_at": now_iso,
         "updated_at": now_iso,
     }
+
+
+def _zoho_account_name(val: Any) -> str:
+    if isinstance(val, dict):
+        return _clean_text(val.get("name") or val.get("Name") or "")
+    return _clean_text(val or "")
+
+
+def _normalize_imported_invoice(item: dict, now_iso: str) -> dict:
+    status_map = {
+        "draft": "pending", "sent": "pending", "awaiting payment": "pending",
+        "paid": "paid", "void": "cancelled", "cancelled": "cancelled", "overdue": "pending",
+    }
+    raw_status = _clean_text(item.get("Status") or "").lower()
+    status = status_map.get(raw_status, "pending")
+    subject = _clean_text(item.get("Subject") or item.get("Invoice_Number") or "Imported Invoice")
+    grand_total = float(item.get("Grand_Total") or 0)
+    sub_total = float(item.get("Sub_Total") or grand_total)
+    tax = float(item.get("Tax") or 0)
+    invoice_number = _clean_text(item.get("Invoice_Number") or "")
+    return {
+        "id": item.get("id") or str(uuid4()),
+        "invoice_id": invoice_number or f"ZOHO-{item.get('id', '')[:8]}",
+        "product_name": subject,
+        "product_names": [subject],
+        "items": [{"product_name": subject, "quantity": 1, "unit_price": sub_total, "subtotal": sub_total}],
+        "quantity": 1,
+        "subtotal_amount": sub_total,
+        "vat_amount": tax,
+        "vat_rate": round((tax / sub_total * 100) if sub_total else 0, 2),
+        "total_amount": grand_total,
+        "status": status,
+        "customer_name": _zoho_account_name(item.get("Account_Name")),
+        "issued_at": _clean_text(item.get("Invoice_Date") or now_iso[:10]),
+        "due_date": _clean_text(item.get("Due_Date") or "") or None,
+        "source_system": "zoho_crm",
+        "source_record_id": _clean_text(item.get("id")),
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+
+def _normalize_imported_quote(item: dict, now_iso: str) -> dict:
+    stage_map = {
+        "draft": "pending", "": "pending", "delivered": "delivered",
+        "accepted": "accepted", "rejected": "rejected", "expired": "expired", "on hold": "pending",
+    }
+    raw_stage = _clean_text(item.get("Quote_Stage") or "").lower()
+    status = stage_map.get(raw_stage, "pending")
+    subject = _clean_text(item.get("Subject") or item.get("Quote_Number") or "Imported Quote")
+    grand_total = float(item.get("Grand_Total") or 0)
+    sub_total = float(item.get("Sub_Total") or grand_total)
+    tax = float(item.get("Tax") or 0)
+    quote_number = _clean_text(item.get("Quote_Number") or "")
+    return {
+        "id": item.get("id") or str(uuid4()),
+        "quotation_id": quote_number or f"ZOHO-QTE-{item.get('id', '')[:8]}",
+        "product_name": subject,
+        "product_names": [subject],
+        "items": [{"product_name": subject, "quantity": 1, "unit_price": sub_total, "subtotal": sub_total}],
+        "quantity": 1,
+        "subtotal_amount": sub_total,
+        "vat_amount": tax,
+        "vat_rate": round((tax / sub_total * 100) if sub_total else 0, 2),
+        "total_amount": grand_total,
+        "status": status,
+        "customer_name": _zoho_account_name(item.get("Account_Name")),
+        "issued_at": _clean_text(item.get("Quotation_Date") or now_iso[:10]),
+        "due_date": _clean_text(item.get("Valid_Until") or "") or None,
+        "validity_days": 30,
+        "source_system": "zoho_crm",
+        "source_record_id": _clean_text(item.get("id")),
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+
+def _merge_financials_list(existing: list[dict], imported: list[dict]) -> list[dict]:
+    """Merge imported Zoho invoices/quotes into existing financials list, matching by source_record_id."""
+    current = [dict(item) for item in existing if isinstance(item, dict)]
+    index: dict[str, int] = {}
+    for i, item in enumerate(current):
+        src_id = _clean_text(item.get("source_record_id"))
+        if src_id:
+            index[src_id] = i
+    merged = list(current)
+    for item in imported:
+        src_id = _clean_text(item.get("source_record_id"))
+        if src_id and src_id in index:
+            existing_idx = index[src_id]
+            merged[existing_idx] = _merge_non_empty(merged[existing_idx], item, keep_existing_keys={"id", "created_at"})
+            merged[existing_idx]["updated_at"] = item["updated_at"]
+        else:
+            merged.insert(0, item)
+            if src_id:
+                index[src_id] = 0
+                for k in list(index.keys()):
+                    if k != src_id and index[k] >= 0:
+                        index[k] += 1
+    return merged
 
 
 def _merge_catalogue_lists(existing: list[dict], imported: list[dict], *, kind: str, now_iso: str) -> list[dict]:
@@ -535,24 +637,37 @@ def _apply_source_record_ids(items: list[dict], *, kind: str, source_updates: di
 async def import_catalogue(meta: dict, client_id: str, client_secret: str) -> tuple[dict[str, list[dict]], list[str]]:
     access, _ = await _ensure_fresh(meta, client_id, client_secret)
     errors: list[str] = []
-    imported: dict[str, list[dict]] = {"products": [], "customers": [], "vendors": []}
+    now = datetime.now(timezone.utc).isoformat()
+    imported: dict[str, list[dict]] = {"products": [], "customers": [], "vendors": [], "invoices": [], "quotes": []}
 
     try:
         products = await _fetch_records("Products", access)
-        imported["products"] = [_normalize_imported_product(row, datetime.now(timezone.utc).isoformat()) for row in products]
+        imported["products"] = [_normalize_imported_product(row, now) for row in products]
     except Exception as e:
         errors.append(f"Products: {str(e)[:160]}")
 
     try:
         customers = await _fetch_records("Contacts", access)
-        imported["customers"] = [_normalize_imported_contact(row, datetime.now(timezone.utc).isoformat()) for row in customers]
+        imported["customers"] = [_normalize_imported_contact(row, now) for row in customers]
     except Exception as e:
         errors.append(f"Contacts: {str(e)[:160]}")
 
     try:
         vendors = await _fetch_records("Vendors", access)
-        imported["vendors"] = [_normalize_imported_vendor(row, datetime.now(timezone.utc).isoformat()) for row in vendors]
+        imported["vendors"] = [_normalize_imported_vendor(row, now) for row in vendors]
     except Exception as e:
         errors.append(f"Vendors: {str(e)[:160]}")
+
+    try:
+        invoices = await _fetch_records("Invoices", access)
+        imported["invoices"] = [_normalize_imported_invoice(row, now) for row in invoices]
+    except Exception as e:
+        errors.append(f"Invoices: {str(e)[:160]}")
+
+    try:
+        quotes = await _fetch_records("Quotes", access)
+        imported["quotes"] = [_normalize_imported_quote(row, now) for row in quotes]
+    except Exception as e:
+        errors.append(f"Quotes: {str(e)[:160]}")
 
     return imported, errors

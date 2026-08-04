@@ -21,6 +21,7 @@ const NAV = [
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
+  { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: null, public: true },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
   { to: "/referrals", label: "Referrals", subtitle: "Earn 5% per referral", icon: "share", moduleKey: null, public: true },
 ];
@@ -190,6 +191,15 @@ function Icon({ name, className = "h-4 w-4" }) {
         <circle cx="6" cy="12" r="3" />
         <circle cx="18" cy="19" r="3" />
         <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+      </svg>
+    );
+  if (name === "plug")
+    return (
+      <svg {...base}>
+        <path d="M12 22v-5" />
+        <path d="M9 7V2" />
+        <path d="M15 7V2" />
+        <path d="M6 13a6 6 0 0 0 12 0v-2H6v2Z" />
       </svg>
     );
 
