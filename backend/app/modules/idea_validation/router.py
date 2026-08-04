@@ -377,4 +377,5 @@ async def market_research_endpoint(
         fields = flatten_fields_from_payload(iv)
     else:
         fields = {}
-    return await run_market_research(fields, user_id=user["id"])
+    async with credit_guard(user["id"], "market_data_refresh"):
+        return await run_market_research(fields, user_id=user["id"])

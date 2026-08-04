@@ -22,6 +22,7 @@ import { pctWidth, shortExplanation, toneForScore } from "../lib/score";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
+import CreditConfirmModal from "../components/CreditConfirmModal";
 
 function decisionBadge(status) {
   if (status === "accepted") return { text: "ACCEPTED", tone: "success" };
@@ -136,6 +137,7 @@ export default function ResultsPage() {
   const [svcMarketResearch, setSvcMarketResearch] = useState(null);
   const [svcMrLoading, setSvcMrLoading] = useState(false);
   const [svcMrError, setSvcMrError] = useState(null);
+  const [creditModal, setCreditModal] = useState(null);
   const svcMrFiredRef = useRef(false);
   const isServiceIdeaView = Boolean(validation?.scores && validation?.metrics && validation?.outcome);
   const decisionMeta = decisionBadge(decision);
@@ -227,6 +229,7 @@ export default function ResultsPage() {
       .then((res) => {
         if (res && typeof res === "object" && Object.keys(res).length > 0) {
           setSvcMarketResearch(res);
+          window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
           // Cache in workspace so next page load shows results instantly
           if (workspaceId) {
             apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { service_market_research: res } }).catch(() => {});
@@ -235,22 +238,24 @@ export default function ResultsPage() {
           setSvcMrError("No data returned. Try again.");
         }
       })
-      .catch(() => { setSvcMrError("Research timed out or failed. Tap retry."); })
+      .catch(() => {
+        setSvcMrError("Research timed out or failed. Tap retry.");
+        svcMrFiredRef.current = false;
+      })
       .finally(() => setSvcMrLoading(false));
   }
 
   useEffect(() => {
     if (!isServiceIdeaView || !serviceDraft || svcMrFiredRef.current) return;
-    // If the validation result already carries market research, use it and skip the re-run
+    // Use cached research if already embedded in the validation result or workspace
     const embeddedMr = validation?.market_research;
     if (embeddedMr && typeof embeddedMr === "object" && Object.keys(embeddedMr).length > 0) {
       setSvcMarketResearch(embeddedMr);
       svcMrFiredRef.current = true;
       return;
     }
-    const hasContent = serviceDraft.service_description || serviceDraft.service_name;
-    if (!hasContent) return;
-    runSvcMr();
+    // Do NOT auto-fire — let the user initiate with the "Generate Market Intelligence" button
+    // so they see the credit cost before the deduction happens.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isServiceIdeaView, serviceDraft]);
 
@@ -1521,16 +1526,44 @@ export default function ResultsPage() {
             </SectionCard>
           )}
 
+          {!svcMrLoading && !svcMarketResearch && !svcMrError && isServiceIdeaView && serviceDraft && (
+            <SectionCard title="Market Intelligence" subtitle="Live data on your market size, competitors and pricing.">
+              <div className="flex flex-col gap-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-slate-500 max-w-md">
+                  Run a live market research report for this idea — covering TAM/SAM, growth rate, competitor landscape and pricing intelligence.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setCreditModal({
+                    featureName: "Market Data Refresh",
+                    creditCost: 4,
+                    onConfirm: () => { setCreditModal(null); runSvcMr(); },
+                  })}
+                  className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-700 transition-colors"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                  </svg>
+                  Generate Market Intelligence · 4 credits
+                </button>
+              </div>
+            </SectionCard>
+          )}
+
           {svcMrError && !svcMrLoading && !svcMarketResearch && (
             <SectionCard title="Market Intelligence" subtitle="Research could not complete.">
               <div className="flex items-center justify-between gap-4 py-2">
                 <span className="text-sm text-rose-600">{svcMrError}</span>
                 <button
-                  onClick={runSvcMr}
+                  onClick={() => setCreditModal({
+                    featureName: "Market Data Refresh",
+                    creditCost: 4,
+                    onConfirm: () => { setCreditModal(null); runSvcMr(); },
+                  })}
                   className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-700 transition-colors"
                 >
                   <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
-                  Retry
+                  Retry · 4 credits
                 </button>
               </div>
             </SectionCard>
@@ -3231,6 +3264,15 @@ export default function ResultsPage() {
           </SectionCard>
         );
       })()}
+
+      {creditModal && (
+        <CreditConfirmModal
+          featureName={creditModal.featureName}
+          creditCost={creditModal.creditCost}
+          onConfirm={creditModal.onConfirm}
+          onCancel={() => setCreditModal(null)}
+        />
+      )}
     </div>
   );
 }

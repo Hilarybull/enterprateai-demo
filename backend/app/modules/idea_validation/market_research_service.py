@@ -282,25 +282,37 @@ def _shopping_items(result: dict, max_items: int = 8) -> list[dict[str, str]]:
 
 # Query builder
 def _build_queries(fields: dict[str, Any]) -> dict[str, tuple[str, str, dict]]:
-    what_long = _clean_text(fields.get("what_building") or fields.get("service_type") or fields.get("business_name") or "business")
-    industry = _clean_text(fields.get("industry") or fields.get("primary_industry") or fields.get("business_type"))
-    sector = _clean_text(fields.get("sector"))
+    idea_name = _clean_text(fields.get("business_name") or "")
+    industry = _clean_text(fields.get("industry") or fields.get("primary_industry") or fields.get("business_type") or "")
+    sector = _clean_text(fields.get("sector") or "")
     location = _clean_text(fields.get("country") or fields.get("location") or "United Kingdom")
     segment = _clean_text(fields.get("customer_segment") or "customers")
-    problem = _clean_text(fields.get("problem_short"))
+    problem = _clean_text(fields.get("problem_short") or "")
     currency = _clean_text(fields.get("currency") or "GBP")
+    what_long = _clean_text(fields.get("what_building") or fields.get("service_type") or idea_name or "business")
 
-    # For SERP queries, always use the concept/category description (not the business name,
-    # which is invented and returns no market data). Extract the key noun phrase.
-    raw = what_long
-    for splitter in (" for ", " targeting ", " that helps ", " which ", " helping ", " designed for "):
-        if splitter in raw.lower():
-            raw = raw[:raw.lower().find(splitter)]
-            break
-    what = raw[:55].strip() or industry or "business software"
+    # Build category from industry+sector first — these are proper market-sector terms.
+    # NEVER use the raw idea/business name: it is invented, produces irrelevant keyword
+    # matches (e.g. "Injection Test Idea" → "injection moulding market"), and contains
+    # no useful category signal.
+    if industry or sector:
+        category = " ".join(part for part in [industry, sector] if part).strip()
+    else:
+        # Fall back to extracting a concept phrase from what_building, but strip the
+        # brand name prefix first since it is invented and not a searchable category.
+        raw = what_long
+        if idea_name and raw.lower().startswith(idea_name.lower()):
+            raw = raw[len(idea_name):].lstrip(" —–-:,|")
+        for splitter in (" for ", " targeting ", " that helps ", " which ", " helping ", " designed for "):
+            if splitter in raw.lower():
+                raw = raw[:raw.lower().find(splitter)]
+                break
+        category = raw[:55].strip() or "business software"
 
-    category = " ".join(part for part in [what, industry or sector] if part).strip()
-    category = category or what or "business software"
+    # For problem-validation / demand queries use the actual problem statement,
+    # not the idea name, so searches stay topically grounded.
+    problem_query = problem or category
+
     audience = f"{segment} {location}".strip()
     location_suffix = f" in {location}" if location else ""
 
@@ -308,8 +320,8 @@ def _build_queries(fields: dict[str, Any]) -> dict[str, tuple[str, str, dict]]:
         "market_opportunity": (f"{category} market size TAM SAM growth{location_suffix}", "google", {}),
         "industry_trends": (f"{category} industry trends CAGR forecast 2025 2030{location_suffix}", "google", {}),
         "target_customer": (f"{segment} pain points buying behaviour for {category}{location_suffix}", "google", {}),
-        "problem_validation": (f"{problem or category} complaints pain points {audience}", "google", {}),
-        "demand_signals": (f"{problem or category} search trends forums reddit reviews {audience}", "google", {}),
+        "problem_validation": (f"{problem_query} complaints pain points {audience}", "google", {}),
+        "demand_signals": (f"{problem_query} search trends forums reddit reviews {audience}", "google", {}),
         "competitors": (f"top {category} competitors revenue market share{location_suffix}", "google", {}),
         "pricing": (f"{category} pricing plans cost per month annual {currency}", "google", {}),
         "pricing_shop": (f"{category} price {currency}", "google_shopping", {}),

@@ -86,7 +86,7 @@ async def scenario_runs_create(
     if not template:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario template not found")
 
-    async with credit_guard(user["id"], "simulation_run"):
+    async with credit_guard(user["id"], "scenario_simulation"):
         run_doc = await create_scenario_run(
             tenant_id=payload.tenant_id,
             business_id=payload.business_id,
