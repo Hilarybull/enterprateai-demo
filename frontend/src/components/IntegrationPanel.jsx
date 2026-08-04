@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { apiRequest } from "../api/client";
 
 const PROVIDER_INFO = {
@@ -51,22 +52,111 @@ function fmtDate(iso) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function ProviderCard({ provider, info, status, onConnect, onDisconnect, onImport, actionLoading }) {
+function ImportModeModal({ provider, info, onConfirm, onCancel }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onCancel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(2px)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+        {/* Header strip */}
+        <div className="h-1 w-full" style={{ background: info.color }} />
+
+        <div className="p-6">
+          {/* Provider identity */}
+          <div className="flex items-center gap-3 mb-5">
+            {info.logo}
+            <div>
+              <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{info.label}</div>
+              <div className="text-[11px] text-slate-400">{info.tagline}</div>
+            </div>
+          </div>
+
+          <h2 className="text-[15px] font-bold text-slate-900 dark:text-slate-100 mb-1">
+            How would you like to import?
+          </h2>
+          <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-5">
+            Choose whether to bring in new records only, or also refresh ones you've already imported.
+          </p>
+
+          <div className="flex flex-col gap-3">
+            {/* Option A — new only */}
+            <button
+              type="button"
+              onClick={() => onConfirm("new_only")}
+              className="group flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+            >
+              <div
+                className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                style={{ background: info.color + "18" }}
+              >
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke={info.color} strokeWidth="2">
+                  <path d="M10 4v12M4 10l6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">New records only</div>
+                <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  Skip anything you've already imported. Only pull in records that don't exist yet.
+                </div>
+              </div>
+            </button>
+
+            {/* Option B — overwrite */}
+            <button
+              type="button"
+              onClick={() => onConfirm("overwrite")}
+              className="group flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+            >
+              <div
+                className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                style={{ background: info.color + "18" }}
+              >
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke={info.color} strokeWidth="2">
+                  <path d="M4 10a6 6 0 1 0 12 0 6 6 0 0 0-12 0Z" />
+                  <path d="M10 7v3l2 2" strokeLinecap="round" />
+                </svg>
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Import &amp; update existing</div>
+                <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  Pull in new records and overwrite existing ones with the latest data from {info.label}.
+                </div>
+              </div>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={onCancel}
+            className="mt-4 w-full text-center text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function ProviderCard({ provider, info, status, onConnect, onDisconnect, onAskImport, actionLoading }) {
   const connected = status?.connected;
   const isImporting = actionLoading === `import_${provider}`;
   const loading = actionLoading === provider || isImporting;
 
   return (
-    <div className={`flex flex-col overflow-hidden rounded-2xl border transition-shadow duration-200 hover:shadow-md ${
-      connected
-        ? "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
-        : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
-    }`}>
-      {/* Top accent */}
+    <div className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white transition-shadow duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
       <div className="h-1 w-full shrink-0" style={{ background: info.color }} />
 
       <div className="flex flex-1 flex-col p-5">
-        {/* Logo + status */}
         <div className="flex items-start justify-between">
           {info.logo}
           {connected && (
@@ -77,18 +167,15 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onImpor
           )}
         </div>
 
-        {/* Name + tagline */}
         <div className="mt-3">
           <div className="text-[13px] font-bold text-slate-900 dark:text-slate-100">{info.label}</div>
           <div className="text-[11px] text-slate-400 dark:text-slate-500">{info.tagline}</div>
         </div>
 
-        {/* Description */}
         <p className="mt-2 flex-1 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
           {info.description}
         </p>
 
-        {/* Last sync note */}
         {connected && (
           <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
             {status?.last_sync_at
@@ -99,7 +186,6 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onImpor
           </p>
         )}
 
-        {/* Actions */}
         <div className="mt-5 flex flex-col gap-2">
           {connected ? (
             <>
@@ -107,7 +193,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onImpor
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={() => onImport(provider)}
+                  onClick={() => onAskImport(provider)}
                   className="w-full rounded-xl py-2.5 text-xs font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
                   style={{ background: info.color }}
                 >
@@ -122,7 +208,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onImpor
                 type="button"
                 disabled={loading}
                 onClick={() => onDisconnect(provider)}
-                className="w-full rounded-xl border border-slate-200 py-2 text-[11px] font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-300"
+                className="w-full rounded-xl border border-slate-200 py-2 text-[11px] font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-400"
               >
                 Disconnect
               </button>
@@ -148,13 +234,14 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
   const [actionLoading, setActionLoading] = useState(null);
   const [syncResult, setSyncResult] = useState(null);
   const [error, setError] = useState("");
+  const [importModal, setImportModal] = useState(null); // provider key or null
 
   const loadStatuses = useCallback(async () => {
     try {
       const data = await apiRequest("/integrations/status", "GET");
       setStatuses(data);
     } catch (e) {
-      // silently fail — integrations are optional
+      // silently fail
     }
   }, []);
 
@@ -190,12 +277,13 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
     }
   }
 
-  async function handleImport(provider) {
+  async function handleImport(provider, mode) {
+    setImportModal(null);
     setActionLoading(`import_${provider}`);
     setSyncResult(null);
     setError("");
     try {
-      const res = await apiRequest(`/integrations/${provider}/sync`, "POST", { direction: "import" }, { timeoutMs: 120000 });
+      const res = await apiRequest(`/integrations/${provider}/sync`, "POST", { direction: "import", mode }, { timeoutMs: 120000 });
       setSyncResult(res);
       if (onWorkspaceRefresh) await onWorkspaceRefresh();
       await loadStatuses();
@@ -205,6 +293,8 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
       setActionLoading(null);
     }
   }
+
+  const modalInfo = importModal ? PROVIDER_INFO[importModal] : null;
 
   return (
     <div className="space-y-4">
@@ -245,12 +335,21 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
               status={statuses[provider]}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
-              onImport={handleImport}
+              onAskImport={setImportModal}
               actionLoading={actionLoading}
             />
           );
         })}
       </div>
+
+      {importModal && modalInfo && (
+        <ImportModeModal
+          provider={importModal}
+          info={modalInfo}
+          onConfirm={(mode) => handleImport(importModal, mode)}
+          onCancel={() => setImportModal(null)}
+        />
+      )}
     </div>
   );
 }

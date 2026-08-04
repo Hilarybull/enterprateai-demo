@@ -302,7 +302,7 @@ def _normalize_imported_quote(item: dict, now_iso: str) -> dict:
     }
 
 
-def _merge_financials_list(existing: list[dict], imported: list[dict]) -> list[dict]:
+def _merge_financials_list(existing: list[dict], imported: list[dict], *, mode: str = "new_only") -> list[dict]:
     """Merge imported Zoho invoices/quotes into existing financials list, matching by source_record_id."""
     current = [dict(item) for item in existing if isinstance(item, dict)]
     index: dict[str, int] = {}
@@ -314,9 +314,11 @@ def _merge_financials_list(existing: list[dict], imported: list[dict]) -> list[d
     for item in imported:
         src_id = _clean_text(item.get("source_record_id"))
         if src_id and src_id in index:
-            existing_idx = index[src_id]
-            merged[existing_idx] = _merge_non_empty(merged[existing_idx], item, keep_existing_keys={"id", "created_at"})
-            merged[existing_idx]["updated_at"] = item["updated_at"]
+            if mode == "overwrite":
+                existing_idx = index[src_id]
+                merged[existing_idx] = _merge_non_empty(merged[existing_idx], item, keep_existing_keys={"id", "created_at"})
+                merged[existing_idx]["updated_at"] = item["updated_at"]
+            # new_only: skip existing records
         else:
             merged.insert(0, item)
             if src_id:
@@ -327,7 +329,7 @@ def _merge_financials_list(existing: list[dict], imported: list[dict]) -> list[d
     return merged
 
 
-def _merge_catalogue_lists(existing: list[dict], imported: list[dict], *, kind: str, now_iso: str) -> list[dict]:
+def _merge_catalogue_lists(existing: list[dict], imported: list[dict], *, kind: str, now_iso: str, mode: str = "new_only") -> list[dict]:
     current = [dict(item) for item in existing if isinstance(item, dict)]
     index: dict[str, int] = {}
     for i, item in enumerate(current):
@@ -346,10 +348,12 @@ def _merge_catalogue_lists(existing: list[dict], imported: list[dict], *, kind: 
         item = normalizer(raw_item, now_iso)
         key = _catalogue_key(kind, item)
         if key and key in index:
-            existing_idx = index[key]
-            merged[existing_idx] = _merge_non_empty(merged[existing_idx], item, keep_existing_keys={"id", "created_at"})
-            merged[existing_idx]["archived"] = False
-            merged[existing_idx]["updated_at"] = now_iso
+            if mode == "overwrite":
+                existing_idx = index[key]
+                merged[existing_idx] = _merge_non_empty(merged[existing_idx], item, keep_existing_keys={"id", "created_at"})
+                merged[existing_idx]["archived"] = False
+                merged[existing_idx]["updated_at"] = now_iso
+            # new_only: skip existing records
         else:
             merged.insert(0, item)
             if key:

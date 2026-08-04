@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Literal, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,8 +26,11 @@ Provider = Literal["quickbooks", "xero", "zoho_crm"]
 SyncDirection = Literal["push", "import"]
 
 
+ImportMode = Literal["new_only", "overwrite"]
+
 class SyncRequest(BaseModel):
-    direction: SyncDirection = "push"
+    direction: SyncDirection = "import"
+    mode: Optional[ImportMode] = "new_only"
 
 PROVIDERS: dict[str, dict] = {
     "quickbooks": {"label": "QuickBooks", "group": "financial"},
@@ -264,6 +267,7 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
     if provider not in PROVIDERS:
         raise HTTPException(status_code=400, detail="Unknown provider.")
     direction = (payload.direction if payload else "import").lower()
+    mode: ImportMode = (payload.mode if payload and payload.mode else "new_only")
     if direction != "import":
         raise HTTPException(status_code=400, detail="Only 'import' direction is supported. Push/sync to external services is disabled.")
 
@@ -316,9 +320,9 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         # Merge catalogue (products, customers, vendors)
         existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
         merged_catalogue = {
-            "products": zoho_mod._merge_catalogue_lists(existing_catalogue.get("products", []), imported.get("products", []), kind="products", now_iso=now),
-            "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now),
-            "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now),
+            "products": zoho_mod._merge_catalogue_lists(existing_catalogue.get("products", []), imported.get("products", []), kind="products", now_iso=now, mode=mode),
+            "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now, mode=mode),
+            "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now, mode=mode),
         }
         await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
 
@@ -327,11 +331,11 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         merged_financials = dict(existing_financials)
         if imported.get("invoices"):
             merged_financials["invoices"] = zoho_mod._merge_financials_list(
-                existing_financials.get("invoices", []), imported["invoices"]
+                existing_financials.get("invoices", []), imported["invoices"], mode=mode
             )
         if imported.get("quotes"):
             merged_financials["quotes"] = zoho_mod._merge_financials_list(
-                existing_financials.get("quotes", []), imported["quotes"]
+                existing_financials.get("quotes", []), imported["quotes"], mode=mode
             )
         if imported.get("invoices") or imported.get("quotes"):
             await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
