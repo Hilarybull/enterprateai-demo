@@ -6,23 +6,27 @@ const STEPS = [
     { id: 2, text: "Scanning Global Market Data", duration: 8000 },
     { id: 3, text: "Extracting Research Signals", duration: 8000 },
     { id: 4, text: "AI-Powered Scoring & Assessment", duration: 12000 },
-    { id: 5, text: "Finalizing Validation Report", duration: 10000 }
+    { id: 5, text: "Compiling Validation Report", duration: 10000 }
 ];
+
+// Cap the animated progress at 90% — the API can take 2-4 minutes;
+// once steps complete we stay at 90% with a "finalising" label until done.
+const PROGRESS_CAP = 90;
 
 export default function ValidationLoadingOverlay({ isVisible }) {
     const [currentStep, setCurrentStep] = useState(0);
     const [progress, setProgress] = useState(0);
+    const [finalising, setFinalising] = useState(false);
 
     useEffect(() => {
         if (!isVisible) {
             setCurrentStep(0);
             setProgress(0);
+            setFinalising(false);
             return;
         }
 
         let isMounted = true;
-        let stepIndex = 0;
-        let currentProgress = 0;
 
         const runSteps = async () => {
             for (let i = 0; i < STEPS.length; i++) {
@@ -30,22 +34,26 @@ export default function ValidationLoadingOverlay({ isVisible }) {
                 setCurrentStep(i);
 
                 const step = STEPS[i];
-                const increment = 100 / STEPS.length;
+                const increment = PROGRESS_CAP / STEPS.length;
                 const startProgress = i * increment;
                 const endProgress = (i + 1) * increment;
 
-                // Internal loop for smooth progress bar within a step
                 const startTime = Date.now();
                 while (Date.now() - startTime < step.duration) {
                     if (!isMounted) break;
                     const elapsed = Date.now() - startTime;
                     const stepProgress = elapsed / step.duration;
-                    const globalProgress = startProgress + (stepProgress * (increment * 0.9)); // Leave 10% for the jump to next step
+                    const globalProgress = startProgress + (stepProgress * (increment * 0.9));
                     setProgress(globalProgress);
                     await new Promise(r => setTimeout(r, 50));
                 }
 
                 if (isMounted) setProgress(endProgress);
+            }
+            // All timed steps done — hold at PROGRESS_CAP and show finalising state
+            if (isMounted) {
+                setProgress(PROGRESS_CAP);
+                setFinalising(true);
             }
         };
 
@@ -112,16 +120,23 @@ export default function ValidationLoadingOverlay({ isVisible }) {
                         {/* Progress Bar */}
                         <div className="relative pt-4">
                             <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-brand-500 to-indigo-600 transition-all duration-300 ease-out rounded-full"
-                                    style={{ width: `${progress}%` }}
-                                />
+                                {finalising ? (
+                                    <div className="h-full w-full relative overflow-hidden rounded-full bg-gradient-to-r from-brand-500 to-indigo-600">
+                                        <div className="absolute inset-0 translate-x-[-100%] animate-[slide_1.4s_ease-in-out_infinite] bg-white/30 rounded-full" />
+                                    </div>
+                                ) : (
+                                    <div
+                                        className="h-full bg-gradient-to-r from-brand-500 to-indigo-600 transition-all duration-300 ease-out rounded-full"
+                                        style={{ width: `${progress}%` }}
+                                    />
+                                )}
                             </div>
                             <div className="flex justify-between mt-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                                <span>Progress</span>
-                                <span>{Math.round(progress)}%</span>
+                                <span>{finalising ? "Finalising results…" : "Progress"}</span>
+                                <span>{finalising ? "Almost done" : `${Math.round(progress)}%`}</span>
                             </div>
                         </div>
+                        <style>{`@keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }`}</style>
                     </div>
                 </div>
             </div>

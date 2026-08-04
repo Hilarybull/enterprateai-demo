@@ -1203,6 +1203,14 @@ def evaluate_v4(inp: V4Input) -> dict:
 # PAYLOAD → V4INPUT CONVERTER
 # ---------------------------------------------------------------------------
 
+def _normalize_list(val) -> list[str]:
+    """Accept both list[str] and newline/comma-separated strings so textarea input is handled correctly."""
+    if isinstance(val, list):
+        return [s.strip() for s in val if str(s).strip()]
+    import re as _re
+    return [s.strip() for s in _re.split(r"[\n\r,]+", str(val or "")) if s.strip()]
+
+
 def v4_payload_to_input(payload: dict) -> V4Input:
     """
     Convert the raw wizard form payload (sent from frontend) to a V4Input object.
@@ -1264,9 +1272,9 @@ def v4_payload_to_input(payload: dict) -> V4Input:
         customer_specificity=step3.get("customer_specificity", ""),
         # Step 4
         how_solve_currently=step4.get("how_solve_currently", ""),
-        direct_competitors=step4.get("direct_competitors") or [],
-        indirect_competitors=step4.get("indirect_competitors") or [],
-        substitutes=step4.get("substitutes") or [],
+        direct_competitors=_normalize_list(step4.get("direct_competitors")),
+        indirect_competitors=_normalize_list(step4.get("indirect_competitors")),
+        substitutes=_normalize_list(step4.get("substitutes")),
         diy_alternatives=step4.get("diy_alternatives", ""),
         alternative_frustrations=step4.get("alternative_frustrations", ""),
         existing_spending=step4.get("existing_spending", ""),
@@ -1274,8 +1282,8 @@ def v4_payload_to_input(payload: dict) -> V4Input:
         # Step 5
         solution_description=step5.get("solution_description", ""),
         core_outcome=step5.get("core_outcome", ""),
-        main_features=step5.get("main_features") or [],
-        main_benefits=step5.get("main_benefits") or [],
+        main_features=_normalize_list(step5.get("main_features")),
+        main_benefits=_normalize_list(step5.get("main_benefits")),
         delivery_method=step5.get("delivery_method", ""),
         why_better=step5.get("why_better", ""),
         why_switch=step5.get("why_switch", ""),

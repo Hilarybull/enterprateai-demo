@@ -104,7 +104,8 @@ async def evaluate_v4_endpoint(
     payload: dict,
     user=Depends(get_current_user),
 ) -> dict:
-    return await evaluate_v4_idea(user_id=user["id"], payload=payload)
+    async with credit_guard(user["id"], "idea_validation"):
+        return await evaluate_v4_idea(user_id=user["id"], payload=payload)
 
 
 @router.patch("/me", response_model=WorkspaceResponse)

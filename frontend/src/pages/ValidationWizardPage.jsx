@@ -647,6 +647,11 @@ export default function ValidationWizardPage() {
         workspace_id: editingWorkspaceId || storedWorkspaceId || null,
       };
       const result = await apiRequest("/validation/evaluate-v4", "POST", payload, { timeoutMs: 300000 });
+      if (!result || !result.scores) {
+        setV4Error("Validation did not return a result. Please try again. If the problem persists, try simplifying your inputs.");
+        setIsValidating(false);
+        return;
+      }
       setValidation(result);
 
       // Persist to workspace history
@@ -1552,6 +1557,10 @@ export default function ValidationWizardPage() {
         next.offer.deliverable_unit_other = DELIVERABLE_UNIT_OPTIONS.includes(du) ? "" : du;
         next.context.founder_hours_per_week = String(next.context?.founder_hours_per_week ?? "40");
         next.offer.price_per_unit = String(next.offer?.price_per_unit ?? "");
+        if (!next.demand) next.demand = { expected_units_per_month: "", expected_customers: "", sales_cycle_days: "", payment_terms_days: "14" };
+        if (!next.costs) next.costs = { variable_cost_per_unit: "", fixed_costs_monthly: "", founder_draw_monthly: "", contractor_costs_monthly: "" };
+        if (!next.capacity) next.capacity = { team_size: "1", capacity_units_per_person_per_month: "" };
+        if (!next.cash) next.cash = { starting_cash: "", upfront_costs: "" };
         next.demand.expected_units_per_month = String(next.demand?.expected_units_per_month ?? "");
         next.demand.expected_customers = String(next.demand?.expected_customers ?? "");
         next.demand.sales_cycle_days = String(next.demand?.sales_cycle_days ?? "");
@@ -1779,6 +1788,10 @@ export default function ValidationWizardPage() {
 
     next.context.founder_hours_per_week = String(next.context?.founder_hours_per_week ?? "40");
     next.offer.price_per_unit = String(next.offer?.price_per_unit ?? "");
+    if (!next.demand) next.demand = { expected_units_per_month: "", expected_customers: "", sales_cycle_days: "", payment_terms_days: "14" };
+    if (!next.costs) next.costs = { variable_cost_per_unit: "", fixed_costs_monthly: "", founder_draw_monthly: "", contractor_costs_monthly: "" };
+    if (!next.capacity) next.capacity = { team_size: "1", capacity_units_per_person_per_month: "" };
+    if (!next.cash) next.cash = { starting_cash: "", upfront_costs: "" };
     next.demand.expected_units_per_month = String(next.demand?.expected_units_per_month ?? "");
     next.demand.expected_customers = String(next.demand?.expected_customers ?? "");
     next.demand.sales_cycle_days = String(next.demand?.sales_cycle_days ?? "");
@@ -3602,7 +3615,7 @@ export default function ValidationWizardPage() {
                         <div className="flex items-center gap-2">
                           <svg className="h-6 w-6 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18" /></svg>
                           <span className="text-lg font-bold text-violet-900">Comprehensive</span>
-                          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">15–25 min</span>
+                          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">3–5 min</span>
                         </div>
                         <p className="text-sm text-violet-800">A full assessment covering all dimensions: customer, solution, market, competition, pricing, unit economics, operations, founder readiness and regulatory risk.</p>
                         <ul className="mt-1 space-y-1">
@@ -3704,6 +3717,18 @@ export default function ValidationWizardPage() {
                 const progressPct = totalSteps > 1 ? Math.round((stepIdx / (totalSteps - 1)) * 100) : 0;
 
                 function goNext() {
+                  // Required-field validation per step
+                  if (v4Step === 1) {
+                    if (!String(getV4(1, "idea_name")).trim()) { setV4Error("Please enter an Idea name before continuing."); return; }
+                    if (!String(getV4(1, "idea_type")).trim()) { setV4Error("Please select an Idea type before continuing."); return; }
+                  }
+                  if (v4Step === 2) {
+                    if (!String(getV4(2, "problem_description")).trim()) { setV4Error("Please describe the problem being solved before continuing."); return; }
+                    if (v4Journey === "basic" && !String(getV4(2, "proposed_solution")).trim()) { setV4Error("Please describe your proposed solution before continuing."); return; }
+                  }
+                  if (v4Step === 3 && !String(getV4(3, "primary_segment")).trim()) { setV4Error("Please enter your primary customer segment before continuing."); return; }
+                  if (v4Step === 5 && !String(getV4(5, "solution_description")).trim()) { setV4Error("Please enter a solution description before continuing."); return; }
+                  setV4Error(null);
                   markV4StepComplete(v4Step);
                   if (!isLast) setV4Step(steps[stepIdx + 1]);
                 }
@@ -4017,7 +4042,7 @@ export default function ValidationWizardPage() {
                               <FieldLabel info="Include direct competitors (same problem, same customer), substitutes (related alternatives), and manual workarounds — one per line.">Competitors & alternatives (one per line)</FieldLabel>
                               {v4SuggestBtn(4,"direct_competitors",{field:"v4_direct_competitors"})}
                             </div>
-                            <textarea rows={4} className="ea-input w-full resize-none" value={(getV4(4,"direct_competitors",[]) || []).join("\n")} onChange={(e) => setV4Field(4,"direct_competitors",e.target.value.split("\n").filter(Boolean))} placeholder="e.g. Salesforce&#10;HubSpot&#10;Generic spreadsheets&#10;In-house team" />
+                            <textarea rows={4} className="ea-input w-full resize-none" value={Array.isArray(getV4(4,"direct_competitors")) ? getV4(4,"direct_competitors",[]).join("\n") : (getV4(4,"direct_competitors") || "")} onChange={(e) => setV4Field(4,"direct_competitors",e.target.value.split("\n"))} placeholder="e.g. Salesforce&#10;HubSpot&#10;Generic spreadsheets&#10;In-house team" />
                           </div>
                           <div>
                             <div className="flex items-center justify-between mb-1">
@@ -4135,7 +4160,7 @@ export default function ValidationWizardPage() {
                           </div>
                           <div>
                             <FieldLabel>Market sources / reports (one per line)</FieldLabel>
-                            <textarea rows={2} className="ea-input w-full resize-none" value={(getV4(6,"market_sources",[]) || []).join("\n")} onChange={(e) => setV4Field(6,"market_sources",e.target.value.split("\n").filter(Boolean))} placeholder="e.g. Statista report URL, IBISWorld, ONS data..." />
+                            <textarea rows={2} className="ea-input w-full resize-none" value={Array.isArray(getV4(6,"market_sources")) ? getV4(6,"market_sources",[]).join("\n") : (getV4(6,"market_sources") || "")} onChange={(e) => setV4Field(6,"market_sources",e.target.value.split("\n"))} placeholder="e.g. Statista report URL, IBISWorld, ONS data..." />
                           </div>
                         </div>
                       )}
@@ -5728,6 +5753,18 @@ export default function ValidationWizardPage() {
                                 className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 border-0"
                                 disabled={isLoading}
                                 onClick={async () => {
+                                  const entry = validationHistory.find((e) => e.id === lastEvaluationId);
+                                  const score = entry?.score ?? null;
+                                  const verdict = String(entry?.verdict || "").toLowerCase();
+                                  const isWeak = (score !== null && score < 40) || verdict === "weak" || verdict === "not recommended" || verdict === "poor";
+                                  if (isWeak) {
+                                    const ok = window.confirm(
+                                      `This idea scored ${score !== null ? score + "/100" : "low"} and is rated "${entry?.verdict || "Weak"}". ` +
+                                      "Are you sure you want to accept it and add it to your pipeline? " +
+                                      "We recommend addressing the key gaps first."
+                                    );
+                                    if (!ok) return;
+                                  }
                                   await updateHistoryEntryStatus(lastEvaluationId, "accepted");
                                   setLastEvaluationId(null);
                                   setSavedNotice("Validation accepted.");

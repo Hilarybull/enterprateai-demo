@@ -197,13 +197,17 @@ export default function CataloguePage() {
   }
 
   function isZohoImported(item) {
-    return String(item?.source_system || "").toLowerCase() === "zoho_crm" || Boolean(item?.source_record_id);
+    return String(item?.source_system || "").toLowerCase() === "zoho_crm";
   }
 
   function importBadge(item) {
     return isZohoImported(item) ? (
-      <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
-        Imported from Zoho
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600 ring-1 ring-inset ring-red-200">
+        <svg viewBox="0 0 40 40" className="h-2.5 w-2.5 shrink-0" aria-hidden="true">
+          <rect width="40" height="40" rx="4" fill="#E42527" />
+          <text x="50%" y="56%" dominantBaseline="middle" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold" fontFamily="sans-serif">Z</text>
+        </svg>
+        Zoho
       </span>
     ) : null;
   }
@@ -1671,7 +1675,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
 
       {activeTab === "integrations" && (
         <div className="mt-6">
-          <SectionCard title="Catalogue Integrations" subtitle="Connect Zoho CRM to sync your products, customers and vendors.">
+          <SectionCard title="Catalogue Integrations" subtitle="Import products, customers and vendors from Zoho CRM.">
             <div className="mt-3">
               <IntegrationPanel providers={["zoho_crm"]} onWorkspaceRefresh={refreshWorkspaceData} />
             </div>

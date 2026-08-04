@@ -263,7 +263,9 @@ async def disconnect(provider: Provider, user=Depends(get_current_user)) -> dict
 async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depends(get_current_user)) -> dict:
     if provider not in PROVIDERS:
         raise HTTPException(status_code=400, detail="Unknown provider.")
-    direction = (payload.direction if payload else "push").lower()
+    direction = (payload.direction if payload else "import").lower()
+    if direction != "import":
+        raise HTTPException(status_code=400, detail="Only 'import' direction is supported. Push/sync to external services is disabled.")
 
     row = await _load_token_row(user["id"], provider)
     if not row or not row.get("access_token"):
@@ -284,84 +286,40 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
     financials = ws_data.get("financials", {})
     catalogue = ws_data.get("catalogue", {})
 
-    total_synced = 0
     total_imported = 0
     all_errors: list[str] = []
 
-    if provider == "quickbooks":
-        customers = catalogue.get("customers", [])
-        vendors = catalogue.get("vendors", [])
-        invoices = financials.get("invoices", [])
-        expenses = financials.get("expenses", [])
-
-        s, e = await qb.sync_customers(meta, customers, client_id, client_secret)
-        total_synced += s; all_errors += e
-
-        s, e = await qb.sync_vendors(meta, vendors, client_id, client_secret)
-        total_synced += s; all_errors += e
-
-        s, e = await qb.sync_invoices(meta, invoices, client_id, client_secret)
-        total_synced += s; all_errors += e
-
-        s, e = await qb.sync_expenses(meta, expenses, client_id, client_secret)
-        total_synced += s; all_errors += e
-
-    elif provider == "xero":
-        customers = catalogue.get("customers", [])
-        vendors = catalogue.get("vendors", [])
-        invoices = financials.get("invoices", [])
-        expenses = financials.get("expenses", [])
-
-        s, e = await xero_mod.sync_contacts(meta, customers, "CUSTOMER", client_id, client_secret)
-        total_synced += s; all_errors += e
-
-        s, e = await xero_mod.sync_contacts(meta, vendors, "SUPPLIER", client_id, client_secret)
-        total_synced += s; all_errors += e
-
-        s, e = await xero_mod.sync_invoices(meta, invoices, client_id, client_secret)
-        total_synced += s; all_errors += e
-
-        s, e = await xero_mod.sync_expenses(meta, expenses, client_id, client_secret)
-        total_synced += s; all_errors += e
+    if provider in ("quickbooks", "xero"):
+        raise HTTPException(status_code=501, detail=f"Import from {PROVIDERS[provider]['label']} is not yet available.")
 
     elif provider == "zoho_crm":
-        if direction == "import":
-            imported, import_errors = await zoho_mod.import_catalogue(meta, client_id, client_secret)
-            all_errors += import_errors
-            now = datetime.now(timezone.utc).isoformat()
-            existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
-            merged_catalogue = {
-                "products": zoho_mod._merge_catalogue_lists(existing_catalogue.get("products", []), imported.get("products", []), kind="products", now_iso=now),
-                "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now),
-                "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now),
-            }
-            await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
-            total_imported = len(imported.get("products", [])) + len(imported.get("customers", [])) + len(imported.get("vendors", []))
-        else:
-            products = list(catalogue.get("products", []))
-            customers = list(catalogue.get("customers", []))
-            vendors = list(catalogue.get("vendors", []))
-            source_updates = {"products": {}, "customers": {}, "vendors": {}}
-
-            s, e, updates = await zoho_mod.sync_products(meta, products, client_id, client_secret)
-            total_synced += s; all_errors += e
-            source_updates["products"] = updates
-
-            s, e, updates = await zoho_mod.sync_contacts(meta, customers, client_id, client_secret)
-            total_synced += s; all_errors += e
-            source_updates["customers"] = updates
-
-            s, e, updates = await zoho_mod.sync_vendors(meta, vendors, client_id, client_secret)
-            total_synced += s; all_errors += e
-            source_updates["vendors"] = updates
-
-            if any(source_updates.get(kind) for kind in ("products", "customers", "vendors")):
-                updated_catalogue = {
-                    "products": zoho_mod._apply_source_record_ids(products, kind="products", source_updates=source_updates["products"]),
-                    "customers": zoho_mod._apply_source_record_ids(customers, kind="customers", source_updates=source_updates["customers"]),
-                    "vendors": zoho_mod._apply_source_record_ids(vendors, kind="vendors", source_updates=source_updates["vendors"]),
-                }
-                await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": updated_catalogue})
+        # Refresh token BEFORE importing so we can persist the new token to DB
+        fresh_access, new_meta = await zoho_mod._ensure_fresh(meta, client_id, client_secret)
+        if new_meta:
+            try:
+                await sb_update(
+                    "integration_tokens",
+                    payload={
+                        "access_token": new_meta["access_token"],
+                        "refresh_token": new_meta["refresh_token"],
+                        "token_expiry": new_meta["token_expiry"],
+                    },
+                    filters=[("user_id", "eq", user["id"]), ("provider", "eq", provider)],
+                )
+                meta.update(new_meta)
+            except Exception:
+                pass
+        imported, import_errors = await zoho_mod.import_catalogue(meta, client_id, client_secret)
+        all_errors += import_errors
+        now = datetime.now(timezone.utc).isoformat()
+        existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
+        merged_catalogue = {
+            "products": zoho_mod._merge_catalogue_lists(existing_catalogue.get("products", []), imported.get("products", []), kind="products", now_iso=now),
+            "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now),
+            "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now),
+        }
+        await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
+        total_imported = len(imported.get("products", [])) + len(imported.get("customers", [])) + len(imported.get("vendors", []))
 
     # Update last_sync_at
     try:
@@ -374,9 +332,8 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         pass
 
     return {
-        "synced": total_synced,
         "imported": total_imported,
         "errors": all_errors,
         "provider": provider,
-        "direction": direction,
+        "direction": "import",
     }

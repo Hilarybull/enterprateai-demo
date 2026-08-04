@@ -4411,7 +4411,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 
       {activeTab === "integrations" && (
         <div className="mt-6">
-          <SectionCard title="Financial Integrations" subtitle="Connect QuickBooks or Xero to sync your invoices, expenses, customers and vendors.">
+          <SectionCard title="Financial Integrations" subtitle="Import invoices, expenses, customers and vendors from QuickBooks or Xero.">
             <div className="mt-3">
               <IntegrationPanel providers={["quickbooks", "xero"]} />
             </div>

@@ -378,23 +378,44 @@ async def _ensure_fresh(meta: dict, client_id: str, client_secret: str) -> tuple
     expiry_str = meta.get("token_expiry")
     access = meta.get("access_token", "")
     refresh = meta.get("refresh_token", "")
-    if expiry_str and refresh:
+    if not refresh:
+        # No refresh token — nothing we can do; caller will hit 401 if access is expired
+        return access, None
+    now = datetime.now(timezone.utc)
+    already_expired = False
+    if expiry_str:
         try:
             expiry = datetime.fromisoformat(expiry_str)
-            now = datetime.now(timezone.utc)
             if expiry.tzinfo is None:
                 expiry = expiry.replace(tzinfo=timezone.utc)
-            if (expiry - now).total_seconds() < 300:
-                new_tokens = await _refresh(client_id, client_secret, refresh)
-                new_meta = {
-                    **meta,
-                    "access_token": new_tokens["access_token"],
-                    "refresh_token": new_tokens.get("refresh_token", refresh),
-                    "token_expiry": (now + timedelta(seconds=new_tokens.get("expires_in", 3600))).isoformat(),
-                }
-                return new_tokens["access_token"], new_meta
+            already_expired = (expiry - now).total_seconds() < 0
+            needs_refresh = (expiry - now).total_seconds() < 300
+        except ValueError:
+            needs_refresh = True
+            already_expired = True
+    else:
+        # No expiry stored — always attempt a refresh
+        needs_refresh = True
+        already_expired = True
+    if needs_refresh:
+        try:
+            new_tokens = await _refresh(client_id, client_secret, refresh)
+            new_meta = {
+                **meta,
+                "access_token": new_tokens["access_token"],
+                "refresh_token": new_tokens.get("refresh_token", refresh),
+                "token_expiry": (now + timedelta(seconds=new_tokens.get("expires_in", 3600))).isoformat(),
+            }
+            return new_tokens["access_token"], new_meta
         except Exception as e:
             logger.warning("Zoho token refresh failed: %s", e)
+            if already_expired:
+                # Token is already expired and refresh failed — raise so the caller
+                # can surface a useful "please reconnect" error instead of a silent 401
+                raise RuntimeError(
+                    "Zoho CRM access token has expired and could not be refreshed. "
+                    "Please disconnect and reconnect Zoho CRM to generate a new token."
+                ) from e
     return access, None
 
 

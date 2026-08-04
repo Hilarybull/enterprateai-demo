@@ -907,7 +907,7 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
     final_result = {
         # V4-native fields
         "engine_version": "4.0",
-        "validation_mode": "basic" if is_free else "comprehensive",
+        "validation_mode": "basic" if is_free else payload.get("validation_mode", "basic"),
         "is_paid_plan": not is_free,
         "idea_name": v4_inp.idea_name or fields.get("business_name", ""),
         "idea_type": v4_inp.idea_type or "",
