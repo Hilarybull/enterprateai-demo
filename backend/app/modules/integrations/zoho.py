@@ -118,6 +118,15 @@ def _catalogue_key(kind: str, item: dict) -> str:
     return _vendor_key(item)
 
 
+def _catalogue_name_key(kind: str, item: dict) -> str:
+    """Name-only key used for cross-source deduplication (e.g. same product in Zoho and QB)."""
+    if kind == "products":
+        return _casefold_key(item.get("name") or item.get("Product_Name"))
+    if kind == "customers":
+        return _casefold_key(item.get("name") or item.get("email") or item.get("Email"))
+    return _casefold_key(item.get("name") or item.get("email") or item.get("Email"))
+
+
 def _source_record_id(item: dict) -> str:
     return _clean_text(
         item.get("source_record_id")
@@ -331,11 +340,15 @@ def _merge_financials_list(existing: list[dict], imported: list[dict], *, mode: 
 
 def _merge_catalogue_lists(existing: list[dict], imported: list[dict], *, kind: str, now_iso: str, mode: str = "new_only") -> list[dict]:
     current = [dict(item) for item in existing if isinstance(item, dict)]
-    index: dict[str, int] = {}
+    index: dict[str, int] = {}      # source-id keyed
+    name_index: dict[str, int] = {} # name-only keyed (cross-system dedup)
     for i, item in enumerate(current):
         key = _catalogue_key(kind, item)
         if key:
             index[key] = i
+        nk = _catalogue_name_key(kind, item)
+        if nk and nk not in name_index:
+            name_index[nk] = i
 
     normalizer = {
         "products": _normalize_imported_product,
@@ -347,13 +360,23 @@ def _merge_catalogue_lists(existing: list[dict], imported: list[dict], *, kind: 
     for raw_item in imported:
         item = normalizer(raw_item, now_iso)
         key = _catalogue_key(kind, item)
-        if key and key in index:
+        nk = _catalogue_name_key(kind, item)
+
+        # Try source-ID match first, then cross-system name match
+        match_idx = index.get(key) if key else None
+        if match_idx is None and nk:
+            match_idx = name_index.get(nk)
+
+        if match_idx is not None:
             if mode == "overwrite":
-                existing_idx = index[key]
-                merged[existing_idx] = _merge_non_empty(merged[existing_idx], item, keep_existing_keys={"id", "created_at"})
-                merged[existing_idx]["archived"] = False
-                merged[existing_idx]["updated_at"] = now_iso
-            # new_only: skip existing records
+                merged[match_idx] = _merge_non_empty(merged[match_idx], item, keep_existing_keys={"id", "created_at"})
+                merged[match_idx]["archived"] = False
+                merged[match_idx]["updated_at"] = now_iso
+                # update source attribution when the incoming item is from a different system
+                if item.get("source_system"):
+                    merged[match_idx]["source_system"] = item["source_system"]
+                    merged[match_idx]["source_record_id"] = item.get("source_record_id", "")
+            # new_only: skip (same or cross-system duplicate)
         else:
             merged.insert(0, item)
             if key:
@@ -361,6 +384,8 @@ def _merge_catalogue_lists(existing: list[dict], imported: list[dict], *, kind: 
                 for k in list(index.keys()):
                     if k != key and index[k] >= 0:
                         index[k] += 1
+            if nk and nk not in name_index:
+                name_index[nk] = 0
     return _dedupe_catalogue_items(merged, lambda row: _catalogue_key(kind, row))
 
 
