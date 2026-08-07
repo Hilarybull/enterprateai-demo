@@ -253,7 +253,12 @@ async def refresh_token(client_id: str, client_secret: str, token: str) -> dict:
 
 
 def _headers(access_token: str) -> dict:
-    return {"Authorization": f"Bearer {access_token}", "Accept": "application/json", "Content-Type": "application/json"}
+    return {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Accept-Encoding": "identity",
+    }
 
 
 async def _ensure_fresh(meta: dict, client_id: str, client_secret: str) -> tuple[str, dict | None]:

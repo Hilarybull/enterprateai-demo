@@ -181,7 +181,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onAskIm
             {status?.last_sync_at
               ? `Last imported ${fmtDate(status.last_sync_at)}`
               : info.importSupported
-                ? "Ready to import — no data pulled yet."
+                ? "Ready to import. No data pulled yet."
                 : "Connected · import coming soon."}
           </p>
         )}
