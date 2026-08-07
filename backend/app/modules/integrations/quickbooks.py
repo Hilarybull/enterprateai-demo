@@ -88,12 +88,17 @@ def _map_vendor(row: dict, now: str) -> dict:
     }
 
 
-def _map_item(row: dict, now: str) -> dict:
+_QB_SELLABLE_TYPES = {"inventory", "noninventory", "service", "othercharge"}
+
+def _map_item(row: dict, now: str) -> dict | None:
+    item_type = _clean(row.get("Type") or "").lower()
+    if item_type and item_type not in _QB_SELLABLE_TYPES:
+        return None
     return {
         "id": _clean(row.get("Id")) or str(uuid4()),
         "name": _clean(row.get("Name") or "Imported Item"),
         "type": "product",
-        "product_type": _clean(row.get("Type") or "product").lower(),
+        "product_type": "service" if item_type == "service" else "product",
         "category": "Imported from QuickBooks",
         "base_price": float(row.get("UnitPrice") or 0),
         "cost_of_sales": float(row.get("PurchaseCost") or 0),
@@ -204,7 +209,8 @@ async def import_from_quickbooks(meta: dict, client_id: str, client_secret: str)
         ]:
             try:
                 rows = await _qb_query(client, realm_id, access, entity)
-                result[key] = [mapper(r, now) for r in rows]
+                mapped = [mapper(r, now) for r in rows]
+                result[key] = [m for m in mapped if m is not None]
             except Exception as e:
                 logger.warning("QB import %s failed: %s", entity, e)
                 errors.append(f"{entity}: {str(e)[:120]}")
