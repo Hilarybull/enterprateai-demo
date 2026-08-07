@@ -2747,13 +2747,33 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                 label: "Edit",
                                 onClick: () => {
                                   setEditingInvoiceId(inv.id);
+                                  // Resolve product_ids: prefer stored ids, otherwise match by name from items
+                                  let resolvedProductIds = Array.isArray(inv.product_ids) && inv.product_ids.length
+                                    ? inv.product_ids
+                                    : inv.product_id ? [inv.product_id] : [];
+                                  let resolvedItems = normalizeRecordItems(inv);
+                                  let resolvedExtras = [];
+                                  if (!resolvedProductIds.length && Array.isArray(inv.items) && inv.items.length) {
+                                    resolvedProductIds = [];
+                                    resolvedItems = [];
+                                    resolvedExtras = [];
+                                    for (const it of inv.items) {
+                                      const catalogueMatch = resolveProduct(it.product_id, it.product_name);
+                                      if (catalogueMatch?.id) {
+                                        resolvedProductIds.push(catalogueMatch.id);
+                                        resolvedItems.push({ product_id: catalogueMatch.id, product_name: catalogueMatch.name, quantity: Number(it.quantity || 1), unit_price: Number(it.unit_price || 0), unit_cost_of_sales: Number(it.unit_cost_of_sales || 0) });
+                                      } else {
+                                        resolvedExtras.push({ id: crypto.randomUUID(), product_id: "__other__", product_name: it.product_name || "", quantity: Number(it.quantity || 1), unit_price: Number(it.unit_price || 0), unit_cost_of_sales: 0 });
+                                      }
+                                    }
+                                  }
                                   setInvoiceForm({
                                     invoice_id: inv.invoice_id || "",
                                     customer_id: inv.customer_name || inv.customer_id,
                                     contract_id: inv.contract_id || "",
-                                    product_ids: Array.isArray(inv.product_ids) && inv.product_ids.length ? inv.product_ids : inv.product_id ? [inv.product_id] : [],
-                                    items: normalizeRecordItems(inv),
-                                    extra_items: [],
+                                    product_ids: resolvedProductIds,
+                                    items: resolvedItems,
+                                    extra_items: resolvedExtras,
                                     issued_at: inv.issued_at || "",
                                     due_date: inv.due_date || "",
                                     vat_rate: inv.vat_rate != null ? String(inv.vat_rate) : "",
