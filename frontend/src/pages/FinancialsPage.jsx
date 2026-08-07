@@ -698,6 +698,23 @@ export default function FinancialsPage() {
     return formatCurrency(Number(value || 0), currency || "GBP");
   }
 
+  function sourceBadge(item) {
+    const src = String(item?.source_system || "").toLowerCase();
+    if (src === "zoho_crm") return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600 ring-1 ring-inset ring-red-200">
+        <svg viewBox="0 0 40 40" className="h-2.5 w-2.5 shrink-0"><rect width="40" height="40" rx="4" fill="#E42527" /><text x="50%" y="56%" dominantBaseline="middle" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold" fontFamily="sans-serif">Z</text></svg>
+        Zoho
+      </span>
+    );
+    if (src === "quickbooks") return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 ring-1 ring-inset ring-green-200">
+        <svg viewBox="0 0 40 40" className="h-2.5 w-2.5 shrink-0"><rect width="40" height="40" rx="4" fill="#2CA01C" /><text x="50%" y="56%" dominantBaseline="middle" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold" fontFamily="sans-serif">Q</text></svg>
+        QB
+      </span>
+    );
+    return null;
+  }
+
   function formatPaymentTerms(value) {
     const str = String(value || "").trim();
     const num = parseInt(str, 10);
@@ -2717,6 +2734,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "delivered" ? "bg-blue-50 text-blue-700" : inv.status === "draft" || inv.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
                                 {inv.status || "pending"}
                               </span>
+                              {sourceBadge(inv)}
                             </div>
                             <div className="mt-0.5 text-xs text-slate-500">
                               Qty {inv.quantity} · {formatMoney(inv.total_amount)} · Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"}
@@ -3385,6 +3403,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${exp.status === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
                                 {exp.status || "pending"}
                               </span>
+                              {sourceBadge(exp)}
                             </div>
                             <div className="mt-0.5 text-xs text-slate-500">
                               {exp.cost_type} · {formatMoney(exp.price)} · Due {exp.due_date ? new Date(exp.due_date).toLocaleDateString() : "Not set"}

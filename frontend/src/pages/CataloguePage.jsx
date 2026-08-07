@@ -195,12 +195,9 @@ export default function CataloguePage() {
     return Math.floor((Date.now() - ts) / (1000 * 60 * 60 * 24));
   }
 
-  function isZohoImported(item) {
-    return String(item?.source_system || "").toLowerCase() === "zoho_crm";
-  }
-
   function importBadge(item) {
-    return isZohoImported(item) ? (
+    const src = String(item?.source_system || "").toLowerCase();
+    if (src === "zoho_crm") return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600 ring-1 ring-inset ring-red-200">
         <svg viewBox="0 0 40 40" className="h-2.5 w-2.5 shrink-0" aria-hidden="true">
           <rect width="40" height="40" rx="4" fill="#E42527" />
@@ -208,7 +205,17 @@ export default function CataloguePage() {
         </svg>
         Zoho
       </span>
-    ) : null;
+    );
+    if (src === "quickbooks") return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 ring-1 ring-inset ring-green-200">
+        <svg viewBox="0 0 40 40" className="h-2.5 w-2.5 shrink-0" aria-hidden="true">
+          <rect width="40" height="40" rx="4" fill="#2CA01C" />
+          <text x="50%" y="56%" dominantBaseline="middle" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold" fontFamily="sans-serif">Q</text>
+        </svg>
+        QB
+      </span>
+    );
+    return null;
   }
 
   function normalizeHeader(value) {
