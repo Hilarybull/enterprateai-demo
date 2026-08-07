@@ -152,13 +152,12 @@ async def connect(provider: Provider, user=Depends(get_current_user)) -> dict:
 # ── Callback — exchange code, store tokens, redirect to frontend ───────────────
 
 @router.get("/{provider}/callback", include_in_schema=False)
-async def callback(provider: Provider, code: str = "", state: str = "", error: str = ""):
+async def callback(provider: Provider, code: str = "", state: str = "", error: str = "", realmId: str = ""):
     frontend = _frontend_url()
 
     if error or not code or not state:
         return RedirectResponse(f"{frontend}/integrations/callback?provider={provider}&status=error&reason={error or 'missing_code'}")
 
-    # Decode state to get user_id
     try:
         payload = decode_token(state)
         user_id: str = payload["sub"]
@@ -174,9 +173,8 @@ async def callback(provider: Provider, code: str = "", state: str = "", error: s
         if provider == "zoho_crm":
             logger.info("Zoho OAuth callback starting redirect_uri=%s", redirect_uri)
         if provider == "quickbooks":
-            # QB also sends realmId in the callback query string — we receive it via **kwargs
-            # It's accessible via the request; for now store it from the token response
             tokens = await qb.exchange_code(client_id, client_secret, code, redirect_uri)
+            tokens["realmId"] = realmId
         elif provider == "xero":
             tokens = await xero_mod.exchange_code(client_id, client_secret, code, redirect_uri)
         else:
@@ -186,7 +184,8 @@ async def callback(provider: Provider, code: str = "", state: str = "", error: s
         return RedirectResponse(f"{frontend}/integrations/callback?provider={provider}&status=error&reason=exchange_failed")
 
     try:
-        await _save_tokens(user_id, provider, tokens)
+        extra_meta = {"realm_id": realmId} if provider == "quickbooks" else None
+        await _save_tokens(user_id, provider, tokens, extra_meta=extra_meta)
     except Exception as e:
         logger.error("Failed to store tokens for %s/%s: %s", provider, user_id, e)
         return RedirectResponse(f"{frontend}/integrations/callback?provider={provider}&status=error&reason=storage_failed")
