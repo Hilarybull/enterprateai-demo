@@ -534,7 +534,9 @@ export default function FinancialsPage() {
   }, [activeInvoices, activeExpenses]);
 
   const financialReportRows = useMemo(() => {
-    const revenueInvs = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "paid");
+    const paidInvs = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "paid");
+    const deliveredInvs = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "delivered");
+    const earnedInvs = [...paidInvs, ...deliveredInvs];
     const reportExpenses = activeExpenses;
     function dmc(items) {
       const s = new Set();
@@ -546,11 +548,23 @@ export default function FinancialsPage() {
       }
       return Math.max(1, s.size);
     }
-    const totalRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
-    const totalCos = revenueInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
+    // MRR = most recent month's earned revenue (matches Overview calculation)
+    function mostRecentMonthRev(items) {
+      const byMonth = new Map();
+      items.forEach((i) => {
+        const d = new Date(i.paid_at || i.issued_at || i.created_at || i.updated_at || "");
+        if (!Number.isFinite(d.getTime())) return;
+        const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, "0")}`;
+        byMonth.set(key, (byMonth.get(key) || 0) + Number(i.total_amount || i.subtotal_amount || 0));
+      });
+      if (!byMonth.size) return 0;
+      return byMonth.get([...byMonth.keys()].sort().at(-1)) || 0;
+    }
+    const totalRevenue = paidInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
+    const totalCos = paidInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
     const totalExpenses = reportExpenses.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-    const monthlyRevenue = totalRevenue / dmc(revenueInvs);
-    const monthlyCos = totalCos / dmc(revenueInvs);
+    const monthlyRevenue = earnedInvs.length ? mostRecentMonthRev(earnedInvs) : 0;
+    const monthlyCos = totalCos / dmc(paidInvs);
     const monthlyExp = totalExpenses / dmc(reportExpenses);
     const grossMargin = monthlyRevenue > 0 ? (((monthlyRevenue - monthlyCos) / monthlyRevenue) * 100).toFixed(1) : null;
     const pendingReceivablesTotal = activeInvoices.filter(i => String(i.status || "").toLowerCase() !== "paid").reduce((s, i) => s + Number(i.total_amount || 0), 0);
@@ -561,12 +575,15 @@ export default function FinancialsPage() {
       { label: "Pending receivables", value: formatMoney(pendingReceivablesTotal) },
       { label: "Pending payables", value: formatMoney(pendingPayablesTotal) },
     ];
-    const invoiceListRaw = [...activeInvoices].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,30).map(inv=>({customer:inv.customer_name||"—",items:Array.isArray(inv.product_names)&&inv.product_names.length?inv.product_names.join(", "):inv.product_name||"—",amount:formatMoney(Number(inv.total_amount||0)),due:inv.due_date?new Date(inv.due_date).toLocaleDateString():inv.issued_at?new Date(inv.issued_at).toLocaleDateString():"—",status:String(inv.status||"pending")}));
-    const quoteListRaw = [...activeQuotes].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,20).map(q=>({customer:q.customer_name||"—",items:Array.isArray(q.product_names)&&q.product_names.length?q.product_names.join(", "):q.product_name||"—",amount:formatMoney(Number(q.total_amount||q.subtotal_amount||0)),validity:q.validity_days?`${q.validity_days}d`:"—",status:String(q.status||"draft")}));
-    const expenseListRaw = [...activeExpenses].sort((a,b)=>new Date(b.created_at||b.updated_at||0)-new Date(a.created_at||a.updated_at||0)).slice(0,20).map(e=>({vendor:e.vendor_name||e.counterparty_name||"—",description:e.description||e.expense_type||e.item||"—",amount:formatMoney(Number(e.price||e.total_amount||0)),due:e.due_date?new Date(e.due_date).toLocaleDateString():"—",status:String(e.status||"pending")}));
-    const contractListRaw = [...activeContracts].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).map(c=>({counterparty:c.counterparty_name||"—",type:c.contract_type||"—",price:formatMoney(Number(c.price||0)),cos:formatMoney(Number(c.cost_of_sales||0)),terms:c.payment_terms||"—",status:String(c.status||"active")}));
+    // Resolve customer/vendor names from catalogue so they match what the Invoices/Contracts tabs show
+    const resolveName = (id, fallback) => resolveCustomer(id, fallback)?.name || fallback || "—";
+    const resolveVendorName = (id, fallback) => resolveVendor(id, fallback)?.name || fallback || "—";
+    const invoiceListRaw = [...activeInvoices].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,30).map(inv=>({customer:resolveName(inv.customer_id, inv.customer_name),items:Array.isArray(inv.product_names)&&inv.product_names.length?inv.product_names.join(", "):inv.product_name||"—",amount:formatMoney(Number(inv.total_amount||0)),due:inv.due_date?new Date(inv.due_date).toLocaleDateString():inv.issued_at?new Date(inv.issued_at).toLocaleDateString():"—",status:String(inv.status||"pending")}));
+    const quoteListRaw = [...activeQuotes].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,20).map(q=>({customer:resolveName(q.customer_id, q.customer_name),items:Array.isArray(q.product_names)&&q.product_names.length?q.product_names.join(", "):q.product_name||"—",amount:formatMoney(Number(q.total_amount||q.subtotal_amount||0)),validity:q.validity_days?`${q.validity_days}d`:"—",status:String(q.status||"draft")}));
+    const expenseListRaw = [...activeExpenses].sort((a,b)=>new Date(b.created_at||b.updated_at||0)-new Date(a.created_at||a.updated_at||0)).slice(0,20).map(e=>({vendor:resolveVendorName(e.vendor_id, e.vendor_name||e.counterparty_name),description:e.description||e.expense_type||e.item||"—",amount:formatMoney(Number(e.price||e.total_amount||0)),due:e.due_date?new Date(e.due_date).toLocaleDateString():"—",status:String(e.status||"pending")}));
+    const contractListRaw = [...activeContracts].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).map(c=>{const party=c.contract_type==="sales"?resolveCustomer(c.counterparty_id,c.counterparty_name):resolveVendor(c.counterparty_id,c.counterparty_name);return{counterparty:party?.name||c.counterparty_name||"—",type:c.contract_type||"—",price:formatMoney(Number(c.price||0)),cos:formatMoney(Number(c.cost_of_sales||0)),terms:c.payment_terms||"—",status:String(c.status||"active")};});
     return { kpiTiles, invoiceListRaw, quoteListRaw, expenseListRaw, contractListRaw, monthlyExp };
-  }, [activeInvoices, activeQuotes, activeExpenses, activeContracts]); // eslint-disable-line
+  }, [activeInvoices, activeQuotes, activeExpenses, activeContracts, activeCustomers, activeVendors]); // eslint-disable-line
 
   const hasArchiveWarning = useMemo(() => {
     const list = [...archivedInvoices, ...archivedQuotes, ...archivedExpenses, ...archivedContracts];
@@ -4239,13 +4256,20 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           }
           return Math.max(1, s.size);
         }
-        const invMonths = _dmc(revenueInvs);
         const expMonths = _dmc(reportExpenses);
+        const deliveredInvsOv = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "delivered");
+        const earnedInvsOv = [...revenueInvs, ...deliveredInvsOv];
         const totalRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || 0), 0);
         const totalCos = revenueInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
         const totalExpenses = reportExpenses.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-        const monthlyRevenue = totalRevenue / invMonths;
-        const monthlyCos = totalCos / invMonths;
+        function _mrr(items) {
+          const byMonth = new Map();
+          items.forEach(i => { const d = new Date(i.paid_at||i.issued_at||i.created_at||i.updated_at||""); if (!Number.isFinite(d.getTime())) return; const k=`${d.getFullYear()}-${String(d.getMonth()).padStart(2,"0")}`; byMonth.set(k,(byMonth.get(k)||0)+Number(i.total_amount||i.subtotal_amount||0)); });
+          if (!byMonth.size) return 0;
+          return byMonth.get([...byMonth.keys()].sort().at(-1))||0;
+        }
+        const monthlyRevenue = earnedInvsOv.length ? _mrr(earnedInvsOv) : 0;
+        const monthlyCos = totalCos / Math.max(1, _dmc(revenueInvs));
         const monthlyExp = totalExpenses / expMonths;
         const grossMargin = monthlyRevenue > 0 ? (((monthlyRevenue - monthlyCos) / monthlyRevenue) * 100).toFixed(1) : null;
         const pendingReceivablesTotal = activeInvoices.filter(i => String(i.status || "").toLowerCase() !== "paid").reduce((s, i) => s + Number(i.total_amount || 0), 0);
@@ -4255,7 +4279,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           .sort((a, b) => new Date(b.created_at || b.updated_at || 0) - new Date(a.created_at || a.updated_at || 0))
           .slice(0, 30)
           .map(inv => ({
-            customer: inv.customer_name || "—",
+            customer: resolveCustomer(inv.customer_id, inv.customer_name)?.name || inv.customer_name || "—",
             items: Array.isArray(inv.product_names) && inv.product_names.length ? inv.product_names.join(", ") : inv.product_name || "—",
             amount: formatMoney(Number(inv.total_amount || 0)),
             due: inv.due_date ? new Date(inv.due_date).toLocaleDateString() : inv.issued_at ? new Date(inv.issued_at).toLocaleDateString() : "—",
@@ -4266,7 +4290,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
           .slice(0, 20)
           .map(q => ({
-            customer: q.customer_name || "—",
+            customer: resolveCustomer(q.customer_id, q.customer_name)?.name || q.customer_name || "—",
             items: Array.isArray(q.product_names) && q.product_names.length ? q.product_names.join(", ") : q.product_name || "—",
             amount: formatMoney(Number(q.total_amount || q.subtotal_amount || 0)),
             validity: q.validity_days ? `${q.validity_days}d` : "—",
@@ -4277,8 +4301,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           .sort((a, b) => new Date(b.created_at || b.updated_at || 0) - new Date(a.created_at || a.updated_at || 0))
           .slice(0, 20)
           .map(e => ({
-            vendor: e.vendor_name || e.counterparty_name || "—",
-            description: e.description || e.expense_type || "—",
+            vendor: resolveVendor(e.vendor_id, e.vendor_name || e.counterparty_name)?.name || e.vendor_name || e.counterparty_name || "—",
+            description: e.description || e.expense_type || e.item || "—",
             amount: formatMoney(Number(e.price || e.total_amount || 0)),
             due: e.due_date ? new Date(e.due_date).toLocaleDateString() : "—",
             status: <StatusBadge status={e.status || "pending"} />,
@@ -4286,14 +4310,17 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 
         const contractRows = [...activeContracts]
           .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
-          .map(c => ({
-            counterparty: c.counterparty_name || "—",
-            type: c.contract_type || "—",
-            price: formatMoney(Number(c.price || 0)),
-            cos: formatMoney(Number(c.cost_of_sales || 0)),
-            terms: c.payment_terms || "—",
-            status: <StatusBadge status={c.status || "active"} />,
-          }));
+          .map(c => {
+            const party = c.contract_type === "sales" ? resolveCustomer(c.counterparty_id, c.counterparty_name) : resolveVendor(c.counterparty_id, c.counterparty_name);
+            return {
+              counterparty: party?.name || c.counterparty_name || "—",
+              type: c.contract_type || "—",
+              price: formatMoney(Number(c.price || 0)),
+              cos: formatMoney(Number(c.cost_of_sales || 0)),
+              terms: c.payment_terms || "—",
+              status: <StatusBadge status={c.status || "active"} />,
+            };
+          });
 
         const kpiTiles = [
           { label: "Monthly run rate", value: formatMoney(monthlyRevenue) },
