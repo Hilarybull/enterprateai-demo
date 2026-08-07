@@ -2758,12 +2758,18 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                     resolvedItems = [];
                                     resolvedExtras = [];
                                     for (const it of inv.items) {
-                                      const catalogueMatch = resolveProduct(it.product_id, it.product_name);
+                                      // Try by id first, then by name in catalogue
+                                      const catalogueMatch = (it.product_id ? activeProducts.find(p => p.id === it.product_id) : null)
+                                        || matchByName(activeProducts, it.product_name);
+                                      const qty = Number(it.quantity || 1);
+                                      const price = Number(it.unit_price || 0);
+                                      const cos = Number(it.unit_cost_of_sales || 0);
                                       if (catalogueMatch?.id) {
                                         resolvedProductIds.push(catalogueMatch.id);
-                                        resolvedItems.push({ product_id: catalogueMatch.id, product_name: catalogueMatch.name, quantity: Number(it.quantity || 1), unit_price: Number(it.unit_price || 0), unit_cost_of_sales: Number(it.unit_cost_of_sales || 0) });
+                                        // preserve the invoice's actual unit_price, not the catalogue base_price
+                                        resolvedItems.push({ product_id: catalogueMatch.id, product_name: catalogueMatch.name, quantity: qty, unit_price: price, unit_cost_of_sales: cos });
                                       } else {
-                                        resolvedExtras.push({ id: crypto.randomUUID(), product_id: "__other__", product_name: it.product_name || "", quantity: Number(it.quantity || 1), unit_price: Number(it.unit_price || 0), unit_cost_of_sales: 0 });
+                                        resolvedExtras.push({ id: crypto.randomUUID(), product_id: "__other__", product_name: it.product_name || "", quantity: qty, unit_price: price, unit_cost_of_sales: cos });
                                       }
                                     }
                                   }
