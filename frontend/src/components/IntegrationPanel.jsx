@@ -7,7 +7,7 @@ const PROVIDER_INFO = {
     label: "QuickBooks",
     tagline: "Online Accounting",
     description: "Import invoices, expenses, customers and vendors from QuickBooks Online.",
-    importSupported: false,
+    importSupported: true,
     color: "#2CA01C",
     logo: (
       <svg viewBox="0 0 44 44" className="h-11 w-11" fill="none">

@@ -293,8 +293,51 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
     total_imported = 0
     all_errors: list[str] = []
 
-    if provider in ("quickbooks", "xero"):
-        raise HTTPException(status_code=501, detail=f"Import from {PROVIDERS[provider]['label']} is not yet available.")
+    if provider == "quickbooks":
+        fresh_access, new_meta = await qb._ensure_fresh(meta, client_id, client_secret)
+        if new_meta:
+            try:
+                await sb_update(
+                    "integration_tokens",
+                    payload={
+                        "access_token": new_meta["access_token"],
+                        "refresh_token": new_meta["refresh_token"],
+                        "token_expiry": new_meta["token_expiry"],
+                    },
+                    filters=[("user_id", "eq", user["id"]), ("provider", "eq", "quickbooks")],
+                )
+                meta.update(new_meta)
+            except Exception:
+                pass
+        imported, import_errors, _ = await qb.import_from_quickbooks(meta, client_id, client_secret)
+        all_errors += import_errors
+
+        existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
+        now = datetime.now(timezone.utc).isoformat()
+        merged_catalogue = {
+            "products": zoho_mod._merge_catalogue_lists(existing_catalogue.get("products", []), imported.get("products", []), kind="products", now_iso=now, mode=mode),
+            "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now, mode=mode),
+            "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now, mode=mode),
+        }
+        await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
+
+        existing_financials = financials if isinstance(financials, dict) else {}
+        merged_financials = dict(existing_financials)
+        if imported.get("invoices"):
+            merged_financials["invoices"] = zoho_mod._merge_financials_list(
+                existing_financials.get("invoices", []), imported["invoices"], mode=mode
+            )
+        if imported.get("expenses"):
+            merged_financials["expenses"] = zoho_mod._merge_financials_list(
+                existing_financials.get("expenses", []), imported["expenses"], mode=mode
+            )
+        if imported.get("invoices") or imported.get("expenses"):
+            await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
+
+        total_imported = sum(len(imported.get(k, [])) for k in ("products", "customers", "vendors", "invoices", "expenses"))
+
+    elif provider == "xero":
+        raise HTTPException(status_code=501, detail="Import from Xero is not yet available.")
 
     elif provider == "zoho_crm":
         # Refresh token BEFORE importing so we can persist the new token to DB
