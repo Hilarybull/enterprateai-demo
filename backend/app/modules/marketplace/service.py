@@ -126,11 +126,16 @@ async def publish_workspace(*, user_id: str, workspace_id: str | None = None) ->
     }
     merged = dict(data)
     merged["marketplace"] = marketplace_data
-    await sb_update(
+    updated = await sb_update(
         "workspaces",
         filters=[("id", "eq", ws_id), ("user_id", "eq", user_id)],
         payload={"data": merged, "updated_at": now},
     )
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to publish listing. Please try again.",
+        )
     return {"workspace_id": ws_id, "is_published": True, "published_at": marketplace_data["published_at"], "has_profile": True}
 
 
@@ -144,11 +149,16 @@ async def unpublish_workspace(*, user_id: str, workspace_id: str | None = None) 
     marketplace_data = {**existing_marketplace, "is_active": False, "updated_at": now}
     merged = dict(data)
     merged["marketplace"] = marketplace_data
-    await sb_update(
+    updated = await sb_update(
         "workspaces",
         filters=[("id", "eq", ws_id), ("user_id", "eq", user_id)],
         payload={"data": merged, "updated_at": now},
     )
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to unpublish listing. Please try again.",
+        )
     return {"workspace_id": ws_id, "is_published": False, "published_at": None, "has_profile": bool(data.get("workspace_profile"))}
 
 

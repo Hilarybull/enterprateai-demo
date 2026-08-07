@@ -14,6 +14,7 @@ import { CatalogueIllustration, IllustrationCard } from "../components/Illustrat
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { hasFeatureAccess } from "../lib/permissions";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 export default function CataloguePage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -67,6 +68,7 @@ export default function CataloguePage() {
   }, []); // eslint-disable-line
   const [reportFinancials, setReportFinancials] = useState({ invoices: [], expenses: [] });
   const [pendingCatalogueReport, setPendingCatalogueReport] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
   const [reportFilter, setReportFilter] = useState({ products: true, customers: true, vendors: true });
   const [reportPreviewHtml, setReportPreviewHtml] = useState(null);
   const currency = useWorkspaceStore((s) => s.currency);
@@ -662,7 +664,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     await persist({ products: nextProducts, customers: nextCustomers, vendors: nextVendors });
   }
 
-  async function deleteEntity(kind, id) {
+  async function _doDeleteEntity(kind, id) {
     const filterer = (list) => list.filter((it) => it.id !== id);
     const nextProducts = kind === "products" ? filterer(products) : products;
     const nextCustomers = kind === "customers" ? filterer(customers) : customers;
@@ -671,6 +673,15 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     setCustomers(nextCustomers);
     setVendors(nextVendors);
     await persist({ products: nextProducts, customers: nextCustomers, vendors: nextVendors });
+  }
+
+  function deleteEntity(kind, id) {
+    const label = kind === "products" ? "product" : kind === "customers" ? "customer" : "vendor";
+    setConfirmDialog({
+      message: `Delete this ${label}? This cannot be undone.`,
+      onConfirm: async () => { setConfirmDialog(null); await _doDeleteEntity(kind, id); },
+      onCancel: () => setConfirmDialog(null),
+    });
   }
 
   const activeProducts = useMemo(() => products.filter((p) => !p.archived), [products]);
@@ -1682,6 +1693,16 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
         <div className="mt-4">
           <div className="text-xs text-slate-500">Syncing catalogue...</div>
         </div>
+      ) : null}
+
+      {confirmDialog ? (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          confirmLabel="Delete"
+          danger
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={confirmDialog.onCancel}
+        />
       ) : null}
     </div>
   );

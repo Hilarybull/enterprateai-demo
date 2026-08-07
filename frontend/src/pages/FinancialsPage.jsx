@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import html2pdf from "html2pdf.js";
 import Button from "../components/Button";
 import DocumentShareModal from "../components/DocumentShareModal";
+import ConfirmDialog from "../components/ConfirmDialog";
 import InlineAlert from "../components/InlineAlert";
 import Input from "../components/Input";
 import PageHeader from "../components/PageHeader";
@@ -178,6 +179,7 @@ export default function FinancialsPage() {
     if (t) { setActiveTab(t); setSearchParams({}, { replace: true }); }
   }, []); // eslint-disable-line
   const [statusDateModal, setStatusDateModal] = useState(null); // { type, id, status, label }
+  const [confirmDialog, setConfirmDialog] = useState(null);
   const [pendingFinancialReport, setPendingFinancialReport] = useState(null);
   const [reportFilter, setReportFilter] = useState({ kpis: true, invoices: true, quotes: true, expenses: true, contracts: true });
   const [reportPreviewHtml, setReportPreviewHtml] = useState(null);
@@ -1896,7 +1898,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     }
   }
 
-  async function deleteItem(type, id) {
+  async function _doDeleteItem(type, id) {
     if (type === "invoice") {
       const next = invoices.filter((i) => i.id !== id);
       setInvoices(next);
@@ -1917,6 +1919,14 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       setContracts(next);
       await persist({ invoices, quotes, expenses, contracts: next });
     }
+  }
+
+  function deleteItem(type, id) {
+    setConfirmDialog({
+      message: `Delete this ${type}? This cannot be undone.`,
+      onConfirm: async () => { setConfirmDialog(null); await _doDeleteItem(type, id); },
+      onCancel: () => setConfirmDialog(null),
+    });
   }
 
   function openRfqApproveModal(rfq) {
@@ -1975,7 +1985,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     }
   }
 
-  async function deleteRfq(rfqId) {
+  async function _doDeleteRfq(rfqId) {
     setError(null);
     try {
       await apiRequest(`/marketplace/rfq/${rfqId}`, "DELETE");
@@ -1984,6 +1994,14 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete RFQ.");
     }
+  }
+
+  function deleteRfq(rfqId) {
+    setConfirmDialog({
+      message: "Delete this RFQ? This cannot be undone.",
+      onConfirm: async () => { setConfirmDialog(null); await _doDeleteRfq(rfqId); },
+      onCancel: () => setConfirmDialog(null),
+    });
   }
 
   function buildRfqQuoteHtml(quote, customer, companyName) {
@@ -4505,6 +4523,16 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           </div>
         </div>
       )}
+
+      {confirmDialog ? (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          confirmLabel="Delete"
+          danger
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={confirmDialog.onCancel}
+        />
+      ) : null}
 
       {/* RFQ Approve + Price Edit Modal */}
       {rfqApproveModal && (
