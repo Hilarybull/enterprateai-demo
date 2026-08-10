@@ -708,15 +708,42 @@ def _apply_source_record_ids(items: list[dict], *, kind: str, source_updates: di
     return patched
 
 
+async def _fetch_org_base_currency(access_token: str) -> str | None:
+    """Return the ISO code of the Zoho org's base currency (e.g. 'NGN'), or None on failure."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{_api_base_v8()}/currencies",
+                headers=_headers(access_token),
+            )
+            if resp.status_code == 200:
+                for cur in (resp.json().get("currencies") or []):
+                    if cur.get("is_base"):
+                        return _clean_text(cur.get("iso_code") or "").upper() or None
+    except Exception:
+        pass
+    return None
+
+
 async def import_catalogue(meta: dict, client_id: str, client_secret: str) -> tuple[dict[str, list[dict]], list[str]]:
     access, _ = await _ensure_fresh(meta, client_id, client_secret)
     errors: list[str] = []
     now = datetime.now(timezone.utc).isoformat()
     imported: dict[str, list[dict]] = {"products": [], "customers": [], "vendors": [], "invoices": [], "quotes": []}
 
+    # Fetch org base currency once and stamp all products with it
+    org_currency = await _fetch_org_base_currency(access)
+
     try:
         products = await _fetch_records("Products", access)
-        imported["products"] = [_normalize_imported_product(row, now) for row in products]
+        normalized = [_normalize_imported_product(row, now) for row in products]
+        # Stamp org currency on any product that didn't get one from the record field
+        if org_currency:
+            for p in normalized:
+                if not p.get("source_currency"):
+                    p["source_currency"] = org_currency
+                    p["original_price"] = p["base_price"]
+        imported["products"] = normalized
     except Exception as e:
         errors.append(f"Products: {str(e)[:160]}")
 
