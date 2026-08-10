@@ -136,7 +136,7 @@ function ImportModeModal({ provider, info, onConfirm, onCancel }) {
               onChange={(e) => setSourceCurrency(e.target.value)}
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-[13px] font-medium text-slate-800 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
             >
-              <option value="">— Select the currency used in this integration —</option>
+              <option value="">Select currency used in {info.label}</option>
               {COMMON_CURRENCIES.map(({ code, label }) => (
                 <option key={code} value={code}>{label}</option>
               ))}

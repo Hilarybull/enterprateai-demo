@@ -3617,13 +3617,6 @@ export default function ValidationWizardPage() {
           ) : mode === "v4" ? (
             <div className="space-y-6">
               <ValidationLoadingOverlay isVisible={isValidating} />
-              {/* V4 header */}
-              <div className="flex items-center gap-3">
-                <div>
-                  <span className="text-lg font-bold text-slate-900">Universal Idea Validation</span>
-                  <span className="ml-2 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold text-white">V4</span>
-                </div>
-              </div>
 
               {v4Error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{v4Error}</div>}
               {savedNotice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{savedNotice}</div>}
@@ -4447,8 +4440,7 @@ export default function ValidationWizardPage() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <div className="text-lg font-black text-violet-900">Universal Idea Validation</div>
-                          <span className="rounded-full bg-violet-600 px-2.5 py-0.5 text-[10px] font-bold text-white tracking-wide">V4</span>
+                          <div className="text-lg font-black text-violet-900">Idea Validation</div>
                         </div>
                         <p className="text-sm leading-relaxed text-violet-700">
                           Evidence-aware validation with dual scores — Commercial Potential and Evidence Confidence. Choose Basic or Comprehensive depth.
