@@ -126,28 +126,33 @@ function ImportModeModal({ provider, info, onConfirm, onCancel }) {
           </p>
 
           {/* Currency selector */}
-          <div className="mb-4 rounded-xl border-2 border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+          <div className={`mb-4 rounded-xl border-2 p-3 transition-colors ${sourceCurrency ? "border-emerald-400 bg-emerald-50 dark:border-emerald-600 dark:bg-emerald-900/20" : "border-amber-300 bg-amber-50 dark:border-amber-600 dark:bg-amber-900/20"}`}>
             <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wide">
-              Source currency <span className="font-normal normal-case text-slate-400">(optional, for price conversion)</span>
+              Source currency <span className="text-rose-500">*</span>
+              <span className="ml-1 font-normal normal-case text-slate-400">(required for price conversion)</span>
             </label>
             <select
               value={sourceCurrency}
               onChange={(e) => setSourceCurrency(e.target.value)}
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-[13px] font-medium text-slate-800 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
             >
-              <option value="">Same as workspace (no conversion)</option>
+              <option value="">— Select the currency used in this integration —</option>
               {COMMON_CURRENCIES.map(({ code, label }) => (
                 <option key={code} value={code}>{label}</option>
               ))}
             </select>
+            {!sourceCurrency && (
+              <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">Select a currency to continue</p>
+            )}
           </div>
 
           <div className="flex flex-col gap-3">
             {/* Option A — new only */}
             <button
               type="button"
+              disabled={!sourceCurrency}
               onClick={() => onConfirm("new_only", sourceCurrency)}
-              className="group flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+              className="group flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800"
             >
               <div
                 className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
@@ -168,8 +173,9 @@ function ImportModeModal({ provider, info, onConfirm, onCancel }) {
             {/* Option B — overwrite */}
             <button
               type="button"
+              disabled={!sourceCurrency}
               onClick={() => onConfirm("overwrite", sourceCurrency)}
-              className="group flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+              className="group flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800"
             >
               <div
                 className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
