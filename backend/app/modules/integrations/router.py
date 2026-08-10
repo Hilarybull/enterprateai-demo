@@ -296,15 +296,31 @@ async def _convert_financials(records: list[dict], target_currency: str) -> list
     return out
 
 
-async def _convert_products(products: list[dict], target_currency: str) -> list[dict]:
-    """Convert base_price and cost_of_sales to target_currency where source_currency differs."""
+def _infer_source_currency(financial_records: list[dict]) -> str | None:
+    """Pick the most common source_currency from invoices/quotes as the org's default."""
+    counts: dict[str, int] = {}
+    for r in financial_records:
+        sc = (r.get("source_currency") or "").upper()
+        if sc:
+            counts[sc] = counts.get(sc, 0) + 1
+    return max(counts, key=lambda k: counts[k]) if counts else None
+
+
+async def _convert_products(
+    products: list[dict], target_currency: str, fallback_source_currency: str | None = None
+) -> list[dict]:
+    """Convert base_price and cost_of_sales to target_currency where source_currency differs.
+
+    fallback_source_currency is used for products where source_currency is not set
+    (e.g. Zoho products that don't carry a per-record Currency field).
+    """
     if not products or not target_currency:
         return products
     target = target_currency.upper()
     rate_cache: dict[str, float | None] = {}
     out = []
     for p in products:
-        src = (p.get("source_currency") or "").upper()
+        src = (p.get("source_currency") or fallback_source_currency or "").upper()
         if not src or src == target:
             out.append(p)
             continue
@@ -315,6 +331,7 @@ async def _convert_products(products: list[dict], target_currency: str) -> list[
             out.append(p)
             continue
         p = dict(p)
+        p["source_currency"] = src  # stamp it so the record knows its origin
         if p.get("base_price") is not None:
             p["base_price"] = convert_amount(float(p["base_price"]), rate)
         if p.get("cost_of_sales"):
@@ -391,7 +408,8 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         if imported.get("expenses"):
             imported["expenses"] = await _convert_financials(imported["expenses"], ws_currency)
         if imported.get("products"):
-            imported["products"] = await _convert_products(imported["products"], ws_currency)
+            org_currency = _infer_source_currency(imported.get("invoices", []) + imported.get("expenses", []))
+            imported["products"] = await _convert_products(imported["products"], ws_currency, fallback_source_currency=org_currency)
 
         existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
         now = datetime.now(timezone.utc).isoformat()
@@ -456,7 +474,8 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         if imported.get("quotes"):
             imported["quotes"] = await _convert_financials(imported["quotes"], ws_currency)
         if imported.get("products"):
-            imported["products"] = await _convert_products(imported["products"], ws_currency)
+            org_currency = _infer_source_currency(imported.get("invoices", []) + imported.get("quotes", []))
+            imported["products"] = await _convert_products(imported["products"], ws_currency, fallback_source_currency=org_currency)
 
         # Merge catalogue (products, customers, vendors)
         existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
