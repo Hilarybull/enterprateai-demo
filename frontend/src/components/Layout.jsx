@@ -723,7 +723,7 @@ export default function Layout() {
         </div>
         <button
           type="button"
-          onClick={() => workspaceId && setWorkspaceProfileOpen(true)}
+          onClick={() => workspaceId && navigate("/account")}
           className={
             "mt-2 w-full text-left text-base font-semibold text-slate-900 dark:text-slate-100 " +
             (workspaceId ? "cursor-pointer hover:text-brand-600 dark:hover:text-brand-400 transition-colors" : "cursor-default")
@@ -1145,15 +1145,6 @@ export default function Layout() {
                     )}
                     {!isMemberMode && (
                       <>
-                        {workspaceId && (
-                          <button
-                            type="button"
-                            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
-                            onClick={() => { setProfileOpen(false); setWorkspaceProfileOpen(true); }}
-                          >
-                            View workspace
-                          </button>
-                        )}
                         <button
                           type="button"
                           className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
@@ -1270,17 +1261,6 @@ export default function Layout() {
         </main>
       </div>
       {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}
-      {workspaceProfileOpen && workspaceId && (
-        <WorkspaceProfilePanel
-          workspaceId={workspaceId}
-          onClose={() => setWorkspaceProfileOpen(false)}
-          onEdit={() => {
-            setWorkspaceProfileOpen(false);
-            const returnTo = encodeURIComponent(location.pathname + location.search);
-            navigate(`/validation?from=module&return=${returnTo}`);
-          }}
-        />
-      )}
       {onboardingOpen && !workspaceId && (
         <OnboardingModal onDismiss={() => setOnboardingOpen(false)} userId={email} />
       )}

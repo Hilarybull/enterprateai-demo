@@ -932,6 +932,8 @@ export default function ValidationWizardPage() {
   }));
   const [serviceCurrency, setServiceCurrency] = useState("GBP");
   const serviceCurrencySymbol = useMemo(() => getCurrencySymbol(serviceCurrency), [serviceCurrency]);
+  const savedProfileSnap = useRef(null);
+  const profileSnapPending = useRef(false);
   const [profile, setProfile] = useState(() => ({
     company_name: "",
     logo_data_url: "",
@@ -1431,6 +1433,13 @@ export default function ValidationWizardPage() {
     }));
   }, [isCreateWorkspace, isProductPath]);
 
+  // Capture the full merged profile snapshot after server data is applied
+  useEffect(() => {
+    if (profileSnapPending.current) {
+      savedProfileSnap.current = JSON.stringify(profile);
+      profileSnapPending.current = false;
+    }
+  }, [profile]);
 
   useEffect(() => {
     async function prefill() {
@@ -1468,13 +1477,17 @@ export default function ValidationWizardPage() {
           const wp = ws?.data?.workspace_profile;
           if (wp && typeof wp === "object") {
             setWorkspaceLogoStore(wp.logo_data_url || null);
+            const wpNormalized = {
+              ...wp,
+              core_values: Array.isArray(wp.core_values) ? wp.core_values.join(", ") : (wp.core_values || ""),
+            };
+            profileSnapPending.current = true;
             setProfile((prev) => ({
               ...prev,
-              ...wp,
+              ...wpNormalized,
               services: Array.isArray(wp.services) && wp.services.length
                 ? wp.services
                 : prev.services,
-              core_values: Array.isArray(wp.core_values) ? wp.core_values.join(", ") : prev.core_values
             }));
             if (wp.company_name && !form?.context?.business_name) {
               update("context.business_name", wp.company_name);
@@ -1529,13 +1542,17 @@ export default function ValidationWizardPage() {
         next.pathway = requestedHistoryType === "service_validation" ? "product_service_idea" : (form.pathway || next.pathway || "business_idea");
         if (wp && typeof wp === "object") {
           setWorkspaceLogoStore(wp.logo_data_url || null);
+          const wpNormalized2 = {
+            ...wp,
+            core_values: Array.isArray(wp.core_values) ? wp.core_values.join(", ") : (wp.core_values || ""),
+          };
+          profileSnapPending.current = true;
           setProfile((prev) => ({
             ...prev,
-            ...wp,
+            ...wpNormalized2,
             services: Array.isArray(wp.services) && wp.services.length
               ? wp.services
               : prev.services,
-            core_values: Array.isArray(wp.core_values) ? wp.core_values.join(", ") : prev.core_values
           }));
           if (wp.company_name && !next.context.business_name) {
             next.context.business_name = wp.company_name;
@@ -2167,7 +2184,15 @@ export default function ValidationWizardPage() {
   }
 
   const canRun = useMemo(() => {
-    if (isCreateWorkspace) return !validateProfileDraft();
+    if (isCreateWorkspace) {
+      const existingWsId = editingWorkspaceId || storedWorkspaceId;
+      if (existingWsId && savedProfileSnap.current !== null) {
+        // Existing workspace: enable whenever something changed (validation errors shown on click)
+        return JSON.stringify(profile) !== savedProfileSnap.current;
+      }
+      // New workspace: enable when all required fields are filled
+      return !validateProfileDraft();
+    }
     if (isProductPath) {
       const required = [
         String(serviceForm.service_name || "").trim().length >= 2,
@@ -2192,7 +2217,9 @@ export default function ValidationWizardPage() {
     isCreateWorkspace,
     isProductPath,
     profile,
-    serviceForm
+    serviceForm,
+    editingWorkspaceId,
+    storedWorkspaceId,
   ]);
   const canEdit = !isLoading && !isPrefilling;
 
@@ -5844,7 +5871,11 @@ export default function ValidationWizardPage() {
                             </div>
                           ) : (
                             <Button
-                              className="w-full bg-slate-900 text-white hover:bg-slate-800 border-0 h-12 text-base font-bold shadow-xl shadow-slate-200"
+                              className={`w-full border-0 h-12 text-base font-bold shadow-xl ${
+                                isCreateWorkspace && canRun
+                                  ? "bg-violet-600 hover:bg-violet-700 text-white shadow-violet-200"
+                                  : "bg-slate-900 hover:bg-slate-800 text-white shadow-slate-200"
+                              }`}
                               disabled={isLoading || isPrefilling || !canRun}
                               onClick={() => {
                                 if (!isCreateWorkspace) {

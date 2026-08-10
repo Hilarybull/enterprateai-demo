@@ -505,21 +505,22 @@ async def suggest_blueprint_field(
         "proof": f"Write 1-2 sentences of social proof / credibility for a sales letter. Context: {ctx}. Return only the text, no labels.",
         "urgency": f"Write a concise urgency/scarcity line for a sales letter. Context: {ctx}. Return only the text, no labels.",
         "proposal_title": f"Suggest a professional business proposal title. Context: {ctx}. Return only the title, no labels.",
-        "about_company": f"Write a 2-3 sentence company overview describing what it does, who it serves, and its edge. Context: {ctx}. Return only the text, no labels.",
-        "tagline": f"Write a punchy one-line business tagline (max 10 words). Context: {ctx}. Return only the tagline, no labels.",
-        "vision": f"Write a one-sentence company vision statement describing the future the company wants to create. Context: {ctx}. Return only the text, no labels.",
-        "mission": f"Write a one-sentence company mission statement describing how it achieves its vision. Context: {ctx}. Return only the text, no labels.",
-        "core_values": f"List 4-5 short company core values as comma-separated words or short phrases. Context: {ctx}. Return only the comma-separated list, no labels.",
+        "about_company": f"Write a 2-3 sentence company overview describing what it does, who it serves, and its edge. Context: {ctx}. Return only the text, no labels, no markdown.",
+        "tagline": f"Write a punchy one-line business tagline (max 10 words). Context: {ctx}. Return only the tagline, no labels, no markdown.",
+        "vision": f"Write a one-sentence company vision statement describing the future the company wants to create. Context: {ctx}. Return only the text, no labels, no markdown.",
+        "mission": f"Write a one-sentence company mission statement describing how it achieves its vision. Context: {ctx}. Return only the text, no labels, no markdown.",
+        "core_values": f"List 4-5 short company core values as comma-separated words or short phrases. Context: {ctx}. Return only the comma-separated list, no labels, no markdown.",
     }
 
     prompt = prompts.get(
         payload.field,
-        f"Provide a short, professional text for the '{payload.field}' field. Context: {ctx}. Return only the text, no labels.",
+        f"Provide a short, professional text for the '{payload.field}' field. Context: {ctx}. Return only the text, no labels, no markdown.",
     )
 
     try:
         res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt, feature="blueprint.suggest_field")
-        text = (res.text or "").strip()
+        import re as _re
+        text = _re.sub(r"\*{1,3}|_{1,3}|^[-–—]\s*", "", (res.text or ""), flags=_re.MULTILINE).strip()
         return {"value": text}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI suggestion failed: {e}")

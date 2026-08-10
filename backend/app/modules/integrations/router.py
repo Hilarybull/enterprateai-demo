@@ -17,6 +17,7 @@ from app.modules.idea_validation.service import get_user_workspace, upsert_user_
 from app.modules.integrations import quickbooks as qb
 from app.modules.integrations import xero as xero_mod
 from app.modules.integrations import zoho as zoho_mod
+from app.shared.currency import get_rate, convert as convert_amount
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +260,52 @@ async def disconnect(provider: Provider, user=Depends(get_current_user)) -> dict
     return {"disconnected": True, "provider": provider}
 
 
+async def _convert_financials(records: list[dict], target_currency: str) -> list[dict]:
+    """Convert monetary fields in financial records to target_currency where source differs."""
+    if not records or not target_currency:
+        return records
+    target = target_currency.upper()
+    rate_cache: dict[str, float | None] = {}
+    out = []
+    for rec in records:
+        src = (rec.get("source_currency") or "").upper()
+        if not src or src == target:
+            out.append(rec)
+            continue
+        if src not in rate_cache:
+            rate_cache[src] = await get_rate(src, target)
+        rate = rate_cache[src]
+        if rate is None:
+            out.append(rec)
+            continue
+        rec = dict(rec)
+        for field in ("total_amount", "subtotal_amount", "vat_amount", "price"):
+            if rec.get(field) is not None:
+                rec[field] = convert_amount(float(rec[field]), rate)
+        items = rec.get("items")
+        if items:
+            converted_items = []
+            for item in items:
+                item = dict(item)
+                for f in ("unit_price", "subtotal"):
+                    if item.get(f) is not None:
+                        item[f] = convert_amount(float(item[f]), rate)
+                converted_items.append(item)
+            rec["items"] = converted_items
+        out.append(rec)
+    return out
+
+
+def _get_workspace_currency(ws_data: dict) -> str:
+    ctx = ws_data.get("context") or {}
+    return (
+        (ctx.get("resolved_currency") if isinstance(ctx, dict) else None)
+        or (ctx.get("currency") if isinstance(ctx, dict) else None)
+        or ws_data.get("currency")
+        or "GBP"
+    ).upper()
+
+
 # ── Sync ──────────────────────────────────────────────────────────────────────
 
 @router.post("/{provider}/sync")
@@ -310,6 +357,12 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
                 pass
         imported, import_errors, _ = await qb.import_from_quickbooks(meta, client_id, client_secret)
         all_errors += import_errors
+
+        ws_currency = _get_workspace_currency(ws_data)
+        if imported.get("invoices"):
+            imported["invoices"] = await _convert_financials(imported["invoices"], ws_currency)
+        if imported.get("expenses"):
+            imported["expenses"] = await _convert_financials(imported["expenses"], ws_currency)
 
         existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
         now = datetime.now(timezone.utc).isoformat()
@@ -367,6 +420,12 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         imported, import_errors = await zoho_mod.import_catalogue(meta, client_id, client_secret)
         all_errors += import_errors
         now = datetime.now(timezone.utc).isoformat()
+
+        ws_currency = _get_workspace_currency(ws_data)
+        if imported.get("invoices"):
+            imported["invoices"] = await _convert_financials(imported["invoices"], ws_currency)
+        if imported.get("quotes"):
+            imported["quotes"] = await _convert_financials(imported["quotes"], ws_currency)
 
         # Merge catalogue (products, customers, vendors)
         existing_catalogue = catalogue if isinstance(catalogue, dict) else {}

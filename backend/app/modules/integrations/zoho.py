@@ -139,9 +139,10 @@ def _source_record_id(item: dict) -> str:
 _IMPORT_FIELDS = {
     "Products": "Product_Name,Unit_Price,Product_Category,Description",
     "Contacts": "First_Name,Last_Name,Full_Name,Email,Phone,Mailing_Street,Industry",
+    "Leads": "First_Name,Last_Name,Full_Name,Email,Phone,Street,Industry,Company",
     "Vendors": "Vendor_Name,Email,Phone,Street,Category",
-    "Invoices": "Subject,Invoice_Number,Account_Name,Status,Grand_Total,Due_Date,Invoice_Date,Sub_Total,Tax",
-    "Quotes": "Subject,Quote_Number,Account_Name,Quote_Stage,Grand_Total,Valid_Until,Quotation_Date,Sub_Total,Tax",
+    "Invoices": "Subject,Invoice_Number,Account_Name,Status,Grand_Total,Due_Date,Invoice_Date,Sub_Total,Tax,Currency",
+    "Quotes": "Subject,Quote_Number,Account_Name,Quote_Stage,Grand_Total,Valid_Until,Quotation_Date,Sub_Total,Tax,Currency",
 }
 
 
@@ -214,6 +215,39 @@ def _normalize_imported_contact(item: dict, now_iso: str) -> dict:
     }
 
 
+def _normalize_imported_lead(item: dict, now_iso: str) -> dict:
+    first_name = _clean_text(item.get("First_Name"))
+    last_name = _clean_text(item.get("Last_Name"))
+    full_name = _clean_text(item.get("Full_Name") or item.get("name"))
+    if not last_name:
+        _, last_name = _display_name_parts(full_name)
+    if not first_name and full_name:
+        first_name, _ = _display_name_parts(full_name)
+    # Prefer the person's name; fall back to Company if all name parts are missing
+    display_name = (
+        _clean_text(item.get("Full_Name") or item.get("name") or full_name)
+        or _clean_text(item.get("Company"))
+        or "Imported Lead"
+    )
+    email = _clean_text(item.get("Email") or item.get("Email_Address"))
+    return {
+        "id": item.get("id") or str(uuid4()),
+        "name": display_name,
+        "address": _clean_text(item.get("Street") or item.get("Mailing_Street")),
+        "email": email,
+        "phone_number": _clean_text(item.get("Phone")),
+        "payment_terms": 14,
+        "industry": _clean_text(item.get("Industry")),
+        "first_name": first_name,
+        "last_name": last_name or "Imported",
+        "archived": bool(item.get("archived", False)),
+        "source_system": item.get("source_system") or "zoho_crm",
+        "source_record_id": item.get("source_record_id") or _clean_text(item.get("id")),
+        "created_at": item.get("created_at") or now_iso,
+        "updated_at": now_iso,
+    }
+
+
 def _normalize_imported_vendor(item: dict, now_iso: str) -> dict:
     name = _clean_text(item.get("Vendor_Name") or item.get("name"))
     email = _clean_text(item.get("Email") or item.get("Email_Address") or item.get("EmailAddress"))
@@ -254,6 +288,7 @@ def _normalize_imported_invoice(item: dict, now_iso: str) -> dict:
     sub_total = float(item.get("Sub_Total") or grand_total)
     tax = float(item.get("Tax") or 0)
     invoice_number = _clean_text(item.get("Invoice_Number") or "")
+    source_currency = _clean_text(item.get("Currency") or "").upper() or None
     return {
         "id": item.get("id") or str(uuid4()),
         "invoice_id": invoice_number or f"ZOHO-{item.get('id', '')[:8]}",
@@ -265,6 +300,8 @@ def _normalize_imported_invoice(item: dict, now_iso: str) -> dict:
         "vat_amount": tax,
         "vat_rate": round((tax / sub_total * 100) if sub_total else 0, 2),
         "total_amount": grand_total,
+        "original_amount": grand_total,
+        "source_currency": source_currency,
         "status": status,
         "customer_name": _zoho_account_name(item.get("Account_Name")),
         "issued_at": _clean_text(item.get("Invoice_Date") or now_iso[:10]),
@@ -288,6 +325,7 @@ def _normalize_imported_quote(item: dict, now_iso: str) -> dict:
     sub_total = float(item.get("Sub_Total") or grand_total)
     tax = float(item.get("Tax") or 0)
     quote_number = _clean_text(item.get("Quote_Number") or "")
+    source_currency = _clean_text(item.get("Currency") or "").upper() or None
     return {
         "id": item.get("id") or str(uuid4()),
         "quotation_id": quote_number or f"ZOHO-QTE-{item.get('id', '')[:8]}",
@@ -299,6 +337,8 @@ def _normalize_imported_quote(item: dict, now_iso: str) -> dict:
         "vat_amount": tax,
         "vat_rate": round((tax / sub_total * 100) if sub_total else 0, 2),
         "total_amount": grand_total,
+        "original_amount": grand_total,
+        "source_currency": source_currency,
         "status": status,
         "customer_name": _zoho_account_name(item.get("Account_Name")),
         "issued_at": _clean_text(item.get("Quotation_Date") or now_iso[:10]),
@@ -682,6 +722,26 @@ async def import_catalogue(meta: dict, client_id: str, client_secret: str) -> tu
         imported["customers"] = [_normalize_imported_contact(row, now) for row in customers]
     except Exception as e:
         errors.append(f"Contacts: {str(e)[:160]}")
+
+    try:
+        leads = await _fetch_records("Leads", access)
+        normalized_leads = [_normalize_imported_lead(row, now) for row in leads]
+        # Deduplicate: skip leads whose email or name already came in from Contacts
+        existing_emails = {c["email"].lower() for c in imported["customers"] if c.get("email")}
+        existing_names = {c["name"].lower() for c in imported["customers"] if c.get("name")}
+        for lead in normalized_leads:
+            lead_email = (lead.get("email") or "").lower()
+            lead_name = (lead.get("name") or "").lower()
+            if lead_email and lead_email in existing_emails:
+                continue
+            if not lead_email and lead_name in existing_names:
+                continue
+            imported["customers"].append(lead)
+            if lead_email:
+                existing_emails.add(lead_email)
+            existing_names.add(lead_name)
+    except Exception as e:
+        errors.append(f"Leads: {str(e)[:160]}")
 
     try:
         vendors = await _fetch_records("Vendors", access)

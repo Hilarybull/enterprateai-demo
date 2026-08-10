@@ -324,10 +324,12 @@ async def credit_guard(user_id: str, feature_code: str):
                 detail={"error": err, "feature_code": feature_code},
             )
 
+    _success = False
     try:
         yield gen_id
-    except Exception:
-        await release_credits(gen_id, user_id, feature_code)
-        raise
-    else:
-        await commit_credits(gen_id, user_id, feature_code)
+        _success = True
+    finally:
+        if _success:
+            await commit_credits(gen_id, user_id, feature_code)
+        else:
+            await release_credits(gen_id, user_id, feature_code)

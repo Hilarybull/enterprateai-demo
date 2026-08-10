@@ -91,8 +91,6 @@ class WorkspaceProfile(BaseModel):
 
     @model_validator(mode="after")
     def validate_required_lists(self):
-        if not self.services or len(self.services) == 0:
-            raise ValueError("services must contain at least one entry")
         return self
 
 

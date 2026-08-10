@@ -58,6 +58,10 @@ export default function CataloguePage() {
   const [editingProductId, setEditingProductId] = useState(null);
   const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [editingVendorId, setEditingVendorId] = useState(null);
+  const [productPage, setProductPage] = useState(0);
+  const [customerPage, setCustomerPage] = useState(0);
+  const [vendorPage, setVendorPage] = useState(0);
+  const CAT_PAGE_SIZE = 6;
   const [activeTab, setActiveTab] = useState(() => firstAccessibleCatalogueTab());
   const [searchParams, setSearchParams] = useSearchParams();
   const [catalogueDrill, setCatalogueDrill] = useState(null); // { label, type, items }
@@ -972,7 +976,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
         <SectionCard
           title="Active products"
           subtitle="Your current live products and services."
-          className="lg:col-span-3"
+          className="lg:col-span-3 flex flex-col"
           icon={
             <CardIcon tone="bg-indigo-50 text-indigo-600">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -982,52 +986,48 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
             </CardIcon>
           }
         >
-            <div className="mt-2 space-y-2 max-h-72 overflow-auto pr-1">
-              {activeProducts.length ? (
-                activeProducts.map((p) => (
-                  <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm font-semibold text-slate-900">{p.name}</div>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${p.type === "product" ? "bg-sky-50 text-sky-700" : "bg-violet-50 text-violet-700"}`}>{p.type}</span>
-                        {importBadge(p)}
+            {(() => {
+              const pTotal = Math.max(1, Math.ceil(activeProducts.length / CAT_PAGE_SIZE));
+              const pPage = Math.min(productPage, pTotal - 1);
+              const pSlice = activeProducts.slice(pPage * CAT_PAGE_SIZE, (pPage + 1) * CAT_PAGE_SIZE);
+              return (
+                <div className="flex-1 flex flex-col gap-3 mt-2">
+                  <div className="flex-1 space-y-2">
+                    {pSlice.length ? pSlice.map((p) => (
+                      <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-semibold text-slate-900">{p.name}</div>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${p.type === "product" ? "bg-sky-50 text-sky-700" : "bg-violet-50 text-violet-700"}`}>{p.type}</span>
+                            {importBadge(p)}
+                          </div>
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            {formatCurrency(p.base_price, currency)} base · {formatCurrency(p.cost_of_sales || 0, currency)} CoS{p.discount ? ` · ${formatCurrency(p.discount, currency)} off` : ""}{p.freight_cost ? ` · ${formatCurrency(p.freight_cost, currency)} freight` : ""}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="secondary" onClick={() => { setEditingProductId(p.id); setProductForm({ name: p.name, type: p.type, base_price: String(p.base_price ?? ""), cost_of_sales: String(p.cost_of_sales ?? ""), discount: String(p.discount ?? ""), freight_cost: String(p.freight_cost ?? "") }); }}>Edit</Button>
+                          <Button variant="ghost" onClick={() => archiveEntity("products", p.id)}>Archive</Button>
+                          <Button variant="ghost" onClick={() => deleteEntity("products", p.id)}>Delete</Button>
+                        </div>
                       </div>
-                      <div className="mt-0.5 text-xs text-slate-500">
-                        {formatCurrency(p.base_price, currency)} base · {formatCurrency(p.cost_of_sales || 0, currency)} CoS{p.discount ? ` · ${formatCurrency(p.discount, currency)} off` : ""}{p.freight_cost ? ` · ${formatCurrency(p.freight_cost, currency)} freight` : ""}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setEditingProductId(p.id);
-                          setProductForm({
-                            name: p.name,
-                            type: p.type,
-                            base_price: String(p.base_price ?? ""),
-                            cost_of_sales: String(p.cost_of_sales ?? ""),
-                            discount: String(p.discount ?? ""),
-                            freight_cost: String(p.freight_cost ?? "")
-                          });
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button variant="ghost" onClick={() => archiveEntity("products", p.id)}>
-                        Archive
-                      </Button>
-                      <Button variant="ghost" onClick={() => deleteEntity("products", p.id)}>
-                        Delete
-                      </Button>
-                    </div>
+                    )) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No active products yet.</div>
+                    )}
                   </div>
-                ))
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-                  No active products yet.
+                  {pTotal > 1 && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-xs text-slate-500">{activeProducts.length} product{activeProducts.length !== 1 ? "s" : ""} · Page {pPage + 1} of {pTotal}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" disabled={pPage === 0} onClick={() => setProductPage((p) => Math.max(0, p - 1))} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+                        {Array.from({ length: Math.min(5, pTotal) }, (_, i) => { const pi = pTotal <= 5 ? i : Math.max(0, Math.min(pPage - 2 + i, pTotal - 5 + i)); return <button key={pi} type="button" onClick={() => setProductPage(pi)} className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${pPage === pi ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{pi + 1}</button>; })}
+                        <button type="button" disabled={pPage >= pTotal - 1} onClick={() => setProductPage((p) => Math.min(pTotal - 1, p + 1))} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
         </SectionCard>
         <SectionCard
           title="Archived products"
@@ -1196,7 +1196,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
         <SectionCard
           title="Active customers"
           subtitle="Clients you currently bill."
-          className="lg:col-span-3"
+          className="lg:col-span-3 flex flex-col"
           icon={
             <CardIcon tone="bg-indigo-50 text-indigo-600">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1207,55 +1207,48 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
             </CardIcon>
           }
         >
-            <div className="mt-2 space-y-2 max-h-72 overflow-auto pr-1">
-              {activeCustomers.length ? (
-                activeCustomers.map((c) => (
-                  <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm font-semibold text-slate-900">{c.name}</div>
-                        {importBadge(c)}
+            {(() => {
+              const cTotal = Math.max(1, Math.ceil(activeCustomers.length / CAT_PAGE_SIZE));
+              const cPage = Math.min(customerPage, cTotal - 1);
+              const cSlice = activeCustomers.slice(cPage * CAT_PAGE_SIZE, (cPage + 1) * CAT_PAGE_SIZE);
+              return (
+                <div className="flex-1 flex flex-col gap-3 mt-2">
+                  <div className="flex-1 space-y-2">
+                    {cSlice.length ? cSlice.map((c) => (
+                      <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-semibold text-slate-900">{c.name}</div>
+                            {importBadge(c)}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {c.industry || "Industry"} • {formatPaymentTerms(c.payment_terms)} • {c.address || "Address on file"}
+                            {c.email ? ` • ${c.email}` : ""}{c.phone_number ? ` • ${c.phone_number}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="secondary" onClick={() => { const industryVal = c.industry || ""; setEditingCustomerId(c.id); setCustomerForm({ name: c.name, address: c.address || "", email: c.email || "", phone_number: c.phone_number || "", payment_terms: String(c.payment_terms || "14"), industry: industryVal }); setCustomerIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal)); }}>Edit</Button>
+                          <Button variant="ghost" onClick={() => archiveEntity("customers", c.id)}>Archive</Button>
+                          <Button variant="ghost" onClick={() => deleteEntity("customers", c.id)}>Delete</Button>
+                        </div>
                       </div>
-                      <div className="text-xs text-slate-500">
-                        {c.industry || "Industry"} • {formatPaymentTerms(c.payment_terms)} • {c.address || "Address on file"}
-                        {c.email ? ` • ${c.email}` : ""}
-                        {c.phone_number ? ` • ${c.phone_number}` : ""}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          const industryVal = c.industry || "";
-                          setEditingCustomerId(c.id);
-                          setCustomerForm({
-                            name: c.name,
-                            address: c.address || "",
-                            email: c.email || "",
-                            phone_number: c.phone_number || "",
-                            payment_terms: String(c.payment_terms || "14"),
-                            industry: industryVal
-                          });
-                          setCustomerIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal));
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button variant="ghost" onClick={() => archiveEntity("customers", c.id)}>
-                        Archive
-                      </Button>
-                      <Button variant="ghost" onClick={() => deleteEntity("customers", c.id)}>
-                        Delete
-                      </Button>
-                    </div>
+                    )) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No active customers yet.</div>
+                    )}
                   </div>
-                ))
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-                  No active customers yet.
+                  {cTotal > 1 && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-xs text-slate-500">{activeCustomers.length} customer{activeCustomers.length !== 1 ? "s" : ""} · Page {cPage + 1} of {cTotal}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" disabled={cPage === 0} onClick={() => setCustomerPage((p) => Math.max(0, p - 1))} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+                        {Array.from({ length: Math.min(5, cTotal) }, (_, i) => { const pi = cTotal <= 5 ? i : Math.max(0, Math.min(cPage - 2 + i, cTotal - 5 + i)); return <button key={pi} type="button" onClick={() => setCustomerPage(pi)} className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${cPage === pi ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{pi + 1}</button>; })}
+                        <button type="button" disabled={cPage >= cTotal - 1} onClick={() => setCustomerPage((p) => Math.min(cTotal - 1, p + 1))} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
         </SectionCard>
         <SectionCard
           title="Archived customers"
@@ -1440,7 +1433,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
         <SectionCard
           title="Active vendors"
           subtitle="Suppliers you currently rely on."
-          className="lg:col-span-3"
+          className="lg:col-span-3 flex flex-col"
           icon={
             <CardIcon tone="bg-indigo-50 text-indigo-600">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1451,59 +1444,49 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
             </CardIcon>
           }
         >
-            <div className="mt-2 space-y-2 max-h-72 overflow-auto pr-1">
-              {activeVendors.length ? (
-                activeVendors.map((v) => (
-                  <div key={v.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm font-semibold text-slate-900">{v.name}</div>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${v.product_type === "product" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>{v.product_type}</span>
-                        {importBadge(v)}
+            {(() => {
+              const vTotal = Math.max(1, Math.ceil(activeVendors.length / CAT_PAGE_SIZE));
+              const vPage = Math.min(vendorPage, vTotal - 1);
+              const vSlice = activeVendors.slice(vPage * CAT_PAGE_SIZE, (vPage + 1) * CAT_PAGE_SIZE);
+              return (
+                <div className="flex-1 flex flex-col gap-3 mt-2">
+                  <div className="flex-1 space-y-2">
+                    {vSlice.length ? vSlice.map((v) => (
+                      <div key={v.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-semibold text-slate-900">{v.name}</div>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${v.product_type === "product" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>{v.product_type}</span>
+                            {importBadge(v)}
+                          </div>
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            {v.product_name} · {formatCurrency(v.price, currency)} · {formatPaymentTerms(v.payment_terms)}
+                            {v.email ? ` • ${v.email}` : ""}{v.phone_number ? ` • ${v.phone_number}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="secondary" onClick={() => { const industryVal = v.industry || ""; setEditingVendorId(v.id); setVendorForm({ name: v.name, address: v.address || "", email: v.email || "", phone_number: v.phone_number || "", payment_terms: String(v.payment_terms || "14"), industry: industryVal, product_type: v.product_type || "product", product_name: v.product_name || "", price: String(v.price ?? "") }); setVendorIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal)); }}>Edit</Button>
+                          <Button variant="ghost" onClick={() => archiveEntity("vendors", v.id)}>Archive</Button>
+                          <Button variant="ghost" onClick={() => deleteEntity("vendors", v.id)}>Delete</Button>
+                        </div>
                       </div>
-                      <div className="mt-0.5 text-xs text-slate-500">
-                                {v.product_name} · {formatCurrency(v.price, currency)} · {formatPaymentTerms(v.payment_terms)}
-                                {v.email ? ` • ${v.email}` : ""}
-                                {v.phone_number ? ` • ${v.phone_number}` : ""}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          const industryVal = v.industry || "";
-                          setEditingVendorId(v.id);
-                          setVendorForm({
-                            name: v.name,
-                            address: v.address || "",
-                            email: v.email || "",
-                            phone_number: v.phone_number || "",
-                            payment_terms: String(v.payment_terms || "14"),
-                            industry: industryVal,
-                            product_type: v.product_type || "product",
-                            product_name: v.product_name || "",
-                            price: String(v.price ?? "")
-                          });
-                          setVendorIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal));
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button variant="ghost" onClick={() => archiveEntity("vendors", v.id)}>
-                        Archive
-                      </Button>
-                      <Button variant="ghost" onClick={() => deleteEntity("vendors", v.id)}>
-                        Delete
-                      </Button>
-                    </div>
+                    )) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No active vendors yet.</div>
+                    )}
                   </div>
-                ))
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-                  No active vendors yet.
+                  {vTotal > 1 && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-xs text-slate-500">{activeVendors.length} vendor{activeVendors.length !== 1 ? "s" : ""} · Page {vPage + 1} of {vTotal}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" disabled={vPage === 0} onClick={() => setVendorPage((p) => Math.max(0, p - 1))} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+                        {Array.from({ length: Math.min(5, vTotal) }, (_, i) => { const pi = vTotal <= 5 ? i : Math.max(0, Math.min(vPage - 2 + i, vTotal - 5 + i)); return <button key={pi} type="button" onClick={() => setVendorPage(pi)} className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${vPage === pi ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{pi + 1}</button>; })}
+                        <button type="button" disabled={vPage >= vTotal - 1} onClick={() => setVendorPage((p) => Math.min(vTotal - 1, p + 1))} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
         </SectionCard>
         <SectionCard
           title="Archived vendors"

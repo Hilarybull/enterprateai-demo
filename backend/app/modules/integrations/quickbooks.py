@@ -120,6 +120,7 @@ def _map_invoice(row: dict, now: str) -> dict:
     tax = round(total - sub_total, 2)
     customer = _clean((row.get("CustomerRef") or {}).get("name"))
     doc_number = _clean(row.get("DocNumber") or "")
+    source_currency = _clean((row.get("CurrencyRef") or {}).get("value") or "").upper() or None
     status_map = {"": "pending", "Paid": "paid", "Voided": "cancelled"}
     raw_status = "Paid" if balance == 0 and total > 0 else ""
     status = status_map.get(raw_status, "pending")
@@ -146,6 +147,8 @@ def _map_invoice(row: dict, now: str) -> dict:
         "vat_amount": max(tax, 0),
         "vat_rate": round((tax / sub_total * 100) if sub_total else 0, 2),
         "total_amount": total,
+        "original_amount": total,
+        "source_currency": source_currency,
         "status": status,
         "customer_name": customer,
         "issued_at": _clean(row.get("TxnDate") or now[:10]),
@@ -162,6 +165,7 @@ def _map_expense(row: dict, now: str) -> dict:
     entity_ref = row.get("EntityRef") or {}
     vendor_name = _clean(entity_ref.get("name"))
     doc_number = _clean(row.get("DocNumber") or "")
+    source_currency = _clean((row.get("CurrencyRef") or {}).get("value") or "").upper() or None
     lines = row.get("Line") or []
     description = ""
     for line in lines:
@@ -179,6 +183,8 @@ def _map_expense(row: dict, now: str) -> dict:
         "description": description,
         "vendor_name": vendor_name,
         "total_amount": total,
+        "original_amount": total,
+        "source_currency": source_currency,
         "price": total,
         "quantity": 1,
         "status": "paid",

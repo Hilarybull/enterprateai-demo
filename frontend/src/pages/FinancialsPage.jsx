@@ -240,6 +240,9 @@ export default function FinancialsPage() {
   const [expenseSearchQuery, setExpenseSearchQuery] = useState("");
   const [expenseDateFrom, setExpenseDateFrom] = useState("");
   const [expenseDateTo, setExpenseDateTo] = useState("");
+  const [quoteListPage, setQuoteListPage] = useState(0);
+  const [quoteStatusFilter, setQuoteStatusFilter] = useState("all");
+  const [quoteSearchQuery, setQuoteSearchQuery] = useState("");
   const [contractListPage, setContractListPage] = useState(0);
   const [contractStatusFilter, setContractStatusFilter] = useState("all");
   const [contractSearchQuery, setContractSearchQuery] = useState("");
@@ -2694,7 +2697,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
         <SectionCard
           title="Recent invoices"
           subtitle="Latest invoice activity."
-          className="lg:col-span-3"
+          className="lg:col-span-3 flex flex-col"
           icon={
             <CardIcon tone="bg-amber-50 text-amber-600">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -2705,7 +2708,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           }
         >
             {(() => {
-              const INVOICES_PER_PAGE = 10;
+              const INVOICES_PER_PAGE = 6;
               const q = invoiceSearchQuery.trim().toLowerCase();
               const filtered = activeInvoices.filter((inv) => {
                 const statusMatch = invoiceStatusFilter === "all" || String(inv.status || "pending").toLowerCase() === invoiceStatusFilter;
@@ -2725,7 +2728,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               const safePage = Math.min(invoiceListPage, totalPages - 1);
               const paginated = filtered.slice(safePage * INVOICES_PER_PAGE, (safePage + 1) * INVOICES_PER_PAGE);
               return (
-                <div className="mt-2 space-y-3">
+                <div className="flex-1 flex flex-col gap-3 mt-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
                       {["all", "pending", "paid"].map((s) => (
@@ -2756,7 +2759,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                         className="text-xs text-slate-400 hover:text-slate-600">Clear</button>
                     )}
                   </div>
-                  <div className="space-y-2">
+                  <div className="flex-1 space-y-2">
                     {paginated.length ? paginated.map((inv) => {
                       const customer = resolveCustomer(inv.customer_id, inv.customer_name);
                       const product = resolveProduct(inv.product_id, inv.product_name);
@@ -3124,7 +3127,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
         <SectionCard
           title="Recent quotations"
           subtitle="Drafts, sent quotes, accepted proposals, and incoming requests."
-          className="lg:col-span-3"
+          className="lg:col-span-3 flex flex-col"
           icon={
             <CardIcon tone="bg-amber-50 text-amber-600">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -3134,76 +3137,93 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             </CardIcon>
           }
         >
-            <div className="mt-2 space-y-2">
-              {activeQuotes.length ? (
-                activeQuotes.map((quote) => {
-                  const customer = resolveCustomer(quote.customer_id, quote.customer_name);
-                  const product = resolveProduct(quote.product_id, quote.product_name);
-                  return (
-                    <div key={quote.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <div className="truncate text-sm font-semibold text-slate-900">
-                            {customer?.name || "Customer"} · {summariseProductNames(quote)}
-                          </div>
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${quote.status === "accepted" ? "bg-emerald-50 text-emerald-700" : quote.status === "rejected" ? "bg-rose-50 text-rose-700" : quote.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-slate-100 text-slate-600"}`}>
-                            {quote.status || "draft"}
-                          </span>
-                        </div>
-                        <div className="mt-0.5 text-xs text-slate-500">
-                          Qty {quote.quantity} · {formatMoney(quote.total_amount)} · Due {quote.due_date ? new Date(quote.due_date).toLocaleDateString() : "Not set"}
-                          {quote.status === "accepted" && quote.issued_at ? ` · Accepted ${new Date(quote.issued_at).toLocaleDateString()}` : null}
-                        </div>
-                      </div>
-                      <ActionMenu
-                        items={addFinancialShareAction([
-                          {
-                            label: "Edit",
-                            onClick: () => {
-                              setEditingQuoteId(quote.id);
-                              setQuoteForm({
-                                  quotation_id: quote.quotation_id || "",
-                                  customer_id: quote.customer_name || quote.customer_id,
-                                  product_ids: Array.isArray(quote.product_ids) && quote.product_ids.length ? quote.product_ids : quote.product_id ? [quote.product_id] : [],
-                                  items: normalizeRecordItems(quote),
-                                  validity_days: String(quote.validity_days || "30"),
-                                  issued_at: quote.issued_at || "",
-                                  due_date: quote.due_date || "",
-                                });
-                            }
-                          },
-                          {
-                            label: quote.status === "sent" ? "Mark draft" : "Mark sent",
-                            onClick: () => updateStatus("quote", quote.id, quote.status === "sent" ? "draft" : "sent")
-                          },
-                          {
-                            label: quote.status === "accepted" ? "Mark draft" : "Mark accepted",
-                            onClick: () => updateStatus("quote", quote.id, quote.status === "accepted" ? "draft" : "accepted")
-                          },
-                          {
-                            label: "View quotation",
-                            onClick: () => setPreviewQuoteId(quote.id)
-                          },
-                          {
-                            label: "Archive",
-                            onClick: () => archiveItem("quote", quote.id)
-                          },
-                          {
-                            label: "Delete",
-                            tone: "danger",
-                            onClick: () => deleteItem("quote", quote.id)
-                          }
-                        ], "quote", quote, customer, product)}
-                      />
+            {(() => {
+              const QUOTES_PER_PAGE = 6;
+              const qq = quoteSearchQuery.trim().toLowerCase();
+              const qFiltered = activeQuotes.filter((quote) => {
+                const statusMatch = quoteStatusFilter === "all" || String(quote.status || "draft").toLowerCase() === quoteStatusFilter;
+                if (!statusMatch) return false;
+                if (!qq) return true;
+                const cust = resolveCustomer(quote.customer_id, quote.customer_name);
+                return (
+                  (cust?.name || quote.customer_name || "").toLowerCase().includes(qq) ||
+                  summariseProductNames(quote).toLowerCase().includes(qq) ||
+                  (quote.quotation_id || "").toLowerCase().includes(qq)
+                );
+              });
+              const qTotal = Math.max(1, Math.ceil(qFiltered.length / QUOTES_PER_PAGE));
+              const qPage = Math.min(quoteListPage, qTotal - 1);
+              const qPaginated = qFiltered.slice(qPage * QUOTES_PER_PAGE, (qPage + 1) * QUOTES_PER_PAGE);
+              return (
+                <div className="flex-1 flex flex-col gap-3 mt-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+                      {["all", "draft", "sent", "accepted", "rejected"].map((s) => (
+                        <button key={s} type="button" onClick={() => { setQuoteStatusFilter(s); setQuoteListPage(0); }}
+                          className={`px-3 py-1.5 font-medium capitalize transition-colors ${quoteStatusFilter === s ? "bg-brand-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>{s}</button>
+                      ))}
                     </div>
-                  );
-                })
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-                  No quotations yet. Add your first quote above.
+                    <input type="text" placeholder="Search customer, product, ID…" value={quoteSearchQuery}
+                      onChange={(e) => { setQuoteSearchQuery(e.target.value); setQuoteListPage(0); }}
+                      className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none" />
+                  </div>
+                  <div className="flex-1 space-y-2">
+                    {qPaginated.length ? qPaginated.map((quote) => {
+                      const customer = resolveCustomer(quote.customer_id, quote.customer_name);
+                      const product = resolveProduct(quote.product_id, quote.product_name);
+                      return (
+                        <div key={quote.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <div className="truncate text-sm font-semibold text-slate-900">
+                                {customer?.name || "Customer"} · {summariseProductNames(quote)}
+                              </div>
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${quote.status === "accepted" ? "bg-emerald-50 text-emerald-700" : quote.status === "rejected" ? "bg-rose-50 text-rose-700" : quote.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-slate-100 text-slate-600"}`}>
+                                {quote.status || "draft"}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 text-xs text-slate-500">
+                              Qty {quote.quantity} · {formatMoney(quote.total_amount)} · Due {quote.due_date ? new Date(quote.due_date).toLocaleDateString() : "Not set"}
+                              {quote.status === "accepted" && quote.issued_at ? ` · Accepted ${new Date(quote.issued_at).toLocaleDateString()}` : null}
+                            </div>
+                          </div>
+                          <ActionMenu
+                            items={addFinancialShareAction([
+                              { label: "Edit", onClick: () => { setEditingQuoteId(quote.id); setQuoteForm({ quotation_id: quote.quotation_id || "", customer_id: quote.customer_name || quote.customer_id, product_ids: Array.isArray(quote.product_ids) && quote.product_ids.length ? quote.product_ids : quote.product_id ? [quote.product_id] : [], items: normalizeRecordItems(quote), validity_days: String(quote.validity_days || "30"), issued_at: quote.issued_at || "", due_date: quote.due_date || "" }); } },
+                              { label: quote.status === "sent" ? "Mark draft" : "Mark sent", onClick: () => updateStatus("quote", quote.id, quote.status === "sent" ? "draft" : "sent") },
+                              { label: quote.status === "accepted" ? "Mark draft" : "Mark accepted", onClick: () => updateStatus("quote", quote.id, quote.status === "accepted" ? "draft" : "accepted") },
+                              { label: "View quotation", onClick: () => setPreviewQuoteId(quote.id) },
+                              { label: "Archive", onClick: () => archiveItem("quote", quote.id) },
+                              { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", quote.id) }
+                            ], "quote", quote, customer, product)}
+                          />
+                        </div>
+                      );
+                    }) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-xs text-slate-500">
+                        {activeQuotes.length ? "No quotations match your filters." : "No quotations yet. Add your first quote above."}
+                      </div>
+                    )}
+                  </div>
+                  {qTotal > 1 && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-xs text-slate-500">{qFiltered.length} quotation{qFiltered.length !== 1 ? "s" : ""} · Page {qPage + 1} of {qTotal}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" disabled={qPage === 0} onClick={() => setQuoteListPage((p) => Math.max(0, p - 1))}
+                          className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+                        {Array.from({ length: Math.min(5, qTotal) }, (_, i) => {
+                          const pi = qTotal <= 5 ? i : Math.max(0, Math.min(qPage - 2 + i, qTotal - 5 + i));
+                          return <button key={pi} type="button" onClick={() => setQuoteListPage(pi)}
+                            className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${qPage === pi ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{pi + 1}</button>;
+                        })}
+                        <button type="button" disabled={qPage >= qTotal - 1} onClick={() => setQuoteListPage((p) => Math.min(qTotal - 1, p + 1))}
+                          className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
         </SectionCard>
 
         {/* Incoming RFQ Requests */}
@@ -3399,7 +3419,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
         <SectionCard
           title="Recent expenses"
           subtitle="Latest vendor payments."
-          className="lg:col-span-3"
+          className="lg:col-span-3 flex flex-col"
           icon={
             <CardIcon tone="bg-amber-50 text-amber-600">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -3410,7 +3430,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           }
         >
             {(() => {
-              const EXP_PER_PAGE = 10;
+              const EXP_PER_PAGE = 6;
               const eq = expenseSearchQuery.trim().toLowerCase();
               const expFiltered = activeExpenses.filter((exp) => {
                 const statusMatch = expenseStatusFilter === "all" || String(exp.status || "pending").toLowerCase() === expenseStatusFilter;
@@ -3430,7 +3450,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               const expPage = Math.min(expenseListPage, expTotal - 1);
               const expPaginated = expFiltered.slice(expPage * EXP_PER_PAGE, (expPage + 1) * EXP_PER_PAGE);
               return (
-                <div className="mt-2 space-y-3">
+                <div className="flex-1 flex flex-col gap-3 mt-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
                       {["all", "pending", "paid"].map((s) => (
@@ -3454,7 +3474,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                         className="text-xs text-slate-400 hover:text-slate-600">Clear</button>
                     )}
                   </div>
-                  <div className="space-y-2">
+                  <div className="flex-1 space-y-2">
                     {expPaginated.length ? expPaginated.map((exp) => {
                       const vendor = resolveVendor(exp.vendor_id, exp.vendor_name);
                       return (
@@ -3703,7 +3723,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
         <SectionCard
           title="Recent contracts"
           subtitle="Latest signed or pending contracts."
-          className="lg:col-span-3"
+          className="lg:col-span-3 flex flex-col"
           icon={
             <CardIcon tone="bg-amber-50 text-amber-600">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -3714,7 +3734,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           }
         >
             {(() => {
-              const CON_PER_PAGE = 10;
+              const CON_PER_PAGE = 6;
               const cq = contractSearchQuery.trim().toLowerCase();
               const conFiltered = activeContracts.filter((contract) => {
                 const statusMatch = contractStatusFilter === "all" || String(contract.status || "pending").toLowerCase() === contractStatusFilter;
@@ -3736,7 +3756,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               const conPage = Math.min(contractListPage, conTotal - 1);
               const conPaginated = conFiltered.slice(conPage * CON_PER_PAGE, (conPage + 1) * CON_PER_PAGE);
               return (
-                <div className="mt-2 space-y-3">
+                <div className="flex-1 flex flex-col gap-3 mt-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
                       {["all", "pending", "signed", "expired"].map((s) => (
@@ -3760,7 +3780,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                         className="text-xs text-slate-400 hover:text-slate-600">Clear</button>
                     )}
                   </div>
-                  <div className="space-y-2">
+                  <div className="flex-1 space-y-2">
                     {conPaginated.length ? conPaginated.map((contract) => {
                       const party = contract.contract_type === "sales"
                         ? resolveCustomer(contract.counterparty_id, contract.counterparty_name)

@@ -34,14 +34,30 @@ async def get_profile(*, user_id: str, workspace_id: str | None = None):
 async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: WorkspaceProfile):
     ws = await _load_workspace(user_id, workspace_id)
     now = datetime.now(timezone.utc).isoformat()
-    payload = {"workspace_profile": profile.model_dump()}
 
     if ws:
-        await update_workspace(user_id=user_id, workspace_id=str(ws.id), data_patch=payload)
+        # Merge incoming profile on top of existing so previously-saved required fields
+        # (services, country, city, etc.) are preserved when not re-submitted.
+        existing = ws.data.get("workspace_profile") if isinstance(ws.data, dict) else {}
+        base = dict(existing or {})
+        incoming = profile.model_dump()
+        for k, v in incoming.items():
+            # Only overwrite with incoming value when it's non-empty; keep existing otherwise
+            if isinstance(v, list):
+                if v:
+                    base[k] = v
+            elif v is not None and v != "":
+                base[k] = v
+        try:
+            merged_profile = WorkspaceProfile.model_validate(base)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        await update_workspace(user_id=user_id, workspace_id=str(ws.id), data_patch={"workspace_profile": merged_profile.model_dump()})
         ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
-        return {"workspace_id": str(ws.id), "profile": profile, "updated_at": ws.updated_at}
+        return {"workspace_id": str(ws.id), "profile": merged_profile, "updated_at": ws.updated_at}
 
     # Create a workspace if none exists yet
+    payload = {"workspace_profile": profile.model_dump()}
     ws_id = await create_workspace(user_id=user_id, name=profile.company_name, data=payload)
     ws = await get_workspace(user_id=user_id, workspace_id=ws_id)
     return {"workspace_id": str(ws.id), "profile": profile, "updated_at": ws.updated_at}
