@@ -333,7 +333,16 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         if imported.get("invoices") or imported.get("expenses"):
             await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
 
-        total_imported = sum(len(imported.get(k, [])) for k in ("products", "customers", "vendors", "invoices", "expenses"))
+        if mode == "new_only":
+            total_imported = max(0, (
+                len(merged_catalogue.get("products", [])) - len(existing_catalogue.get("products", []))
+                + len(merged_catalogue.get("customers", [])) - len(existing_catalogue.get("customers", []))
+                + len(merged_catalogue.get("vendors", [])) - len(existing_catalogue.get("vendors", []))
+                + len(merged_financials.get("invoices", [])) - len(existing_financials.get("invoices", []))
+                + len(merged_financials.get("expenses", [])) - len(existing_financials.get("expenses", []))
+            ))
+        else:
+            total_imported = sum(len(imported.get(k, [])) for k in ("products", "customers", "vendors", "invoices", "expenses"))
 
     elif provider == "xero":
         raise HTTPException(status_code=501, detail="Import from Xero is not yet available.")
@@ -382,7 +391,16 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         if imported.get("invoices") or imported.get("quotes"):
             await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
 
-        total_imported = sum(len(imported.get(k, [])) for k in ("products", "customers", "vendors", "invoices", "quotes"))
+        if mode == "new_only":
+            total_imported = max(0, (
+                len(merged_catalogue.get("products", [])) - len(existing_catalogue.get("products", []))
+                + len(merged_catalogue.get("customers", [])) - len(existing_catalogue.get("customers", []))
+                + len(merged_catalogue.get("vendors", [])) - len(existing_catalogue.get("vendors", []))
+                + len(merged_financials.get("invoices", [])) - len(existing_financials.get("invoices", []))
+                + len(merged_financials.get("quotes", [])) - len(existing_financials.get("quotes", []))
+            ))
+        else:
+            total_imported = sum(len(imported.get(k, [])) for k in ("products", "customers", "vendors", "invoices", "quotes"))
 
     # Update last_sync_at
     try:

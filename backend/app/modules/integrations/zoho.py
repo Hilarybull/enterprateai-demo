@@ -384,6 +384,8 @@ def _merge_catalogue_lists(existing: list[dict], imported: list[dict], *, kind: 
                 for k in list(index.keys()):
                     if k != key and index[k] >= 0:
                         index[k] += 1
+            for nk2 in list(name_index.keys()):
+                name_index[nk2] += 1
             if nk and nk not in name_index:
                 name_index[nk] = 0
     return _dedupe_catalogue_items(merged, lambda row: _catalogue_key(kind, row))
