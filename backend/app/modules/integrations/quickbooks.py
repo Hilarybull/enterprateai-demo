@@ -94,13 +94,17 @@ def _map_item(row: dict, now: str) -> dict | None:
     item_type = _clean(row.get("Type") or "").lower()
     if item_type and item_type not in _QB_SELLABLE_TYPES:
         return None
+    price = float(row.get("UnitPrice") or 0)
+    source_currency = _clean((row.get("CurrencyRef") or {}).get("value") or "").upper() or None
     return {
         "id": _clean(row.get("Id")) or str(uuid4()),
         "name": _clean(row.get("Name") or "Imported Item"),
         "type": "product",
         "product_type": "service" if item_type == "service" else "product",
         "category": "Imported from QuickBooks",
-        "base_price": float(row.get("UnitPrice") or 0),
+        "base_price": price,
+        "original_price": price,
+        "source_currency": source_currency,
         "cost_of_sales": float(row.get("PurchaseCost") or 0),
         "discount": 0,
         "freight_cost": 0,

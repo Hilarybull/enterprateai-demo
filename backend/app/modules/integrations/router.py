@@ -296,6 +296,33 @@ async def _convert_financials(records: list[dict], target_currency: str) -> list
     return out
 
 
+async def _convert_products(products: list[dict], target_currency: str) -> list[dict]:
+    """Convert base_price and cost_of_sales to target_currency where source_currency differs."""
+    if not products or not target_currency:
+        return products
+    target = target_currency.upper()
+    rate_cache: dict[str, float | None] = {}
+    out = []
+    for p in products:
+        src = (p.get("source_currency") or "").upper()
+        if not src or src == target:
+            out.append(p)
+            continue
+        if src not in rate_cache:
+            rate_cache[src] = await get_rate(src, target)
+        rate = rate_cache[src]
+        if rate is None:
+            out.append(p)
+            continue
+        p = dict(p)
+        if p.get("base_price") is not None:
+            p["base_price"] = convert_amount(float(p["base_price"]), rate)
+        if p.get("cost_of_sales"):
+            p["cost_of_sales"] = convert_amount(float(p["cost_of_sales"]), rate)
+        out.append(p)
+    return out
+
+
 def _get_workspace_currency(ws_data: dict) -> str:
     ctx = ws_data.get("context") or {}
     return (
@@ -363,6 +390,8 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             imported["invoices"] = await _convert_financials(imported["invoices"], ws_currency)
         if imported.get("expenses"):
             imported["expenses"] = await _convert_financials(imported["expenses"], ws_currency)
+        if imported.get("products"):
+            imported["products"] = await _convert_products(imported["products"], ws_currency)
 
         existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
         now = datetime.now(timezone.utc).isoformat()
@@ -426,6 +455,8 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             imported["invoices"] = await _convert_financials(imported["invoices"], ws_currency)
         if imported.get("quotes"):
             imported["quotes"] = await _convert_financials(imported["quotes"], ws_currency)
+        if imported.get("products"):
+            imported["products"] = await _convert_products(imported["products"], ws_currency)
 
         # Merge catalogue (products, customers, vendors)
         existing_catalogue = catalogue if isinstance(catalogue, dict) else {}

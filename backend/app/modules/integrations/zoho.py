@@ -137,7 +137,7 @@ def _source_record_id(item: dict) -> str:
 
 
 _IMPORT_FIELDS = {
-    "Products": "Product_Name,Unit_Price,Product_Category,Description",
+    "Products": "Product_Name,Unit_Price,Product_Category,Description,Currency",
     "Contacts": "First_Name,Last_Name,Full_Name,Email,Phone,Mailing_Street,Industry",
     "Leads": "First_Name,Last_Name,Full_Name,Email,Phone,Street,Industry,Company",
     "Vendors": "Vendor_Name,Email,Phone,Street,Category",
@@ -160,16 +160,19 @@ def _merge_non_empty(existing: dict, incoming: dict, *, keep_existing_keys: set[
 
 def _normalize_imported_product(item: dict, now_iso: str) -> dict:
     name = _clean_text(item.get("Product_Name") or item.get("name"))
-    price = item.get("Unit_Price") or item.get("base_price")
+    price = float(item.get("Unit_Price") or item.get("base_price") or 0)
     category = _clean_text(item.get("Product_Category") or item.get("category") or item.get("type"))
     description = _clean_text(item.get("Description") or item.get("description"))
+    source_currency = _clean_text(item.get("Currency") or "").upper() or None
     return {
         "id": item.get("id") or str(uuid4()),
         "name": name or "Unknown",
         "type": item.get("type") or "product",
         "product_type": item.get("product_type") or "product",
         "category": category or "Imported from Zoho",
-        "base_price": float(price or 0),
+        "base_price": price,
+        "original_price": item.get("original_price") or price,
+        "source_currency": source_currency,
         "cost_of_sales": float(item.get("cost_of_sales") or 0),
         "discount": float(item.get("discount") or 0),
         "freight_cost": float(item.get("freight_cost") or 0),
