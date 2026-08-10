@@ -10,7 +10,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-ZOHO_SCOPES = "ZohoCRM.modules.ALL,ZohoCRM.settings.ALL"
+ZOHO_SCOPES = "ZohoCRM.modules.ALL,ZohoCRM.settings.ALL,ZohoCRM.org.READ"
 
 _ZOHO_ENDPOINTS = {
     "com": ("accounts.zoho.com", "www.zohoapis.com"),
@@ -794,6 +794,8 @@ async def import_catalogue(meta: dict, client_id: str, client_secret: str) -> tu
 
     try:
         invoices = await _fetch_records("Invoices", access)
+        if invoices:
+            logger.warning("[CURRENCY-DEBUG] raw invoice sample keys=%s currency_fields=%s", list(invoices[0].keys()), {k: v for k, v in invoices[0].items() if "curr" in k.lower() or k == "Currency"})
         imported["invoices"] = [_normalize_imported_invoice(row, now) for row in invoices]
     except Exception as e:
         errors.append(f"Invoices: {str(e)[:160]}")
