@@ -4,6 +4,7 @@ import base64
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 import httpx
 
@@ -177,6 +178,290 @@ async def sync_invoices(meta: dict, invoices: list[dict], client_id: str, client
             except httpx.HTTPStatusError as e:
                 errors.append(f"Invoice '{inv.get('invoice_id', '')}': {e.response.text[:120]}")
     return synced, errors
+
+
+def _clean(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _xero_date(value: Any) -> str | None:
+    """Convert Xero /Date(ms+tz)/ or YYYY-MM-DD string to YYYY-MM-DD."""
+    s = str(value or "").strip()
+    if not s:
+        return None
+    if s.startswith("/Date("):
+        try:
+            ms = int(s[6:s.index("+")] if "+" in s else s[6:s.index(")")])
+            return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+        except Exception:
+            return None
+    return s[:10] if len(s) >= 10 else None
+
+
+async def _xero_get_pages(client: httpx.AsyncClient, path: str, key: str, access_token: str, tenant_id: str, params: dict | None = None) -> list[dict]:
+    """Paginate through all pages of a Xero endpoint."""
+    rows: list[dict] = []
+    page = 1
+    base_params = {**(params or {}), "page": page}
+    while True:
+        base_params["page"] = page
+        resp = await client.get(
+            f"{XERO_API_BASE}/{path}",
+            params=base_params,
+            headers=_headers(access_token, tenant_id),
+        )
+        resp.raise_for_status()
+        batch = resp.json().get(key, [])
+        rows.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    return rows
+
+
+def _map_xero_contact(row: dict, now: str) -> dict:
+    phones = row.get("Phones") or []
+    phone = ""
+    for p in phones:
+        if p.get("PhoneType") in ("DEFAULT", "MOBILE") and p.get("PhoneNumber"):
+            phone = _clean(p["PhoneNumber"])
+            break
+    addresses = row.get("Addresses") or []
+    address = ""
+    for a in addresses:
+        line1 = _clean(a.get("AddressLine1"))
+        if line1:
+            address = line1
+            break
+    name = _clean(row.get("Name") or "Imported Contact")
+    parts = name.split(" ", 1)
+    return {
+        "id": _clean(row.get("ContactID")) or str(uuid4()),
+        "name": name,
+        "first_name": parts[0] if len(parts) > 1 else "",
+        "last_name": parts[-1],
+        "email": _clean(row.get("EmailAddress")),
+        "phone_number": phone,
+        "address": address,
+        "payment_terms": 14,
+        "industry": "",
+        "archived": row.get("ContactStatus", "ACTIVE") != "ACTIVE",
+        "source_system": "xero",
+        "source_record_id": _clean(row.get("ContactID")),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _map_xero_item(row: dict, now: str) -> dict | None:
+    if not row.get("Name"):
+        return None
+    sales = row.get("SalesDetails") or {}
+    purchase = row.get("PurchaseDetails") or {}
+    price = float(sales.get("UnitPrice") or 0)
+    cost = float(purchase.get("UnitPrice") or 0)
+    return {
+        "id": _clean(row.get("ItemID")) or str(uuid4()),
+        "name": _clean(row.get("Name") or "Imported Item"),
+        "type": "product",
+        "product_type": "product",
+        "category": "Imported from Xero",
+        "base_price": price,
+        "original_price": price,
+        "source_currency": None,
+        "cost_of_sales": cost,
+        "discount": 0,
+        "freight_cost": 0,
+        "description": _clean(row.get("Description")),
+        "archived": not row.get("IsTrackedAsInventory", True) and not price,
+        "source_system": "xero",
+        "source_record_id": _clean(row.get("ItemID")),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _map_xero_invoice(row: dict, now: str) -> dict:
+    total = float(row.get("Total") or 0)
+    sub_total = float(row.get("SubTotal") or total)
+    tax = float(row.get("TotalTax") or 0)
+    source_currency = _clean(row.get("CurrencyCode") or "").upper() or None
+    customer = _clean((row.get("Contact") or {}).get("Name"))
+    inv_number = _clean(row.get("InvoiceNumber") or "")
+    raw_status = _clean(row.get("Status") or "").upper()
+    status_map = {"PAID": "paid", "VOIDED": "cancelled", "DELETED": "cancelled", "DRAFT": "pending", "SUBMITTED": "pending", "AUTHORISED": "pending"}
+    status = status_map.get(raw_status, "pending")
+    lines = row.get("LineItems") or []
+    items = []
+    for line in lines:
+        name = _clean(line.get("Description") or line.get("ItemCode") or "Item")
+        qty = float(line.get("Quantity") or 1)
+        unit_price = float(line.get("UnitAmount") or 0)
+        subtotal = float(line.get("LineAmount") or 0)
+        if name and subtotal:
+            items.append({"product_name": name, "quantity": qty, "unit_price": unit_price, "subtotal": subtotal})
+    if not items:
+        items = [{"product_name": f"Xero Invoice {inv_number}", "quantity": 1, "unit_price": sub_total, "subtotal": sub_total}]
+    return {
+        "id": _clean(row.get("InvoiceID")) or str(uuid4()),
+        "invoice_id": inv_number or f"XERO-{_clean(row.get('InvoiceID', ''))[:8]}",
+        "product_name": items[0]["product_name"] if items else "Xero Invoice",
+        "product_names": [i["product_name"] for i in items],
+        "items": items,
+        "quantity": 1,
+        "subtotal_amount": sub_total,
+        "vat_amount": max(tax, 0),
+        "vat_rate": round((tax / sub_total * 100) if sub_total else 0, 2),
+        "total_amount": total,
+        "original_amount": total,
+        "source_currency": source_currency,
+        "status": status,
+        "customer_name": customer,
+        "issued_at": _xero_date(row.get("Date") or row.get("DateString")) or now[:10],
+        "due_date": _xero_date(row.get("DueDate") or row.get("DueDateString")),
+        "source_system": "xero",
+        "source_record_id": _clean(row.get("InvoiceID")),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _map_xero_bill(row: dict, now: str) -> dict:
+    total = float(row.get("Total") or 0)
+    source_currency = _clean(row.get("CurrencyCode") or "").upper() or None
+    vendor = _clean((row.get("Contact") or {}).get("Name"))
+    lines = row.get("LineItems") or []
+    description = ""
+    for line in lines:
+        desc = _clean(line.get("Description"))
+        if desc:
+            description = desc
+            break
+    return {
+        "id": _clean(row.get("InvoiceID")) or str(uuid4()),
+        "expense_id": f"XERO-BILL-{_clean(row.get('InvoiceID', ''))[:8]}",
+        "item": description or vendor or "Xero Bill",
+        "description": description,
+        "vendor_name": vendor,
+        "total_amount": total,
+        "original_amount": total,
+        "source_currency": source_currency,
+        "price": total,
+        "quantity": 1,
+        "status": "paid" if _clean(row.get("Status") or "").upper() == "PAID" else "pending",
+        "payment_method": "",
+        "incurred_at": _xero_date(row.get("Date") or row.get("DateString")) or now[:10],
+        "due_date": _xero_date(row.get("DueDate") or row.get("DueDateString")),
+        "source_system": "xero",
+        "source_record_id": _clean(row.get("InvoiceID")),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _map_xero_quote(row: dict, now: str) -> dict:
+    total = float(row.get("Total") or 0)
+    sub_total = float(row.get("SubTotal") or total)
+    tax = float(row.get("TotalTax") or 0)
+    source_currency = _clean(row.get("CurrencyCode") or "").upper() or None
+    customer = _clean((row.get("Contact") or {}).get("Name"))
+    quote_number = _clean(row.get("QuoteNumber") or "")
+    raw_status = _clean(row.get("Status") or "").upper()
+    status_map = {"ACCEPTED": "accepted", "DECLINED": "declined", "INVOICED": "accepted", "DELETED": "cancelled"}
+    status = status_map.get(raw_status, "draft")
+    lines = row.get("LineItems") or []
+    items = []
+    for line in lines:
+        name = _clean(line.get("Description") or line.get("ItemCode") or "Item")
+        qty = float(line.get("Quantity") or 1)
+        unit_price = float(line.get("UnitAmount") or 0)
+        subtotal = float(line.get("LineAmount") or 0)
+        if name and subtotal:
+            items.append({"product_name": name, "quantity": qty, "unit_price": unit_price, "subtotal": subtotal})
+    if not items:
+        items = [{"product_name": f"Xero Quote {quote_number}", "quantity": 1, "unit_price": sub_total, "subtotal": sub_total}]
+    return {
+        "id": _clean(row.get("QuoteID")) or str(uuid4()),
+        "quote_id": quote_number or f"XERO-Q-{_clean(row.get('QuoteID', ''))[:8]}",
+        "product_name": items[0]["product_name"] if items else "Xero Quote",
+        "product_names": [i["product_name"] for i in items],
+        "items": items,
+        "quantity": 1,
+        "subtotal_amount": sub_total,
+        "vat_amount": max(tax, 0),
+        "vat_rate": round((tax / sub_total * 100) if sub_total else 0, 2),
+        "total_amount": total,
+        "original_amount": total,
+        "source_currency": source_currency,
+        "status": status,
+        "customer_name": customer,
+        "issued_at": _xero_date(row.get("DateString") or row.get("Date")) or now[:10],
+        "expiry_date": _xero_date(row.get("ExpiryDateString") or row.get("ExpiryDate")),
+        "source_system": "xero",
+        "source_record_id": _clean(row.get("QuoteID")),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+async def import_from_xero(meta: dict, client_id: str, client_secret: str) -> tuple[dict, list[str]]:
+    """Fetch all importable data from Xero and return normalized records."""
+    access, _ = await _ensure_fresh(meta, client_id, client_secret)
+    tenant_id = meta.get("tenant_id", "")
+    now = datetime.now(timezone.utc).isoformat()
+    errors: list[str] = []
+    result: dict[str, list] = {"customers": [], "vendors": [], "products": [], "invoices": [], "expenses": [], "quotes": []}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Contacts → split into customers and vendors
+        try:
+            contacts = await _xero_get_pages(client, "Contacts", "Contacts", access, tenant_id, {"where": 'ContactStatus=="ACTIVE"'})
+            for c in contacts:
+                mapped = _map_xero_contact(c, now)
+                if c.get("IsSupplier") and not c.get("IsCustomer"):
+                    result["vendors"].append(mapped)
+                else:
+                    result["customers"].append(mapped)
+        except Exception as e:
+            logger.warning("Xero import Contacts failed: %s", e)
+            errors.append(f"Contacts: {str(e)[:120]}")
+
+        # Items → products
+        try:
+            items = await _xero_get_pages(client, "Items", "Items", access, tenant_id)
+            for item in items:
+                mapped = _map_xero_item(item, now)
+                if mapped:
+                    result["products"].append(mapped)
+        except Exception as e:
+            logger.warning("Xero import Items failed: %s", e)
+            errors.append(f"Items: {str(e)[:120]}")
+
+        # Invoices (ACCREC = sales)
+        try:
+            invoices = await _xero_get_pages(client, "Invoices", "Invoices", access, tenant_id, {"Type": "ACCREC", "Statuses": "DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED"})
+            result["invoices"] = [_map_xero_invoice(r, now) for r in invoices]
+        except Exception as e:
+            logger.warning("Xero import Invoices failed: %s", e)
+            errors.append(f"Invoices: {str(e)[:120]}")
+
+        # Bills (ACCPAY = expenses/purchases)
+        try:
+            bills = await _xero_get_pages(client, "Invoices", "Invoices", access, tenant_id, {"Type": "ACCPAY", "Statuses": "DRAFT,SUBMITTED,AUTHORISED,PAID,VOIDED"})
+            result["expenses"] = [_map_xero_bill(r, now) for r in bills]
+        except Exception as e:
+            logger.warning("Xero import Bills failed: %s", e)
+            errors.append(f"Bills: {str(e)[:120]}")
+
+        # Quotes
+        try:
+            quotes = await _xero_get_pages(client, "Quotes", "Quotes", access, tenant_id)
+            result["quotes"] = [_map_xero_quote(r, now) for r in quotes]
+        except Exception as e:
+            logger.warning("Xero import Quotes failed: %s", e)
+            errors.append(f"Quotes: {str(e)[:120]}")
+
+    return result, errors
 
 
 async def sync_expenses(meta: dict, expenses: list[dict], client_id: str, client_secret: str) -> tuple[int, list[str]]:

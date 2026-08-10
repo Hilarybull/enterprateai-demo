@@ -447,7 +447,72 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             total_imported = sum(len(imported.get(k, [])) for k in ("products", "customers", "vendors", "invoices", "expenses"))
 
     elif provider == "xero":
-        raise HTTPException(status_code=501, detail="Import from Xero is not yet available.")
+        fresh_access, new_meta = await xero_mod._ensure_fresh(meta, client_id, client_secret)
+        if new_meta:
+            try:
+                await sb_update(
+                    "integration_tokens",
+                    payload={
+                        "access_token": new_meta["access_token"],
+                        "refresh_token": new_meta["refresh_token"],
+                        "token_expiry": new_meta["token_expiry"],
+                    },
+                    filters=[("user_id", "eq", user["id"]), ("provider", "eq", "xero")],
+                )
+                meta.update(new_meta)
+            except Exception:
+                pass
+        imported, import_errors = await xero_mod.import_from_xero(meta, client_id, client_secret)
+        all_errors += import_errors
+        now = datetime.now(timezone.utc).isoformat()
+
+        ws_currency = _get_workspace_currency(ws_data)
+        if imported.get("invoices"):
+            imported["invoices"] = await _convert_financials(imported["invoices"], ws_currency)
+        if imported.get("expenses"):
+            imported["expenses"] = await _convert_financials(imported["expenses"], ws_currency)
+        if imported.get("quotes"):
+            imported["quotes"] = await _convert_financials(imported["quotes"], ws_currency)
+        if imported.get("products"):
+            org_currency = user_source_currency or _infer_source_currency(imported.get("invoices", []) + imported.get("expenses", []))
+            imported["products"] = await _convert_products(imported["products"], ws_currency, fallback_source_currency=org_currency)
+
+        existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
+        merged_catalogue = {
+            "products": zoho_mod._merge_catalogue_lists(existing_catalogue.get("products", []), imported.get("products", []), kind="products", now_iso=now, mode=mode),
+            "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now, mode=mode),
+            "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now, mode=mode),
+        }
+        await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
+
+        existing_financials = financials if isinstance(financials, dict) else {}
+        merged_financials = dict(existing_financials)
+        if imported.get("invoices"):
+            merged_financials["invoices"] = zoho_mod._merge_financials_list(
+                existing_financials.get("invoices", []), imported["invoices"], mode=mode
+            )
+        if imported.get("expenses"):
+            merged_financials["expenses"] = zoho_mod._merge_financials_list(
+                existing_financials.get("expenses", []), imported["expenses"], mode=mode
+            )
+        if imported.get("quotes"):
+            merged_financials["quotes"] = zoho_mod._merge_financials_list(
+                existing_financials.get("quotes", []), imported["quotes"], mode=mode
+            )
+        if imported.get("invoices") or imported.get("expenses") or imported.get("quotes"):
+            await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
+
+        if mode == "new_only":
+            total_imported = max(0, (
+                len(merged_catalogue.get("products", [])) - len(existing_catalogue.get("products", []))
+                + len(merged_catalogue.get("customers", [])) - len(existing_catalogue.get("customers", []))
+                + len(merged_catalogue.get("vendors", [])) - len(existing_catalogue.get("vendors", []))
+                + len(merged_financials.get("invoices", [])) - len(existing_financials.get("invoices", []))
+                + len(merged_financials.get("expenses", [])) - len(existing_financials.get("expenses", []))
+                + len(merged_financials.get("quotes", [])) - len(existing_financials.get("quotes", []))
+            ))
+        else:
+            total_imported = sum(len(imported.get(k, [])) for k in ("products", "customers", "vendors", "invoices", "expenses", "quotes"))
 
     elif provider == "zoho_crm":
         # Refresh token BEFORE importing so we can persist the new token to DB
