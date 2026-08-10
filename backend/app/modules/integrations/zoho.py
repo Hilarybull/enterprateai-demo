@@ -710,18 +710,26 @@ def _apply_source_record_ids(items: list[dict], *, kind: str, source_updates: di
 
 async def _fetch_org_base_currency(access_token: str) -> str | None:
     """Return the ISO code of the Zoho org's base currency (e.g. 'NGN'), or None on failure."""
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{_api_base_v8()}/currencies",
-                headers=_headers(access_token),
-            )
-            if resp.status_code == 200:
-                for cur in (resp.json().get("currencies") or []):
-                    if cur.get("is_base"):
-                        return _clean_text(cur.get("iso_code") or "").upper() or None
-    except Exception:
-        pass
+    _, api_host = _zoho_hosts()
+    endpoints = [
+        f"https://{api_host}/crm/v8/currencies",
+        f"https://{api_host}/crm/v3/currencies",
+        f"https://{api_host}/crm/v2/currencies",
+    ]
+    for url in endpoints:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, headers=_headers(access_token))
+                logger.warning("[CURRENCY-DEBUG] currencies url=%s status=%s body_preview=%s", url, resp.status_code, resp.text[:300])
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for cur in (data.get("currencies") or []):
+                        if cur.get("is_base"):
+                            iso = _clean_text(cur.get("iso_code") or cur.get("name") or "").upper()
+                            if iso:
+                                return iso
+        except Exception as exc:
+            logger.warning("[CURRENCY-DEBUG] currencies url=%s error=%s", url, exc)
     return None
 
 
