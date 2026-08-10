@@ -52,7 +52,23 @@ function fmtDate(iso) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+const COMMON_CURRENCIES = [
+  { code: "GBP", label: "GBP – British Pound" },
+  { code: "USD", label: "USD – US Dollar" },
+  { code: "EUR", label: "EUR – Euro" },
+  { code: "NGN", label: "NGN – Nigerian Naira" },
+  { code: "KES", label: "KES – Kenyan Shilling" },
+  { code: "GHS", label: "GHS – Ghanaian Cedi" },
+  { code: "ZAR", label: "ZAR – South African Rand" },
+  { code: "CAD", label: "CAD – Canadian Dollar" },
+  { code: "AUD", label: "AUD – Australian Dollar" },
+  { code: "INR", label: "INR – Indian Rupee" },
+  { code: "AED", label: "AED – UAE Dirham" },
+];
+
 function ImportModeModal({ provider, info, onConfirm, onCancel }) {
+  const [sourceCurrency, setSourceCurrency] = useState("");
+
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onCancel(); };
     window.addEventListener("keydown", onKey);
@@ -86,11 +102,28 @@ function ImportModeModal({ provider, info, onConfirm, onCancel }) {
             Choose whether to bring in new records only, or also refresh ones you've already imported.
           </p>
 
+          {/* Currency selector */}
+          <div className="mb-4">
+            <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wide">
+              Source currency <span className="font-normal normal-case text-slate-400">(optional, for price conversion)</span>
+            </label>
+            <select
+              value={sourceCurrency}
+              onChange={(e) => setSourceCurrency(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            >
+              <option value="">Same as workspace (no conversion)</option>
+              {COMMON_CURRENCIES.map(({ code, label }) => (
+                <option key={code} value={code}>{label}</option>
+              ))}
+            </select>
+          </div>
+
           <div className="flex flex-col gap-3">
             {/* Option A — new only */}
             <button
               type="button"
-              onClick={() => onConfirm("new_only")}
+              onClick={() => onConfirm("new_only", sourceCurrency)}
               className="group flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800"
             >
               <div
@@ -112,7 +145,7 @@ function ImportModeModal({ provider, info, onConfirm, onCancel }) {
             {/* Option B — overwrite */}
             <button
               type="button"
-              onClick={() => onConfirm("overwrite")}
+              onClick={() => onConfirm("overwrite", sourceCurrency)}
               className="group flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800"
             >
               <div
@@ -277,13 +310,15 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
     }
   }
 
-  async function handleImport(provider, mode) {
+  async function handleImport(provider, mode, sourceCurrency) {
     setImportModal(null);
     setActionLoading(`import_${provider}`);
     setSyncResult(null);
     setError("");
     try {
-      const res = await apiRequest(`/integrations/${provider}/sync`, "POST", { direction: "import", mode }, { timeoutMs: 120000 });
+      const body = { direction: "import", mode };
+      if (sourceCurrency) body.source_currency = sourceCurrency;
+      const res = await apiRequest(`/integrations/${provider}/sync`, "POST", body, { timeoutMs: 120000 });
       setSyncResult(res);
       if (onWorkspaceRefresh) await onWorkspaceRefresh();
       await loadStatuses();
@@ -346,7 +381,7 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
         <ImportModeModal
           provider={importModal}
           info={modalInfo}
-          onConfirm={(mode) => handleImport(importModal, mode)}
+          onConfirm={(mode, currency) => handleImport(importModal, mode, currency)}
           onCancel={() => setImportModal(null)}
         />
       )}

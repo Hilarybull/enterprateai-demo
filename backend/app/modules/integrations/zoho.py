@@ -717,22 +717,16 @@ async def _fetch_org_base_currency(access_token: str) -> str | None:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(url, headers=_headers(access_token))
-                logger.warning("[CURRENCY-DEBUG] org url=%s status=%s body=%s", url, resp.status_code, resp.text[:500])
                 if resp.status_code == 200:
                     orgs = resp.json().get("org") or []
                     if orgs:
                         org = orgs[0]
-                        # Zoho org returns iso_code directly on some API versions
                         iso = _clean_text(org.get("iso_code") or org.get("currency") or "").upper()
                         if iso and len(iso) == 3:
                             return iso
-                        # Fall back to locale-based mapping (e.g. en_NG → NGN)
-                        locale = _clean_text(org.get("currency_locale") or "")
-                        logger.warning("[CURRENCY-DEBUG] org fields: iso_code=%s currency=%s locale=%s symbol=%s all_keys=%s",
-                            org.get("iso_code"), org.get("currency"), locale, org.get("currency_symbol"), list(org.keys()))
                         break
-        except Exception as exc:
-            logger.warning("[CURRENCY-DEBUG] org url=%s error=%s", url, exc)
+        except Exception:
+            pass
     return None
 
 
@@ -747,8 +741,6 @@ async def import_catalogue(meta: dict, client_id: str, client_secret: str) -> tu
 
     try:
         products = await _fetch_records("Products", access)
-        if products:
-            logger.warning("[CURRENCY-DEBUG] raw product sample keys=%s values=%s", list(products[0].keys()), {k: v for k, v in products[0].items() if "curr" in k.lower() or "price" in k.lower() or k.startswith("$")})
         normalized = [_normalize_imported_product(row, now) for row in products]
         # Stamp org currency on any product that didn't get one from the record field
         if org_currency:
@@ -794,8 +786,6 @@ async def import_catalogue(meta: dict, client_id: str, client_secret: str) -> tu
 
     try:
         invoices = await _fetch_records("Invoices", access)
-        if invoices:
-            logger.warning("[CURRENCY-DEBUG] raw invoice sample keys=%s currency_fields=%s", list(invoices[0].keys()), {k: v for k, v in invoices[0].items() if "curr" in k.lower() or k == "Currency"})
         imported["invoices"] = [_normalize_imported_invoice(row, now) for row in invoices]
     except Exception as e:
         errors.append(f"Invoices: {str(e)[:160]}")
