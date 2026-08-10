@@ -119,8 +119,8 @@ function CompanyAvatar({ logo, name, size = "lg" }) {
 /* ── tabs ── */
 
 const TABS = [
-  { id: "account", label: "Account" },
   { id: "workspace", label: "Workspace" },
+  { id: "account", label: "Account" },
 ];
 
 function TabBar({ active, onChange }) {
@@ -384,12 +384,14 @@ export default function AccountPage() {
   const setProfile = useAuthStore((s) => s.setProfile);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
-  const [tab, setTab] = useState("account");
+  const [tab, setTab] = useState("workspace");
   const [displayName, setDisplayName] = useState(name || "");
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileMsg, setProfileMsg] = useState(null);
 
-  const [currentPassword, setCurrentPassword] = useState("");
+  // OTP-gated password change: null | "request" | "otp" | "form"
+  const [pwStep, setPwStep] = useState(null);
+  const [otpInput, setOtpInput] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordLoading, setPasswordLoading] = useState(false);
@@ -413,33 +415,50 @@ export default function AccountPage() {
     }
   }
 
+  async function handleSendOTP() {
+    setPasswordLoading(true);
+    setPasswordMsg(null);
+    try {
+      await apiRequest("/auth/me/send-password-otp", "POST");
+      setPwStep("otp");
+      setPasswordMsg({ type: "success", text: `Verification code sent to ${email}.` });
+    } catch (err) {
+      setPasswordMsg({ type: "error", text: err?.message || "Failed to send code." });
+    } finally {
+      setPasswordLoading(false);
+    }
+  }
+
+  async function handleVerifyOTP() {
+    if (otpInput.length !== 6) {
+      setPasswordMsg({ type: "error", text: "Enter the 6-digit code from your email." });
+      return;
+    }
+    setPwStep("form");
+    setPasswordMsg(null);
+  }
+
   async function handlePasswordSave(e) {
     e.preventDefault();
     setPasswordMsg(null);
     if (newPassword !== confirmPassword) {
-      setPasswordMsg({ type: "error", text: "New passwords do not match." });
+      setPasswordMsg({ type: "error", text: "Passwords do not match." });
       return;
     }
     if (newPassword.length < 8) {
-      setPasswordMsg({ type: "error", text: "New password must be at least 8 characters." });
+      setPasswordMsg({ type: "error", text: "Password must be at least 8 characters." });
       return;
     }
     setPasswordLoading(true);
     try {
-      await apiRequest("/auth/me/password", "POST", {
-        current_password: currentPassword,
-        new_password: newPassword,
-      });
-      setCurrentPassword("");
+      await apiRequest("/auth/me/change-password-otp", "POST", { otp_code: otpInput, new_password: newPassword });
+      setOtpInput("");
       setNewPassword("");
       setConfirmPassword("");
-      setPasswordMsg({ type: "success", text: "Password changed successfully." });
+      setPwStep(null);
+      setPasswordMsg({ type: "success", text: "Password updated successfully." });
     } catch (err) {
-      const msg = err?.message || "";
-      setPasswordMsg({
-        type: "error",
-        text: msg.includes("incorrect") ? "Current password is incorrect." : msg || "Failed to change password.",
-      });
+      setPasswordMsg({ type: "error", text: err?.message || "Failed to update password." });
     } finally {
       setPasswordLoading(false);
     }
@@ -459,7 +478,7 @@ export default function AccountPage() {
 
         {/* ── Account tab ── */}
         {tab === "account" && (
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-stretch">
+          <div className="max-w-md">
 
             {/* Profile card */}
             <Card>
@@ -496,7 +515,7 @@ export default function AccountPage() {
                 </div>
               </div>
 
-              {/* Form — flex-1 + flex-col so button is pinned to bottom */}
+              {/* Form */}
               <div className="flex-1 px-6 py-5 flex flex-col">
                 <form onSubmit={handleProfileSave} className="flex flex-col flex-1">
                   <div className="space-y-4">
@@ -514,100 +533,120 @@ export default function AccountPage() {
                       <p className="text-[11px] text-slate-400 dark:text-slate-500">Email cannot be changed.</p>
                     </Field>
                   </div>
-                  <div className="mt-auto pt-5 space-y-3">
+                  <div className="mt-4 pt-4 space-y-2">
                     <Alert type={profileMsg?.type} message={profileMsg?.text} />
                     <SubmitButton loading={profileLoading}>Save profile</SubmitButton>
                   </div>
                 </form>
-              </div>
-            </Card>
 
-            {/* Password card */}
-            <Card>
-              <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800">
-                <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Password</h2>
-                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                  {isGoogleOnly ? "No password set on this account." : "Update your login password."}
-                </p>
-              </div>
-
-              {/* Security status — mirrors the avatar section for equal visual weight */}
-              <div className="px-6 pt-6 pb-5 flex flex-col items-center text-center border-b border-slate-100 dark:border-slate-800">
-                <div className={`h-16 w-16 flex items-center justify-center rounded-full shadow ${isGoogleOnly ? "bg-slate-100 dark:bg-slate-800" : "bg-emerald-50 dark:bg-emerald-900/20"}`}>
-                  {isGoogleOnly ? (
-                    <svg className="h-7 w-7 text-slate-400" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
-                    </svg>
-                  ) : (
-                    <svg className="h-7 w-7 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
-                      <rect x="3" y="11" width="18" height="11" rx="2" />
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                    </svg>
-                  )}
-                </div>
-                <div className="mt-3">
-                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    {isGoogleOnly ? "No password" : "Password set"}
-                  </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    {isGoogleOnly ? "Signed in via Google SSO" : "Email & password login active"}
-                  </div>
-                  {isGoogleOnly && (
-                    <Link
-                      to={`/forgot-password?setup=1${email ? `&email=${encodeURIComponent(email)}` : ""}`}
-                      className="mt-2 inline-block text-[11px] font-semibold text-brand-600 hover:underline dark:text-brand-400"
-                    >
-                      Set a password →
-                    </Link>
-                  )}
-                </div>
-              </div>
-
-              {/* Form */}
-              <div className="flex-1 px-6 py-5">
-                {isGoogleOnly ? (
-                  <p className="text-[13px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                    Adding a password lets you sign in with your email and password in addition to Google. Click <strong className="font-semibold text-slate-700 dark:text-slate-300">Set a password</strong> above to get started.
-                  </p>
-                ) : (
-                  <form onSubmit={handlePasswordSave} className="space-y-4">
-                    <Field label="Current password">
-                      <Input
-                        type="password"
-                        placeholder="Enter current password"
-                        value={currentPassword}
-                        onChange={(e) => setCurrentPassword(e.target.value)}
-                        required
-                      />
-                      <Link
-                        to={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ""}`}
-                        className="self-start text-[11px] font-semibold text-brand-600 hover:underline dark:text-brand-400"
+                {/* Password section */}
+                <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Password</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {isGoogleOnly ? "Google account — no password set." : "Email & password login active."}
+                      </p>
+                    </div>
+                    {!pwStep && !isGoogleOnly && (
+                      <button
+                        type="button"
+                        onClick={() => { setPwStep("request"); setPasswordMsg(null); }}
+                        className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-400"
                       >
-                        Forgot password?
+                        Change password
+                      </button>
+                    )}
+                    {!pwStep && isGoogleOnly && (
+                      <Link
+                        to={`/forgot-password?setup=1${email ? `&email=${encodeURIComponent(email)}` : ""}`}
+                        className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-400"
+                      >
+                        Set a password
                       </Link>
-                    </Field>
-                    <Field label="New password">
-                      <Input
-                        type="password"
-                        placeholder="At least 8 characters"
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        required
-                      />
-                    </Field>
-                    <Field label="Confirm new password">
-                      <Input
-                        type="password"
-                        placeholder="Repeat new password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        required
-                      />
-                    </Field>
-                    <Alert type={passwordMsg?.type} message={passwordMsg?.text} />
-                    <SubmitButton loading={passwordLoading}>Change password</SubmitButton>
-                  </form>
-                )}
+                    )}
+                  </div>
+
+                  {pwStep === "request" && (
+                    <div className="space-y-3">
+                      <p className="text-[12px] text-slate-500 dark:text-slate-400">
+                        We'll send a 6-digit verification code to <strong>{email}</strong> before you can update your password.
+                      </p>
+                      <Alert type={passwordMsg?.type} message={passwordMsg?.text} />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={passwordLoading}
+                          onClick={handleSendOTP}
+                          className="flex-1 rounded-lg bg-brand-600 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                        >
+                          {passwordLoading ? "Sending…" : "Send verification code"}
+                        </button>
+                        <button type="button" onClick={() => { setPwStep(null); setPasswordMsg(null); }} className="text-xs text-slate-400 hover:text-slate-600 px-3">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {pwStep === "otp" && (
+                    <div className="space-y-3">
+                      <Alert type={passwordMsg?.type} message={passwordMsg?.text} />
+                      <Field label="Enter the 6-digit code from your email">
+                        <Input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={6}
+                          placeholder="000000"
+                          value={otpInput}
+                          onChange={(e) => setOtpInput(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        />
+                      </Field>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={otpInput.length !== 6}
+                          onClick={handleVerifyOTP}
+                          className="flex-1 rounded-lg bg-brand-600 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                        >
+                          Verify code
+                        </button>
+                        <button type="button" onClick={handleSendOTP} disabled={passwordLoading} className="text-xs text-slate-400 hover:text-slate-600 px-3">
+                          Resend
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {pwStep === "form" && (
+                    <form onSubmit={handlePasswordSave} className="space-y-3">
+                      <Field label="New password">
+                        <Input
+                          type="password"
+                          placeholder="At least 8 characters"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          required
+                        />
+                      </Field>
+                      <Field label="Confirm new password">
+                        <Input
+                          type="password"
+                          placeholder="Repeat new password"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          required
+                        />
+                      </Field>
+                      <Alert type={passwordMsg?.type} message={passwordMsg?.text} />
+                      <SubmitButton loading={passwordLoading}>Update password</SubmitButton>
+                    </form>
+                  )}
+
+                  {!pwStep && passwordMsg && (
+                    <Alert type={passwordMsg.type} message={passwordMsg.text} />
+                  )}
+                </div>
               </div>
             </Card>
 

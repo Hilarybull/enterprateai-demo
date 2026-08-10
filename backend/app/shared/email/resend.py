@@ -187,6 +187,41 @@ async def send_password_reset_email(
     )
 
 
+async def send_password_otp_email(
+    *,
+    to_email: str,
+    otp_code: str,
+) -> EmailDeliveryResult:
+    app_name = get_settings().app_name
+    subject = f"Your {app_name} password verification code"
+    text_content = (
+        f"Your verification code is: {otp_code}\n\n"
+        f"Enter this code to confirm your identity and update your password.\n"
+        f"This code expires in 10 minutes."
+        + _FOOTER_TEXT
+    )
+    html_content = (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+        "line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+        f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;color:#0f172a;\">Password verification code</h2>"
+        f"<p style=\"margin:0 0 20px;\">Use the code below to verify your identity and update your password.</p>"
+        f"<div style=\"text-align:center;margin:28px 0;\">"
+        f"<span style=\"display:inline-block;padding:16px 32px;border-radius:12px;background:#f1f5f9;"
+        f"font-size:32px;font-weight:800;letter-spacing:8px;color:#0f172a;\">{escape(otp_code)}</span>"
+        f"</div>"
+        f"<p style=\"color:#475569;font-size:13px;\">This code expires in <strong>10 minutes</strong>. "
+        f"If you did not request this, ignore this email — your password will not change.</p>"
+        + _FOOTER_HTML
+        + "</div>"
+    )
+    return await send_email_via_resend(
+        to_email=to_email,
+        subject=subject,
+        text_content=text_content,
+        html_content=html_content,
+    )
+
+
 async def send_document_share_email(
     *,
     to_email: str,

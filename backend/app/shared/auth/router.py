@@ -11,7 +11,7 @@ from app.shared.auth.google import verify_google_id_token
 from app.shared.auth.schemas import ChangePasswordRequest, ForgotPasswordRequest, GoogleAuthRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserPublic
 from app.shared.auth.security import create_access_token, hash_password, verify_password
 from app.shared.auth.deps import get_current_user
-from app.shared.email.resend import send_password_reset_email
+from app.shared.email.resend import send_password_reset_email, send_password_otp_email
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +174,50 @@ async def change_password(payload: ChangePasswordRequest, user=Depends(get_curre
     if not verify_password(payload.current_password, user.get("password_hash") or ""):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
     await sb_update("users", filters=[("id", "eq", user["id"])], payload={"password_hash": hash_password(payload.new_password)})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+_OTP_EXPIRY_MINUTES = 10
+
+
+@router.post("/me/send-password-otp", status_code=status.HTTP_200_OK)
+async def send_password_otp(user=Depends(get_current_user)) -> dict:
+    """Send a 6-digit OTP to the user's email to verify identity before changing password."""
+    otp = str(secrets.randbelow(900000) + 100000)  # 100000–999999
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=_OTP_EXPIRY_MINUTES)).isoformat()
+    await sb_update(
+        "users",
+        filters=[("id", "eq", user["id"])],
+        payload={"reset_token": otp, "reset_token_expires_at": expires_at},
+    )
+    await send_password_otp_email(to_email=user["email"], otp_code=otp)
+    return {"detail": "Verification code sent to your email."}
+
+
+@router.post("/me/change-password-otp", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def change_password_with_otp(payload: dict, user=Depends(get_current_user)) -> Response:
+    """Verify OTP then update password — no current_password required."""
+    otp_code = str(payload.get("otp_code", "")).strip()
+    new_password = str(payload.get("new_password", "")).strip()
+    if not otp_code or not new_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="otp_code and new_password are required.")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters.")
+    stored_otp = user.get("reset_token")
+    expires_str = user.get("reset_token_expires_at")
+    if not stored_otp or stored_otp != otp_code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code.")
+    if expires_str:
+        expires_at = datetime.fromisoformat(expires_str)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expires_at:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired. Please request a new one.")
+    await sb_update(
+        "users",
+        filters=[("id", "eq", user["id"])],
+        payload={"password_hash": hash_password(new_password), "reset_token": None, "reset_token_expires_at": None},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
