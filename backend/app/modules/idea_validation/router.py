@@ -104,7 +104,12 @@ async def evaluate_v4_endpoint(
     payload: dict,
     user=Depends(get_current_user),
 ) -> dict:
-    async with credit_guard(user["id"], "idea_validation"):
+    feature_code = (
+        "idea_validation_comprehensive"
+        if payload.get("validation_mode") == "comprehensive"
+        else "idea_validation"
+    )
+    async with credit_guard(user["id"], feature_code):
         return await evaluate_v4_idea(user_id=user["id"], payload=payload)
 
 

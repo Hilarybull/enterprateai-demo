@@ -511,6 +511,13 @@ export default function ResultsPage() {
     const sections = narration.sections || {};
     const sources = narration.sources || validation.research_data?.sources || {};
 
+    // Comprehensive-only computed metrics
+    const compMetrics = !isBasic ? (validation.comprehensive_metrics || null) : null;
+    const compUnitEcon = compMetrics?.unit_economics || null;
+    const compForecast = Array.isArray(compMetrics?.monthly_forecast) ? compMetrics.monthly_forecast : null;
+    const compEvidence = Array.isArray(compMetrics?.evidence_breakdown) ? compMetrics.evidence_breakdown : null;
+    const compFounder = compMetrics?.founder_profile || null;
+
     const strongestDim = validation.summary?.strongest_dimension;
     const weakestDim = validation.summary?.weakest_dimension;
 
@@ -563,7 +570,8 @@ export default function ResultsPage() {
       );
     }
 
-    const hasAssessments = sections.problem || sections.customer || sections.solution || sections.market || sections.competition;
+    const hasAssessments = sections.problem || sections.customer || sections.solution || sections.market || sections.competition ||
+      (!isBasic && (sections.unit_economics || sections.operations || sections.founder_readiness || sections.regulatory));
 
     return (
       <div className="w-full max-w-full space-y-4 overflow-x-hidden px-2 sm:px-4">
@@ -781,6 +789,10 @@ export default function ResultsPage() {
               <AssessmentCard title="Solution" data={sections.solution} sourceKeys={[]} />
               <AssessmentCard title="Market" data={sections.market} sourceKeys={["market_opportunity", "industry_trends"]} />
               <AssessmentCard title="Competition" data={sections.competition} sourceKeys={["competitors"]} />
+              {!isBasic && <AssessmentCard title="Unit Economics & Financial Viability" data={sections.unit_economics} sourceKeys={[]} />}
+              {!isBasic && <AssessmentCard title="Operational Feasibility" data={sections.operations} sourceKeys={[]} />}
+              {!isBasic && <AssessmentCard title="Founder-Market Fit" data={sections.founder_readiness} sourceKeys={[]} />}
+              {!isBasic && <AssessmentCard title="Regulatory & Compliance" data={sections.regulatory} sourceKeys={[]} />}
             </div>
           </SectionCard>
         )}
@@ -1000,6 +1012,174 @@ export default function ResultsPage() {
                 <InlineSources sourceKeys={["pricing"]} />
               </div>
             )}
+          </SectionCard>
+        )}
+
+        {/* Comprehensive-only: Competitor Comparison Table */}
+        {!isBasic && narration.competitor_analysis?.top_competitors?.length > 0 && (
+          <SectionCard title="Competitor Landscape">
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full text-xs border-collapse min-w-[480px]">
+                <thead>
+                  <tr className="border-b-2 border-slate-200">
+                    <th className="pb-2 pr-3 text-left font-bold text-slate-400 uppercase tracking-wider text-[10px]">Competitor</th>
+                    <th className="pb-2 pr-3 text-left font-bold text-slate-400 uppercase tracking-wider text-[10px]">What they do</th>
+                    <th className="pb-2 pr-3 text-left font-bold text-slate-400 uppercase tracking-wider text-[10px]">Pricing</th>
+                    <th className="pb-2 text-left font-bold text-slate-400 uppercase tracking-wider text-[10px]">Their weakness</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {narration.competitor_analysis.top_competitors.map((comp, i) => (
+                    <tr key={i} className="border-b border-slate-100 last:border-0">
+                      <td className="py-2.5 pr-3 align-top">
+                        <div className="font-semibold text-slate-800">{cleanAi(comp.name || "")}</div>
+                        {comp.market_share && <div className="text-[10px] text-slate-400 mt-0.5">{cleanAi(comp.market_share)}</div>}
+                      </td>
+                      <td className="py-2.5 pr-3 align-top text-slate-600 max-w-[180px] leading-relaxed">{cleanAi(comp.description || "")}</td>
+                      <td className="py-2.5 pr-3 align-top font-medium text-brand-700 whitespace-nowrap">{cleanAi(comp.pricing || "—")}</td>
+                      <td className="py-2.5 align-top text-emerald-700 leading-relaxed">{cleanAi(comp.weakness || "")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {narration.competitor_analysis.competitive_moat && (
+              <div className="mt-3 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-xs text-brand-700">
+                <span className="font-semibold">Your competitive moat: </span>{cleanAi(narration.competitor_analysis.competitive_moat)}
+              </div>
+            )}
+            <InlineSources sourceKeys={["competitors"]} />
+          </SectionCard>
+        )}
+
+        {/* Comprehensive-only: Unit Economics */}
+        {!isBasic && compUnitEcon && (compUnitEcon.price_per_unit != null || compUnitEcon.breakeven_units != null) && (
+          <SectionCard title="Unit Economics">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {compUnitEcon.price_per_unit != null && (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Price / Unit</div>
+                  <div className="text-sm font-bold text-slate-800 font-tabular">{compUnitEcon.currency} {compUnitEcon.price_per_unit.toLocaleString()}</div>
+                </div>
+              )}
+              {compUnitEcon.variable_cost_per_unit != null && (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Variable Cost</div>
+                  <div className="text-sm font-bold text-slate-800 font-tabular">{compUnitEcon.currency} {compUnitEcon.variable_cost_per_unit.toLocaleString()}</div>
+                </div>
+              )}
+              {compUnitEcon.contribution_per_unit != null && (
+                <div className={`rounded-xl border p-3 ${compUnitEcon.contribution_per_unit >= 0 ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
+                  <div className={`text-[10px] font-black uppercase tracking-widest mb-1 ${compUnitEcon.contribution_per_unit >= 0 ? "text-emerald-500" : "text-rose-500"}`}>Contribution</div>
+                  <div className={`text-sm font-bold font-tabular ${compUnitEcon.contribution_per_unit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{compUnitEcon.currency} {compUnitEcon.contribution_per_unit.toLocaleString()}</div>
+                </div>
+              )}
+              {compUnitEcon.gross_margin_pct != null && (
+                <div className={`rounded-xl border p-3 ${compUnitEcon.gross_margin_pct >= 50 ? "border-emerald-100 bg-emerald-50" : compUnitEcon.gross_margin_pct >= 20 ? "border-amber-100 bg-amber-50" : "border-rose-100 bg-rose-50"}`}>
+                  <div className={`text-[10px] font-black uppercase tracking-widest mb-1 ${compUnitEcon.gross_margin_pct >= 50 ? "text-emerald-500" : compUnitEcon.gross_margin_pct >= 20 ? "text-amber-500" : "text-rose-500"}`}>Gross Margin</div>
+                  <div className={`text-sm font-bold font-tabular ${compUnitEcon.gross_margin_pct >= 50 ? "text-emerald-700" : compUnitEcon.gross_margin_pct >= 20 ? "text-amber-700" : "text-rose-700"}`}>{compUnitEcon.gross_margin_pct}%</div>
+                </div>
+              )}
+              {compUnitEcon.fixed_costs_monthly != null && (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Fixed Cost / Month</div>
+                  <div className="text-sm font-bold text-slate-800 font-tabular">{compUnitEcon.currency} {compUnitEcon.fixed_costs_monthly.toLocaleString()}</div>
+                </div>
+              )}
+              {compUnitEcon.breakeven_units != null && (
+                <div className="rounded-xl border border-violet-100 bg-violet-50 p-3">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-violet-400 mb-1">Break-even</div>
+                  <div className="text-sm font-bold text-violet-700 font-tabular">
+                    {compUnitEcon.breakeven_units.toLocaleString()} units
+                    {compUnitEcon.breakeven_months != null && <span className="text-xs font-normal ml-1 text-violet-500">≈ {compUnitEcon.breakeven_months} mo.</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+            {compUnitEcon.capacity_per_month != null && (
+              <p className="mt-3 text-[11px] text-slate-400">Based on stated capacity of {compUnitEcon.capacity_per_month.toLocaleString()} units / month.</p>
+            )}
+          </SectionCard>
+        )}
+
+        {/* Comprehensive-only: 12-Month Financial Forecast */}
+        {!isBasic && compForecast && compForecast.length > 0 && (
+          <SectionCard title="12-Month Financial Forecast">
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full text-xs border-collapse min-w-[420px]" style={{ fontVariantNumeric: "tabular-nums" }}>
+                <thead>
+                  <tr className="border-b-2 border-slate-200">
+                    <th className="pb-2 text-left font-bold text-slate-400 uppercase tracking-wider text-[10px]">Mo.</th>
+                    <th className="pb-2 px-2 text-right font-bold text-slate-400 uppercase tracking-wider text-[10px]">Cap %</th>
+                    <th className="pb-2 px-2 text-right font-bold text-slate-400 uppercase tracking-wider text-[10px]">Units</th>
+                    <th className="pb-2 px-2 text-right font-bold text-slate-400 uppercase tracking-wider text-[10px]">Revenue</th>
+                    <th className="pb-2 px-2 text-right font-bold text-slate-400 uppercase tracking-wider text-[10px]">Gross Profit</th>
+                    <th className="pb-2 text-right font-bold text-slate-400 uppercase tracking-wider text-[10px]">Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {compForecast.map((row) => (
+                    <tr key={row.month} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
+                      <td className="py-1.5 text-slate-600 font-medium">M{row.month}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-400">{row.capacity_pct}%</td>
+                      <td className="py-1.5 px-2 text-right text-slate-600">{row.units.toLocaleString()}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-700 font-medium">{compUnitEcon?.currency} {row.revenue.toLocaleString()}</td>
+                      <td className="py-1.5 px-2 text-right text-emerald-600 font-medium">{compUnitEcon?.currency} {row.gross_profit.toLocaleString()}</td>
+                      <td className={`py-1.5 text-right font-bold ${row.net_income >= 0 ? "text-emerald-600" : "text-rose-500"}`}>{compUnitEcon?.currency} {row.net_income.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-400">Assumes a capacity ramp from 10% to 100% of stated maximum over 12 months. Based on your inputs — not a market forecast.</p>
+          </SectionCard>
+        )}
+
+        {/* Comprehensive-only: Founder-Market Fit */}
+        {!isBasic && compFounder && (
+          <SectionCard title="Founder-Market Fit">
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Experience</div>
+                <div className="text-xs font-bold text-slate-700 capitalize">{(compFounder.experience_level || "unknown").replace(/_/g, " ")}</div>
+              </div>
+              <div className={`rounded-xl border p-3 text-center ${compFounder.capital_available ? "border-emerald-100 bg-emerald-50" : "border-amber-100 bg-amber-50"}`}>
+                <div className={`text-[10px] font-black uppercase tracking-widest mb-1.5 ${compFounder.capital_available ? "text-emerald-500" : "text-amber-500"}`}>Capital</div>
+                <div className={`text-xs font-bold ${compFounder.capital_available ? "text-emerald-700" : "text-amber-700"}`}>{compFounder.capital_available ? "Available" : "Limited"}</div>
+              </div>
+              <div className={`rounded-xl border p-3 text-center ${compFounder.time_available ? "border-emerald-100 bg-emerald-50" : "border-amber-100 bg-amber-50"}`}>
+                <div className={`text-[10px] font-black uppercase tracking-widest mb-1.5 ${compFounder.time_available ? "text-emerald-500" : "text-amber-500"}`}>Time</div>
+                <div className={`text-xs font-bold ${compFounder.time_available ? "text-emerald-700" : "text-amber-700"}`}>{compFounder.time_available ? "Available" : "Limited"}</div>
+              </div>
+            </div>
+            {compFounder.fit_note && (
+              <p className="text-xs text-slate-600 leading-relaxed rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">{compFounder.fit_note}</p>
+            )}
+          </SectionCard>
+        )}
+
+        {/* Comprehensive-only: Evidence Strength Appendix */}
+        {!isBasic && compEvidence && compEvidence.length > 0 && (
+          <SectionCard title="Evidence Strength Breakdown">
+            <div className="space-y-2">
+              {compEvidence.map((ev, i) => {
+                const strengthStyle = {
+                  none: "bg-slate-100 text-slate-500 border-slate-200",
+                  weak: "bg-amber-50 text-amber-700 border-amber-200",
+                  moderate: "bg-blue-50 text-blue-700 border-blue-200",
+                  strong: "bg-emerald-50 text-emerald-700 border-emerald-200",
+                  verified: "bg-violet-50 text-violet-700 border-violet-200",
+                  unknown: "bg-slate-50 text-slate-400 border-slate-200",
+                }[ev.strength] || "bg-slate-50 text-slate-400 border-slate-200";
+                return (
+                  <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white px-3 py-2 shadow-sm">
+                    <span className="text-xs text-slate-700">{ev.label}</span>
+                    <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${strengthStyle}`}>{ev.strength}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-3 text-[11px] text-slate-400">Strength tiers: none → weak → moderate → strong → verified. Higher-tier evidence reduces investor risk perception.</p>
           </SectionCard>
         )}
 

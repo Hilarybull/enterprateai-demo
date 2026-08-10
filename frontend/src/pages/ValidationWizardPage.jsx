@@ -996,15 +996,21 @@ export default function ValidationWizardPage() {
     savedServiceIdeaOptions.forEach((name) => names.add(name));
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [savedServiceIdeaOptions, workspaceServices]);
-  const historyCounts = useMemo(
-    () => ({
-      all: validationHistory.length,
-      pending: validationHistory.filter((entry) => entry.status === "pending").length,
-      accepted: validationHistory.filter((entry) => entry.status === "accepted").length,
-      rejected: validationHistory.filter((entry) => entry.status === "rejected").length,
-    }),
-    [validationHistory]
-  );
+  const historyCounts = useMemo(() => {
+    const seen = new Set();
+    const deduped = validationHistory.filter((entry) => {
+      const key = `${String(entry.title || "").toLowerCase().trim()}__${entry.type}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return {
+      all: deduped.length,
+      pending: deduped.filter((e) => e.status === "pending").length,
+      accepted: deduped.filter((e) => e.status === "accepted").length,
+      rejected: deduped.filter((e) => e.status === "rejected").length,
+    };
+  }, [validationHistory]);
   const filteredValidationHistory = useMemo(() => {
     setHistoryPage(1);
     const q = historySearch.trim().toLowerCase();
@@ -1230,6 +1236,19 @@ export default function ValidationWizardPage() {
     }
   }, [requestedEditMode, v4Journey, mode, v4Step]);
 
+  // Reactively clear the v4 error banner as soon as the user fills the required field
+  useEffect(() => {
+    if (!v4Error) return;
+    const s1 = v4Form["step1"] || {};
+    const s2 = v4Form["step2"] || {};
+    const s3 = v4Form["step3"] || {};
+    const s5 = v4Form["step5"] || {};
+    if (v4Step === 1 && String(s1.idea_name || "").trim() && String(s1.idea_type || "").trim()) { setV4Error(null); return; }
+    if (v4Step === 2 && String(s2.problem_description || "").trim() && (v4Journey !== "basic" || String(s2.proposed_solution || "").trim())) { setV4Error(null); return; }
+    if (v4Step === 3 && String(s3.primary_segment || "").trim()) { setV4Error(null); return; }
+    if (v4Step === 5 && String(s5.solution_description || "").trim()) { setV4Error(null); return; }
+  }, [v4Error, v4Form, v4Step, v4Journey]);
+
   useEffect(() => {
     if (!isCreateWorkspace) return;
     if (String(profile.email || "").trim()) return;
@@ -1415,8 +1434,18 @@ export default function ValidationWizardPage() {
 
   useEffect(() => {
     async function prefill() {
-      const wsId = editingWorkspaceId || storedWorkspaceId;
-      if (!wsId) return;
+      let wsId = editingWorkspaceId || storedWorkspaceId;
+      if (!wsId) {
+        try {
+          const meWs = await apiRequest("/validation/me", "GET", undefined, { timeoutMs: 15000 });
+          if (meWs?.id) {
+            wsId = meWs.id;
+            setWorkspaceId(meWs.id);
+            setWorkspaceNameStore(meWs.name || "");
+          }
+        } catch {}
+        if (!wsId) return;
+      }
       setIsPrefilling(true);
       setError(null);
       try {
@@ -1835,6 +1864,7 @@ export default function ValidationWizardPage() {
   async function editHistoryEntry(entry, skipNavigation = false, goToForm = false) {
     if (!activeWorkspaceId) return;
     setError(null);
+    setIsPrefilling(true);
     try {
       const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET", undefined, { timeoutMs: 90000 });
       const data = ws?.data || {};
@@ -1919,17 +1949,19 @@ export default function ValidationWizardPage() {
           return;
         }
       } else {
-        const payload = entry.payload || data.draft_idea_validation || data.idea_validation;
+        // Look up the history entry first so its payload/journey take precedence
+        // over the current draft (entry from URL params has no payload or journey).
+        const vHistory = Array.isArray(data.validation_history) ? data.validation_history : [];
+        const apiHistEntry = vHistory.find((e) => String(e?.id) === String(entry.id));
+        const payload = entry.payload || apiHistEntry?.payload || data.draft_idea_validation || data.idea_validation;
         if (!payload || typeof payload !== "object") {
           setError("We could not find the saved business inputs for this history item.");
           return;
         }
 
         // V4 entries have a `journey` field ("basic" | "comprehensive")
-        const isV4Entry = Boolean(entry.journey || payload?.validation_mode || payload?.steps_completed);
+        const isV4Entry = Boolean(entry.journey || apiHistEntry?.journey || payload?.validation_mode || payload?.steps_completed);
 
-        const vHistory = Array.isArray(data.validation_history) ? data.validation_history : [];
-        const apiHistEntry = vHistory.find((e) => String(e?.id) === String(entry.id));
         const bizResult = entry.result || apiHistEntry?.result || null;
         if (bizResult) setValidation(bizResult);
 
@@ -1941,7 +1973,7 @@ export default function ValidationWizardPage() {
         });
 
         // All business entries (V4 or legacy) — if there's a result show it, else go to V4 step 0
-        const journey = entry.journey || payload?.validation_mode || "basic";
+        const journey = entry.journey || apiHistEntry?.journey || payload?.validation_mode || "basic";
         setV4Journey(journey);
         setV4Form(payload);
         setV4Error(null);
@@ -1969,6 +2001,8 @@ export default function ValidationWizardPage() {
       setServiceFormDirty(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load this validation history item.");
+    } finally {
+      setIsPrefilling(false);
     }
   }
 
@@ -2124,9 +2158,10 @@ export default function ValidationWizardPage() {
     if (!String(profile.email || "").trim()) return "Email is required in the workspace profile.";
     if (!String(profile.operating_stage || "").trim()) return "Operating stage is required in the workspace profile.";
     if (!String(profile.delivery_model || "").trim()) return "Delivery model is required in the workspace profile.";
-    const svc = Array.isArray(profile.services) ? profile.services : [];
-    if (!svc.length || svc.some((s) => !String(s.service_name || "").trim() || !String(s.service_category || "").trim())) {
-      return "Add at least one service with a name and category.";
+    const svc = (Array.isArray(profile.services) ? profile.services : [])
+      .filter((s) => String(s.service_name || "").trim());
+    if (svc.some((s) => !String(s.service_category || "").trim())) {
+      return "Each service entry must have a category selected.";
     }
     return null;
   }
@@ -2396,11 +2431,13 @@ export default function ValidationWizardPage() {
           secondary_industries: Array.isArray(profile.secondary_industries)
             ? profile.secondary_industries.filter(Boolean)
             : [],
-          services: (profile.services || []).map((s) => ({
-            service_name: String(s.service_name || "").trim(),
-            service_category: s.service_category,
-            service_description: String(s.service_description || "").trim() || null
-          })),
+          services: (profile.services || [])
+            .filter((s) => String(s.service_name || "").trim())
+            .map((s) => ({
+              service_name: String(s.service_name || "").trim(),
+              service_category: s.service_category,
+              service_description: String(s.service_description || "").trim() || null
+            })),
           country: String(profile.country || "").trim(),
           city: String(profile.city || "").trim(),
           state_or_region: String(profile.state_or_region || "").trim() || null,
@@ -2456,8 +2493,8 @@ export default function ValidationWizardPage() {
           );
         } else {
           const ws = await apiRequest(
-            "/validation/create",
-            "POST",
+            "/validation/me",
+            "PATCH",
             { name: wsName, data: { catalogue: nextCatalogue } },
             { timeoutMs: 120000 }
           );
@@ -2526,7 +2563,6 @@ export default function ValidationWizardPage() {
       payload.cash.starting_cash = parseNumber(payload.cash.starting_cash, 0);
       payload.cash.upfront_costs = parseNumber(payload.cash.upfront_costs, 0);
       setCurrency(payload.context.currency || "GBP");
-      const nextCatalogue = existingCatalogue || { products: [], customers: [], vendors: [] };
       // Only write idea_validation to the live field when the user explicitly accepts.
       // All other saves (draft, insight generation) stay in draft_idea_validation only
       // so other modules never see unaccepted data.
@@ -2534,7 +2570,6 @@ export default function ValidationWizardPage() {
         draft_idea_validation: isProductPath ? null : payload,
         draft_service_idea: isProductPath ? serviceForm : null,
         ...(shouldEvaluate && !isProductPath ? { idea_validation: payload } : {}),
-        ...(isProductPath ? {} : { catalogue: nextCatalogue })
       };
       if (wsId) {
         await apiRequest(
@@ -2551,8 +2586,8 @@ export default function ValidationWizardPage() {
         else setDraftIdeaValidation(payload);
       } else {
         const ws = await apiRequest(
-          "/validation/create",
-          "POST",
+          "/validation/me",
+          "PATCH",
           { name: wsName, data: workspacePatch },
           { timeoutMs: 120000 }
         );
@@ -2582,11 +2617,13 @@ export default function ValidationWizardPage() {
           secondary_industries: Array.isArray(profile.secondary_industries)
             ? profile.secondary_industries.filter(Boolean)
             : [],
-          services: (profile.services || []).map((s) => ({
-            service_name: String(s.service_name || "").trim(),
-            service_category: s.service_category,
-            service_description: String(s.service_description || "").trim() || null
-          })),
+          services: (profile.services || [])
+            .filter((s) => String(s.service_name || "").trim())
+            .map((s) => ({
+              service_name: String(s.service_name || "").trim(),
+              service_category: s.service_category,
+              service_description: String(s.service_description || "").trim() || null
+            })),
           country: String(profile.country || "").trim(),
           city: String(profile.city || "").trim(),
           state_or_region: String(profile.state_or_region || "").trim() || null,
@@ -2933,11 +2970,11 @@ export default function ValidationWizardPage() {
             </div>
             <div>
               <div className="text-2xl font-semibold tracking-tight text-slate-900">
-                {fromOtherModule ? "Create Workspace" : "Idea Validation"}
+                {fromOtherModule ? ((storedWorkspaceId || editingWorkspaceId) ? "Edit workspace" : "Create Workspace") : "Idea Validation"}
               </div>
               <div className="mt-1 text-sm text-slate-600 [@media(max-height:820px)]:hidden">
                 {fromOtherModule
-                  ? "Tell us about your workspace so we can set things up."
+                  ? ((storedWorkspaceId || editingWorkspaceId) ? "Update your workspace profile and settings." : "Tell us about your workspace so we can set things up.")
                   : "Choose what to fill first, then generate a deterministic report."}
               </div>
             </div>
@@ -3555,14 +3592,6 @@ export default function ValidationWizardPage() {
               <ValidationLoadingOverlay isVisible={isValidating} />
               {/* V4 header */}
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }}
-                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5m7 7l-7-7 7-7" /></svg>
-                  Back
-                </button>
                 <div>
                   <span className="text-lg font-bold text-slate-900">Universal Idea Validation</span>
                   <span className="ml-2 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold text-white">V4</span>
@@ -3574,6 +3603,16 @@ export default function ValidationWizardPage() {
 
               {/* V4 wizard body */}
               {v4Step === 0 ? (
+                (isPrefilling || Boolean(requestedHistoryId)) ? (
+                  /* Show a spinner instead of the journey chooser while a saved
+                     validation is being loaded. requestedHistoryId comes from
+                     useSearchParams() so it's reactive to URL changes even when
+                     the component doesn't remount (same-route navigation). */
+                  <div className="flex flex-col items-center justify-center py-20 gap-4">
+                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-600 border-t-transparent" />
+                    <p className="text-sm text-slate-500">Loading your saved validation...</p>
+                  </div>
+                ) : (
                 /* Journey selection */
                 <>
                 <div className="space-y-4">
@@ -3708,6 +3747,7 @@ export default function ValidationWizardPage() {
                   </div>
                 )}
                 </>
+              )
               ) : (() => {
                 const steps = getV4Steps();
                 const stepIdx = steps.indexOf(v4Step);
@@ -3716,23 +3756,28 @@ export default function ValidationWizardPage() {
                 const isFirst = stepIdx === 0;
                 const progressPct = totalSteps > 1 ? Math.round((stepIdx / (totalSteps - 1)) * 100) : 0;
 
+                function validateStep(step) {
+                  if (step === 1) {
+                    if (!String(getV4(1, "idea_name")).trim()) return "Please enter an Idea name before continuing.";
+                    if (!String(getV4(1, "idea_type")).trim()) return "Please select an Idea type before continuing.";
+                  }
+                  if (step === 2) {
+                    if (!String(getV4(2, "problem_description")).trim()) return "Please describe the problem being solved before continuing.";
+                    if (v4Journey === "basic" && !String(getV4(2, "proposed_solution")).trim()) return "Please describe your proposed solution before continuing.";
+                  }
+                  if (step === 3 && !String(getV4(3, "primary_segment")).trim()) return "Please enter your primary customer segment before continuing.";
+                  if (step === 5 && !String(getV4(5, "solution_description")).trim()) return "Please enter a solution description before continuing.";
+                  return null;
+                }
                 function goNext() {
-                  // Required-field validation per step
-                  if (v4Step === 1) {
-                    if (!String(getV4(1, "idea_name")).trim()) { setV4Error("Please enter an Idea name before continuing."); return; }
-                    if (!String(getV4(1, "idea_type")).trim()) { setV4Error("Please select an Idea type before continuing."); return; }
-                  }
-                  if (v4Step === 2) {
-                    if (!String(getV4(2, "problem_description")).trim()) { setV4Error("Please describe the problem being solved before continuing."); return; }
-                    if (v4Journey === "basic" && !String(getV4(2, "proposed_solution")).trim()) { setV4Error("Please describe your proposed solution before continuing."); return; }
-                  }
-                  if (v4Step === 3 && !String(getV4(3, "primary_segment")).trim()) { setV4Error("Please enter your primary customer segment before continuing."); return; }
-                  if (v4Step === 5 && !String(getV4(5, "solution_description")).trim()) { setV4Error("Please enter a solution description before continuing."); return; }
+                  const err = validateStep(v4Step);
+                  if (err) { setV4Error(err); return; }
                   setV4Error(null);
                   markV4StepComplete(v4Step);
                   if (!isLast) setV4Step(steps[stepIdx + 1]);
                 }
                 function goBack() {
+                  setV4Error(null);
                   if (!isFirst) setV4Step(steps[stepIdx - 1]);
                   else { setV4Step(0); }
                 }
@@ -3758,7 +3803,19 @@ export default function ValidationWizardPage() {
                           <button
                             key={s}
                             type="button"
-                            onClick={() => setV4Step(s)}
+                            onClick={() => {
+                              setV4Error(null);
+                              if (s > v4Step) {
+                                // Validate every step between current and target; stop at first failure
+                                const targetIdx = steps.indexOf(s);
+                                for (let si = stepIdx; si < targetIdx; si++) {
+                                  const err = validateStep(steps[si]);
+                                  if (err) { setV4Step(steps[si]); setV4Error(err); return; }
+                                  markV4StepComplete(steps[si]);
+                                }
+                              }
+                              setV4Step(s);
+                            }}
                             title={V4_STEP_TITLES[s]}
                             className={`flex-shrink-0 h-2 rounded-full transition-all ${s === v4Step ? "w-6 bg-brand-600" : i < stepIdx ? "w-2 bg-brand-300" : "w-2 bg-slate-200"}`}
                           />
@@ -4315,7 +4372,7 @@ export default function ValidationWizardPage() {
                           <button
                             type="button"
                             disabled={v4Saving}
-                            onClick={() => setCreditModal({ featureName: "Idea Validation", creditCost: 5, onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } })}
+                            onClick={() => setCreditModal({ featureName: "Idea Validation", creditCost: v4Journey === "comprehensive" ? 10 : 5, onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } })}
                             className="flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-brand-700 disabled:opacity-50"
                           >
                             {v4Saving ? "Running validation..." : "Run Validation"}
@@ -5798,7 +5855,9 @@ export default function ValidationWizardPage() {
                               }}
                             >
                               {isLoading ? null : <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 1 1-7.6-13.5 8.38 8.38 0 0 1 3.8.9" /><path d="M22 2L12 12" /><path d="M22 2l-7 20-4-9-9-4 20-7z" /></svg>}
-                              {isLoading ? (isCreateWorkspace ? "Creating Workspace..." : "Running Intelligence Engine...") : (isCreateWorkspace ? "Create Workspace" : "Run Validation Analysis")}
+                              {isLoading
+                                ? (isCreateWorkspace ? ((storedWorkspaceId || editingWorkspaceId) ? "Saving..." : "Creating Workspace...") : "Running Intelligence Engine...")
+                                : (isCreateWorkspace ? ((storedWorkspaceId || editingWorkspaceId) ? "Save workspace" : "Create workspace") : "Run Validation Analysis")}
                             </Button>
                           )}
                         </div>

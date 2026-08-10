@@ -11,7 +11,7 @@ from app.shared.auth.google import verify_google_id_token
 from app.shared.auth.schemas import ChangePasswordRequest, ForgotPasswordRequest, GoogleAuthRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserPublic
 from app.shared.auth.security import create_access_token, hash_password, verify_password
 from app.shared.auth.deps import get_current_user
-from app.shared.email.sendgrid import send_password_reset_email
+from app.shared.email.resend import send_password_reset_email
 
 logger = logging.getLogger(__name__)
 

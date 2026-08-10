@@ -46,6 +46,7 @@ export default function DocumentShareModal({
   const [emailStatus, setEmailStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [emailInvalid, setEmailInvalid] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mailPromptOpen, setMailPromptOpen] = useState(false);
   const [mailSending, setMailSending] = useState(false);
@@ -67,12 +68,23 @@ export default function DocumentShareModal({
     setMailPromptOpen(false);
   }, [accessMode, email, expiryDays]);
 
+  function isValidEmail(v) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim());
+  }
+
   async function handleGenerate() {
     if (accessMode === "email" && !email.trim()) {
+      setEmailInvalid(true);
       setError("Enter the email address for this share link.");
       return;
     }
+    if (accessMode === "email" && !isValidEmail(email)) {
+      setEmailInvalid(true);
+      setError("Enter a valid email address (e.g. name@company.com).");
+      return;
+    }
     setLoading(true);
+    setEmailInvalid(false);
     setError("");
     try {
       const result = await onGenerate({
@@ -89,7 +101,14 @@ export default function DocumentShareModal({
         error: normalized.emailError || "",
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create share link.");
+      const raw = (e instanceof Error ? e.message : "") || "";
+      if (raw === "NETWORK_ERROR") {
+        setError("Unable to reach the server. Please check your connection and try again.");
+      } else {
+        const clean = raw.replace(/^HTTP \d+:\s*/i, "");
+        const isEmailErr = /email|@-sign|valid.*address/i.test(clean);
+        setError(isEmailErr ? "Enter a valid email address (e.g. name@company.com)." : clean || "Failed to create share link.");
+      }
     } finally {
       setLoading(false);
     }
@@ -230,9 +249,14 @@ export default function DocumentShareModal({
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => { setEmail(e.target.value); setEmailInvalid(false); }}
                 placeholder="recipient@company.com"
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
+                className={
+                  "w-full rounded-xl border bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:ring-2 " +
+                  (emailInvalid
+                    ? "border-rose-400 focus:border-rose-400 focus:ring-rose-100"
+                    : "border-slate-200 focus:border-brand-300 focus:ring-brand-100")
+                }
               />
             </div>
           )}

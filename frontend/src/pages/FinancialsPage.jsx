@@ -395,7 +395,7 @@ export default function FinancialsPage() {
         });
       } catch (e) {
         if (String(e?.message || "").includes("HTTP 404")) return;
-        setError(e instanceof Error ? e.message : "Failed to load financials");
+        setError((e instanceof Error ? e.message : "Failed to load financials").replace(/^HTTP \d+:\s*/i, "") || "Failed to load financials");
       } finally {
         if (alive) setLoading(false);
       }
@@ -469,8 +469,7 @@ export default function FinancialsPage() {
       await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: { ...next, manual_receipts: next.manual_receipts !== undefined ? next.manual_receipts : manualReceipts } } }, { timeoutMs: 120000 });
       refreshWorkspaceData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      // Re-throw so callers can handle if needed
+      setError((err instanceof Error ? err.message : String(err)).replace(/^HTTP \d+:\s*/i, "") || "Failed to save changes.");
       throw err;
     }
   }
@@ -1350,8 +1349,8 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
           email: shareConfig.email || null,
           expires_in_days: shareConfig.expires_in_days || 7,
           document_id: existingDocumentId,
-          type: isExpenseReceipt ? `expense_receipt:${record.id}` : isReceipt ? `receipt:${record.id}` : isInvoice ? `invoice_template:${record.id}` : `sales_quotation:${record.id}`,
-          title: `${titlePrefix} — ${isExpenseReceipt ? `EXP-${recId}` : isReceipt ? `RCP-${recId}` : record?.invoice_id || (isInvoice ? `INV-${recId}` : record?.quotation_id || `QUO-${recId}`) || workspaceName || "Document"}`,
+          type: (isReceipt || isExpenseReceipt) ? "invoice_template" : isInvoice ? "invoice_template" : "sales_quotation",
+          title: `${titlePrefix} ${isExpenseReceipt ? `EXP-${recId}` : isReceipt ? `RCP-${recId}` : record?.invoice_id || (isInvoice ? `INV-${recId}` : record?.quotation_id || `QUO-${recId}`) || workspaceName || "Document"}`,
           company_name: workspaceName || "EnterprateAI",
           workspace_id: workspaceId || null,
           document_markdown: markdown,
@@ -1390,11 +1389,13 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
         };
     } catch (e) {
       setShareNotice(null);
-      const raw = e instanceof Error ? e.message : "";
+      const raw = (e instanceof Error ? e.message : "") || "";
       if (raw === "NETWORK_ERROR") {
         setError("Cannot reach the server to create a share link. Check that the backend is running, then try again.");
       } else {
-        setError(raw || "Share failed.");
+        const clean = raw.replace(/^HTTP \d+:\s*/i, "");
+        const isEmailErr = /email|@-sign|valid.*address/i.test(clean);
+        setError(isEmailErr ? "Enter a valid email address (e.g. name@company.com)." : clean || "Could not create share link. Please try again.");
       }
       return null;
     }

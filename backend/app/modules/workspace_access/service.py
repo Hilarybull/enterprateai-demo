@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.core.config import get_settings
-from app.shared.email.sendgrid import send_workspace_invitation_email_with_link
+from app.shared.email.resend import send_workspace_invitation_email_with_link
 
 
 def _normalize_expiry_days(expires_in_days: int | None) -> int:
@@ -57,12 +57,15 @@ async def create_invitation(
 
     if normalized_email:
         invite_url = f"{get_settings().frontend_url.rstrip('/')}/join/{token}"
+        ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
+        workspace_name = ws.get("name") if ws else None
         delivery = await send_workspace_invitation_email_with_link(
             to_email=normalized_email,
             inviter_email=invited_by_email,
             invite_url=invite_url,
             expires_in_days=expires_in_days,
             permission_type=permission_type,
+            workspace_name=workspace_name,
         )
         invitation["email_sent"] = delivery.sent
         invitation["email_error"] = delivery.error

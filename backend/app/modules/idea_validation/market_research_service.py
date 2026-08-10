@@ -344,7 +344,140 @@ def _build_synthesis_prompt(fields: dict[str, Any], evidence: dict[str, list[str
     alternatives_display = alternatives or "not specified"
     differentiator = _clean_text(fields.get("differentiator") or "")
     market_scope = _clean_text(fields.get("market_scope") or "")
-    
+
+    # ── Comprehensive mode extras ────────────────────────────────────────
+    validation_mode = _clean_text(fields.get("validation_mode") or "basic")
+    is_comprehensive = validation_mode == "comprehensive"
+
+    if is_comprehensive:
+        revenue_model_c = _clean_text(fields.get("revenue_model") or "")
+        proposed_price_c = _clean_text(fields.get("proposed_price") or "")
+        payment_frequency_c = _clean_text(fields.get("payment_frequency") or "")
+        wtp_evidence_c = fields.get("willingness_to_pay_evidence", False)
+        variable_cost_c = _clean_text(fields.get("variable_cost_per_unit") or "")
+        fixed_costs_c = _clean_text(fields.get("fixed_costs_monthly") or "")
+        gross_margin_c = _clean_text(fields.get("gross_margin_estimate") or "")
+        capacity_c = _clean_text(fields.get("capacity_per_month") or "")
+        delivery_unit_c = _clean_text(fields.get("delivery_unit") or "")
+        key_bottleneck_c = _clean_text(fields.get("key_bottleneck") or "")
+        founder_experience_c = _clean_text(fields.get("founder_industry_experience") or "")
+        founder_capital_c = fields.get("founder_capital_available", False)
+        founder_time_c = fields.get("founder_time_available", False)
+        reg_risk_c = _clean_text(fields.get("regulatory_risk_level") or "")
+        reg_known_c = fields.get("regulatory_requirements_known", False)
+        reg_planned_c = fields.get("regulatory_mitigation_planned", False)
+        evidence_types_c = fields.get("evidence_types") or []
+        evidence_list_c = (
+            ", ".join(str(e).replace("_", " ") for e in evidence_types_c)
+            if evidence_types_c else "none specified"
+        )
+        price_freq_c = f" ({payment_frequency_c})" if payment_frequency_c else ""
+
+        comprehensive_context = (
+            f"\nCOMPREHENSIVE INPUTS (Steps 7-12):\n"
+            f"- Revenue Model: {revenue_model_c or 'not specified'}\n"
+            f"- Proposed Price: {proposed_price_c or 'not specified'}{price_freq_c}\n"
+            f"- Customer WTP Evidence: {'Yes' if wtp_evidence_c else 'No'}\n"
+            f"- Variable Cost/Unit: {variable_cost_c or 'not specified'}\n"
+            f"- Fixed Monthly Costs: {fixed_costs_c or 'not specified'}\n"
+            f"- Gross Margin Estimate: {gross_margin_c or 'not specified'}\n"
+            f"- Delivery Unit: {delivery_unit_c or 'not specified'}\n"
+            f"- Monthly Capacity: {capacity_c or 'not specified'}\n"
+            f"- Key Bottleneck: {key_bottleneck_c or 'not specified'}\n"
+            f"- Evidence Types Collected: {evidence_list_c}\n"
+            f"- Founder Industry Experience: {founder_experience_c or 'not specified'}\n"
+            f"- Capital Available: {'Yes' if founder_capital_c else 'No'}\n"
+            f"- Time Available to Execute: {'Yes' if founder_time_c else 'No'}\n"
+            f"- Regulatory Risk Level: {reg_risk_c or 'not specified'}\n"
+            f"- Regulatory Requirements Known: {'Yes' if reg_known_c else 'No'}\n"
+            f"- Mitigation Planned: {'Yes' if reg_planned_c else 'No'}\n"
+        )
+        cap_yes_no = "Yes" if founder_capital_c else "No"
+        time_yes_no = "Yes" if founder_time_c else "No"
+        reg_known_yn = "Yes" if reg_known_c else "No"
+        reg_planned_yn = "Yes" if reg_planned_c else "No"
+
+        # Inject deterministic unit economics into the comprehensive context block
+        # so the AI cites exact figures rather than re-estimating from raw inputs.
+        computed = (fields.get("computed_metrics") or {}).get("unit_economics") or {}
+        c_breakeven_u = computed.get("breakeven_units")
+        c_breakeven_m = computed.get("breakeven_months")
+        c_gm_pct = computed.get("gross_margin_pct")
+        c_contrib = computed.get("contribution_per_unit")
+        c_price = computed.get("price_per_unit")
+        c_fixed = computed.get("fixed_costs_monthly")
+        c_currency = computed.get("currency") or currency
+
+        computed_lines: list[str] = []
+        if c_price is not None:
+            computed_lines.append(f"- Price per unit: {c_currency} {c_price:,.2f}")
+        if c_contrib is not None:
+            computed_lines.append(f"- Contribution per unit: {c_currency} {c_contrib:,.2f}")
+        if c_gm_pct is not None:
+            computed_lines.append(f"- Gross margin: {c_gm_pct}%")
+        if c_fixed is not None:
+            computed_lines.append(f"- Fixed costs / month: {c_currency} {c_fixed:,.2f}")
+        if c_breakeven_u is not None:
+            be_str = f"- Break-even: {c_breakeven_u:,.1f} units"
+            if c_breakeven_m is not None:
+                be_str += f" (≈ {c_breakeven_m:.1f} months at stated capacity)"
+            computed_lines.append(be_str)
+
+        if computed_lines:
+            comprehensive_context += (
+                "\nCOMPUTED UNIT ECONOMICS (mathematically exact — you MUST cite these precise figures in the"
+                " unit_economics section, not your own estimates):\n"
+                + "\n".join(computed_lines) + "\n"
+            )
+
+        # Build section instruction for unit_economics, referencing computed figures where available
+        if c_breakeven_u is not None:
+            ue_breakeven_hint = (
+                f"The exact break-even is {c_breakeven_u:,.1f} units"
+                + (f" (≈ {c_breakeven_m:.1f} months at stated capacity)" if c_breakeven_m is not None else "")
+                + " — use this precise figure, not an estimate."
+            )
+        else:
+            ue_breakeven_hint = "Calculate break-even if the inputs allow."
+
+        comp_sections_json = (
+            f',\n    "unit_economics": {{\n'
+            f'      "body": "2-3 sentences on financial viability for {business_name}. '
+            f'Use the EXACT computed figures: gross margin {f"{c_gm_pct}%" if c_gm_pct is not None else gross_margin_c or "unspecified"}, '
+            f'contribution {f"{c_currency} {c_contrib:,.2f}" if c_contrib is not None else "unspecified"} per unit, '
+            f'fixed costs {f"{c_currency} {c_fixed:,.2f}/month" if c_fixed is not None else fixed_costs_c or "unspecified"}. '
+            f'{ue_breakeven_hint} '
+            f'Comment whether the {revenue_model_c or "proposed"} model is sustainably profitable at this margin '
+            f'and what it implies for scaling and investor returns.",\n'
+            f'      "insight": "One sentence on the key unit economics strength or risk and its implication for funding runway."\n'
+            f'    }},\n'
+            f'    "operations": {{\n'
+            f'      "body": "2-3 sentences on operational readiness. '
+            f'Delivery unit: {delivery_unit_c or "unspecified"}, stated capacity: {capacity_c or "unspecified"}/month, '
+            f'main bottleneck: {key_bottleneck_c or "not identified"}. '
+            f'Assess whether this capacity can realistically meet early customer demand and what the bottleneck means for growth.",\n'
+            f'      "insight": "One sentence on the most critical operational constraint or advantage for scaling {business_name}."\n'
+            f'    }},\n'
+            f'    "founder_readiness": {{\n'
+            f'      "body": "2-3 sentences on founder-venture fit. '
+            f'Industry experience: {founder_experience_c or "unspecified"}, capital available: {cap_yes_no}, '
+            f'time available: {time_yes_no}. '
+            f'Compare the venture\'s demands (domain expertise, execution bandwidth, capital intensity) '
+            f'against what the founder currently brings.",\n'
+            f'      "insight": "One sentence verdict on readiness and the single most important gap to close before launch."\n'
+            f'    }},\n'
+            f'    "regulatory": {{\n'
+            f'      "body": "2-3 sentences on the regulatory landscape for {business_name} in {location}. '
+            f'Assessed risk level: {reg_risk_c or "unknown"}, requirements known: {reg_known_yn}, '
+            f'mitigation planned: {reg_planned_yn}. '
+            f'Name the specific regulatory domains for {industry} businesses in {location} this venture must navigate before launch.",\n'
+            f'      "insight": "One sentence on the realistic compliance cost, timeline, or risk this creates for market entry."\n'
+            f'    }}'
+        )
+    else:
+        comprehensive_context = ""
+        comp_sections_json = ""
+
     evidence_text = ""
     for key, snippets in evidence.items():
         if snippets:
@@ -372,7 +505,7 @@ DETERMINISTIC ENGINE DATA (Ground Truth):
 - Spoken to: {_clean_text(fields.get('interviews_conducted')) or '0'} people
 - Deterministic Score: {score}/100
 - Classification: {classification}
-
+{comprehensive_context}
 LIVE RESEARCH EVIDENCE:
 {evidence_text or "No live search evidence was retrieved. Rely on your training knowledge."}
 
@@ -517,7 +650,7 @@ REQUIRED JSON STRUCTURE:
     "competition": {{
       "body": "2-3 sentences identifying real named competitors or substitutes customers currently use, assessing switching barriers and {business_name}'s differentiation angle. Name specific brands where known.",
       "insight": "One sentence key finding on competitive positioning and defensibility."
-    }}
+    }}{comp_sections_json}
   }},
   "contradictions": [
     "First specific inconsistency between claimed inputs and evidence (e.g. 'Market described as growing but no market data or sources cited', 'Customer segment defined but no customer interviews or behavioural evidence cited'). Use a real inconsistency found.",
@@ -1037,6 +1170,12 @@ def flatten_fields_from_v4_payload(payload: dict[str, Any]) -> dict[str, Any]:
     step4 = payload.get("step4") or {}
     step5 = payload.get("step5") or {}
     step6 = payload.get("step6") or {}
+    step7 = payload.get("step7") or {}
+    step8 = payload.get("step8") or {}
+    step9 = payload.get("step9") or {}
+    step10 = payload.get("step10") or {}
+    step11 = payload.get("step11") or {}
+    step12 = payload.get("step12") or {}
 
     competitors_raw = step4.get("direct_competitors") or []
     if isinstance(competitors_raw, list):
@@ -1072,6 +1211,27 @@ def flatten_fields_from_v4_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "differentiator": _clean_text(step5.get("why_better") or step5.get("defensibility") or ""),
         "market_scope": _clean_text(step6.get("market_scope") or step1.get("market_scope") or ""),
         "interviews_conducted": "0",
+        # ── Comprehensive-only: Steps 7-12 ──────────────────────────────────
+        "validation_mode": _clean_text(payload.get("validation_mode") or "basic"),
+        "revenue_model": _clean_text(step7.get("revenue_model") or ""),
+        "proposed_price": _clean_text(step7.get("proposed_price") or ""),
+        "payment_frequency": _clean_text(step7.get("payment_frequency") or ""),
+        "willingness_to_pay_evidence": bool(step7.get("willingness_to_pay_evidence")),
+        "variable_cost_per_unit": _clean_text(step8.get("variable_cost_per_unit") or ""),
+        "fixed_costs_monthly": _clean_text(step8.get("fixed_costs_monthly") or ""),
+        "gross_margin_estimate": _clean_text(step8.get("gross_margin_estimate") or ""),
+        "variable_cost_known": bool(step8.get("variable_cost_known")),
+        "capacity_per_month": _clean_text(step9.get("capacity_per_month") or ""),
+        "delivery_unit": _clean_text(step9.get("delivery_unit") or ""),
+        "key_bottleneck": _clean_text(step9.get("key_bottleneck") or ""),
+        "delivery_model_defined": bool(step9.get("delivery_model_defined")),
+        "evidence_types": step10.get("evidence_types") or [],
+        "founder_industry_experience": _clean_text(step11.get("founder_industry_experience") or ""),
+        "founder_capital_available": bool(step11.get("founder_capital_available")),
+        "founder_time_available": bool(step11.get("founder_time_available")),
+        "regulatory_risk_level": _clean_text(step12.get("regulatory_risk_level") or ""),
+        "regulatory_requirements_known": bool(step12.get("regulatory_requirements_known")),
+        "regulatory_mitigation_planned": bool(step12.get("regulatory_mitigation_planned")),
     }
 
 

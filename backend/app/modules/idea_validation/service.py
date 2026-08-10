@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 import asyncio
 import logging
@@ -828,6 +829,153 @@ Rules:
     return generate_experiments(v4_inp, vps_dims)
 
 
+def _compute_comprehensive_metrics(payload: dict, v4_inp: Any) -> dict:
+    """Deterministically compute unit economics, 12-month forecast, and evidence metrics from wizard inputs."""
+    step7 = payload.get("step7") or {}
+    step8 = payload.get("step8") or {}
+    step9 = payload.get("step9") or {}
+    step10 = payload.get("step10") or {}
+    step11 = payload.get("step11") or {}
+    step12 = payload.get("step12") or {}
+    currency = str(payload.get("currency") or "GBP")
+
+    def _parse_num(s: Any) -> float | None:
+        if s is None:
+            return None
+        # Extract only the FIRST numeric token from free text, e.g.:
+        #   "$4,000/month (2 founders' salaries)" → 4000  (not 40002)
+        #   "£49.99"                              → 49.99
+        #   "0.7" or "70%"                        → 0.7 / 70
+        m = re.search(r"\d+(?:,\d{3})*(?:\.\d+)?", str(s))
+        if not m:
+            return None
+        try:
+            return float(m.group().replace(",", ""))
+        except ValueError:
+            return None
+
+    price = _parse_num(step7.get("proposed_price") or getattr(v4_inp, "proposed_price", None))
+    variable_cost = _parse_num(step8.get("variable_cost_per_unit")) if step8.get("variable_cost_known") else None
+    fixed_costs = _parse_num(step8.get("fixed_costs_monthly"))
+    capacity = _parse_num(step9.get("capacity_per_month"))
+
+    # Gross margin — accept 0.7 (fraction) or 70 (percentage)
+    gross_margin_pct: float | None = None
+    gm_raw = _parse_num(step8.get("gross_margin_estimate"))
+    if gm_raw is not None:
+        gross_margin_pct = round(gm_raw * 100, 1) if gm_raw <= 1.0 else round(gm_raw, 1)
+
+    # Contribution per unit
+    contribution: float | None = None
+    if price is not None and variable_cost is not None:
+        contribution = round(price - variable_cost, 2)
+        if gross_margin_pct is None and price > 0:
+            gross_margin_pct = round((contribution / price) * 100, 1)
+    elif price is not None and gross_margin_pct is not None:
+        contribution = round(price * gross_margin_pct / 100, 2)
+
+    # Break-even
+    breakeven_units: float | None = None
+    breakeven_months: float | None = None
+    if contribution and contribution > 0 and fixed_costs is not None:
+        breakeven_units = round(fixed_costs / contribution, 1)
+        if capacity and capacity > 0:
+            breakeven_months = round(breakeven_units / capacity, 1)
+
+    # 12-month forecast with progressive capacity ramp
+    monthly_forecast = None
+    if price is not None and capacity is not None and capacity > 0:
+        ramps = [0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.60, 0.65, 0.70, 0.75, 0.85, 1.00]
+        monthly_forecast = []
+        for i, r in enumerate(ramps):
+            units = round(capacity * r)
+            revenue = round(units * price, 2)
+            cogs = round(units * (variable_cost or 0), 2)
+            gross_profit = round(revenue - cogs, 2)
+            net = round(gross_profit - (fixed_costs or 0), 2)
+            monthly_forecast.append({
+                "month": i + 1,
+                "capacity_pct": int(r * 100),
+                "units": units,
+                "revenue": revenue,
+                "gross_profit": gross_profit,
+                "net_income": net,
+            })
+
+    # Evidence strength breakdown
+    EVIDENCE_LABELS: dict[str, tuple[str, str]] = {
+        "no_evidence": ("No evidence", "none"),
+        "personal_experience": ("Personal experience", "weak"),
+        "informal_conversations": ("Informal conversations", "weak"),
+        "customer_interviews": ("Customer interviews", "moderate"),
+        "survey_responses": ("Survey responses", "moderate"),
+        "social_media_engagement": ("Social media engagement", "moderate"),
+        "search_demand": ("Search demand data", "moderate"),
+        "landing_page_visits": ("Landing page visits", "moderate"),
+        "email_sign_ups": ("Email sign-ups", "moderate"),
+        "waiting_list": ("Waiting list", "strong"),
+        "letters_of_intent": ("Letters of intent", "strong"),
+        "requests_for_quotation": ("Requests for quotation", "strong"),
+        "pre_orders": ("Pre-orders", "strong"),
+        "deposits": ("Deposits received", "strong"),
+        "paid_pilots": ("Paid pilots", "strong"),
+        "existing_customers": ("Existing customers", "verified"),
+        "repeat_customers": ("Repeat customers", "verified"),
+        "revenue": ("Revenue generated", "verified"),
+        "retention_data": ("Retention data", "verified"),
+        "usage_data": ("Usage data", "verified"),
+    }
+    evidence_types = step10.get("evidence_types") or []
+    evidence_breakdown = [
+        {
+            "type": et,
+            "label": EVIDENCE_LABELS.get(et, (str(et).replace("_", " ").title(), "unknown"))[0],
+            "strength": EVIDENCE_LABELS.get(et, ("", "unknown"))[1],
+        }
+        for et in evidence_types
+    ]
+
+    # Founder profile
+    exp = str(step11.get("founder_industry_experience") or "none")
+    capital = bool(step11.get("founder_capital_available"))
+    time_av = bool(step11.get("founder_time_available"))
+    if capital and time_av:
+        fit_note = "Capital and time are both available — self-funded, full-commitment launch is viable."
+    elif capital and not time_av:
+        fit_note = "Capital is available but time is limited — consider a co-founder or fractional model."
+    elif not capital and time_av:
+        fit_note = "Time is available but capital is limited — prioritise lean validation and explore grant or accelerator funding."
+    else:
+        fit_note = "Both capital and time are constrained — a side-project approach or external funding will be needed before full commitment."
+
+    return {
+        "unit_economics": {
+            "currency": currency,
+            "price_per_unit": price,
+            "variable_cost_per_unit": variable_cost,
+            "contribution_per_unit": contribution,
+            "gross_margin_pct": gross_margin_pct,
+            "fixed_costs_monthly": fixed_costs,
+            "breakeven_units": breakeven_units,
+            "breakeven_months": breakeven_months,
+            "capacity_per_month": capacity,
+        },
+        "monthly_forecast": monthly_forecast,
+        "evidence_breakdown": evidence_breakdown,
+        "founder_profile": {
+            "experience_level": exp,
+            "capital_available": capital,
+            "time_available": time_av,
+            "fit_note": fit_note,
+        },
+        "regulatory_summary": {
+            "risk_level": str(step12.get("regulatory_risk_level") or "unknown"),
+            "requirements_known": bool(step12.get("regulatory_requirements_known")),
+            "mitigation_planned": bool(step12.get("regulatory_mitigation_planned")),
+        },
+    }
+
+
 async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
     """
     V4 Universal Validation — deterministic scoring (VPS + ECS) + live web research.
@@ -872,12 +1020,19 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
     vps = v4_result["scores"]["potential_score"]
     ecs = v4_result["scores"]["evidence_confidence_score"]
     verdict = v4_result["verdict"]
+
+    # 5b. Compute deterministic metrics BEFORE narration so the AI can cite exact figures
+    comp_metrics: dict | None = None
+    if payload.get("validation_mode") == "comprehensive" and not is_free:
+        comp_metrics = _compute_comprehensive_metrics(payload, v4_inp)
+
     narration_fields = {
         **fields,
         "deterministic_evaluation": {
             "score": vps,
             "classification": verdict.get("label", verdict.get("category", "")),
         },
+        **({"computed_metrics": comp_metrics} if comp_metrics else {}),
     }
     try:
         narrative_report = await run_ai_narration(
@@ -943,6 +1098,10 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
         "flags": [],
         "advisory_flags": [],
     }
+
+    # 6b. Attach pre-computed comprehensive metrics (computed in step 5b, before narration)
+    if comp_metrics is not None:
+        final_result["comprehensive_metrics"] = comp_metrics
 
     # 7. Persist result
     workspace_id = payload.get("workspace_id")

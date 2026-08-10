@@ -207,6 +207,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
   const [expiryDays, setExpiryDays] = useState(7);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [emailInvalid, setEmailInvalid] = useState(false);
   const [inviteLink, setInviteLink] = useState(null);
   const [emailStatus, setEmailStatus] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -235,11 +236,25 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
     return Object.values(selectedFeatures).some((f) => f && f.length > 0);
   }
 
+  function isValidEmail(v) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim());
+  }
+
   async function handleGenerate() {
-    if (!hasSelection()) { setError("Select at least one module or feature."); return; }
-    if (accessMode === "email" && !email.trim()) { setError("Enter the email address for this invite."); return; }
+    if (!hasSelection()) { setError("Select at least one module or feature to continue."); return; }
+    if (accessMode === "email" && !email.trim()) {
+      setEmailInvalid(true);
+      setError("Enter the email address for this invite.");
+      return;
+    }
+    if (accessMode === "email" && !isValidEmail(email)) {
+      setEmailInvalid(true);
+      setError("Enter a valid email address (e.g. name@company.com).");
+      return;
+    }
     setLoading(true);
     setError(null);
+    setEmailInvalid(false);
     setEmailStatus(null);
     try {
       const result = await apiRequest("/workspace/invitations", "POST", {
@@ -255,7 +270,7 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
         error: result?.email_error || "",
       });
     } catch (e) {
-      setError(e.message || "Failed to create invitation.");
+      setError((e.message || "Failed to create invitation.").replace(/^HTTP \d+:\s*/, ""));
     } finally {
       setLoading(false);
     }
@@ -418,9 +433,14 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
                   <input
                     type="email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => { setEmail(e.target.value); setEmailInvalid(false); }}
                     placeholder="colleague@company.com"
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-slate-600 transition"
+                    className={
+                      "w-full rounded-xl border bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:ring-2 transition dark:bg-slate-800 dark:text-slate-100 " +
+                      (emailInvalid
+                        ? "border-rose-400 focus:border-rose-400 focus:ring-rose-100 dark:border-rose-500 dark:focus:border-rose-500"
+                        : "border-slate-200 focus:border-brand-300 focus:ring-brand-100 dark:border-slate-700 dark:focus:border-slate-600")
+                    }
                   />
                 </div>
               )}
@@ -517,14 +537,21 @@ export default function InviteModal({ onClose, initialPermissionType, initialPer
               {loading ? "Saving..." : "Save changes"}
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={loading || !hasSelection()}
-              className="w-full sm:w-auto rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50 transition"
-            >
-              {loading ? "Creating..." : accessMode === "email" ? "Create and send" : "Generate invite link"}
-            </button>
+            <div className="flex flex-col items-end gap-1">
+              {!hasSelection() && (
+                <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                  Select at least one module or feature above
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={loading || !hasSelection()}
+                className="w-full sm:w-auto rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50 transition"
+              >
+                {loading ? "Creating..." : accessMode === "email" ? "Create and send" : "Generate invite link"}
+              </button>
+            </div>
           )}
         </div>
       </div>

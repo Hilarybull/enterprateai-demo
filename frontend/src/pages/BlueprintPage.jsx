@@ -738,7 +738,7 @@ export default function BlueprintPage() {
   useEffect(() => {
     let alive = true;
     async function prefillFromWorkspace() {
-    if (acceptedIdeaValidation || !workspaceIdStored) return;
+      if (!workspaceIdStored) return;
       try {
         const ws = await apiRequest(`/validation/${workspaceIdStored}`, "GET");
         if (!alive) return;
@@ -753,6 +753,35 @@ export default function BlueprintPage() {
         if (!documentLogo && (workspaceProfile?.logo_data_url || workspaceLogoStored)) {
           setDocumentLogo(String(workspaceProfile?.logo_data_url || workspaceLogoStored || ""));
         }
+
+        // Use accepted idea_validation from server if the store's copy is missing
+        const serverIV = ws?.data?.idea_validation;
+        const serverDecision = ws?.data?.decision?.status;
+        const iv = acceptedIdeaValidation || (serverDecision === "accepted" && serverIV ? serverIV : null);
+
+        if (iv) {
+          const ctx = iv.context || {};
+          const offer = iv.offer || {};
+          const prob = iv.problem || {};
+          if (!dirtyFields.companyName && !companyName && ctx.business_name) setCompanyName(ctx.business_name);
+          if (!dirtyFields.industry && !industry) setIndustry(ctx.primary_industry || ctx.business_type || workspaceProfile.primary_industry || profile.primary_industry || "");
+          if (!dirtyFields.targetMarket && !targetMarket && (prob.customer_segment || workspaceProfile.target_customer_type)) setTargetMarket(prob.customer_segment || workspaceProfile.target_customer_type);
+          if (!dirtyFields.problem && !problem && prob.problem_type) setProblem(prob.problem_type);
+          if (!dirtyFields.solution && !solution && offer.service_type) setSolution(offer.service_type);
+          if (!dirtyFields.valueProp && !valueProp) {
+            const vp = String(ctx.business_offering || ctx.description || offer.service_type || workspaceProfile.key_offering_focus || workspaceProfile.tagline || "").trim();
+            if (vp) setValueProp(vp);
+          }
+          const pm = String(offer.pricing_model || "").toLowerCase();
+          if (pm && pricingModel === "Subscription") {
+            if (pm === "hourly") setPricingModel("Hourly");
+            else if (pm === "retainer") setPricingModel("Retainer");
+            else if (pm === "fixed_job") setPricingModel("One-time");
+          }
+          return;
+        }
+
+        // No accepted validation — fall back to workspace profile data
         if (!dirtyFields.companyName && !companyName && (workspaceProfile.company_name || profile.business_name)) {
           setCompanyName(workspaceProfile.company_name || profile.business_name);
         }
@@ -779,7 +808,6 @@ export default function BlueprintPage() {
             .filter(Boolean)
             .join(" / ");
           if (joined) setSolution(joined);
-          // Also prefill selected services if empty
           if (!dirtyFields.selectedServices && !selectedServices.length) {
             setSelectedServices(wpServices.map((s) => String(s?.service_name || "").trim()).filter(Boolean));
           }

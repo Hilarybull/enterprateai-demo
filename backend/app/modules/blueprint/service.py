@@ -1,13 +1,10 @@
 ﻿from __future__ import annotations
 
 import asyncio
-import logging
 import re
 from html import escape
 from datetime import datetime
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, status
 
@@ -1716,7 +1713,7 @@ async def generate_blueprint(
 
     def _default_title(doc_type: str, company_name: str) -> str:
         c = (company_name or "").strip() or "Untitled"
-        return f"{doc_type} — {c}"
+        return f"{doc_type} for {c}"
 
     async def _persist_response(resp: BlueprintGenerateResponse) -> BlueprintGenerateResponse:
         if not user_id:

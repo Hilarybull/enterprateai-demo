@@ -7,6 +7,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import BusinessAssistant from "./BusinessAssistant";
 import InviteModal from "./InviteModal";
 import OnboardingModal, { hasSeenOnboarding } from "./OnboardingModal";
+import { WorkspaceProfilePanel } from "./WorkspaceProfileCard";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 import { hasModuleAccess, isPlatformModuleGranted, isPlatformModuleRestricted } from "../lib/permissions";
 import { planHasModuleAccess, planLabel } from "../lib/plans";
@@ -291,6 +292,7 @@ export default function Layout() {
   const [feedbackSent, setFeedbackSent] = useState(false);
   const [feedbackError, setFeedbackError] = useState(null);
   const [showInviteUpgrade, setShowInviteUpgrade] = useState(false);
+  const [workspaceProfileOpen, setWorkspaceProfileOpen] = useState(false);
   const creditBalance = useAuthStore((s) => s.creditBalance);
   const creditInfo = useAuthStore((s) => s.creditInfo);
   const setCreditInfo = useAuthStore((s) => s.setCreditInfo);
@@ -719,7 +721,17 @@ export default function Layout() {
             </div>
           ) : null}
         </div>
-        <div className="mt-2 text-base font-semibold text-slate-900 dark:text-slate-100">{workspaceDisplayName}</div>
+        <button
+          type="button"
+          onClick={() => workspaceId && setWorkspaceProfileOpen(true)}
+          className={
+            "mt-2 w-full text-left text-base font-semibold text-slate-900 dark:text-slate-100 " +
+            (workspaceId ? "cursor-pointer hover:text-brand-600 dark:hover:text-brand-400 transition-colors" : "cursor-default")
+          }
+          title={workspaceId ? "View workspace profile" : undefined}
+        >
+          {workspaceDisplayName}
+        </button>
         {isMemberMode ? (
           <>
             <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2 py-1 text-[11px] font-semibold text-brand-700 dark:bg-slate-800 dark:text-brand-400">
@@ -1133,17 +1145,15 @@ export default function Layout() {
                     )}
                     {!isMemberMode && (
                       <>
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
-                          onClick={() => {
-                            setProfileOpen(false);
-                            const returnTo = encodeURIComponent(location.pathname + location.search);
-                            navigate(`/validation?from=module&return=${returnTo}`);
-                          }}
-                        >
-                          Edit workspace
-                        </button>
+                        {workspaceId && (
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                            onClick={() => { setProfileOpen(false); setWorkspaceProfileOpen(true); }}
+                          >
+                            View workspace
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
@@ -1260,6 +1270,17 @@ export default function Layout() {
         </main>
       </div>
       {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}
+      {workspaceProfileOpen && workspaceId && (
+        <WorkspaceProfilePanel
+          workspaceId={workspaceId}
+          onClose={() => setWorkspaceProfileOpen(false)}
+          onEdit={() => {
+            setWorkspaceProfileOpen(false);
+            const returnTo = encodeURIComponent(location.pathname + location.search);
+            navigate(`/validation?from=module&return=${returnTo}`);
+          }}
+        />
+      )}
       {onboardingOpen && !workspaceId && (
         <OnboardingModal onDismiss={() => setOnboardingOpen(false)} userId={email} />
       )}
