@@ -469,13 +469,17 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         now = datetime.now(timezone.utc).isoformat()
 
         ws_currency = _get_workspace_currency(ws_data)
+        logger.warning("[CURRENCY-DEBUG] ws_currency=%s ws_data_keys=%s", ws_currency, list((ws_data or {}).keys()))
         if imported.get("invoices"):
             imported["invoices"] = await _convert_financials(imported["invoices"], ws_currency)
         if imported.get("quotes"):
             imported["quotes"] = await _convert_financials(imported["quotes"], ws_currency)
         if imported.get("products"):
             org_currency = _infer_source_currency(imported.get("invoices", []) + imported.get("quotes", []))
+            sample = imported["products"][:2]
+            logger.warning("[CURRENCY-DEBUG] org_currency=%s products_sample=%s", org_currency, [{"name": p.get("name"), "base_price": p.get("base_price"), "source_currency": p.get("source_currency")} for p in sample])
             imported["products"] = await _convert_products(imported["products"], ws_currency, fallback_source_currency=org_currency)
+            logger.warning("[CURRENCY-DEBUG] after convert sample=%s", [{"name": p.get("name"), "base_price": p.get("base_price")} for p in imported["products"][:2]])
 
         # Merge catalogue (products, customers, vendors)
         existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
