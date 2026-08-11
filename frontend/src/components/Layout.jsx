@@ -277,6 +277,7 @@ export default function Layout() {
   const feedbackRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
+  const dismissedNotifIds = useRef(new Set(JSON.parse(localStorage.getItem("ea_notif_dismissed") || "[]")));
   const [helpOpen, setHelpOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [helpName, setHelpName] = useState("");
@@ -549,7 +550,12 @@ export default function Layout() {
               .filter((i) => i.due_date && String(i.status || "").toLowerCase() !== "paid" && new Date(i.due_date) < today)
               .map((i) => ({ ...i, _notifType: "overdue" }))
           : [];
-        setNotifications([...overdueInvoices, ...pendingRfqs]);
+        const dismissed = dismissedNotifIds.current;
+        setNotifications(
+          [...overdueInvoices, ...pendingRfqs].filter(
+            (n) => !dismissed.has(`${n._notifType}-${n.id}`)
+          )
+        );
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
         else setDecisionStatus(null);
@@ -1074,7 +1080,11 @@ export default function Layout() {
                       {notifications.length > 0 && (
                         <button
                           type="button"
-                          onClick={() => setNotifications([])}
+                          onClick={() => {
+                            notifications.forEach((n) => dismissedNotifIds.current.add(`${n._notifType}-${n.id}`));
+                            localStorage.setItem("ea_notif_dismissed", JSON.stringify([...dismissedNotifIds.current]));
+                            setNotifications([]);
+                          }}
                           className="text-[10px] font-semibold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
                         >
                           Clear all
@@ -1093,6 +1103,9 @@ export default function Layout() {
                               type="button"
                               className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
                               onClick={() => {
+                                const key = `${notif._notifType}-${notif.id}`;
+                                dismissedNotifIds.current.add(key);
+                                localStorage.setItem("ea_notif_dismissed", JSON.stringify([...dismissedNotifIds.current]));
                                 setNotifications((prev) => prev.filter((n) => !(n._notifType === notif._notifType && n.id === notif.id)));
                                 setNotifOpen(false);
                                 navigate(destination);

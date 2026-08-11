@@ -1109,6 +1109,14 @@ export default function MarketplacePage() {
     return () => clearTimeout(t);
   }, [search]);
 
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") setRefreshKey(k => k + 1); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -1131,7 +1139,7 @@ export default function MarketplacePage() {
     }
     load();
     return () => { alive = false; };
-  }, [debouncedSearch, filterIndustry, filterType, page]);
+  }, [debouncedSearch, filterIndustry, filterType, page, refreshKey]);
 
   useEffect(() => {
     if (!isLoggedIn || !workspaceId) return;
@@ -1253,7 +1261,7 @@ export default function MarketplacePage() {
           <div className="inline-flex rounded-t-2xl bg-white/10 backdrop-blur-sm overflow-hidden">
             {[
               { id: "products", label: "Products & Services", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" /><line x1="3" y1="6" x2="21" y2="6" /><path d="M16 10a4 4 0 0 1-8 0" /></svg> },
-              { id: "profiles", label: "Profiles", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg> },
+              { id: "profiles", label: "Businesses", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg> },
             ].map((t) => (
               <button key={t.id} onClick={() => { setActiveTab(t.id); setFilterCategory(""); setFilterIndustry(""); setFilterType(""); }}
                 className={`flex items-center gap-2 px-5 py-3 text-[13px] font-semibold transition ${activeTab === t.id
