@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
@@ -6,7 +6,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import Spinner from "../components/Spinner";
 import logoUrl from "../enterprate-logo.png";
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
 function fmt(str) {
   if (!str) return "";
@@ -30,6 +30,22 @@ function industryColor(industry) {
   return map[industry] || "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300";
 }
 
+function categoryColor(cat) {
+  const map = {
+    software: "bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
+    design: "bg-fuchsia-50 text-fuchsia-600 dark:bg-fuchsia-900/30 dark:text-fuchsia-400",
+    consulting: "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400",
+    marketing: "bg-pink-50 text-pink-600 dark:bg-pink-900/30 dark:text-pink-400",
+    finance: "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
+    legal: "bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
+    logistics: "bg-orange-50 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400",
+    health: "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400",
+    education: "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+  };
+  const key = Object.keys(map).find((k) => (cat || "").toLowerCase().includes(k));
+  return key ? map[key] : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300";
+}
+
 function initials(name) {
   return (name || "?").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
@@ -46,7 +62,7 @@ function avatarGradient(name) {
   return gradients[Math.abs(hash) % gradients.length];
 }
 
-// ─── star components ──────────────────────────────────────────────────────────
+// ─── star rating ──────────────────────────────────────────────────────────────
 
 function StarDisplay({ rating, count, size = "sm" }) {
   const filled = Math.floor(rating || 0);
@@ -88,11 +104,9 @@ function StarInput({ value, hover, onHover, onLeave, onChange, disabled }) {
       {[1, 2, 3, 4, 5].map((i) => {
         const active = i <= (hover || value || 0);
         return (
-          <button
-            key={i} type="button" disabled={disabled}
+          <button key={i} type="button" disabled={disabled}
             onMouseEnter={() => onHover(i)} onMouseLeave={onLeave} onClick={() => onChange(i)}
-            className="transition-transform hover:scale-110 focus:outline-none disabled:cursor-not-allowed"
-          >
+            className="transition-transform hover:scale-110 focus:outline-none disabled:cursor-not-allowed">
             <svg className="h-7 w-7" viewBox="0 0 24 24">
               <path fill={active ? "#f59e0b" : "#e2e8f0"} className={active ? "" : "dark:fill-slate-700"}
                 d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -106,16 +120,321 @@ function StarInput({ value, hover, onHover, onLeave, onChange, disabled }) {
 
 const STAR_LABELS = ["", "Poor", "Fair", "Good", "Very Good", "Excellent"];
 
+// ─── company avatar ───────────────────────────────────────────────────────────
+
+function CompanyAvatar({ listing, size = "md" }) {
+  const grad = avatarGradient(listing.company_name);
+  const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
+  const cls = size === "sm" ? "h-7 w-7 text-[10px]" : size === "lg" ? "h-14 w-14 text-lg" : "h-10 w-10 text-xs";
+  return hasLogo ? (
+    <img src={listing.logo_data_url} alt={listing.company_name}
+      className={`${cls} rounded-xl border border-slate-200 bg-white object-contain p-0.5 shadow-sm dark:border-slate-700 dark:bg-slate-900`} />
+  ) : (
+    <div className={`${cls} flex shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${grad} font-bold text-white shadow-sm`}>
+      {initials(listing.company_name)}
+    </div>
+  );
+}
+
+// ─── filter chip ──────────────────────────────────────────────────────────────
+
+function FilterChip({ label, active, onClick }) {
+  return (
+    <button onClick={onClick}
+      className={`rounded-xl border px-3 py-1.5 text-[12px] font-medium transition whitespace-nowrap ${active
+        ? "border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-500 dark:bg-brand-900/30 dark:text-brand-300"
+        : "border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
+      {label}
+    </button>
+  );
+}
+
+// ─── service detail modal ─────────────────────────────────────────────────────
+
+function ServiceDetailModal({ product, onClose, onRequestQuote, isOwnListing, userEmail }) {
+  const { service, listing } = product;
+  const grad = avatarGradient(listing.company_name);
+
+  const [ratingData, setRatingData] = useState({ avg_rating: listing.avg_rating, rating_count: listing.rating_count || 0, user_rating: null, user_review: null });
+  const [ratingLoading, setRatingLoading] = useState(true);
+  const [hoverStar, setHoverStar] = useState(0);
+  const [pendingStar, setPendingStar] = useState(0);
+  const [reviewText, setReviewText] = useState("");
+  const [ratingEmail, setRatingEmail] = useState(userEmail || "");
+  const [submitting, setSubmitting] = useState(false);
+  const [ratingError, setRatingError] = useState(null);
+  const [showReviewBox, setShowReviewBox] = useState(false);
+
+  const svcKey = encodeURIComponent(service.service_name || "");
+
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      setRatingLoading(true);
+      try {
+        const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}?service_name=${svcKey}`, "GET");
+        if (!alive) return;
+        setRatingData(res); setPendingStar(res.user_rating || 0); setReviewText(res.user_review || "");
+      } catch { } finally { if (alive) setRatingLoading(false); }
+    }
+    load();
+    return () => { alive = false; };
+  }, [listing.workspace_id, svcKey]);
+
+  async function submitRating() {
+    if (!pendingStar) return;
+    const emailTrimmed = ratingEmail.trim();
+    if (!emailTrimmed) { setRatingError("Please enter your email to verify this review."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) { setRatingError("Enter a valid email address."); return; }
+    setSubmitting(true); setRatingError(null);
+    try {
+      const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}`, "POST", {
+        rating: pendingStar, review: reviewText.trim() || null, rater_email: emailTrimmed,
+        service_name: service.service_name || "",
+      });
+      setRatingData(res); setShowReviewBox(false); setRatingEmail("");
+    } catch (e) { setRatingError(e instanceof Error ? e.message : "Failed to submit rating."); }
+    finally { setSubmitting(false); }
+  }
+
+  async function removeRating() {
+    setSubmitting(true); setRatingError(null);
+    try {
+      const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}?service_name=${svcKey}`, "DELETE");
+      setRatingData(res); setPendingStar(0); setReviewText("");
+    } catch (e) { setRatingError(e instanceof Error ? e.message : "Failed to remove rating."); }
+    finally { setSubmitting(false); }
+  }
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center p-0 sm:items-center sm:p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="ea-dialog relative z-10 w-full max-w-lg overflow-hidden rounded-t-3xl sm:rounded-2xl" style={{ maxHeight: "92vh" }}>
+        {/* Header gradient */}
+        <div className={`h-2 w-full bg-gradient-to-r ${grad}`} />
+        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4">
+          <div className="min-w-0 flex-1">
+            {service.service_category && (
+              <span className={`mb-2 inline-block rounded-lg px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${categoryColor(service.service_category)}`}>
+                {fmt(service.service_category)}
+              </span>
+            )}
+            <h3 className="text-[17px] font-bold text-slate-900 dark:text-slate-100 leading-tight">{service.service_name}</h3>
+          </div>
+          <button onClick={onClose}
+            className="shrink-0 flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+
+        <div className="ea-scroll overflow-y-auto px-5 pb-6" style={{ maxHeight: "calc(92vh - 120px)" }}>
+          {/* Description */}
+          {service.service_description ? (
+            <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4 mb-4">
+              <p className="text-[13px] leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-line">{service.service_description}</p>
+            </div>
+          ) : (
+            <p className="text-[13px] italic text-slate-400 dark:text-slate-500 mb-4">No description provided.</p>
+          )}
+
+          {/* Offered by */}
+          <div className="mb-4 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3">
+            <CompanyAvatar listing={listing} size="md" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-0.5">Offered by</div>
+              <div className="text-[14px] font-bold text-slate-900 dark:text-slate-100 truncate">{listing.company_name}</div>
+              {listing.tagline && <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">{listing.tagline}</div>}
+            </div>
+            {listing.avg_rating != null ? (
+              <StarDisplay rating={listing.avg_rating} count={listing.rating_count} />
+            ) : (
+              <span className="text-[10px] text-slate-400 italic shrink-0">No ratings</span>
+            )}
+          </div>
+
+          {/* Location + industry */}
+          <div className="flex flex-wrap gap-2 mb-5">
+            {[listing.city, listing.country].filter(Boolean).length > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+                <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2C8.1 2 5 5.1 5 9c0 5.3 7 13 7 13s7-7.7 7-13c0-3.9-3.1-7-7-7Z" /><circle cx="12" cy="9" r="2.5" />
+                </svg>
+                {[listing.city, listing.country].filter(Boolean).join(", ")}
+              </span>
+            )}
+            {listing.primary_industry && (
+              <span className={`rounded-xl px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${industryColor(listing.primary_industry)}`}>
+                {fmt(listing.primary_industry)}
+              </span>
+            )}
+          </div>
+
+          {/* CTA */}
+          {!isOwnListing && (
+            <button
+              onClick={() => { onClose(); onRequestQuote(listing); }}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 py-3 text-[13px] font-bold text-white hover:bg-brand-700 transition">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
+                <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+              Request Quotation from {listing.company_name}
+            </button>
+          )}
+
+          {/* Ratings & Reviews */}
+          <div className="mt-5 border-t border-slate-100 dark:border-slate-800 pt-5">
+            <h4 className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+              Ratings &amp; Reviews
+            </h4>
+            <p className="mb-3 text-[11px] text-slate-400 dark:text-slate-500">
+              For <span className="font-semibold text-slate-600 dark:text-slate-300">{service.service_name}</span> by {listing.company_name}
+            </p>
+            <div className="mb-4 flex items-center gap-4 rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
+              {ratingLoading ? <Spinner size={14} /> : ratingData.avg_rating != null ? (
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-slate-900 dark:text-slate-100">{ratingData.avg_rating.toFixed(1)}</div>
+                  <div className="mt-1"><StarDisplay rating={ratingData.avg_rating} size="lg" /></div>
+                  <div className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">{ratingData.rating_count} review{ratingData.rating_count !== 1 ? "s" : ""}</div>
+                </div>
+              ) : (
+                <div className="text-[13px] text-slate-500 dark:text-slate-400 italic">No ratings yet. Be the first to review.</div>
+              )}
+            </div>
+            {isOwnListing ? (
+              <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">You cannot rate your own business.</p>
+            ) : (
+              <div>
+                {ratingData.user_rating && !showReviewBox ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-400 mb-1">Your rating</div>
+                        <StarDisplay rating={ratingData.user_rating} count={null} />
+                        {ratingData.user_review && <p className="mt-1.5 text-[12px] text-slate-500 dark:text-slate-400 italic">"{ratingData.user_review}"</p>}
+                      </div>
+                      <button onClick={removeRating} disabled={submitting}
+                        className="text-[11px] font-medium text-red-500 hover:text-red-600 hover:underline disabled:opacity-50 transition">Remove</button>
+                    </div>
+                    <button onClick={() => { setPendingStar(ratingData.user_rating); setShowReviewBox(true); }}
+                      className="mt-2 text-[11px] font-medium text-brand-600 hover:underline dark:text-brand-400">Edit rating</button>
+                  </div>
+                ) : null}
+                {(!ratingData.user_rating || showReviewBox) && (
+                  <div className={`rounded-2xl border p-4 dark:bg-slate-900 ${showReviewBox ? "border-brand-200 bg-brand-50 dark:border-brand-800 dark:bg-brand-900/20" : "border-slate-200 bg-white dark:border-slate-700"}`}>
+                    <div className="mb-3 text-[12px] font-semibold text-slate-700 dark:text-slate-300">
+                      {showReviewBox ? "Update your rating" : "Rate this business"}
+                    </div>
+                    <div className="flex items-center gap-3 mb-3">
+                      <StarInput value={pendingStar} hover={hoverStar} onHover={setHoverStar} onLeave={() => setHoverStar(0)} onChange={setPendingStar} disabled={submitting} />
+                      {(hoverStar || pendingStar) > 0 && (
+                        <span className="text-[13px] font-semibold text-amber-600 dark:text-amber-400">{STAR_LABELS[hoverStar || pendingStar]}</span>
+                      )}
+                    </div>
+                    <textarea placeholder="Write a short review (optional)…" value={reviewText} onChange={(e) => setReviewText(e.target.value)} rows={2} className="ea-input mb-3 resize-none" />
+                    <div className="mb-3">
+                      <input type="email" placeholder="Your email address" value={ratingEmail} onChange={(e) => setRatingEmail(e.target.value)} className="ea-input" />
+                      <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Required for review credibility. Not shown publicly.</p>
+                    </div>
+                    {ratingError && <p className="mb-2 text-[12px] text-red-500">{ratingError}</p>}
+                    <div className="flex gap-2">
+                      {showReviewBox && (
+                        <button onClick={() => setShowReviewBox(false)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-[12px] font-medium text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">Cancel</button>
+                      )}
+                      <button onClick={submitRating} disabled={!pendingStar || submitting}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-1.5 text-[12px] font-semibold text-white hover:bg-brand-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                        {submitting ? <Spinner size={12} /> : null}
+                        {ratingData.user_rating ? "Update Rating" : "Submit Rating"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── product card ─────────────────────────────────────────────────────────────
+
+function ProductCard({ product, onOpen, onRequestQuote, isOwn }) {
+  const { service, listing } = product;
+  const grad = avatarGradient(listing.company_name);
+  const hasDesc = !!service.service_description;
+
+  return (
+    <article
+      onClick={() => onOpen(product)}
+      className="ea-card ea-card-hover flex cursor-pointer flex-col overflow-hidden group">
+      <div className={`h-1 w-full bg-gradient-to-r ${grad}`} />
+      <div className="flex flex-1 flex-col p-4 gap-3">
+        {/* Category + name */}
+        <div>
+          {service.service_category && (
+            <span className={`mb-1.5 inline-block rounded-lg px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${categoryColor(service.service_category)}`}>
+              {fmt(service.service_category)}
+            </span>
+          )}
+          <h3 className="text-[14px] font-bold text-slate-900 dark:text-slate-100 leading-snug group-hover:text-brand-700 dark:group-hover:text-brand-400 transition-colors">
+            {service.service_name}
+          </h3>
+        </div>
+
+        {/* Description */}
+        <div className="flex-1">
+          {hasDesc ? (
+            <p className="text-[12px] leading-relaxed text-slate-500 dark:text-slate-400 line-clamp-3">{service.service_description}</p>
+          ) : (
+            <p className="text-[12px] italic text-slate-400 dark:text-slate-500">No description provided.</p>
+          )}
+        </div>
+
+        {/* Company row */}
+        <div className="border-t border-slate-100 dark:border-slate-800 pt-3 flex items-center gap-2 min-w-0">
+          <CompanyAvatar listing={listing} size="sm" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[11px] font-semibold text-slate-700 dark:text-slate-300">{listing.company_name}</div>
+            {listing.avg_rating != null ? (
+              <StarDisplay rating={listing.avg_rating} count={listing.rating_count} />
+            ) : (
+              <span className="text-[10px] italic text-slate-400">No ratings yet</span>
+            )}
+          </div>
+          <span className="text-[11px] font-semibold text-brand-600 group-hover:text-brand-700 dark:text-brand-400 shrink-0">View →</span>
+        </div>
+
+        {/* Actions */}
+        {!isOwn && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRequestQuote(listing); }}
+            className="w-full rounded-xl border border-brand-200 bg-brand-50 py-2 text-[12px] font-semibold text-brand-700 hover:bg-brand-100 transition dark:border-brand-800 dark:bg-brand-900/20 dark:text-brand-300 dark:hover:bg-brand-900/40">
+            Request Quotation
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
 // ─── business card ────────────────────────────────────────────────────────────
 
 function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
   const grad = avatarGradient(listing.company_name);
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
   return (
-    <article
-      onClick={() => onClick(listing)}
-      className="ea-card ea-card-hover group flex cursor-pointer flex-col overflow-hidden"
-    >
+    <article onClick={() => onClick(listing)}
+      className="ea-card ea-card-hover group flex cursor-pointer flex-col overflow-hidden">
       <div className={`h-1.5 w-full bg-gradient-to-r ${grad} opacity-80`} />
       <div className="flex flex-1 flex-col p-5">
         <div className="flex items-start gap-3">
@@ -175,28 +494,23 @@ function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
               <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">No ratings yet</span>
             )}
             {isOwn ? (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onViewsClick(); }}
-                className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 hover:bg-brand-50 hover:text-brand-600 transition dark:hover:bg-brand-900/20 dark:hover:text-brand-400"
-              >
+              <button type="button" onClick={(e) => { e.stopPropagation(); onViewsClick(); }}
+                className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 hover:bg-brand-50 hover:text-brand-600 transition dark:hover:bg-brand-900/20 dark:hover:text-brand-400">
                 <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
                 </svg>
                 {viewCount != null ? `${viewCount} view${viewCount !== 1 ? "s" : ""}` : "Views"}
               </button>
             ) : (
-              <span className="text-[11px] font-semibold text-brand-600 group-hover:text-brand-700 dark:text-brand-400 transition-colors">View Profile →</span>
+              <span className="text-[11px] font-semibold text-brand-600 group-hover:text-brand-700 dark:text-brand-400">View Profile →</span>
             )}
           </div>
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0 text-[11px] text-slate-500 dark:text-slate-400">
               {listing.phone_number ? (
-                <a
-                  href={`tel:${listing.phone_number}`}
+                <a href={`tel:${listing.phone_number}`}
                   className="inline-flex max-w-full items-center gap-1.5 truncate hover:text-brand-600 dark:hover:text-brand-400"
-                  onClick={(e) => e.stopPropagation()}
-                >
+                  onClick={(e) => e.stopPropagation()}>
                   <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.63 2.62a2 2 0 0 1-.45 2.11L8 9.91a16 16 0 0 0 6.09 6.09l1.46-1.29a2 2 0 0 1 2.11-.45c.84.3 1.72.51 2.62.63A2 2 0 0 1 22 16.92z" />
                   </svg>
@@ -208,7 +522,8 @@ function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
             </div>
             <div className="flex items-center gap-1.5">
               {listing.website && (
-                <a href={listing.website.startsWith("http") ? listing.website : `https://${listing.website}`} target="_blank" rel="noopener noreferrer"
+                <a href={listing.website.startsWith("http") ? listing.website : `https://${listing.website}`}
+                  target="_blank" rel="noopener noreferrer"
                   className="flex h-7 w-7 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900"
                   onClick={(e) => e.stopPropagation()}>
                   <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" /></svg>
@@ -229,19 +544,6 @@ function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
   );
 }
 
-// ─── filter chip ──────────────────────────────────────────────────────────────
-
-function FilterChip({ label, active, onClick }) {
-  return (
-    <button onClick={onClick}
-      className={`rounded-xl border px-3 py-1.5 text-[12px] font-medium transition whitespace-nowrap ${active
-        ? "border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-500 dark:bg-brand-900/30 dark:text-brand-300"
-        : "border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
-      {label}
-    </button>
-  );
-}
-
 // ─── RFQ modal ────────────────────────────────────────────────────────────────
 
 function RFQModal({ listing, onClose }) {
@@ -251,7 +553,6 @@ function RFQModal({ listing, onClose }) {
   const [done, setDone] = useState(false);
   const [error, setError] = useState(null);
 
-  // Build dropdown options: catalogue products first, then profile services, deduplicated by name
   const productOptions = (() => {
     const seen = new Set();
     const opts = [];
@@ -272,21 +573,14 @@ function RFQModal({ listing, onClose }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  function addItem() {
-    setItems((prev) => [...prev, { name: "", quantity: 1, notes: "" }]);
-  }
-
-  function removeItem(idx) {
-    setItems((prev) => prev.filter((_, i) => i !== idx));
-  }
-
+  function addItem() { setItems((p) => [...p, { name: "", quantity: 1, notes: "" }]); }
+  function removeItem(idx) { setItems((p) => p.filter((_, i) => i !== idx)); }
   function updateItem(idx, field, value) {
-    setItems((prev) => prev.map((item, i) => {
+    setItems((p) => p.map((item, i) => {
       if (i !== idx) return item;
-      const updated = { ...item, [field]: field === "quantity" ? Math.max(1, Number(value) || 1) : value };
-      // clear custom name when switching away from "other"
-      if (field === "name" && value !== "__other__") updated.customName = "";
-      return updated;
+      const u = { ...item, [field]: field === "quantity" ? Math.max(1, Number(value) || 1) : value };
+      if (field === "name" && value !== "__other__") u.customName = "";
+      return u;
     }));
   }
 
@@ -331,7 +625,6 @@ function RFQModal({ listing, onClose }) {
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         </div>
-
         {done ? (
           <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
@@ -353,7 +646,6 @@ function RFQModal({ listing, onClose }) {
                 <input type="email" className="ea-input" placeholder="email@example.com" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
               </div>
             </div>
-
             <div className="mt-4">
               <div className="mb-2 flex items-center justify-between">
                 <label className="ea-label mb-0">Products / Services *</label>
@@ -367,13 +659,9 @@ function RFQModal({ listing, onClose }) {
                         <div className="relative">
                           <select
                             className={`w-full appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-8 py-2.5 text-sm outline-none ring-brand-200 focus:ring-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${!item.name ? "text-slate-400 dark:text-slate-500" : "text-slate-900 dark:text-slate-100"}`}
-                            value={item.name}
-                            onChange={(e) => updateItem(idx, "name", e.target.value)}
-                          >
+                            value={item.name} onChange={(e) => updateItem(idx, "name", e.target.value)}>
                             <option value="">Select a product / service</option>
-                            {productOptions.map((opt) => (
-                              <option key={opt} value={opt}>{opt}</option>
-                            ))}
+                            {productOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
                             <option value="__other__">Other / Custom…</option>
                           </select>
                           <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
@@ -385,37 +673,36 @@ function RFQModal({ listing, onClose }) {
                       )}
                       <input type="number" min="1" className="ea-input" placeholder="Qty" value={item.quantity} onChange={(e) => updateItem(idx, "quantity", e.target.value)} />
                       {items.length > 1 ? (
-                        <button type="button" onClick={() => removeItem(idx)} className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500 dark:border-slate-700">
+                        <button type="button" onClick={() => removeItem(idx)}
+                          className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500 dark:border-slate-700">
                           <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
                         </button>
                       ) : <div className="h-9 w-9" />}
                     </div>
                     {item.name === "__other__" && (
-                      <input
-                        className="ea-input"
-                        placeholder="Describe the product or service you need"
-                        value={item.customName || ""}
-                        onChange={(e) => updateItem(idx, "customName", e.target.value)}
-                      />
+                      <input className="ea-input" placeholder="Describe the product or service you need"
+                        value={item.customName || ""} onChange={(e) => updateItem(idx, "customName", e.target.value)} />
                     )}
                   </div>
                 ))}
               </div>
             </div>
-
             <div className="mt-3">
               <label className="ea-label">Message (optional)</label>
-              <textarea className="ea-input resize-none" rows={3} placeholder="Additional details, timeline, or requirements…" value={form.message} onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))} />
+              <textarea className="ea-input resize-none" rows={3} placeholder="Additional details, timeline, or requirements…"
+                value={form.message} onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))} />
             </div>
-
             {error && <p className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700 dark:border-rose-800 dark:bg-rose-900/20 dark:text-rose-400">{error}</p>}
-
             <div className="mt-4 flex gap-2">
-              <button type="submit" disabled={submitting} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 transition disabled:opacity-50">
+              <button type="submit" disabled={submitting}
+                className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 transition disabled:opacity-50">
                 {submitting ? <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg> : null}
                 Send Request
               </button>
-              <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-[13px] font-medium text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">Cancel</button>
+              <button type="button" onClick={onClose}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-[13px] font-medium text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+                Cancel
+              </button>
             </div>
           </form>
         )}
@@ -424,22 +711,20 @@ function RFQModal({ listing, onClose }) {
   );
 }
 
-// ─── sign up gate modal ────────────────────────────────────────────────────────
+// ─── sign-up gate modal ───────────────────────────────────────────────────────
 
 function SignUpGateModal({ action, onClose }) {
   const navigate = useNavigate();
   const messages = {
-    rate: { title: "Sign in to rate", body: "Share your experience with this business. Create a free account or sign in — it only takes a minute." },
+    rate: { title: "Sign in to rate", body: "Share your experience with this business. Create a free account or sign in." },
     publish: { title: "List your business", body: "Once you sign up and validate your business idea, you can publish it to the marketplace for others to discover." },
   };
   const { title, body } = messages[action] || messages.publish;
-
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
@@ -469,7 +754,7 @@ function SignUpGateModal({ action, onClose }) {
   );
 }
 
-// ─── detail row (inside profile modal) ───────────────────────────────────────
+// ─── detail row ───────────────────────────────────────────────────────────────
 
 function DetailRow({ icon, label, value }) {
   if (!value) return null;
@@ -491,10 +776,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
   const isOwnListing = isLoggedIn && ownWorkspaceId === listing.workspace_id;
 
-  const [ratingData, setRatingData] = useState({
-    avg_rating: listing.avg_rating, rating_count: listing.rating_count || 0,
-    user_rating: null, user_review: null,
-  });
+  const [ratingData, setRatingData] = useState({ avg_rating: listing.avg_rating, rating_count: listing.rating_count || 0, user_rating: null, user_review: null });
   const [ratingLoading, setRatingLoading] = useState(true);
   const [hoverStar, setHoverStar] = useState(0);
   const [pendingStar, setPendingStar] = useState(0);
@@ -503,12 +785,12 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
   const [submitting, setSubmitting] = useState(false);
   const [ratingError, setRatingError] = useState(null);
   const [showReviewBox, setShowReviewBox] = useState(false);
+  const [expandedServices, setExpandedServices] = useState({});
 
   useEffect(() => {
     if (!isOwnListing) {
       apiRequest(`/marketplace/listings/${listing.workspace_id}/view`, "POST", {
-        viewer_workspace_id: ownWorkspaceId || null,
-        viewer_email: userEmail || null,
+        viewer_workspace_id: ownWorkspaceId || null, viewer_email: userEmail || null,
       }).catch(() => {});
     }
   }, [listing.workspace_id]);
@@ -520,16 +802,18 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
       try {
         const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}`, "GET");
         if (!alive) return;
-        setRatingData(res);
-        setPendingStar(res.user_rating || 0);
-        setReviewText(res.user_review || "");
-      } catch { /* non-critical */ } finally {
-        if (alive) setRatingLoading(false);
-      }
+        setRatingData(res); setPendingStar(res.user_rating || 0); setReviewText(res.user_review || "");
+      } catch { } finally { if (alive) setRatingLoading(false); }
     }
     load();
     return () => { alive = false; };
   }, [listing.workspace_id]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   async function submitRating() {
     if (!pendingStar) return;
@@ -538,11 +822,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) { setRatingError("Enter a valid email address."); return; }
     setSubmitting(true); setRatingError(null);
     try {
-      const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}`, "POST", {
-        rating: pendingStar,
-        review: reviewText.trim() || null,
-        rater_email: emailTrimmed,
-      });
+      const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}`, "POST", { rating: pendingStar, review: reviewText.trim() || null, rater_email: emailTrimmed });
       setRatingData(res); setShowReviewBox(false); setRatingEmail("");
     } catch (e) { setRatingError(e instanceof Error ? e.message : "Failed to submit rating."); }
     finally { setSubmitting(false); }
@@ -556,12 +836,6 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
     } catch (e) { setRatingError(e instanceof Error ? e.message : "Failed to remove rating."); }
     finally { setSubmitting(false); }
   }
-
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -583,7 +857,6 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
           </div>
         </div>
 
-        {/* Body */}
         <div className="ea-scroll flex-1 overflow-y-auto px-6 pb-8 pt-10">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -596,9 +869,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
                 {[listing.city, listing.state_or_region, listing.country].filter(Boolean).join(", ")}
               </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              <span className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${industryColor(listing.primary_industry)}`}>{fmt(listing.primary_industry)}</span>
-            </div>
+            <span className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${industryColor(listing.primary_industry)}`}>{fmt(listing.primary_industry)}</span>
           </div>
 
           {/* About */}
@@ -607,18 +878,46 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
             <p className="text-[13px] leading-relaxed text-slate-700 dark:text-slate-300">{listing.about_company}</p>
           </div>
 
-          {/* Services */}
+          {/* Services with See More */}
           {listing.services && listing.services.length > 0 && (
             <div className="mt-5">
-              <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Services</h4>
+              <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                Services &amp; Products
+              </h4>
               <div className="grid gap-2 sm:grid-cols-2">
-                {listing.services.map((s, i) => (
-                  <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                    <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">{s.service_name}</div>
-                    <div className="mt-0.5 text-[11px] font-medium text-slate-400 dark:text-slate-500">{fmt(s.service_category)}</div>
-                    {s.service_description && <div className="mt-1 text-[12px] text-slate-500 dark:text-slate-400 line-clamp-2">{s.service_description}</div>}
-                  </div>
-                ))}
+                {listing.services.map((s, i) => {
+                  const isExpanded = expandedServices[i];
+                  const hasLongDesc = s.service_description && s.service_description.length > 100;
+                  return (
+                    <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">{s.service_name}</div>
+                          {s.service_category && (
+                            <span className={`mt-0.5 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${categoryColor(s.service_category)}`}>
+                              {fmt(s.service_category)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {s.service_description && (
+                        <div className="mt-1.5">
+                          <p className={`text-[12px] text-slate-500 dark:text-slate-400 ${isExpanded ? "" : "line-clamp-2"}`}>
+                            {s.service_description}
+                          </p>
+                          {hasLongDesc && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedServices((p) => ({ ...p, [i]: !p[i] }))}
+                              className="mt-0.5 text-[11px] font-semibold text-brand-600 hover:underline dark:text-brand-400">
+                              {isExpanded ? "Show less" : "See more"}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -649,7 +948,8 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
                 </a>
               )}
               {listing.website && (
-                <a href={listing.website.startsWith("http") ? listing.website : `https://${listing.website}`} target="_blank" rel="noopener noreferrer"
+                <a href={listing.website.startsWith("http") ? listing.website : `https://${listing.website}`}
+                  target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-[12px] font-semibold text-brand-700 hover:bg-brand-100 transition dark:border-brand-800 dark:bg-brand-900/30 dark:text-brand-300"
                   onClick={(e) => e.stopPropagation()}>
                   <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" /></svg>
@@ -681,10 +981,8 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
                   <div className="text-[13px] font-bold text-brand-800 dark:text-brand-300">Request a Quotation</div>
                   <div className="mt-0.5 text-[11px] text-brand-600 dark:text-brand-400">Send your requirements and get a formal quote from {listing.company_name}.</div>
                 </div>
-                <button
-                  onClick={() => onRequestQuote(listing)}
-                  className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-brand-700 transition"
-                >
+                <button onClick={() => onRequestQuote(listing)}
+                  className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-brand-700 transition">
                   <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
                   Request Quotation
                 </button>
@@ -692,24 +990,20 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
             </div>
           )}
 
-          {/* Ratings section */}
+          {/* Ratings */}
           <div className="mt-6 border-t border-slate-100 dark:border-slate-800 pt-5">
-            <h4 className="mb-4 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Ratings & Reviews</h4>
-
-            {/* Aggregate */}
+            <h4 className="mb-4 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Ratings &amp; Reviews</h4>
             <div className="mb-4 flex items-center gap-4 rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
-              {ratingLoading ? <Spinner size="sm" /> : ratingData.avg_rating != null ? (
+              {ratingLoading ? <Spinner size={14} /> : ratingData.avg_rating != null ? (
                 <div className="text-center">
                   <div className="text-4xl font-bold text-slate-900 dark:text-slate-100">{ratingData.avg_rating.toFixed(1)}</div>
                   <div className="mt-1"><StarDisplay rating={ratingData.avg_rating} size="lg" /></div>
                   <div className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">{ratingData.rating_count} review{ratingData.rating_count !== 1 ? "s" : ""}</div>
                 </div>
               ) : (
-                <div className="text-[13px] text-slate-500 dark:text-slate-400 italic">No ratings yet — be the first to review.</div>
+                <div className="text-[13px] text-slate-500 dark:text-slate-400 italic">No ratings yet. Be the first to review.</div>
               )}
             </div>
-
-            {/* Rating input */}
             {isOwnListing ? (
               <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">You cannot rate your own business.</p>
             ) : (
@@ -731,7 +1025,6 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
                       className="mt-2 text-[11px] font-medium text-brand-600 hover:underline dark:text-brand-400">Edit rating</button>
                   </div>
                 ) : null}
-
                 {(!ratingData.user_rating || showReviewBox) && (
                   <div className={`rounded-2xl border p-4 dark:bg-slate-900 ${showReviewBox ? "border-brand-200 bg-brand-50 dark:border-brand-800 dark:bg-brand-900/20" : "border-slate-200 bg-white dark:border-slate-700"}`}>
                     <div className="mb-3 text-[12px] font-semibold text-slate-700 dark:text-slate-300">
@@ -745,13 +1038,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
                     </div>
                     <textarea placeholder="Write a short review (optional)…" value={reviewText} onChange={(e) => setReviewText(e.target.value)} rows={2} className="ea-input mb-3 resize-none" />
                     <div className="mb-3">
-                      <input
-                        type="email"
-                        placeholder="Your email address"
-                        value={ratingEmail}
-                        onChange={(e) => setRatingEmail(e.target.value)}
-                        className="ea-input"
-                      />
+                      <input type="email" placeholder="Your email address" value={ratingEmail} onChange={(e) => setRatingEmail(e.target.value)} className="ea-input" />
                       <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Required for review credibility. Not shown publicly.</p>
                     </div>
                     {ratingError && <p className="mb-2 text-[12px] text-red-500">{ratingError}</p>}
@@ -761,7 +1048,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
                       )}
                       <button onClick={submitRating} disabled={!pendingStar || submitting}
                         className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-1.5 text-[12px] font-semibold text-white hover:bg-brand-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                        {submitting ? <Spinner size="xs" /> : null}
+                        {submitting ? <Spinner size={12} /> : null}
                         {ratingData.user_rating ? "Update Rating" : "Submit Rating"}
                       </button>
                     </div>
@@ -776,10 +1063,11 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
   );
 }
 
-// ─── filter constants ─────────────────────────────────────────────────────────
+// ─── constants ────────────────────────────────────────────────────────────────
 
 const INDUSTRIES = ["consulting","technology","finance","healthcare","education","retail","ecommerce","logistics","manufacturing","real_estate","marketing"];
 const BIZ_TYPES = ["sole_trader","partnership","limited_company","llp","non_profit","startup"];
+const SERVICE_CATEGORIES = ["software","design","consulting","marketing","finance","legal","logistics","health","education"];
 
 // ─── main page ────────────────────────────────────────────────────────────────
 
@@ -790,6 +1078,7 @@ export default function MarketplacePage() {
   const isLoggedIn = Boolean(token);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
+  const [activeTab, setActiveTab] = useState("products"); // "products" | "profiles"
   const [listings, setListings] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -804,22 +1093,22 @@ export default function MarketplacePage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filterIndustry, setFilterIndustry] = useState("");
   const [filterType, setFilterType] = useState("");
+  const [filterCategory, setFilterCategory] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
 
   const [selected, setSelected] = useState(null);
-  const [gateAction, setGateAction] = useState(null); // "rate" | "publish" | null
+  const [gateAction, setGateAction] = useState(null);
   const [rfqTarget, setRfqTarget] = useState(null);
+  const [serviceDetail, setServiceDetail] = useState(null); // { service, listing }
 
   const PAGE_SIZE = 24;
 
-  // debounce search
   useEffect(() => {
     const t = setTimeout(() => { setDebouncedSearch(search); setPage(1); }, 350);
     return () => clearTimeout(t);
   }, [search]);
 
-  // fetch listings
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -844,48 +1133,48 @@ export default function MarketplacePage() {
     return () => { alive = false; };
   }, [debouncedSearch, filterIndustry, filterType, page]);
 
-  // fetch own publish status (only when logged in)
   useEffect(() => {
     if (!isLoggedIn || !workspaceId) return;
     let alive = true;
-    apiRequest("/marketplace/status", "GET")
-      .then((res) => { if (alive) setMyStatus(res); })
-      .catch(() => {})
-      .finally(() => { alive = false; });
+    apiRequest("/marketplace/status", "GET").then((res) => { if (alive) setMyStatus(res); }).catch(() => {}).finally(() => { alive = false; });
     return () => { alive = false; };
   }, [isLoggedIn, workspaceId]);
 
-  // fetch profile views once we know the listing is published
   useEffect(() => {
     if (!isLoggedIn || !myStatus?.is_published) return;
     let alive = true;
     setViewsLoading(true);
-    apiRequest("/marketplace/my/views", "GET")
-      .then((res) => { if (alive) setProfileViews(res); })
-      .catch(() => {})
-      .finally(() => { if (alive) setViewsLoading(false); alive = false; });
+    apiRequest("/marketplace/my/views", "GET").then((res) => { if (alive) setProfileViews(res); }).catch(() => {}).finally(() => { if (alive) setViewsLoading(false); alive = false; });
     return () => { alive = false; };
   }, [isLoggedIn, myStatus?.is_published]);
 
-  function clearFilters() {
-    setFilterIndustry(""); setFilterType(""); setSearch(""); setPage(1);
-  }
+  // Derive all products from listings
+  const allProducts = useMemo(() => {
+    const products = [];
+    for (const listing of listings) {
+      for (const service of (listing.services || [])) {
+        if (!service.service_name) continue;
+        const matchesSearch = !debouncedSearch ||
+          service.service_name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+          (service.service_description || "").toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+          listing.company_name.toLowerCase().includes(debouncedSearch.toLowerCase());
+        const matchesCategory = !filterCategory ||
+          (service.service_category || "").toLowerCase().includes(filterCategory.toLowerCase());
+        if (matchesSearch && matchesCategory) {
+          products.push({ service, listing, _key: `${listing.workspace_id}-${service.service_name}` });
+        }
+      }
+    }
+    return products;
+  }, [listings, debouncedSearch, filterCategory]);
 
-  function clearSearch() {
-    setSearch(""); setPage(1);
-  }
-
-  function clearChipFilters() {
-    setFilterIndustry(""); setFilterType(""); setPage(1);
-  }
+  function clearFilters() { setFilterIndustry(""); setFilterType(""); setFilterCategory(""); setSearch(""); setPage(1); }
+  const hasFilters = filterIndustry || filterType || filterCategory || debouncedSearch;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
 
   function handleListMyBusiness() {
     if (!isLoggedIn) { setGateAction("publish"); return; }
-    if (myStatus?.is_published) {
-      togglePublish(false);
-    } else {
-      togglePublish(true);
-    }
+    togglePublish(!myStatus?.is_published);
   }
 
   async function togglePublish(publish) {
@@ -896,9 +1185,6 @@ export default function MarketplacePage() {
       alert(e instanceof Error ? e.message : "Failed to update listing.");
     }
   }
-
-  const hasFilters = filterIndustry || filterType || debouncedSearch;
-  const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
     <div className="ea-scroll flex h-screen flex-col overflow-y-auto bg-slate-50 dark:bg-slate-950">
@@ -944,28 +1230,46 @@ export default function MarketplacePage() {
       </header>
 
       {/* Hero */}
-      <div className="bg-gradient-to-br from-brand-600 via-brand-700 to-accent-700 px-4 py-12 text-center sm:py-16">
-        <h1 className="text-2xl font-extrabold text-white sm:text-3xl lg:whitespace-nowrap lg:text-3xl xl:text-4xl">
+      <div className="bg-gradient-to-br from-brand-600 via-brand-700 to-accent-700 px-4 pb-0 pt-10 text-center sm:pt-14">
+        <h1 className="text-2xl font-extrabold text-white sm:text-3xl lg:text-3xl xl:text-4xl">
           Discover Businesses. Promote Yours. Get Seen.
         </h1>
         <div className="mx-auto max-w-2xl">
-          <p className="mt-3 text-base text-white/70">
-            A marketplace built to help businesses get discovered, manage automated RFQ workflows, and generate business plans or proposals in one click.
+          <p className="mt-3 text-sm text-white/70">
+            A marketplace built to help businesses get discovered, manage automated RFQ workflows, and generate proposals in one click.
           </p>
-          {/* Hero search */}
           <div className="relative mt-6">
             <svg className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
             </svg>
-            <input type="text" placeholder="Search by name, service, or location…" value={search} onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-2xl border-0 bg-white py-3.5 pl-11 pr-4 text-sm text-slate-800 shadow-xl outline-none ring-0 placeholder:text-slate-400 focus:ring-2 focus:ring-white/50 dark:bg-slate-900 dark:text-slate-100" />
+            <input type="text" placeholder={activeTab === "products" ? "Search products or services…" : "Search by name, service, or location…"}
+              value={search} onChange={(e) => setSearch(e.target.value)}
+              className="w-full rounded-2xl border-0 bg-white py-3.5 pl-11 pr-4 text-sm text-slate-800 shadow-xl outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-white/50 dark:bg-slate-900 dark:text-slate-100" />
+          </div>
+        </div>
+
+        {/* Tab bar inside hero */}
+        <div className="mt-8 flex justify-center">
+          <div className="inline-flex rounded-t-2xl bg-white/10 backdrop-blur-sm overflow-hidden">
+            {[
+              { id: "products", label: "Products & Services", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" /><line x1="3" y1="6" x2="21" y2="6" /><path d="M16 10a4 4 0 0 1-8 0" /></svg> },
+              { id: "profiles", label: "Profiles", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg> },
+            ].map((t) => (
+              <button key={t.id} onClick={() => { setActiveTab(t.id); setFilterCategory(""); setFilterIndustry(""); setFilterType(""); }}
+                className={`flex items-center gap-2 px-5 py-3 text-[13px] font-semibold transition ${activeTab === t.id
+                  ? "bg-white text-brand-700 dark:bg-slate-900 dark:text-brand-400"
+                  : "text-white/70 hover:text-white hover:bg-white/10"}`}>
+                {t.icon}
+                {t.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
       {/* Main content */}
       <div className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
-        {/* Logged-in "publish" banner */}
+        {/* Publish banner */}
         {isLoggedIn && myStatus && !myStatus.is_published && (
           <div className="mb-5 flex items-center justify-between gap-4 rounded-2xl border border-brand-200 bg-gradient-to-r from-brand-50 to-accent-50 px-5 py-4 dark:border-brand-800 dark:from-brand-900/20 dark:to-accent-900/20">
             <div className="flex items-center gap-3">
@@ -987,41 +1291,43 @@ export default function MarketplacePage() {
         )}
 
         {/* Filter bar */}
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="flex gap-2 flex-1 flex-wrap items-center">
-            <button onClick={() => setShowFilters((p) => !p)}
-              className={`inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] font-medium transition ${hasFilters
-                ? "border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-900/30 dark:text-brand-300"
-                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="21" y1="4" x2="14" y2="4" /><line x1="10" y1="4" x2="3" y2="4" />
-                <line x1="21" y1="12" x2="12" y2="12" /><line x1="8" y1="12" x2="3" y2="12" />
-                <line x1="21" y1="20" x2="16" y2="20" /><line x1="12" y1="20" x2="3" y2="20" />
-                <line x1="14" y1="2" x2="14" y2="6" /><line x1="8" y1="10" x2="8" y2="14" /><line x1="16" y1="18" x2="16" y2="22" />
-              </svg>
-              Filters
-              {[filterIndustry, filterType].filter(Boolean).length > 0 && (
-                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-brand-500 text-[9px] font-bold text-white">
-                  {[filterIndustry, filterType].filter(Boolean).length}
-                </span>
-              )}
-            </button>
-            {(debouncedSearch && !filterIndustry && !filterType) && (
-              <button onClick={clearSearch} className="text-[12px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition">Clear search</button>
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          <button onClick={() => setShowFilters((p) => !p)}
+            className={`inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] font-medium transition ${hasFilters
+              ? "border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-900/30 dark:text-brand-300"
+              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="21" y1="4" x2="14" y2="4" /><line x1="10" y1="4" x2="3" y2="4" />
+              <line x1="21" y1="12" x2="12" y2="12" /><line x1="8" y1="12" x2="3" y2="12" />
+              <line x1="21" y1="20" x2="16" y2="20" /><line x1="12" y1="20" x2="3" y2="20" />
+              <line x1="14" y1="2" x2="14" y2="6" /><line x1="8" y1="10" x2="8" y2="14" /><line x1="16" y1="18" x2="16" y2="22" />
+            </svg>
+            Filters
+            {[filterIndustry, filterType, filterCategory].filter(Boolean).length > 0 && (
+              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-brand-500 text-[9px] font-bold text-white">
+                {[filterIndustry, filterType, filterCategory].filter(Boolean).length}
+              </span>
             )}
-            {((filterIndustry || filterType) && !debouncedSearch) && (
-              <button onClick={clearChipFilters} className="text-[12px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition">Clear filters</button>
-            )}
-            {(debouncedSearch && (filterIndustry || filterType)) && (
-              <button onClick={clearFilters} className="text-[12px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition">Clear all</button>
-            )}
-          </div>
+          </button>
+          {hasFilters && (
+            <button onClick={clearFilters} className="text-[12px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition">Clear all</button>
+          )}
+          {activeTab === "products" && (
+            <span className="ml-auto text-[12px] text-slate-400 dark:text-slate-500">
+              {allProducts.length} product{allProducts.length !== 1 ? "s" : ""}
+            </span>
+          )}
+          {activeTab === "profiles" && !loading && (
+            <span className="ml-auto text-[12px] text-slate-400 dark:text-slate-500">
+              {total} business{total !== 1 ? "es" : ""}
+            </span>
+          )}
         </div>
 
         {/* Filter panel */}
         {showFilters && (
           <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Industry</div>
                 <div className="flex flex-wrap gap-1.5">
@@ -1040,105 +1346,150 @@ export default function MarketplacePage() {
                   ))}
                 </div>
               </div>
+              {activeTab === "products" && (
+                <div>
+                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Category</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SERVICE_CATEGORIES.map((c) => (
+                      <FilterChip key={c} label={fmt(c)} active={filterCategory === c}
+                        onClick={() => setFilterCategory(filterCategory === c ? "" : c)} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* Results */}
+        {/* Content */}
         {error ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">{error}</div>
         ) : loading ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4">
-            <Spinner size="md" />
+            <Spinner size={24} />
             <p className="text-sm text-slate-500 dark:text-slate-400">Loading marketplace…</p>
           </div>
-        ) : listings.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800">
-              <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9M12 3v6" />
-              </svg>
+        ) : activeTab === "products" ? (
+          /* ── Products tab ── */
+          allProducts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800">
+                <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" /><line x1="3" y1="6" x2="21" y2="6" /><path d="M16 10a4 4 0 0 1-8 0" />
+                </svg>
+              </div>
+              <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">
+                {hasFilters ? "No products match your search" : "No products listed yet"}
+              </h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                {hasFilters ? "Try adjusting your search or filters." : "Businesses with services will appear here."}
+              </p>
+              {hasFilters && <button onClick={clearFilters} className="mt-4 text-[13px] font-semibold text-brand-600 hover:underline dark:text-brand-400">Clear filters</button>}
             </div>
-            <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">
-              {hasFilters ? "No businesses match your filters" : "No businesses listed yet"}
-            </h3>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              {hasFilters ? "Try adjusting your search or filters." : "Be the first to list your business!"}
-            </p>
-            {hasFilters ? (
-              <button onClick={clearFilters} className="mt-4 text-[13px] font-semibold text-brand-600 hover:underline dark:text-brand-400">Clear filters</button>
-            ) : !isLoggedIn ? (
-              <button onClick={() => setGateAction("publish")} className="mt-4 rounded-xl bg-brand-600 px-5 py-2 text-[13px] font-bold text-white hover:bg-brand-700 transition">
-                List Your Business →
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          <>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {listings.map((l) => {
-                const isOwn = isLoggedIn && myStatus?.is_published && l.workspace_id === (myStatus?.workspace_id || workspaceId);
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {allProducts.map((product) => {
+                const isOwn = isLoggedIn && (myStatus?.workspace_id || workspaceId) === product.listing.workspace_id;
                 return (
-                  <BusinessCard
-                    key={l.workspace_id}
-                    listing={l}
-                    onClick={setSelected}
+                  <ProductCard
+                    key={product._key}
+                    product={product}
+                    onOpen={setServiceDetail}
+                    onRequestQuote={(listing) => isLoggedIn ? setRfqTarget(listing) : setGateAction("publish")}
                     isOwn={isOwn}
-                    viewCount={isOwn ? profileViews?.total : null}
-                    onViewsClick={() => setShowViews(true)}
                   />
                 );
               })}
             </div>
-            {totalPages > 1 && (
-              <div className="mt-8 flex items-center justify-center gap-2">
-                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
-                </button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1)
-                  .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 2)
-                  .reduce((acc, p, i, arr) => { if (i > 0 && p - arr[i - 1] > 1) acc.push("..."); acc.push(p); return acc; }, [])
-                  .map((p, i) => p === "..." ? (
-                    <span key={`e${i}`} className="px-1 text-slate-400">…</span>
-                  ) : (
-                    <button key={p} onClick={() => setPage(p)}
-                      className={`flex h-9 w-9 items-center justify-center rounded-xl border text-[13px] font-medium transition ${p === page ? "border-brand-500 bg-brand-500 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
-                      {p}
-                    </button>
-                  ))}
-                <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
-                </button>
+          )
+        ) : (
+          /* ── Profiles tab ── */
+          listings.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800">
+                <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9M12 3v6" />
+                </svg>
               </div>
-            )}
-          </>
+              <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">
+                {hasFilters ? "No businesses match your filters" : "No businesses listed yet"}
+              </h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                {hasFilters ? "Try adjusting your search or filters." : "Be the first to list your business!"}
+              </p>
+              {hasFilters ? (
+                <button onClick={clearFilters} className="mt-4 text-[13px] font-semibold text-brand-600 hover:underline dark:text-brand-400">Clear filters</button>
+              ) : !isLoggedIn ? (
+                <button onClick={() => setGateAction("publish")} className="mt-4 rounded-xl bg-brand-600 px-5 py-2 text-[13px] font-bold text-white hover:bg-brand-700 transition">
+                  List Your Business →
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {listings.map((l) => {
+                  const isOwn = isLoggedIn && myStatus?.is_published && l.workspace_id === (myStatus?.workspace_id || workspaceId);
+                  return (
+                    <BusinessCard key={l.workspace_id} listing={l} onClick={setSelected} isOwn={isOwn}
+                      viewCount={isOwn ? profileViews?.total : null} onViewsClick={() => setShowViews(true)} />
+                  );
+                })}
+              </div>
+              {totalPages > 1 && (
+                <div className="mt-8 flex items-center justify-center gap-2">
+                  <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 2)
+                    .reduce((acc, p, i, arr) => { if (i > 0 && p - arr[i - 1] > 1) acc.push("..."); acc.push(p); return acc; }, [])
+                    .map((p, i) => p === "..." ? (
+                      <span key={`e${i}`} className="px-1 text-slate-400">…</span>
+                    ) : (
+                      <button key={p} onClick={() => setPage(p)}
+                        className={`flex h-9 w-9 items-center justify-center rounded-xl border text-[13px] font-medium transition ${p === page ? "border-brand-500 bg-brand-500 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
+                        {p}
+                      </button>
+                    ))}
+                  <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
+                  </button>
+                </div>
+              )}
+            </>
+          )
         )}
 
         {/* Footer CTA */}
-        {!isLoggedIn && listings.length > 0 && (
+        {!isLoggedIn && !loading && (listings.length > 0 || allProducts.length > 0) && (
           <div className="mt-12 rounded-3xl bg-gradient-to-br from-brand-600 to-accent-700 p-8 text-center">
             <h2 className="text-2xl font-extrabold text-white">Is your business here?</h2>
             <p className="mt-2 text-white/70">Validate your idea on EnterprateAI and list your business for free.</p>
             <button onClick={() => setGateAction("publish")} className="mt-5 inline-block rounded-xl bg-white px-6 py-3 text-[13px] font-bold text-brand-700 transition hover:bg-brand-50">
-              Get Started — It's Free
+              Get Started. It's Free
             </button>
           </div>
         )}
       </div>
 
       {/* Modals */}
-      {selected && !rfqTarget && (
-        <BusinessProfileModal
-          listing={selected}
-          onClose={() => setSelected(null)}
-          isLoggedIn={isLoggedIn}
+      {serviceDetail && (
+        <ServiceDetailModal
+          product={serviceDetail}
+          onClose={() => setServiceDetail(null)}
+          onRequestQuote={(listing) => { setServiceDetail(null); isLoggedIn ? setRfqTarget(listing) : setGateAction("publish"); }}
+          isOwnListing={isLoggedIn && (myStatus?.workspace_id || workspaceId) === serviceDetail.listing.workspace_id}
           userEmail={userEmail}
-          ownWorkspaceId={myStatus?.workspace_id || workspaceId}
-          onNeedAuth={(action) => { setSelected(null); setGateAction(action); }}
-          onRequestQuote={(listing) => setRfqTarget(listing)}
         />
+      )}
+      {selected && !rfqTarget && (
+        <BusinessProfileModal listing={selected} onClose={() => setSelected(null)} isLoggedIn={isLoggedIn}
+          userEmail={userEmail} ownWorkspaceId={myStatus?.workspace_id || workspaceId}
+          onNeedAuth={(action) => { setSelected(null); setGateAction(action); }}
+          onRequestQuote={(listing) => setRfqTarget(listing)} />
       )}
       {rfqTarget && <RFQModal listing={rfqTarget} onClose={() => setRfqTarget(null)} />}
       {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}
@@ -1151,7 +1502,7 @@ export default function MarketplacePage() {
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-[14px] font-semibold text-slate-800 dark:text-slate-200">Who viewed your profile</h3>
               <button type="button" onClick={() => setShowViews(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12" /></svg>
               </button>
             </div>
             {viewsLoading ? (
@@ -1182,7 +1533,7 @@ export default function MarketplacePage() {
                 })}
               </div>
             ) : (
-              <p className="text-[13px] italic text-slate-400 dark:text-slate-500">No profile views yet. Views will appear here as people discover your listing.</p>
+              <p className="text-[13px] italic text-slate-400 dark:text-slate-500">No profile views yet.</p>
             )}
           </div>
         </div>

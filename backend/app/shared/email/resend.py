@@ -210,7 +210,7 @@ async def send_password_otp_email(
         f"font-size:32px;font-weight:800;letter-spacing:8px;color:#0f172a;\">{escape(otp_code)}</span>"
         f"</div>"
         f"<p style=\"color:#475569;font-size:13px;\">This code expires in <strong>10 minutes</strong>. "
-        f"If you did not request this, ignore this email — your password will not change.</p>"
+        f"If you did not request this, ignore this email. Your password will not change.</p>"
         + _FOOTER_HTML
         + "</div>"
     )

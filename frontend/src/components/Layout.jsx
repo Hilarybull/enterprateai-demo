@@ -539,7 +539,17 @@ export default function Layout() {
         setWorkspaceCompanyName(ws?.data?.workspace_profile?.company_name || null);
         setWorkspaceLoadedAt(new Date().toISOString());
         const rfqList = ws?.data?.financials?.rfq_requests;
-        if (Array.isArray(rfqList)) setNotifications(rfqList.filter((r) => r.status === "pending"));
+        const pendingRfqs = Array.isArray(rfqList)
+          ? rfqList.filter((r) => r.status === "pending").map((r) => ({ ...r, _notifType: "rfq" }))
+          : [];
+        const invoiceList = ws?.data?.financials?.invoices;
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const overdueInvoices = Array.isArray(invoiceList)
+          ? invoiceList
+              .filter((i) => i.due_date && String(i.status || "").toLowerCase() !== "paid" && new Date(i.due_date) < today)
+              .map((i) => ({ ...i, _notifType: "overdue" }))
+          : [];
+        setNotifications([...overdueInvoices, ...pendingRfqs]);
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
         else setDecisionStatus(null);
@@ -604,8 +614,10 @@ export default function Layout() {
     }
 
     loadWorkspace();
+    window.addEventListener("ea:workspace:refresh", loadWorkspace);
     return () => {
       cancelled = true;
+      window.removeEventListener("ea:workspace:refresh", loadWorkspace);
     };
   }, [token, setCurrency, setDecisionStatus, setDraftIdeaValidation, setDraftServiceIdea, setIdeaValidation, setInputs, setServiceDecisionStatus, setValidation, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, setWorkspaceLoadedAt, setMemberMode, clearMemberMode]);
 
@@ -1056,35 +1068,67 @@ export default function Layout() {
                   )}
                 </button>
                 {notifOpen && (
-                  <div className="absolute right-0 top-11 z-30 w-72 rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                  <div className="absolute right-0 top-11 z-30 w-80 rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
                     <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
                       <span className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">Notifications</span>
                       {notifications.length > 0 && (
-                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-600 dark:bg-rose-900/30 dark:text-rose-400">
-                          {notifications.length} pending
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setNotifications([])}
+                          className="text-[10px] font-semibold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
+                        >
+                          Clear all
+                        </button>
                       )}
                     </div>
                     <div className="max-h-80 overflow-auto">
                       {notifications.length ? (
-                        notifications.map((rfq) => (
-                          <button
-                            key={rfq.id}
-                            type="button"
-                            className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
-                            onClick={() => { setNotifOpen(false); navigate("/financials"); }}
-                          >
-                            <div className="flex w-full items-center justify-between gap-2">
-                              <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{rfq.customer_name}</span>
-                              <span className="shrink-0 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600 dark:bg-sky-900/30 dark:text-sky-400">RFQ</span>
-                            </div>
-                            <span className="text-[11px] text-slate-500 dark:text-slate-400">{rfq.customer_email}</span>
-                            {rfq.items?.length > 0 && (
-                              <span className="text-[10px] text-slate-400">{rfq.items.map((i) => i.name).join(", ")}</span>
-                            )}
-                            <span className="text-[10px] text-slate-400">{rfq.created_at ? new Date(rfq.created_at).toLocaleDateString() : ""}</span>
-                          </button>
-                        ))
+                        notifications.map((notif) => {
+                          const destination = notif._notifType === "overdue"
+                            ? `/financials?tab=invoices`
+                            : `/financials?tab=quotations`;
+                          return (
+                            <button
+                              key={`${notif._notifType}-${notif.id}`}
+                              type="button"
+                              className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+                              onClick={() => {
+                                setNotifications((prev) => prev.filter((n) => !(n._notifType === notif._notifType && n.id === notif.id)));
+                                setNotifOpen(false);
+                                navigate(destination);
+                              }}
+                            >
+                              {notif._notifType === "overdue" ? (
+                                <>
+                                  <div className="flex w-full items-center justify-between gap-2">
+                                    <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{notif.customer_name || "Invoice"}</span>
+                                    <span className="shrink-0 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:bg-rose-900/30 dark:text-rose-400">Overdue</span>
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    Invoice overdue since {new Date(notif.due_date).toLocaleDateString()}
+                                  </span>
+                                  {notif.total_amount != null && (
+                                    <span className="text-[10px] text-slate-400">
+                                      {notif.currency || ""}{Number(notif.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  <div className="flex w-full items-center justify-between gap-2">
+                                    <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{notif.customer_name}</span>
+                                    <span className="shrink-0 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600 dark:bg-sky-900/30 dark:text-sky-400">RFQ</span>
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400">{notif.customer_email}</span>
+                                  {notif.items?.length > 0 && (
+                                    <span className="text-[10px] text-slate-400">{notif.items.map((i) => i.name).join(", ")}</span>
+                                  )}
+                                  <span className="text-[10px] text-slate-400">{notif.created_at ? new Date(notif.created_at).toLocaleDateString() : ""}</span>
+                                </>
+                              )}
+                            </button>
+                          );
+                        })
                       ) : (
                         <div className="px-4 py-6 text-center text-[12px] text-slate-500 dark:text-slate-400">No new notifications</div>
                       )}

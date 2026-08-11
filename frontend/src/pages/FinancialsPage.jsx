@@ -508,31 +508,42 @@ export default function FinancialsPage() {
     const paidExps = activeExpenses.filter((e) => String(e.status || "").toLowerCase() === "paid");
     const today = new Date();
     const overdueInvCount = deliveredInvs.filter((i) => i.due_date && new Date(i.due_date) < today).length;
-    // Revenue = grand total from paid + delivered (accrual: earned when service delivered)
-    const earnedInvs = [...revenueInvs, ...deliveredInvs];
-    const totalRevenue = earnedInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
-    const paidCoS = revenueInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
-    // Receivables = delivered invoices only (subset of revenue, not yet collected)
-    const pendingRec = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
-    const pendingPay = unpaidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-    const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-    // Cash = total received (paid invoices grand total) minus total paid out (expenses)
-    const paidRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
-    const cashBalance = paidRevenue - paidExpTotal;
-    // MRR = most recent month's grand total from paid + delivered invoices
-    function mostRecentMonthRev(items) {
-      const byMonth = new Map();
-      items.forEach((i) => {
-        const d = new Date(i.paid_at || i.issued_at || i.created_at || i.updated_at || "");
-        if (!Number.isFinite(d.getTime())) return;
-        const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, "0")}`;
-        byMonth.set(key, (byMonth.get(key) || 0) + Number(i.total_amount || i.subtotal_amount || 0));
-      });
-      if (!byMonth.size) return 0;
-      const latestKey = [...byMonth.keys()].sort().at(-1);
-      return byMonth.get(latestKey) || 0;
+
+    // Helper: amount actually received for an invoice (partial payments use paid_amount)
+    function receivedAmt(i) {
+      return (i.payment_type === "partial" && i.paid_amount != null)
+        ? Number(i.paid_amount)
+        : Number(i.total_amount || i.subtotal_amount || 0);
     }
-    const monthlyRev = earnedInvs.length ? mostRecentMonthRev(earnedInvs) : 0;
+
+    // Cash = sum of amounts actually received minus paid-out expenses
+    const paidRevenue = revenueInvs.reduce((s, i) => s + receivedAmt(i), 0);
+    const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+    const cashBalance = paidRevenue - paidExpTotal;
+
+    // Receivables = delivered invoices (full amount) + remaining balance on partial-paid invoices
+    const partialInvs = revenueInvs.filter((i) => i.payment_type === "partial" && i.paid_amount != null);
+    const pendingRec = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0)
+      + partialInvs.reduce((s, i) => s + Math.max(0, Number(i.total_amount || 0) - Number(i.paid_amount)), 0);
+
+    const pendingPay = unpaidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+
+    // Revenue (accrual) = amounts earned (paid invoices use received amount; delivered use full amount)
+    const totalRevenue = revenueInvs.reduce((s, i) => s + receivedAmt(i), 0)
+      + deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+
+    // MRR = current calendar month's received revenue only; zero if nothing received this month
+    function currentMonthRev(items) {
+      const now = new Date();
+      const curKey = `${now.getFullYear()}-${String(now.getMonth()).padStart(2, "0")}`;
+      return items.reduce((s, i) => {
+        const d = new Date(i.paid_at || i.issued_at || i.created_at || i.updated_at || "");
+        if (!Number.isFinite(d.getTime())) return s;
+        const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, "0")}`;
+        return key === curKey ? s + receivedAmt(i) : s;
+      }, 0);
+    }
+    const monthlyRev = currentMonthRev(revenueInvs);
     const arr = Number((monthlyRev * 12).toFixed(2));
     return { totalRevenue, pendingRec, pendingPay, monthlyRev, overdueInvCount, cashBalance, arr };
   }, [activeInvoices, activeExpenses]);
@@ -600,7 +611,7 @@ export default function FinancialsPage() {
       case "invoices-paid":
         return activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid");
       case "invoices-unpaid":
-        return activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid");
+        return activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" || (String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial"));
       case "invoices-overdue":
         return activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid" && i.due_date && new Date(i.due_date) < new Date());
       case "invoices-pending":
@@ -2236,7 +2247,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             { label: "Annual Recurring Revenue", value: formatMoney(overviewKpis.arr), sub: "annualised from current revenue", tone: "slate", type: "invoices-paid", wide: true, items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
             { label: "Monthly run rate", value: formatMoney(overviewKpis.monthlyRev), sub: "from paid invoices", tone: "emerald", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
             { label: "Cash", value: formatMoney(overviewKpis.cashBalance), sub: "paid in − paid out", tone: overviewKpis.cashBalance >= 0 ? "emerald" : "rose", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
-            { label: "Receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${invoicePendingCount} delivered invoice${invoicePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate", type: "invoices-unpaid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered") },
+            { label: "Receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered").length} delivered · ${activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial").length} partial`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate", type: "invoices-unpaid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" || (String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial")) },
             { label: "Pending payables", value: formatMoney(overviewKpis.pendingPay), sub: `${expensePendingCount} unpaid expense${expensePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingPay > 0 ? "rose" : "slate", type: "expenses-unpaid", items: activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid") },
             { label: "Overdue invoices", value: overviewKpis.overdueInvCount, sub: overviewKpis.overdueInvCount > 0 ? "require immediate action" : "all within terms", tone: overviewKpis.overdueInvCount > 0 ? "rose" : "emerald", type: "invoices-overdue", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" && i.due_date && new Date(i.due_date) < new Date()) },
           ].map((kpi) => {
@@ -2293,17 +2304,28 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     : item.issued_at
                       ? new Date(item.issued_at).toLocaleDateString()
                       : "";
-                  const amount = Number(item.total_amount || item.price || item.subtotal_amount || 0);
+                  const isPartialInv = !isExp && !isContract && !isQuote && item.status === "paid" && item.payment_type === "partial" && item.paid_amount != null;
+                  const isReceivablesDrill = overviewDrill.type === "invoices-unpaid";
+                  const amount = isPartialInv
+                    ? isReceivablesDrill
+                      ? Math.max(0, Number(item.total_amount || 0) - Number(item.paid_amount))
+                      : Number(item.paid_amount)
+                    : Number(item.total_amount || item.price || item.subtotal_amount || 0);
+                  const partialSub = isPartialInv
+                    ? isReceivablesDrill
+                      ? `${formatMoney(item.paid_amount)} paid`
+                      : `${formatMoney(Math.max(0, Number(item.total_amount || 0) - Number(item.paid_amount)))} remaining`
+                    : null;
                   return (
                     <div key={item.id} className="flex items-center justify-between gap-4 py-2.5">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-medium text-slate-800">{name}</div>
-                        <div className="text-[11px] text-slate-400">{[detail, date].filter(Boolean).join(" · ")}</div>
+                        <div className="text-[11px] text-slate-400">{[detail, date, partialSub].filter(Boolean).join(" · ")}</div>
                       </div>
                       <div className="shrink-0 flex flex-col items-end gap-0.5">
                         <span className="text-sm font-semibold text-slate-800">{formatMoney(amount)}</span>
-                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${item.status === "paid" || item.status === "signed" ? "bg-emerald-50 text-emerald-700" : item.status === "delivered" ? "bg-blue-50 text-blue-700" : item.status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
-                          {item.status || "—"}
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${isPartialInv ? "bg-violet-50 text-violet-700" : item.status === "paid" || item.status === "signed" ? "bg-emerald-50 text-emerald-700" : item.status === "delivered" ? "bg-blue-50 text-blue-700" : item.status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
+                          {isPartialInv ? "partial" : item.status || "—"}
                         </span>
                       </div>
                     </div>
@@ -2770,8 +2792,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                               <div className="truncate text-sm font-semibold text-slate-900">
                                 {customer?.name || "Customer"} · {summariseProductNames(inv)}
                               </div>
-                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "delivered" ? "bg-blue-50 text-blue-700" : inv.status === "draft" || inv.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
-                                {inv.status || "pending"}
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" && inv.payment_type === "partial" ? "bg-violet-50 text-violet-700" : inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "delivered" ? "bg-blue-50 text-blue-700" : inv.status === "draft" || inv.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
+                                {inv.status === "paid" && inv.payment_type === "partial" ? "partial" : inv.status || "pending"}
                               </span>
                               {sourceBadge(inv)}
                             </div>
@@ -4809,8 +4831,6 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <div className="text-right">
                   <div className="text-xs text-slate-500">Invoice ID</div>
                   <div className="text-sm font-semibold text-slate-900">{previewInvoice.invoice_id || `INV-${previewInvoice.id.substring(0, 8).toUpperCase()}`}</div>
-                  <div className="mt-2 text-xs text-slate-500">Status</div>
-                  <div className="text-sm font-semibold text-slate-900">{previewInvoice.status}</div>
                 </div>
               </div>
 

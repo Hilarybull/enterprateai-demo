@@ -33,7 +33,7 @@ _FOOTER_HTML = (
     "<div style=\"margin-top:32px;padding-top:16px;border-top:1px solid #e2e8f0;"
     "font-size:11px;color:#94a3b8;line-height:1.5;\">"
     "You received this email because an action was requested for your EnterprateAI account.<br/>"
-    "EnterprateAI &mdash; Business AI Platform<br/>"
+    "EnterprateAI, Business AI Platform<br/>"
     "If you did not request this, you can safely ignore this email."
     "</div>"
 )
@@ -41,7 +41,7 @@ _FOOTER_HTML = (
 _FOOTER_TEXT = (
     "\n\n---\n"
     "You received this email because an action was requested for your EnterprateAI account.\n"
-    "EnterprateAI — Business AI Platform\n"
+    "EnterprateAI, Business AI Platform\n"
     "If you did not request this, you can safely ignore this email."
 )
 

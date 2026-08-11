@@ -252,7 +252,9 @@ export default function CataloguePage() {
   }
 
   function coercePaymentTerms(value) {
-    const num = parseInt(String(value || "").trim(), 10);
+    const str = String(value || "").trim();
+    if (str.toLowerCase() === "immediate") return "Immediate";
+    const num = parseInt(str, 10);
     if (!Number.isFinite(num) || num <= 0) return "14";
     return String(num);
   }

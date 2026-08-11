@@ -67,6 +67,7 @@ class RatingSubmitRequest(BaseModel):
     rating: int
     review: str | None = None
     rater_email: str
+    service_name: str = ""
 
 
 class RatingResponse(BaseModel):

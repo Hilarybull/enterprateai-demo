@@ -91,9 +91,10 @@ async def unpublish_from_marketplace(
 @router.get("/ratings/{workspace_id}", response_model=RatingResponse)
 async def get_listing_ratings(
     workspace_id: str,
+    service_name: str = Query(default=""),
     user=Depends(get_optional_user),
 ):
-    return await get_ratings(workspace_id=workspace_id, user_id=user["id"] if user else None)
+    return await get_ratings(workspace_id=workspace_id, user_id=user["id"] if user else None, service_name=service_name)
 
 
 @router.post("/ratings/{workspace_id}", response_model=RatingResponse)
@@ -108,15 +109,17 @@ async def rate_listing(
         rating=payload.rating,
         review=payload.review,
         rater_email=payload.rater_email,
+        service_name=payload.service_name,
     )
 
 
 @router.delete("/ratings/{workspace_id}", response_model=RatingResponse)
 async def remove_rating(
     workspace_id: str,
+    service_name: str = Query(default=""),
     user=Depends(get_current_user),
 ):
-    return await delete_rating(workspace_id=workspace_id, user_id=user["id"])
+    return await delete_rating(workspace_id=workspace_id, user_id=user["id"], service_name=service_name)
 
 
 # ─── RFQ endpoints ────────────────────────────────────────────────────────────

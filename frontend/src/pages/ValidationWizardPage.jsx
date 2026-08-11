@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
+import { ToastContainer } from "../components/Toast";
 import Input from "../components/Input";
 import SectionCard from "../components/SectionCard";
 import Spinner from "../components/Spinner";
@@ -414,6 +415,26 @@ export default function ValidationWizardPage() {
   const [creditModal, setCreditModal] = useState(null);
   const [isPrefilling, setIsPrefilling] = useState(false);
   const [savedNotice, setSavedNotice] = useState(null);
+  const [toasts, setToasts] = useState([]);
+
+  const dismissToast = useCallback((id) => setToasts((t) => t.filter((x) => x.id !== id)), []);
+  const addToast = useCallback((message, kind = "info") => {
+    const id = `${Date.now()}-${Math.random()}`;
+    setToasts((t) => [...t, { id, message, kind }]);
+  }, []);
+
+  // Bridge: convert error / savedNotice state to branded toasts
+  useEffect(() => {
+    if (!error) return;
+    addToast(error, "error");
+    setError(null);
+  }, [error, addToast]);
+
+  useEffect(() => {
+    if (!savedNotice) return;
+    addToast(savedNotice, "success");
+    setSavedNotice(null);
+  }, [savedNotice, addToast]);
   const [existingCatalogue, setExistingCatalogue] = useState({ products: [], customers: [], vendors: [] });
   const [savedServiceIdeas, setSavedServiceIdeas] = useState([]);
   const [validationHistory, setValidationHistory] = useState([]);
@@ -3044,16 +3065,6 @@ export default function ValidationWizardPage() {
             </SectionCard>
           ) : null}
 
-          {error ? (
-            <div className="mb-4">
-              <InlineAlert kind="error" message={error} />
-            </div>
-          ) : null}
-          {savedNotice ? (
-            <div className="mb-4">
-              <InlineAlert message={savedNotice} />
-            </div>
-          ) : null}
           {isRejectedReedit ? (
             <div className="mb-4 rounded-xl border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
               This validation was previously rejected. Modify the inputs and run again.
@@ -3808,7 +3819,7 @@ export default function ValidationWizardPage() {
                         <span className="text-xs font-semibold text-brand-600">{V4_STEP_TITLES[v4Step]}</span>
                         {v4Journey === "basic" ? (
                           <button type="button" onClick={() => canAccessComprehensive ? (setV4Journey("comprehensive"), setV4Step(v4Step)) : navigate("/pricing")} className="text-xs font-semibold text-violet-600 hover:text-violet-700">
-                            {canAccessComprehensive ? "Upgrade to Comprehensive" : "🔒 Comprehensive (Paid)"}
+                            {canAccessComprehensive ? "Switch to Comprehensive" : "🔒 Comprehensive (Paid)"}
                           </button>
                         ) : <span className="text-xs font-semibold text-violet-600">Comprehensive</span>}
                       </div>
@@ -4383,7 +4394,7 @@ export default function ValidationWizardPage() {
                               className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-semibold text-violet-700 hover:bg-violet-100 flex items-center gap-1.5"
                             >
                               {!canAccessComprehensive && <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>}
-                              {canAccessComprehensive ? "Upgrade to Comprehensive" : "Comprehensive (Paid)"}
+                              {canAccessComprehensive ? "Switch to Comprehensive" : "Comprehensive (Paid)"}
                             </button>
                           )}
                           <button
@@ -5883,11 +5894,6 @@ export default function ValidationWizardPage() {
                         </div>
                       </div>
 
-                      {error && (
-                        <div className="w-full">
-                          <InlineAlert kind="error" message={error} />
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -5915,6 +5921,7 @@ export default function ValidationWizardPage() {
             />
           ) : null
         }
+        <ToastContainer toasts={toasts} onClose={dismissToast} />
       </div>
     </div>
   );

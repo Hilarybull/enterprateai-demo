@@ -224,15 +224,16 @@ async def get_listing(*, workspace_id: str) -> dict:
     return item
 
 
-async def get_ratings(*, workspace_id: str, user_id: str | None = None, rater_email: str | None = None) -> dict:
+async def get_ratings(*, workspace_id: str, user_id: str | None = None, rater_email: str | None = None, service_name: str = "") -> dict:
     try:
+        filters: list = [("workspace_id", "eq", workspace_id), ("service_name", "eq", service_name)]
         ratings = await sb_select(
             "marketplace_ratings",
-            filters=[("workspace_id", "eq", workspace_id)],
-            columns="rating,review,user_id,rater_email",
+            filters=filters,
+            columns="rating,review,user_id,rater_email,service_name",
         )
     except Exception:
-        return {"workspace_id": workspace_id, "avg_rating": None, "rating_count": 0, "user_rating": None, "user_review": None}
+        return {"workspace_id": workspace_id, "avg_rating": None, "rating_count": 0, "user_rating": None, "user_review": None, "service_name": service_name}
     values = [r["rating"] for r in (ratings or [])]
     avg = round(sum(values) / len(values), 1) if values else None
     user_rating = None
@@ -251,10 +252,11 @@ async def get_ratings(*, workspace_id: str, user_id: str | None = None, rater_em
         "rating_count": len(values),
         "user_rating": user_rating,
         "user_review": user_review,
+        "service_name": service_name,
     }
 
 
-async def submit_rating(*, workspace_id: str, user_id: str | None, rating: int, review: str | None, rater_email: str) -> dict:
+async def submit_rating(*, workspace_id: str, user_id: str | None, rating: int, review: str | None, rater_email: str, service_name: str = "") -> dict:
     if not 1 <= rating <= 5:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rating must be between 1 and 5")
     email = rater_email.strip().lower()
@@ -278,9 +280,10 @@ async def submit_rating(*, workspace_id: str, user_id: str | None, rating: int, 
                 "rater_email": email,
                 "rating": rating,
                 "review": review,
+                "service_name": service_name,
                 "updated_at": now,
             },
-            on_conflict="workspace_id,rater_email",
+            on_conflict="workspace_id,rater_email,service_name",
         )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Ratings table not available. Run the migration first.") from e
@@ -300,16 +303,16 @@ async def submit_rating(*, workspace_id: str, user_id: str | None, rating: int, 
     except Exception:
         pass
 
-    return await get_ratings(workspace_id=workspace_id, rater_email=email)
+    return await get_ratings(workspace_id=workspace_id, rater_email=email, service_name=service_name)
 
 
-async def delete_rating(*, workspace_id: str, user_id: str) -> dict:
+async def delete_rating(*, workspace_id: str, user_id: str, service_name: str = "") -> dict:
     from app.core.supabase import sb_delete
     await sb_delete(
         "marketplace_ratings",
-        filters=[("workspace_id", "eq", workspace_id), ("user_id", "eq", user_id)],
+        filters=[("workspace_id", "eq", workspace_id), ("user_id", "eq", user_id), ("service_name", "eq", service_name)],
     )
-    return await get_ratings(workspace_id=workspace_id, user_id=user_id)
+    return await get_ratings(workspace_id=workspace_id, user_id=user_id, service_name=service_name)
 
 
 # ─── RFQ (Request for Quotation) ─────────────────────────────────────────────
