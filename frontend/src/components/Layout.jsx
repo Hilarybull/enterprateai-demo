@@ -22,7 +22,6 @@ const NAV = [
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
-  { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: null, public: true },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
   { to: "/referrals", label: "Referrals", subtitle: "Earn 5% per referral", icon: "share", moduleKey: null, public: true },
 ];

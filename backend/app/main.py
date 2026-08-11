@@ -37,7 +37,6 @@ from app.modules.plans.router import router as plans_router
 from app.modules.marketplace.router import router as marketplace_router
 from app.modules.support.router import router as support_router
 from app.modules.reports.router import router as reports_router
-from app.modules.integrations.router import router as integrations_router
 from app.modules.credits.router import router as credits_router
 from app.modules.referral.router import router as referral_router, click_router as referral_click_router
 from app.modules.blog.router import router as blog_router
@@ -112,7 +111,6 @@ def create_app() -> FastAPI:
     app.include_router(marketplace_router)
     app.include_router(support_router)
     app.include_router(reports_router)
-    app.include_router(integrations_router)
     app.include_router(credits_router)
     app.include_router(referral_router)
     app.include_router(referral_click_router)
