@@ -113,8 +113,11 @@ async def demo_login() -> TokenResponse:
     if not user or not verify_password(settings.demo_password, user.get("password_hash", "")):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Demo account unavailable")
     token = create_access_token(subject=user["id"])
-    # Ensure demo user has a pre-seeded workspace with sample data
-    await _ensure_demo_workspace(user["id"])
+    # Ensure demo user has a pre-seeded workspace with sample data (non-fatal)
+    try:
+        await _ensure_demo_workspace(user["id"])
+    except Exception as e:
+        logger.warning("Demo workspace seed failed (non-fatal): %s", e)
     return TokenResponse(access_token=token)
 
 
@@ -228,19 +231,22 @@ async def _ensure_demo_workspace(user_id: str) -> None:
         },
     }
 
-    now = datetime.now(timezone.utc).isoformat()
-    existing = await sb_select("workspaces", filters=[("user_id", "eq", user_id)], limit=1, single=True)
-    if existing:
-        await sb_update("workspaces", filters=[("id", "eq", existing["id"])], payload={"data": demo_data, "updated_at": now})
-    else:
-        await sb_insert("workspaces", {
-            "id": str(uuid4()),
-            "user_id": user_id,
-            "name": "Apex Consulting Ltd",
-            "data": demo_data,
-            "created_at": now,
-            "updated_at": now,
-        })
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        existing = await sb_select("workspaces", filters=[("user_id", "eq", user_id)], limit=1, single=True)
+        if existing:
+            await sb_update("workspaces", filters=[("id", "eq", existing["id"])], payload={"data": demo_data, "updated_at": now})
+        else:
+            await sb_insert("workspaces", {
+                "id": str(uuid4()),
+                "user_id": user_id,
+                "name": "Apex Consulting Ltd",
+                "data": demo_data,
+                "created_at": now,
+                "updated_at": now,
+            })
+    except Exception as e:
+        logger.warning("Demo workspace upsert failed: %s", e)
 
 
 @router.post("/google", response_model=TokenResponse)
