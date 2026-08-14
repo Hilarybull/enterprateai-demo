@@ -3,6 +3,22 @@ import { createPortal } from "react-dom";
 import { apiRequest } from "../api/client";
 
 const PROVIDER_INFO = {
+  stripe: {
+    label: "Stripe",
+    tagline: "Payments & Billing",
+    description: "Import products, customers, and invoices from your Stripe account using an API key.",
+    importSupported: true,
+    color: "#635BFF",
+    logo: (
+      <svg viewBox="0 0 44 44" className="h-11 w-11" fill="none">
+        <rect width="44" height="44" rx="12" fill="#635BFF" />
+        <path
+          d="M21.1 17.3c0-1 .8-1.4 2.1-1.4 1.9 0 4.3.6 6.1 1.6v-5.7A16.2 16.2 0 0 0 23.2 11c-5.1 0-8.5 2.7-8.5 7.1 0 6.9 9.5 5.8 9.5 8.8 0 1.2-1 1.6-2.4 1.6-2.1 0-4.7-.9-6.8-2v5.8a17.3 17.3 0 0 0 6.8 1.4c5.2 0 8.8-2.6 8.8-7.1-.1-7.5-9.5-6.1-9.5-9.3Z"
+          fill="white"
+        />
+      </svg>
+    ),
+  },
   quickbooks: {
     label: "QuickBooks",
     tagline: "Online Accounting",
@@ -88,6 +104,82 @@ const COMMON_CURRENCIES = [
   { code: "DKK", label: "DKK – Danish Krone" },
   { code: "NZD", label: "NZD – New Zealand Dollar" },
 ];
+
+function StripeImportModal({ onConfirm, onCancel }) {
+  const info = PROVIDER_INFO.stripe;
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onCancel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(2px)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+        <div className="h-1 w-full" style={{ background: info.color }} />
+        <div className="p-6">
+          <div className="flex items-center gap-3 mb-5">
+            {info.logo}
+            <div>
+              <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{info.label}</div>
+              <div className="text-[11px] text-slate-400">{info.tagline}</div>
+            </div>
+          </div>
+
+          <h2 className="text-[15px] font-bold text-slate-900 dark:text-slate-100 mb-1">How would you like to import?</h2>
+          <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-5">
+            Stripe records include currency information automatically — no extra setup needed.
+          </p>
+
+          <div className="flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={() => onConfirm("new_only")}
+              className="group flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+            >
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ background: info.color + "18" }}>
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke={info.color} strokeWidth="2">
+                  <path d="M10 4v12M4 10l6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">New records only</div>
+                <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">Skip anything you've already imported. Only pull in records that don't exist yet.</div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onConfirm("overwrite")}
+              className="group flex items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+            >
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ background: info.color + "18" }}>
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke={info.color} strokeWidth="2">
+                  <path d="M4 10a6 6 0 1 0 12 0 6 6 0 0 0-12 0Z" />
+                  <path d="M10 7v3l2 2" strokeLinecap="round" />
+                </svg>
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Import &amp; update existing</div>
+                <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">Pull in new records and overwrite existing ones with the latest data from Stripe.</div>
+              </div>
+            </button>
+          </div>
+
+          <button type="button" onClick={onCancel} className="mt-4 w-full text-center text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
 
 function ImportModeModal({ provider, info, onConfirm, onCancel }) {
   const [sourceCurrency, setSourceCurrency] = useState("");
@@ -297,6 +389,7 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
   const [syncResult, setSyncResult] = useState(null);
   const [error, setError] = useState("");
   const [importModal, setImportModal] = useState(null); // provider key or null
+  const [stripeImportModal, setStripeImportModal] = useState(false);
 
   const loadStatuses = useCallback(async () => {
     try {
@@ -360,6 +453,15 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
 
   const modalInfo = importModal ? PROVIDER_INFO[importModal] : null;
 
+  function handleAskImport(provider) {
+    if (provider === "stripe") {
+      // Stripe carries its own currency per record — skip the currency step
+      setStripeImportModal(true);
+      return;
+    }
+    setImportModal(provider);
+  }
+
   return (
     <div className="space-y-4">
       {error && (
@@ -387,7 +489,7 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {providers.map((provider) => {
           const info = PROVIDER_INFO[provider];
           if (!info) return null;
@@ -399,7 +501,7 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
               status={statuses[provider]}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
-              onAskImport={setImportModal}
+              onAskImport={handleAskImport}
               actionLoading={actionLoading}
             />
           );
@@ -412,6 +514,13 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
           info={modalInfo}
           onConfirm={(mode, currency) => handleImport(importModal, mode, currency)}
           onCancel={() => setImportModal(null)}
+        />
+      )}
+
+      {stripeImportModal && (
+        <StripeImportModal
+          onConfirm={(mode) => { setStripeImportModal(false); handleImport("stripe", mode, null); }}
+          onCancel={() => setStripeImportModal(false)}
         />
       )}
     </div>

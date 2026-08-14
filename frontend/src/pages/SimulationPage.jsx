@@ -757,7 +757,7 @@ export default function SimulationPage() {
 
       {workspaceId && ((tab === "adaptive" && canSimFeature("run_simulation")) || (tab === "manual" && (canSimFeature("scenario_intelligence") || canSimFeature("risk_detection") || canSimFeature("recommendations")))) ? (
         <div className="mt-6 flex justify-end">
-          <Button onClick={() => setTab(tab === "manual" ? "adaptive" : "manual")}>
+          <Button data-tour="simulation-run-btn" onClick={() => setTab(tab === "manual" ? "adaptive" : "manual")}>
             {tab === "manual" ? "Back to simulation dashboard" : "Run a scenario"}
           </Button>
         </div>
@@ -866,6 +866,7 @@ export default function SimulationPage() {
           )}
 
           {canSimFeature("scenario_intelligence") && (
+            <div data-tour="simulation-baseline">
             <SectionCard
               title={
                 <div className="flex items-center gap-2">
@@ -892,6 +893,7 @@ export default function SimulationPage() {
                 stateSnapshot={stateSnapshot}
               />
             </SectionCard>
+            </div>
           )}
 
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">

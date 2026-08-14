@@ -413,6 +413,8 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
     if (!deliveryModel) return setMsg({ type: "error", text: "Delivery model is required." });
     const validServices = services.filter((s) => s.service_name.trim().length >= 2);
     if (validServices.length === 0) return setMsg({ type: "error", text: "Add at least one service (min. 2 characters)." });
+    const missingDesc = validServices.find((s) => !s.service_description?.trim());
+    if (missingDesc) return setMsg({ type: "error", text: `Add a description for "${missingDesc.service_name}" — it's required for the Marketplace.` });
 
     const coreValues = coreValuesInput.split(",").map((v) => v.trim()).filter(Boolean);
 
@@ -545,8 +547,8 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
                   </SelectInput>
                 </Field>
               </div>
-              <Field label="Description">
-                <Textarea value={svc.service_description || ""} onChange={(e) => updateService(i, "service_description", e.target.value)} placeholder="Brief description of this service" rows={2} maxLength={600} />
+              <Field label="Description *">
+                <Textarea value={svc.service_description || ""} onChange={(e) => updateService(i, "service_description", e.target.value)} placeholder="Brief description of this service (required for Marketplace)" rows={2} maxLength={600} />
               </Field>
             </div>
           ))}

@@ -13,13 +13,15 @@ export default function SegmentedTabs({ value, onChange, options = [], ariaLabel
     >
       {options.map((opt) => {
         const selected = value === opt.value;
+        const { value: optValue, label, ...extraAttrs } = opt;
         return (
           <button
-            key={opt.value}
+            key={optValue}
             type="button"
             role="tab"
             aria-selected={selected}
             onClick={() => onChange(opt.value)}
+            {...extraAttrs}
             className={
               "flex-1 whitespace-nowrap rounded-xl font-semibold transition " +
               (isSm ? "px-2 py-1 text-xs" : "px-3 py-2 text-sm") +

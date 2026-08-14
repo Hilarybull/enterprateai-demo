@@ -1690,6 +1690,7 @@ const TABS = [
   { key: "module-interest", label: "Module Interest" },
   { key: "mailing-list", label: "Mailing List" },
   { key: "support", label: "Support Messages" },
+  { key: "demo-requests", label: "Demo Requests" },
   { key: "referrals", label: "Referrals" },
   { key: "blog", label: "Blog" },
   { key: "research", label: "Research & Development" },
@@ -1805,6 +1806,21 @@ export default function AdminPage() {
   useEffect(() => {
     if (tab === "mailing-list") loadMailingList();
   }, [tab, loadMailingList]);
+
+  // ── Demo requests ─────────────────────────────────────────────────────────
+  const [demoRequests, setDemoRequests] = useState(null);
+  const [demoRequestsLoaded, setDemoRequestsLoaded] = useState(false);
+
+  const loadDemoRequests = useCallback(() => {
+    if (demoRequestsLoaded) return;
+    apiRequest("/demo/requests", "GET")
+      .then((data) => { setDemoRequests(data); setDemoRequestsLoaded(true); })
+      .catch(() => { setDemoRequests([]); setDemoRequestsLoaded(true); });
+  }, [demoRequestsLoaded]);
+
+  useEffect(() => {
+    if (tab === "demo-requests") loadDemoRequests();
+  }, [tab, loadDemoRequests]);
 
   // ── Referrals admin ───────────────────────────────────────────────────────
   const [refStats, setRefStats] = useState(null);
@@ -2264,6 +2280,11 @@ export default function AdminPage() {
     (mailingList || []).filter((m) =>
       !q || m.email?.toLowerCase().includes(q) || m.source?.toLowerCase().includes(q)
     ), [mailingList, q]);
+
+  const filteredDemoRequests = useMemo(() =>
+    (demoRequests || []).filter((m) =>
+      !q || m.name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q) || m.company?.toLowerCase().includes(q) || m.role?.toLowerCase().includes(q)
+    ), [demoRequests, q]);
 
   const tabCounts = {
     workspaces: stats?.total_workspaces ?? 0,
@@ -3471,6 +3492,63 @@ export default function AdminPage() {
                 ]}
                 rows={filteredSupport}
                 emptyText="No support or feedback messages yet"
+              />
+            )}
+          </div>
+        )}
+
+        {/* ── Demo Requests ── */}
+        {tab === "demo-requests" && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Demo Requests <span className="ml-1 text-slate-400 font-normal">({filteredDemoRequests.length})</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">People who submitted a demo booking request from the website.</p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {demoRequestsLoaded && (
+                  <button
+                    type="button"
+                    onClick={() => downloadCSV(demoRequests || [], [
+                      { key: "name", label: "Name" },
+                      { key: "email", label: "Email" },
+                      { key: "company", label: "Company" },
+                      { key: "phone", label: "Phone" },
+                      { key: "role", label: "Role" },
+                      { key: "message", label: "Message" },
+                      { key: "created_at", label: "Submitted At" },
+                    ], "demo-requests.csv")}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                  >
+                    <DownloadIcon /> Export CSV
+                  </button>
+                )}
+                <SearchBar value={search} onChange={setSearch} placeholder="Search by name, email or company…" />
+              </div>
+            </div>
+            {!demoRequestsLoaded ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
+              </div>
+            ) : (
+              <DataTable
+                columns={[
+                  { key: "name", label: "Name", render: (r) => <span className="font-medium text-slate-800 dark:text-slate-200">{r.name || "—"}</span> },
+                  { key: "email", label: "Email", render: (r) => <span className="text-xs text-slate-600 dark:text-slate-400">{r.email || "—"}</span> },
+                  { key: "company", label: "Company", render: (r) => <span className="text-xs text-slate-700 dark:text-slate-300">{r.company || "—"}</span> },
+                  { key: "phone", label: "Phone", render: (r) => <span className="text-xs text-slate-500">{r.phone || "—"}</span> },
+                  { key: "role", label: "Role", render: (r) => r.role ? (
+                    <span className="inline-flex items-center rounded-full bg-brand-50 dark:bg-brand-900/20 px-2 py-0.5 text-[10px] font-semibold text-brand-700 dark:text-brand-400">{r.role}</span>
+                  ) : <span className="text-xs text-slate-400">—</span> },
+                  { key: "message", label: "Message", render: (r) => (
+                    <span className="block max-w-xs truncate text-xs text-slate-600 dark:text-slate-400" title={r.message}>{r.message || "—"}</span>
+                  )},
+                  { key: "created_at", label: "Submitted", render: (r) => <span className="text-xs">{formatDateTime(r.created_at)}</span> },
+                ]}
+                rows={filteredDemoRequests}
+                emptyText="No demo requests yet"
               />
             )}
           </div>

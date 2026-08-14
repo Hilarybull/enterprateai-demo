@@ -52,7 +52,7 @@ async def referral_click_redirect(code: str, request: Request):
     """Server-side click capture — validate code, record event, redirect."""
     participant = await svc.get_participant_by_code(code)
     if not participant:
-        return RedirectResponse(url=_frontend_url() + "/register", status_code=302)
+        return RedirectResponse(url=_frontend_url() + "/login?signup=1", status_code=302)
 
     config = await svc.get_active_config()
     expires_at = (
@@ -75,7 +75,7 @@ async def referral_click_redirect(code: str, request: Request):
 
     # Redirect to frontend with click_id so it can be stored client-side
     redirect_url = (
-        f"{_frontend_url()}/register?ref_click={click_id}&ref_code={code}"
+        f"{_frontend_url()}/login?signup=1&ref_click={click_id}&ref_code={code}"
     )
     return RedirectResponse(url=redirect_url, status_code=302)
 

@@ -18,6 +18,7 @@ import { imageFileToDataUrl } from "../lib/files";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { generateValidationInsightPdf } from "../lib/reports/index";
 import ValidationLoadingOverlay from "../components/ValidationLoadingOverlay";
+import { useDemoTour } from "../context/DemoTourContext";
 import CreditConfirmModal from "../components/CreditConfirmModal";
 
 function humanizeValidationError(e) {
@@ -367,6 +368,7 @@ function ResumeButton({ entry, onEdit }) {
 
 export default function ValidationWizardPage() {
   const navigate = useNavigate();
+  const { triggerDemoGate } = useDemoTour() || {};
   const [searchParams] = useSearchParams();
   const editingWorkspaceId = searchParams.get("workspace_id");
   const fromOtherModule = searchParams.get("from") === "module";
@@ -447,6 +449,7 @@ export default function ValidationWizardPage() {
   const [lastEvaluationId, setLastEvaluationId] = useState(null);
   const [showBuilderMarketInsight, setShowBuilderMarketInsight] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [addToMarketplaceModal, setAddToMarketplaceModal] = useState(null); // { title, description }
   const [historyFilter, setHistoryFilter] = useState("all");
   const [historyTypeFilter, setHistoryTypeFilter] = useState("all");
   const [historySearch, setHistorySearch] = useState("");
@@ -4400,7 +4403,7 @@ export default function ValidationWizardPage() {
                           <button
                             type="button"
                             disabled={v4Saving}
-                            onClick={() => setCreditModal({ featureName: "Idea Validation", creditCost: v4Journey === "comprehensive" ? 10 : 5, onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } })}
+                            onClick={() => { if (triggerDemoGate?.("validation")) return; setCreditModal({ featureName: "Idea Validation", creditCost: v4Journey === "comprehensive" ? 10 : 5, onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } }); }}
                             className="flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-brand-700 disabled:opacity-50"
                           >
                             {v4Saving ? "Running validation..." : "Run Validation"}
@@ -5850,8 +5853,13 @@ export default function ValidationWizardPage() {
                                     if (!ok) return;
                                   }
                                   await updateHistoryEntryStatus(lastEvaluationId, "accepted");
+                                  const acceptedEntry = validationHistory.find((e) => e.id === lastEvaluationId);
                                   setLastEvaluationId(null);
                                   setSavedNotice("Validation accepted.");
+                                  setAddToMarketplaceModal({
+                                    title: acceptedEntry?.title || "Validated Idea",
+                                    description: acceptedEntry?.payload?.idea_description || acceptedEntry?.payload?.idea_tagline || "",
+                                  });
                                 }}
                               >
                                 Accept Validation
@@ -5921,6 +5929,93 @@ export default function ValidationWizardPage() {
             />
           ) : null
         }
+        {addToMarketplaceModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+              <div className="p-6">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-400">
+                    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Add to Marketplace?</h3>
+                </div>
+                <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">
+                  This validated idea can be listed on the marketplace so other businesses can find your product or service.
+                </p>
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <label className="ea-label mb-1 block">Name</label>
+                    <input
+                      className="ea-input w-full"
+                      value={addToMarketplaceModal.title}
+                      onChange={(e) => setAddToMarketplaceModal((m) => ({ ...m, title: e.target.value }))}
+                      maxLength={120}
+                    />
+                  </div>
+                  <div>
+                    <label className="ea-label mb-1 block">Description <span className="font-normal text-slate-400">(shown on Marketplace)</span></label>
+                    <textarea
+                      className="ea-input w-full resize-none"
+                      rows={3}
+                      maxLength={400}
+                      placeholder="Brief description of this product or service"
+                      value={addToMarketplaceModal.description}
+                      onChange={(e) => setAddToMarketplaceModal((m) => ({ ...m, description: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="mt-5 flex gap-3">
+                  <button
+                    className="flex-1 rounded-xl bg-brand-600 py-2.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                    onClick={async () => {
+                      if (!activeWorkspaceId || !addToMarketplaceModal.title?.trim()) return;
+                      try {
+                        const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+                        const data = ws?.data || {};
+                        const existingCat = data.catalogue || { products: [], customers: [], vendors: [] };
+                        const existingProducts = Array.isArray(existingCat.products) ? existingCat.products : [];
+                        const name = addToMarketplaceModal.title.trim();
+                        const alreadyIn = existingProducts.some((p) => String(p?.name || "").trim().toLowerCase() === name.toLowerCase());
+                        if (!alreadyIn) {
+                          const newProduct = {
+                            id: crypto.randomUUID(),
+                            name,
+                            description: addToMarketplaceModal.description?.trim() || "",
+                            type: "service",
+                            base_price: 0,
+                            cost_of_sales: 0,
+                            discount: 0,
+                            freight_cost: 0,
+                            archived: false,
+                            created_at: new Date().toISOString(),
+                            updated_at: new Date().toISOString(),
+                            source: "validation",
+                          };
+                          await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
+                            data: { catalogue: { ...existingCat, products: [newProduct, ...existingProducts] } },
+                          });
+                          setExistingCatalogue({ ...existingCat, products: [newProduct, ...existingProducts] });
+                        }
+                        setAddToMarketplaceModal(null);
+                        setSavedNotice(alreadyIn ? "Already in catalogue." : "Added to Marketplace.");
+                      } catch {
+                        setAddToMarketplaceModal(null);
+                      }
+                    }}
+                  >
+                    Add to Marketplace
+                  </button>
+                  <button
+                    className="flex-1 rounded-xl border border-slate-200 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                    onClick={() => setAddToMarketplaceModal(null)}
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <ToastContainer toasts={toasts} onClose={dismissToast} />
       </div>
     </div>

@@ -43,9 +43,9 @@ def _build_listing_item(ws: dict) -> dict | None:
         "state_or_region": profile.get("state_or_region"),
         "services": profile.get("services") or [],
         "catalogue_products": [
-            {"id": p.get("id", ""), "name": p.get("name", "")}
+            {"id": p.get("id", ""), "name": p.get("name", ""), "description": p.get("description", ""), "type": p.get("type", "product"), "base_price": p.get("base_price", 0)}
             for p in ((data.get("catalogue") or {}).get("products") or [])
-            if p.get("name") and not p.get("archived")
+            if p.get("name") and not p.get("archived") and p.get("marketplace_listed", True)
         ],
         "logo_data_url": profile.get("logo_data_url"),
         "website": profile.get("website"),

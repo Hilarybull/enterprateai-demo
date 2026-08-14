@@ -1,5 +1,7 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useEffect } from "react";
+import { DemoTourProvider } from "./context/DemoTourContext";
+import DemoTour from "./components/DemoTour";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -45,6 +47,7 @@ import BlogPage from "./pages/BlogPage";
 import BlogArticlePage from "./pages/BlogArticlePage";
 import ResearchPage from "./pages/ResearchPage";
 import IntegrationsPage from "./pages/IntegrationsPage";
+import BookDemoPage from "./pages/BookDemoPage";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -72,7 +75,7 @@ export default function App() {
   }, [authHydrated, email, resetForUser]);
 
   return (
-    <>
+    <DemoTourProvider>
       <ScrollToTop />
       <Routes>
       <Route path="/" element={<PublicRoot />} />
@@ -87,6 +90,7 @@ export default function App() {
       <Route path="/legal/terms" element={<TermsOfServicePage />} />
       <Route path="/legal/disclaimer" element={<DisclaimerPage />} />
       <Route path="/r/:code" element={<ReferralClickPage />} />
+      <Route path="/book-demo" element={<BookDemoPage />} />
       <Route path="/blog" element={<BlogPage />} />
       <Route path="/blog/:slug" element={<BlogArticlePage />} />
       <Route path="/research" element={<ResearchPage />} />
@@ -125,6 +129,7 @@ export default function App() {
       <Route path="/marketplace" element={<MarketplacePage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
-    </>
+    <DemoTour />
+    </DemoTourProvider>
   );
 }

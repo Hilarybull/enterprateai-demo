@@ -64,8 +64,8 @@ class Settings(BaseSettings):
     dataforseo_login: str | None = Field(default=None, validation_alias=AliasChoices("DATAFORSEO_LOGIN",))
     dataforseo_password: str | None = Field(default=None, validation_alias=AliasChoices("DATAFORSEO_PASSWORD",))
     google_places_api_key: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_PLACES_API_KEY",))
-    sendgrid_api_key: str | None = Field(default=None, validation_alias=AliasChoices("SENDGRID_API_KEY",))
-    sendgrid_from_email: str | None = Field(default=None, validation_alias=AliasChoices("SENDGRID_FROM_EMAIL",))
+    resend_api_key: str | None = Field(default=None, validation_alias=AliasChoices("RESEND_API_KEY",))
+    resend_from_email: str | None = Field(default=None, validation_alias=AliasChoices("RESEND_FROM_EMAIL",))
     google_client_id: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_ID",))
     google_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_SECRET",))
 
@@ -80,6 +80,7 @@ class Settings(BaseSettings):
 
     # Stripe
     stripe_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_SECRET_KEY", "STRIPE_LIVE_KEY"))
+    stripe_connect_client_id: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_CONNECT_CLIENT_ID", "STRIPE_CLIENT_ID"))
     stripe_webhook_secret: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_WEBHOOK_SECRET",))
     stripe_price_insight_starter_monthly: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_INSIGHT_STARTER_MONTHLY",))
     stripe_price_insight_starter_annual: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_INSIGHT_STARTER_ANNUAL",))
@@ -96,6 +97,11 @@ class Settings(BaseSettings):
     stripe_price_addon_rfq_20: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_RFQ_20",))
     stripe_price_addon_rfq_50: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_RFQ_50",))
     stripe_price_addon_rfq_100: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_RFQ_100",))
+
+    # Demo account
+    demo_email: str | None = Field(default=None, validation_alias=AliasChoices("DEMO_EMAIL",))
+    demo_password: str | None = Field(default=None, validation_alias=AliasChoices("DEMO_PASSWORD",))
+    demo_notify_email: str | None = Field(default=None, validation_alias=AliasChoices("DEMO_NOTIFY_EMAIL",))
     frontend_url: str = Field(default="http://localhost:5173", validation_alias=AliasChoices("FRONTEND_URL", "CORS_ORIGINS"))
 
     @field_validator("cors_origins", mode="before")

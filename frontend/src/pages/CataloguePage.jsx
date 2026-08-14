@@ -58,6 +58,8 @@ export default function CataloguePage() {
   const [editingProductId, setEditingProductId] = useState(null);
   const [editingCustomerId, setEditingCustomerId] = useState(null);
   const [editingVendorId, setEditingVendorId] = useState(null);
+  const [descSuggesting, setDescSuggesting] = useState(false);
+  const [addToMarketModal, setAddToMarketModal] = useState(null); // { id, name, description }
   const [productPage, setProductPage] = useState(0);
   const [customerPage, setCustomerPage] = useState(0);
   const [vendorPage, setVendorPage] = useState(0);
@@ -139,6 +141,7 @@ export default function CataloguePage() {
   const [productForm, setProductForm] = useState({
     name: "",
     type: "service",
+    description: "",
     base_price: "",
     cost_of_sales: "",
     discount: "",
@@ -526,7 +529,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
   }
 
   function resetProductForm() {
-    setProductForm({ name: "", type: "service", base_price: "", cost_of_sales: "", discount: "", freight_cost: "" });
+    setProductForm({ name: "", type: "service", description: "", base_price: "", cost_of_sales: "", discount: "", freight_cost: "" });
     setEditingProductId(null);
   }
   function resetCustomerForm() {
@@ -561,6 +564,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       id: editingProductId || crypto.randomUUID(),
       name: productForm.name.trim(),
       type: productForm.type,
+      description: productForm.description.trim(),
       base_price: Number(productForm.base_price || 0),
       cost_of_sales: Number(productForm.cost_of_sales || 0),
       discount: Number(productForm.discount || 0),
@@ -574,9 +578,20 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     } else {
       next.unshift({ ...payload, created_at: new Date().toISOString() });
     }
+    const isNew = !editingProductId;
+    const savedId = payload.id;
+    const savedName = payload.name;
+    const savedDesc = payload.description;
     setProducts(next);
-    await persist({ products: next, customers, vendors });
+    try {
+      await persist({ products: next, customers, vendors });
+    } catch {
+      // persist already sets error state; don't block the UX
+    }
     resetProductForm();
+    if (isNew) {
+      setAddToMarketModal({ id: savedId, name: savedName, description: savedDesc });
+    }
   }
 
   async function upsertCustomer() {
@@ -809,8 +824,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
           onChange={setActiveTab}
           options={[
             ...(canViewCatalogueOverview ? [{ value: "overview", label: "Overview" }] : []),
-            ...(canCatalogueFeature("manage_products") ? [{ value: "products", label: "Products" }] : []),
-            ...(canCatalogueFeature("manage_customers") ? [{ value: "customers", label: "Customers" }] : []),
+            ...(canCatalogueFeature("manage_products") ? [{ value: "products", label: "Products", "data-tour": "catalogue-products-tab" }] : []),
+            ...(canCatalogueFeature("manage_customers") ? [{ value: "customers", label: "Customers", "data-tour": "catalogue-customers-tab" }] : []),
             ...(canCatalogueFeature("manage_vendors") ? [{ value: "vendors", label: "Vendors" }] : []),
             { value: "report", label: "Report" },
           ]}
@@ -903,6 +918,38 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
             <div>
               <div className="ea-label">Product / Service name *</div>
               <Input value={productForm.name} onChange={(e) => setProductForm((p) => ({ ...p, name: e.target.value }))} />
+            </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="ea-label">Description</div>
+                <button
+                  type="button"
+                  disabled={descSuggesting || !productForm.name.trim()}
+                  onClick={async () => {
+                    setDescSuggesting(true);
+                    try {
+                      const res = await apiRequest("/blueprint/suggest-field", "POST", {
+                        field: "service_description",
+                        company_name: workspaceName || "",
+                        selected_services: [productForm.name.trim()].filter(Boolean),
+                        industry: productForm.type === "service" ? "service" : "product",
+                      });
+                      if (res?.value) setProductForm((p) => ({ ...p, description: res.value }));
+                    } catch { /* silent */ } finally { setDescSuggesting(false); }
+                  }}
+                  className="flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-brand-600 hover:bg-brand-50 disabled:opacity-40 transition-colors dark:text-brand-400 dark:hover:bg-brand-900/20"
+                >
+                  {descSuggesting ? "..." : "✦ AI Fill"}
+                </button>
+              </div>
+              <textarea
+                className="ea-input resize-none"
+                rows={2}
+                maxLength={400}
+                placeholder="Brief description of this product or service"
+                value={productForm.description}
+                onChange={(e) => setProductForm((p) => ({ ...p, description: e.target.value }))}
+              />
             </div>
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
@@ -1008,7 +1055,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                           </div>
                         </div>
                         <div className="flex gap-2">
-                          <Button variant="secondary" onClick={() => { setEditingProductId(p.id); setProductForm({ name: p.name, type: p.type, base_price: String(p.base_price ?? ""), cost_of_sales: String(p.cost_of_sales ?? ""), discount: String(p.discount ?? ""), freight_cost: String(p.freight_cost ?? "") }); }}>Edit</Button>
+                          <Button variant="secondary" onClick={() => { setEditingProductId(p.id); setProductForm({ name: p.name, type: p.type, description: p.description || "", base_price: String(p.base_price ?? ""), cost_of_sales: String(p.cost_of_sales ?? ""), discount: String(p.discount ?? ""), freight_cost: String(p.freight_cost ?? "") }); }}>Edit</Button>
                           <Button variant="ghost" onClick={() => archiveEntity("products", p.id)}>Archive</Button>
                           <Button variant="ghost" onClick={() => deleteEntity("products", p.id)}>Delete</Button>
                         </div>
@@ -1689,6 +1736,51 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
           onCancel={confirmDialog.onCancel}
         />
       ) : null}
+      {addToMarketModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+            <div className="p-6">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-400">
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9"/></svg>
+                </span>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Add to Marketplace?</h3>
+              </div>
+              <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">
+                List <strong>{addToMarketModal.name}</strong> on the marketplace so other businesses can discover it.
+              </p>
+              {!addToMarketModal.description && (
+                <p className="mt-1.5 text-[12px] text-amber-600 dark:text-amber-400">
+                  Tip: add a description to the product so buyers know what it's about.
+                </p>
+              )}
+              <div className="mt-5 flex gap-3">
+                <button
+                  className="flex-1 rounded-xl bg-brand-600 py-2.5 text-[13px] font-semibold text-white hover:bg-brand-700"
+                  onClick={() => {
+                    // Product is already in catalogue; marketplace_listed defaults true — nothing to do
+                    setAddToMarketModal(null);
+                  }}
+                >
+                  Yes, list it
+                </button>
+                <button
+                  className="flex-1 rounded-xl border border-slate-200 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  onClick={async () => {
+                    // Mark marketplace_listed: false so backend excludes it
+                    const updated = products.map((p) => p.id === addToMarketModal.id ? { ...p, marketplace_listed: false } : p);
+                    setProducts(updated);
+                    persist({ products: updated, customers, vendors });
+                    setAddToMarketModal(null);
+                  }}
+                >
+                  Not now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

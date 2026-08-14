@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.core.config import get_settings
@@ -101,6 +102,145 @@ async def login(payload: LoginRequest) -> TokenResponse:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account suspended. Contact support at tech.support@enterprateai.com")
     token = create_access_token(subject=user["id"])
     return TokenResponse(access_token=token)
+
+
+@router.post("/demo", response_model=TokenResponse)
+async def demo_login() -> TokenResponse:
+    settings = get_settings()
+    if not settings.demo_email or not settings.demo_password:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Demo account not available")
+    user = await sb_select("users", filters=[("id", "eq", settings.demo_email.lower())], single=True)
+    if not user or not verify_password(settings.demo_password, user.get("password_hash", "")):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Demo account unavailable")
+    token = create_access_token(subject=user["id"])
+    # Ensure demo user has a pre-seeded workspace with sample data
+    await _ensure_demo_workspace(user["id"])
+    return TokenResponse(access_token=token)
+
+
+async def _ensure_demo_workspace(user_id: str) -> None:
+    # Grant a full Starter subscription so demo user sees all features unlocked
+    try:
+        existing_sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+        if not existing_sub:
+            far_future = "2099-12-31T23:59:59+00:00"
+            await sb_insert("user_subscriptions", {
+                "user_id": user_id,
+                "plan_key": "starter_insight",
+                "status": "active",
+                "current_period_end": far_future,
+            })
+    except Exception:
+        pass
+
+    demo_data = {
+        "workspace_profile": {
+            "company_name": "Apex Consulting Ltd",
+            "tagline": "Strategic growth for ambitious businesses",
+            "about_company": "Apex Consulting is a London-based advisory firm helping ambitious SMEs unlock growth through data-driven strategy, financial planning, and operational excellence. We have supported over 40 businesses across retail, tech, and professional services.",
+            "primary_industry": "Business Consulting",
+            "business_type": "limited_company",
+            "operating_stage": "growth",
+            "delivery_model": "hybrid",
+            "city": "London",
+            "country": "United Kingdom",
+            "email": "hello@apexconsulting.co.uk",
+            "phone_number": "+44 20 7946 0123",
+            "website": "www.apexconsulting.co.uk",
+            "target_customer_type": "b2b",
+            "primary_revenue_model": "project_based",
+            "key_offering_focus": "Strategic advisory and growth planning for UK SMEs",
+            "vision": "To be the go-to growth partner for ambitious UK SMEs",
+            "mission": "Helping businesses unlock their full potential through practical, data-driven strategy",
+            "employee_count": 8,
+            "core_values": ["Integrity", "Results-first", "Partnership"],
+            "services": [
+                {"service_name": "Strategy Sprint", "price": 2500, "unit": "project", "description": "4-week intensive strategy and planning session"},
+                {"service_name": "Business Plan", "price": 1500, "unit": "document", "description": "Investor-ready business plan with financial projections"},
+                {"service_name": "Market Analysis", "price": 800, "unit": "report", "description": "Competitor and market sizing deep-dive report"},
+            ],
+        },
+        "business_profile": {
+            "business_name": "Apex Consulting Ltd",
+            "primary_industry": "Business Consulting",
+            "location": "London, United Kingdom",
+            "currency": "GBP",
+            "business_type": "limited_company",
+        },
+        "catalogue": {
+            "products": [
+                {"id": "prod-001", "name": "Strategy Sprint", "category": "Service", "price": 2500, "base_price": 2500, "currency": "GBP", "unit": "project", "description": "4-week intensive strategy session", "active": True},
+                {"id": "prod-002", "name": "Business Plan", "category": "Service", "price": 1500, "base_price": 1500, "currency": "GBP", "unit": "document", "description": "Investor-ready business plan with financials", "active": True},
+                {"id": "prod-003", "name": "Market Analysis Report", "category": "Service", "price": 800, "base_price": 800, "currency": "GBP", "unit": "report", "description": "Deep-dive competitor and market sizing analysis", "active": True},
+                {"id": "prod-004", "name": "Growth Advisory Retainer", "category": "Retainer", "price": 1200, "base_price": 1200, "currency": "GBP", "unit": "month", "description": "Ongoing monthly advisory and support", "active": True},
+            ],
+            "customers": [
+                {"id": "cust-001", "name": "Meridian Tech Ltd", "email": "accounts@meridiantech.co.uk", "phone": "+44 7700 900111", "type": "business", "city": "London", "country": "UK", "active": True},
+                {"id": "cust-002", "name": "Parkview Retail Group", "email": "finance@parkviewretail.com", "phone": "+44 7700 900222", "type": "business", "city": "Manchester", "country": "UK", "active": True},
+                {"id": "cust-003", "name": "BlueSky Ventures", "email": "info@bluesky.vc", "phone": "+44 7700 900333", "type": "business", "city": "Edinburgh", "country": "UK", "active": True},
+            ],
+            "vendors": [
+                {"id": "vend-001", "name": "CloudForce Hosting", "email": "billing@cloudforce.io", "category": "Software", "active": True},
+                {"id": "vend-002", "name": "London Office Supplies", "email": "orders@lossupplies.co.uk", "category": "Office", "active": True},
+            ],
+        },
+        "financials": {
+            "invoices": [
+                {
+                    "id": "inv-001", "number": "INV-001",
+                    "customer_id": "cust-001", "customer_name": "Meridian Tech Ltd",
+                    "date": "2026-06-15", "due_date": "2026-07-15", "status": "paid",
+                    "currency": "GBP",
+                    "product_ids": ["prod-001"],
+                    "product_names": ["Strategy Sprint"],
+                    "items": [{"product_id": "prod-001", "name": "Strategy Sprint", "quantity": 1, "unit_price": 2500, "total_amount": 2500}],
+                    "subtotal_amount": 2500, "total_amount": 2500,
+                },
+                {
+                    "id": "inv-002", "number": "INV-002",
+                    "customer_id": "cust-002", "customer_name": "Parkview Retail Group",
+                    "date": "2026-07-01", "due_date": "2026-08-01", "status": "sent",
+                    "currency": "GBP",
+                    "product_ids": ["prod-002"],
+                    "product_names": ["Business Plan"],
+                    "items": [{"product_id": "prod-002", "name": "Business Plan", "quantity": 1, "unit_price": 1500, "total_amount": 1500}],
+                    "subtotal_amount": 1500, "total_amount": 1500,
+                },
+                {
+                    "id": "inv-003", "number": "INV-003",
+                    "customer_id": "cust-003", "customer_name": "BlueSky Ventures",
+                    "date": "2026-07-28", "due_date": "2026-08-28", "status": "draft",
+                    "currency": "GBP",
+                    "product_ids": ["prod-003", "prod-002"],
+                    "product_names": ["Market Analysis Report", "Business Plan"],
+                    "items": [
+                        {"product_id": "prod-003", "name": "Market Analysis Report", "quantity": 1, "unit_price": 800, "total_amount": 800},
+                        {"product_id": "prod-002", "name": "Business Plan", "quantity": 1, "unit_price": 1500, "total_amount": 1500},
+                    ],
+                    "subtotal_amount": 2300, "total_amount": 2300,
+                },
+            ],
+            "expenses": [
+                {"id": "exp-001", "description": "CloudForce Hosting", "price": 120, "currency": "GBP", "category": "Software", "date": "2026-07-01", "status": "paid"},
+                {"id": "exp-002", "description": "Office Supplies Q3", "price": 85, "currency": "GBP", "category": "Office", "date": "2026-07-15", "status": "paid"},
+                {"id": "exp-003", "description": "LinkedIn Premium", "price": 60, "currency": "GBP", "category": "Marketing", "date": "2026-08-01", "status": "pending"},
+            ],
+        },
+    }
+
+    now = datetime.now(timezone.utc).isoformat()
+    existing = await sb_select("workspaces", filters=[("user_id", "eq", user_id)], limit=1, single=True)
+    if existing:
+        await sb_update("workspaces", filters=[("id", "eq", existing["id"])], payload={"data": demo_data, "updated_at": now})
+    else:
+        await sb_insert("workspaces", {
+            "id": str(uuid4()),
+            "user_id": user_id,
+            "name": "Apex Consulting Ltd",
+            "data": demo_data,
+            "created_at": now,
+            "updated_at": now,
+        })
 
 
 @router.post("/google", response_model=TokenResponse)

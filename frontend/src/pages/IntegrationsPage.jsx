@@ -31,7 +31,7 @@ export default function IntegrationsPage() {
       </div>
 
       <IntegrationPanel
-        providers={["zoho_crm", "quickbooks", "xero"]}
+        providers={["stripe", "zoho_crm", "quickbooks", "xero"]}
         onWorkspaceRefresh={refreshWorkspaceData}
       />
     </div>

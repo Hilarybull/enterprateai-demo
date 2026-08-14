@@ -5,6 +5,7 @@ import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 import Spinner from "../components/Spinner";
 import logoUrl from "../enterprate-logo.png";
+import { useDemoTour } from "../context/DemoTourContext";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -417,7 +418,7 @@ function ProductCard({ product, onOpen, onRequestQuote, isOwn }) {
         {!isOwn && (
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); onRequestQuote(listing); }}
+            onClick={(e) => { e.stopPropagation(); onRequestQuote(listing, service.service_name); }}
             className="w-full rounded-xl border border-brand-200 bg-brand-50 py-2 text-[12px] font-semibold text-brand-700 hover:bg-brand-100 transition dark:border-brand-800 dark:bg-brand-900/20 dark:text-brand-300 dark:hover:bg-brand-900/40">
             Request Quotation
           </button>
@@ -546,9 +547,9 @@ function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
 
 // ─── RFQ modal ────────────────────────────────────────────────────────────────
 
-function RFQModal({ listing, onClose }) {
+function RFQModal({ listing, onClose, prefilledProduct }) {
   const [form, setForm] = useState({ name: "", email: "", message: "" });
-  const [items, setItems] = useState([{ name: "", quantity: 1, notes: "" }]);
+  const [items, setItems] = useState([{ name: prefilledProduct || "", quantity: 1, notes: "" }]);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState(null);
@@ -655,7 +656,11 @@ function RFQModal({ listing, onClose }) {
                 {items.map((item, idx) => (
                   <div key={idx} className="space-y-1">
                     <div className="grid grid-cols-[1fr,80px,auto] items-start gap-2">
-                      {productOptions.length > 0 ? (
+                      {prefilledProduct && idx === 0 ? (
+                        <div className="flex items-center rounded-xl border border-brand-200 bg-brand-50 px-3 py-2.5 text-[13px] font-semibold text-brand-800 dark:border-brand-800 dark:bg-brand-900/20 dark:text-brand-300">
+                          {prefilledProduct}
+                        </div>
+                      ) : productOptions.length > 0 ? (
                         <div className="relative">
                           <select
                             className={`w-full appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-8 py-2.5 text-sm outline-none ring-brand-200 focus:ring-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${!item.name ? "text-slate-400 dark:text-slate-500" : "text-slate-900 dark:text-slate-100"}`}
@@ -718,6 +723,7 @@ function SignUpGateModal({ action, onClose }) {
   const messages = {
     rate: { title: "Sign in to rate", body: "Share your experience with this business. Create a free account or sign in." },
     publish: { title: "List your business", body: "Once you sign up and validate your business idea, you can publish it to the marketplace for others to discover." },
+    rfq: { title: "Sign in to request a quote", body: "Create a free account or sign in to send a quotation request to this business." },
   };
   const { title, body } = messages[action] || messages.publish;
   useEffect(() => {
@@ -775,6 +781,34 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
   const grad = avatarGradient(listing.company_name);
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
   const isOwnListing = isLoggedIn && ownWorkspaceId === listing.workspace_id;
+
+  // For owner: full catalogue products including hidden ones
+  const [ownerCatProducts, setOwnerCatProducts] = useState(null); // null = not loaded yet
+  const [togglingItem, setTogglingItem] = useState(null);
+
+  useEffect(() => {
+    if (!isOwnListing || !ownWorkspaceId) return;
+    apiRequest(`/validation/${ownWorkspaceId}`, "GET").then((ws) => {
+      const prods = (ws?.data?.catalogue?.products || []).filter((p) => p.name && !p.archived);
+      setOwnerCatProducts(prods);
+    }).catch(() => setOwnerCatProducts([]));
+  }, [isOwnListing, ownWorkspaceId]);
+
+  async function toggleMarketplaceListed(productId, currentlyListed) {
+    if (!ownWorkspaceId) return;
+    setTogglingItem(productId);
+    try {
+      const ws = await apiRequest(`/validation/${ownWorkspaceId}`, "GET");
+      const data = ws?.data || {};
+      const cat = data.catalogue || { products: [] };
+      const products = (cat.products || []).map((p) =>
+        p.id === productId ? { ...p, marketplace_listed: !currentlyListed } : p
+      );
+      await apiRequest(`/validation/${ownWorkspaceId}`, "PATCH", { data: { catalogue: { ...cat, products } } });
+      setOwnerCatProducts(products.filter((p) => p.name && !p.archived));
+      window.dispatchEvent(new CustomEvent("ea:workspace:refresh"));
+    } catch { /* silent */ } finally { setTogglingItem(null); }
+  }
 
   const [ratingData, setRatingData] = useState({ avg_rating: listing.avg_rating, rating_count: listing.rating_count || 0, user_rating: null, user_review: null });
   const [ratingLoading, setRatingLoading] = useState(true);
@@ -878,49 +912,100 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
             <p className="text-[13px] leading-relaxed text-slate-700 dark:text-slate-300">{listing.about_company}</p>
           </div>
 
-          {/* Services with See More */}
-          {listing.services && listing.services.length > 0 && (
-            <div className="mt-5">
-              <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                Services &amp; Products
-              </h4>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {listing.services.map((s, i) => {
-                  const isExpanded = expandedServices[i];
-                  const hasLongDesc = s.service_description && s.service_description.length > 100;
-                  return (
-                    <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">{s.service_name}</div>
-                          {s.service_category && (
-                            <span className={`mt-0.5 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${categoryColor(s.service_category)}`}>
-                              {fmt(s.service_category)}
-                            </span>
-                          )}
+          {/* Services & Products (profile services + catalogue products) */}
+          {(() => {
+            // Owner sees all catalogue products (including hidden); others see only listed ones
+            const catSource = isOwnListing && ownerCatProducts !== null
+              ? ownerCatProducts.map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  desc: /^cost of sales/i.test(p.description || "") ? "" : (p.description || ""),
+                  cat: p.type,
+                  _src: "catalogue",
+                  listed: p.marketplace_listed !== false,
+                }))
+              : (listing.catalogue_products || []).filter((p) => p.name).map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  desc: /^cost of sales/i.test(p.description || "") ? "" : (p.description || ""),
+                  cat: p.type,
+                  _src: "catalogue",
+                  listed: true,
+                }));
+            const allItems = [
+              ...(listing.services || []).map((s) => ({ name: s.service_name, desc: /^cost of sales/i.test(s.service_description || "") ? "" : (s.service_description || ""), cat: s.service_category, _src: "service", listed: true })),
+              ...catSource,
+            ];
+            if (!allItems.length) return null;
+            return (
+              <div className="mt-5">
+                <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Services &amp; Products
+                </h4>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {allItems.map((item, i) => {
+                    const isExpanded = expandedServices[i];
+                    const hasLongDesc = item.desc && item.desc.length > 100;
+                    const isToggling = togglingItem === item.id;
+                    return (
+                      <div key={i} className={`rounded-xl border p-3 ${item.listed ? "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900" : "border-dashed border-slate-200 bg-slate-50 opacity-60 dark:border-slate-700 dark:bg-slate-800/50"}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">{item.name}</div>
+                            {item.cat && (
+                              <span className={`mt-0.5 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${categoryColor(item.cat)}`}>
+                                {fmt(item.cat)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {item._src === "catalogue" && isOwnListing && (
+                              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">Catalogue</span>
+                            )}
+                            {isOwnListing && item._src === "catalogue" && (
+                              <button
+                                type="button"
+                                title={item.listed ? "Hide from marketplace" : "Show on marketplace"}
+                                disabled={isToggling}
+                                onClick={() => toggleMarketplaceListed(item.id, item.listed)}
+                                className={`flex h-6 w-6 items-center justify-center rounded-md transition disabled:opacity-40 ${item.listed ? "text-brand-500 hover:bg-brand-50 dark:hover:bg-brand-900/20" : "text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"}`}
+                              >
+                                {isToggling ? (
+                                  <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                                ) : item.listed ? (
+                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                ) : (
+                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                                )}
+                              </button>
+                            )}
+                          </div>
                         </div>
+                        {item.desc && (
+                          <div className="mt-1.5">
+                            <p className={`text-[12px] text-slate-500 dark:text-slate-400 ${isExpanded ? "" : "line-clamp-2"}`}>
+                              {item.desc}
+                            </p>
+                            {hasLongDesc && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedServices((p) => ({ ...p, [i]: !p[i] }))}
+                                className="mt-0.5 text-[11px] font-semibold text-brand-600 hover:underline dark:text-brand-400">
+                                {isExpanded ? "Show less" : "See more"}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {isOwnListing && !item.listed && (
+                          <p className="mt-1 text-[10px] text-slate-400">Hidden from marketplace</p>
+                        )}
                       </div>
-                      {s.service_description && (
-                        <div className="mt-1.5">
-                          <p className={`text-[12px] text-slate-500 dark:text-slate-400 ${isExpanded ? "" : "line-clamp-2"}`}>
-                            {s.service_description}
-                          </p>
-                          {hasLongDesc && (
-                            <button
-                              type="button"
-                              onClick={() => setExpandedServices((p) => ({ ...p, [i]: !p[i] }))}
-                              className="mt-0.5 text-[11px] font-semibold text-brand-600 hover:underline dark:text-brand-400">
-                              {isExpanded ? "Show less" : "See more"}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Details */}
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -981,7 +1066,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
                   <div className="text-[13px] font-bold text-brand-800 dark:text-brand-300">Request a Quotation</div>
                   <div className="mt-0.5 text-[11px] text-brand-600 dark:text-brand-400">Send your requirements and get a formal quote from {listing.company_name}.</div>
                 </div>
-                <button onClick={() => onRequestQuote(listing)}
+                <button onClick={() => isLoggedIn ? onRequestQuote(listing) : onNeedAuth("rfq")}
                   className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-brand-700 transition">
                   <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
                   Request Quotation
@@ -1073,6 +1158,7 @@ const SERVICE_CATEGORIES = ["software","design","consulting","marketing","financ
 
 export default function MarketplacePage() {
   const navigate = useNavigate();
+  const { triggerDemoGate } = useDemoTour() || {};
   const token = useAuthStore((s) => s.token);
   const userEmail = useAuthStore((s) => s.email);
   const isLoggedIn = Boolean(token);
@@ -1156,21 +1242,36 @@ export default function MarketplacePage() {
     return () => { alive = false; };
   }, [isLoggedIn, myStatus?.is_published]);
 
-  // Derive all products from listings
+  // Derive all products from listings (workspace profile services + catalogue products)
   const allProducts = useMemo(() => {
     const products = [];
+    const q = debouncedSearch.toLowerCase();
     for (const listing of listings) {
       for (const service of (listing.services || [])) {
         if (!service.service_name) continue;
-        const matchesSearch = !debouncedSearch ||
-          service.service_name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-          (service.service_description || "").toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-          listing.company_name.toLowerCase().includes(debouncedSearch.toLowerCase());
+        const cleanSvcDesc = /^cost of sales/i.test(service.service_description || "") ? "" : (service.service_description || "");
+        const cleanService = cleanSvcDesc !== service.service_description ? { ...service, service_description: cleanSvcDesc } : service;
+        const matchesSearch = !q ||
+          cleanService.service_name.toLowerCase().includes(q) ||
+          cleanSvcDesc.toLowerCase().includes(q) ||
+          listing.company_name.toLowerCase().includes(q);
         const matchesCategory = !filterCategory ||
-          (service.service_category || "").toLowerCase().includes(filterCategory.toLowerCase());
-        if (matchesSearch && matchesCategory) {
-          products.push({ service, listing, _key: `${listing.workspace_id}-${service.service_name}` });
-        }
+          (cleanService.service_category || "").toLowerCase().includes(filterCategory.toLowerCase());
+        if (matchesSearch && matchesCategory)
+          products.push({ service: cleanService, listing, _key: `svc-${listing.workspace_id}-${cleanService.service_name}` });
+      }
+      for (const cp of (listing.catalogue_products || [])) {
+        if (!cp.name) continue;
+        const matchesSearch = !q ||
+          cp.name.toLowerCase().includes(q) ||
+          (cp.description || "").toLowerCase().includes(q) ||
+          listing.company_name.toLowerCase().includes(q);
+        if (matchesSearch)
+          products.push({
+            service: { service_name: cp.name, service_description: /^cost of sales/i.test(cp.description || "") ? "" : (cp.description || ""), service_category: cp.type || "product" },
+            listing,
+            _key: `cat-${listing.workspace_id}-${cp.id || cp.name}`,
+          });
       }
     }
     return products;
@@ -1182,6 +1283,7 @@ export default function MarketplacePage() {
 
   function handleListMyBusiness() {
     if (!isLoggedIn) { setGateAction("publish"); return; }
+    if (triggerDemoGate?.("marketplace")) return;
     togglePublish(!myStatus?.is_published);
   }
 
@@ -1195,7 +1297,7 @@ export default function MarketplacePage() {
   }
 
   return (
-    <div className="ea-scroll flex h-screen flex-col overflow-y-auto bg-slate-50 dark:bg-slate-950">
+    <div className="ea-scroll flex h-screen flex-col overflow-y-auto bg-slate-50 dark:bg-slate-950" data-tour="marketplace-section">
       {/* Top navbar */}
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-950/90">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
@@ -1210,7 +1312,7 @@ export default function MarketplacePage() {
           <div className="flex items-center gap-2">
             {isLoggedIn ? (
               <>
-                <button onClick={handleListMyBusiness}
+                <button data-tour="marketplace-list-btn" onClick={handleListMyBusiness}
                   className={`hidden rounded-xl px-3 py-1.5 text-[12px] font-semibold transition sm:block ${myStatus?.is_published
                     ? "border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
                     : "bg-brand-600 text-white hover:bg-brand-700"}`}>
@@ -1260,10 +1362,10 @@ export default function MarketplacePage() {
         <div className="mt-8 flex justify-center">
           <div className="inline-flex rounded-t-2xl bg-white/10 backdrop-blur-sm overflow-hidden">
             {[
-              { id: "products", label: "Products & Services", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" /><line x1="3" y1="6" x2="21" y2="6" /><path d="M16 10a4 4 0 0 1-8 0" /></svg> },
-              { id: "profiles", label: "Businesses", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg> },
+              { id: "products", label: "Products & Services", tourKey: "marketplace-products-tab", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" /><line x1="3" y1="6" x2="21" y2="6" /><path d="M16 10a4 4 0 0 1-8 0" /></svg> },
+              { id: "profiles", label: "Businesses", tourKey: "marketplace-profiles-tab", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg> },
             ].map((t) => (
-              <button key={t.id} onClick={() => { setActiveTab(t.id); setFilterCategory(""); setFilterIndustry(""); setFilterType(""); }}
+              <button key={t.id} data-tour={t.tourKey} onClick={() => { setActiveTab(t.id); setFilterCategory(""); setFilterIndustry(""); setFilterType(""); }}
                 className={`flex items-center gap-2 px-5 py-3 text-[13px] font-semibold transition ${activeTab === t.id
                   ? "bg-white text-brand-700 dark:bg-slate-900 dark:text-brand-400"
                   : "text-white/70 hover:text-white hover:bg-white/10"}`}>
@@ -1403,7 +1505,7 @@ export default function MarketplacePage() {
                     key={product._key}
                     product={product}
                     onOpen={setServiceDetail}
-                    onRequestQuote={(listing) => isLoggedIn ? setRfqTarget(listing) : setGateAction("publish")}
+                    onRequestQuote={(listing, productName) => isLoggedIn ? setRfqTarget({ listing, productName }) : setGateAction("rfq")}
                     isOwn={isOwn}
                   />
                 );
@@ -1488,7 +1590,7 @@ export default function MarketplacePage() {
         <ServiceDetailModal
           product={serviceDetail}
           onClose={() => setServiceDetail(null)}
-          onRequestQuote={(listing) => { setServiceDetail(null); isLoggedIn ? setRfqTarget(listing) : setGateAction("publish"); }}
+          onRequestQuote={(listing, productName) => { setServiceDetail(null); isLoggedIn ? setRfqTarget({ listing, productName }) : setGateAction("rfq"); }}
           isOwnListing={isLoggedIn && (myStatus?.workspace_id || workspaceId) === serviceDetail.listing.workspace_id}
           userEmail={userEmail}
         />
@@ -1497,9 +1599,9 @@ export default function MarketplacePage() {
         <BusinessProfileModal listing={selected} onClose={() => setSelected(null)} isLoggedIn={isLoggedIn}
           userEmail={userEmail} ownWorkspaceId={myStatus?.workspace_id || workspaceId}
           onNeedAuth={(action) => { setSelected(null); setGateAction(action); }}
-          onRequestQuote={(listing) => setRfqTarget(listing)} />
+          onRequestQuote={(listing) => setRfqTarget({ listing, productName: null })} />
       )}
-      {rfqTarget && <RFQModal listing={rfqTarget} onClose={() => setRfqTarget(null)} />}
+      {rfqTarget && <RFQModal listing={rfqTarget.listing} prefilledProduct={rfqTarget.productName} onClose={() => setRfqTarget(null)} />}
       {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}
 
       {/* Profile views modal */}

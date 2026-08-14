@@ -34,7 +34,7 @@ export default function ReferralClickPage() {
         // Code invalid or expired — still redirect, just without attribution
         setStatus("ok");
       } finally {
-        navigate("/register", { replace: true });
+        navigate("/login?signup=1", { replace: true });
       }
     }
 

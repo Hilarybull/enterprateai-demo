@@ -342,6 +342,7 @@ export default function LandingPage() {
           </ul>
           <div className="flex shrink-0 items-center gap-3 ml-6">
             <Link to="/login" className="hidden whitespace-nowrap text-sm font-medium text-slate-600 hover:text-slate-900 lg:block">Sign in</Link>
+            <Link to="/book-demo" className="hidden whitespace-nowrap rounded-xl border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600 transition hover:bg-brand-50 lg:block">Book a Demo</Link>
             <button type="button" onClick={() => goToApp()} className="hidden whitespace-nowrap rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 lg:block">
               <span className="inline xl:hidden">Get Started Free</span>
               <span className="hidden xl:inline">Create My Free Business Workspace</span>
@@ -362,6 +363,7 @@ export default function LandingPage() {
               <li><Link to="/blog" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">Articles</Link></li>
               <li><Link to="/research" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">Research &amp; Development</Link></li>
               <li><Link to="/login" className="block text-sm font-medium text-slate-700">Sign in</Link></li>
+              <li><Link to="/book-demo" onClick={() => setMobileMenuOpen(false)} className="block rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white text-center">Book a Demo</Link></li>
             </ul>
             <div className="mt-4 border-t border-slate-100 pt-4">
               <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Features</p>
@@ -413,11 +415,11 @@ export default function LandingPage() {
             <button type="button" onClick={() => goToApp()} className="w-full rounded-xl border border-white/40 bg-white/10 px-8 py-3.5 text-sm font-bold text-white transition hover:bg-white/20 active:scale-95 sm:w-auto">
               Create My Free Business Workspace
             </button>
-            <a href="#how-it-works" className="flex w-full items-center justify-center rounded-xl bg-slate-800/80 px-8 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-900 sm:w-auto">
-              See How It Works
-            </a>
+            <Link to="/book-demo" className="flex w-full items-center justify-center rounded-xl bg-white px-8 py-3.5 text-sm font-semibold text-brand-700 transition hover:bg-brand-50 active:scale-95 sm:w-auto">
+              Book a Demo
+            </Link>
           </div>
-          <p className="mt-4 text-xs text-white/80">Free to start. No credit card required.</p>
+          <p className="mt-3 text-xs text-white/80">Free to start · No credit card required · <a href="#how-it-works" className="hover:text-white">See how it works ↓</a></p>
 
           {/* Pillar cards */}
           <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -642,9 +644,14 @@ export default function LandingPage() {
         <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
           <h2 className="text-2xl font-extrabold sm:text-3xl lg:text-4xl">Start building a clearer, stronger business today.</h2>
           <p className="mt-4 text-base text-white/80">Input your business data once. Use it to plan, operate, sell, simulate, and grow with intelligence.</p>
-          <button type="button" onClick={() => goToApp()} className="mt-8 rounded-xl border border-white/40 bg-white/10 px-10 py-4 text-base font-semibold text-white transition hover:bg-white/20 active:scale-95">
-            Create My Free Business Workspace
-          </button>
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <button type="button" onClick={() => goToApp()} className="w-full rounded-xl border border-white/40 bg-white/10 px-10 py-4 text-base font-semibold text-white transition hover:bg-white/20 active:scale-95 sm:w-auto">
+              Create My Free Business Workspace
+            </button>
+            <Link to="/book-demo" className="flex w-full items-center justify-center rounded-xl bg-white px-10 py-4 text-base font-semibold text-brand-700 transition hover:bg-brand-50 active:scale-95 sm:w-auto">
+              Book a Demo
+            </Link>
+          </div>
           <p className="mt-4 text-sm text-white/70">Free to start. No credit card required.</p>
         </div>
       </section>

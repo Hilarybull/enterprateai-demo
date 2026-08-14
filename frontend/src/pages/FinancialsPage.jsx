@@ -471,6 +471,7 @@ export default function FinancialsPage() {
       // Increase timeout for workspace patch in case backend processing is slow
       await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: { ...next, manual_receipts: next.manual_receipts !== undefined ? next.manual_receipts : manualReceipts } } }, { timeoutMs: 120000 });
       refreshWorkspaceData();
+      window.dispatchEvent(new CustomEvent("ea:workspace:refresh"));
     } catch (err) {
       setError((err instanceof Error ? err.message : String(err)).replace(/^HTTP \d+:\s*/i, "") || "Failed to save changes.");
       throw err;
@@ -2228,7 +2229,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           onChange={setActiveTab}
           options={[
             ...(canViewFinancialsOverview ? [{ value: "overview", label: "Overview" }] : []),
-            ...(canFinancialsFeature("invoices") ? [{ value: "invoices", label: "Invoices" }] : []),
+            ...(canFinancialsFeature("invoices") ? [{ value: "invoices", label: "Invoices", "data-tour": "financials-invoices-tab" }] : []),
             ...(canFinancialsFeature("quotations") ? [{ value: "quotes", label: "Quotations" }] : []),
             ...(canFinancialsFeature("expenses") ? [{ value: "expenses", label: "Expenses" }] : []),
             ...(canFinancialsFeature("contracts") ? [{ value: "contracts", label: "Contracts" }] : []),

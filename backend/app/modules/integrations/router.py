@@ -17,13 +17,14 @@ from app.modules.idea_validation.service import get_user_workspace, upsert_user_
 from app.modules.integrations import quickbooks as qb
 from app.modules.integrations import xero as xero_mod
 from app.modules.integrations import zoho as zoho_mod
+from app.modules.integrations import stripe as stripe_mod
 from app.shared.currency import get_rate, convert as convert_amount
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
-Provider = Literal["quickbooks", "xero", "zoho_crm"]
+Provider = Literal["quickbooks", "xero", "zoho_crm", "stripe"]
 SyncDirection = Literal["push", "import"]
 
 
@@ -38,6 +39,7 @@ PROVIDERS: dict[str, dict] = {
     "quickbooks": {"label": "QuickBooks", "group": "financial"},
     "xero":       {"label": "Xero",       "group": "financial"},
     "zoho_crm":   {"label": "Zoho CRM",   "group": "catalogue"},
+    "stripe":     {"label": "Stripe",     "group": "financial"},
 }
 
 
@@ -78,6 +80,7 @@ _PROVIDER_ENV_NAMES: dict[str, tuple[str, str]] = {
     "quickbooks": ("QB_CLIENT_ID", "QB_CLIENT_SECRET"),
     "xero":       ("XERO_CLIENT_ID", "XERO_CLIENT_SECRET"),
     "zoho_crm":   ("ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET"),
+    "stripe":     ("STRIPE_CONNECT_CLIENT_ID", "STRIPE_SECRET_KEY"),
 }
 
 def _get_credentials(provider: str) -> tuple[str, str]:
@@ -88,6 +91,8 @@ def _get_credentials(provider: str) -> tuple[str, str]:
         return settings.xero_client_id or "", settings.xero_client_secret or ""
     if provider == "zoho_crm":
         return settings.zoho_client_id or "", settings.zoho_client_secret or ""
+    if provider == "stripe":
+        return settings.stripe_connect_client_id or "", settings.stripe_secret_key or ""
     raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
 
 
@@ -138,6 +143,8 @@ async def connect(provider: Provider, user=Depends(get_current_user)) -> dict:
         url = qb.auth_url(client_id, redirect_uri, state)
     elif provider == "xero":
         url = xero_mod.auth_url(client_id, redirect_uri, state)
+    elif provider == "stripe":
+        url = stripe_mod.auth_url(client_id, redirect_uri, state)
     else:
         url = zoho_mod.auth_url(client_id, redirect_uri, state)
 
@@ -179,6 +186,8 @@ async def callback(provider: Provider, code: str = "", state: str = "", error: s
             tokens["realmId"] = realmId
         elif provider == "xero":
             tokens = await xero_mod.exchange_code(client_id, client_secret, code, redirect_uri)
+        elif provider == "stripe":
+            tokens = await stripe_mod.exchange_code(client_id, client_secret, code, redirect_uri)
         else:
             tokens = await zoho_mod.exchange_code(client_id, client_secret, code, redirect_uri)
     except Exception as e:
@@ -577,6 +586,43 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             ))
         else:
             total_imported = sum(len(imported.get(k, [])) for k in ("products", "customers", "vendors", "invoices", "quotes"))
+
+    elif provider == "stripe":
+        imported, import_errors = await stripe_mod.import_from_stripe(meta)
+        all_errors += import_errors
+        now = datetime.now(timezone.utc).isoformat()
+
+        ws_currency = _get_workspace_currency(ws_data)
+        if imported.get("invoices"):
+            imported["invoices"] = await _convert_financials(imported["invoices"], ws_currency)
+        if imported.get("products"):
+            org_currency = user_source_currency or _infer_source_currency(imported.get("invoices", []))
+            imported["products"] = await _convert_products(imported["products"], ws_currency, fallback_source_currency=org_currency)
+
+        existing_catalogue = catalogue if isinstance(catalogue, dict) else {}
+        merged_catalogue = {
+            "products": zoho_mod._merge_catalogue_lists(existing_catalogue.get("products", []), imported.get("products", []), kind="products", now_iso=now, mode=mode),
+            "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now, mode=mode),
+            "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), [], kind="vendors", now_iso=now, mode=mode),
+        }
+        await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
+
+        existing_financials = financials if isinstance(financials, dict) else {}
+        merged_financials = dict(existing_financials)
+        if imported.get("invoices"):
+            merged_financials["invoices"] = zoho_mod._merge_financials_list(
+                existing_financials.get("invoices", []), imported["invoices"], mode=mode
+            )
+            await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
+
+        if mode == "new_only":
+            total_imported = max(0, (
+                len(merged_catalogue.get("products", [])) - len(existing_catalogue.get("products", []))
+                + len(merged_catalogue.get("customers", [])) - len(existing_catalogue.get("customers", []))
+                + len(merged_financials.get("invoices", [])) - len(existing_financials.get("invoices", []))
+            ))
+        else:
+            total_imported = sum(len(imported.get(k, [])) for k in ("products", "customers", "invoices"))
 
     # Update last_sync_at
     try:

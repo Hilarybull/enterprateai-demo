@@ -17,6 +17,7 @@ import { imageFileToDataUrl } from "../lib/files";
 import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
 import ConfirmDialog from "../components/ConfirmDialog";
 import CreditConfirmModal from "../components/CreditConfirmModal";
+import { useDemoTour } from "../context/DemoTourContext";
 
 const DOCUMENTS = [
   {
@@ -303,6 +304,7 @@ function writeBlueprintCache(ownerKey, docs) {
 }
 
 export default function BlueprintPage() {
+  const { triggerDemoGate } = useDemoTour() || {};
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
   const workspaceLogoStored = useWorkspaceStore((s) => s.workspaceLogo);
   const setWorkspaceIdStored = useWorkspaceStore((s) => s.setWorkspaceId);
@@ -2659,7 +2661,7 @@ export default function BlueprintPage() {
                 >
                   {showInputs ? "Hide inputs" : "Edit inputs"}
                 </Button>
-                <Button disabled={isLoading} onClick={() => { const secs = sectionsByDoc[selectedDoc]; setCreditModal({ featureName: getBlueprintFeatureName(selectedDoc, secs), creditCost: getBlueprintCreditCost(selectedDoc, secs), onConfirm: () => { setCreditModal(null); generateSelected(); } }); }}>
+                <Button disabled={isLoading} onClick={() => { if (triggerDemoGate?.("blueprint")) return; const secs = sectionsByDoc[selectedDoc]; setCreditModal({ featureName: getBlueprintFeatureName(selectedDoc, secs), creditCost: getBlueprintCreditCost(selectedDoc, secs), onConfirm: () => { setCreditModal(null); generateSelected(); } }); }}>
                   {isLoading ? <Spinner size={16} /> : null}
                   {isLoading ? "Generating..." : hasGenerated ? "Regenerate" : "Generate"}
                 </Button>

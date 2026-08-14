@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../components/Button";
 import Input from "../components/Input";
 import InlineAlert from "../components/InlineAlert";
@@ -8,6 +8,7 @@ import Spinner from "../components/Spinner";
 import GoogleSignInButton from "../components/GoogleSignInButton";
 import SegmentedTabs from "../components/SegmentedTabs";
 import logoUrl from "../enterprate-logo.png";
+import { apiRequest } from "../api/client";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -18,10 +19,33 @@ export default function LoginPage() {
   const isLoading = useAuthStore((s) => s.isLoading);
   const error = useAuthStore((s) => s.error);
 
-  const [mode, setMode] = useState("signin"); // signin | signup
+  const [searchParams] = useSearchParams();
+  const [mode, setMode] = useState(searchParams.get("signup") ? "signup" : "signin"); // signin | signup
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [forgotNotice, setForgotNotice] = useState(null);
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoError, setDemoError] = useState(null);
+
+  async function tryDemo() {
+    setDemoLoading(true);
+    setDemoError(null);
+    try {
+      const data = await apiRequest("/auth/demo", "POST");
+      const token = data?.access_token ?? data?.token;
+      if (!token) throw new Error("no_token");
+      localStorage.setItem("ea_token", token);
+      localStorage.setItem("ea_email", "demo");
+      sessionStorage.setItem("ea_tour_active", "1");
+      sessionStorage.setItem("ea_tour_step", "0");
+      sessionStorage.removeItem("ea_tour_done");
+      await useAuthStore.getState().hydrate();
+    } catch {
+      setDemoError("Demo account is not available right now.");
+    } finally {
+      setDemoLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!token) return;
@@ -148,6 +172,18 @@ export default function LoginPage() {
           </div>
 
           <div className="mt-4 text-xs text-slate-500 [@media(max-height:760px)]:hidden">By continuing, you agree to keep your credentials secure.</div>
+        </div>
+
+        <div className="mt-3 text-center">
+          <button
+            type="button"
+            onClick={tryDemo}
+            disabled={demoLoading}
+            className="text-sm font-medium text-slate-500 hover:text-brand-600 transition disabled:opacity-60"
+          >
+            {demoLoading ? "Loading demo…" : "Explore demo account →"}
+          </button>
+          {demoError && <p className="mt-1 text-xs text-rose-500">{demoError}</p>}
         </div>
 
         <div className="pointer-events-none fixed bottom-4 left-0 right-0 text-center text-xs text-slate-500">
