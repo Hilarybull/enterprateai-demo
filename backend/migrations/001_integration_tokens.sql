@@ -2,7 +2,7 @@
 
 CREATE TABLE IF NOT EXISTS integration_tokens (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id         uuid NOT NULL,
+  user_id         text NOT NULL,
   provider        text NOT NULL,          -- 'quickbooks' | 'xero' | 'zoho_crm'
   access_token    text,
   refresh_token   text,
