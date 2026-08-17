@@ -558,7 +558,7 @@ export default function Layout() {
         const today = new Date(); today.setHours(0, 0, 0, 0);
         const overdueInvoices = Array.isArray(invoiceList)
           ? invoiceList
-              .filter((i) => i.due_date && String(i.status || "").toLowerCase() !== "paid" && new Date(i.due_date) < today)
+              .filter((i) => !i.archived && i.due_date && String(i.status || "").toLowerCase() !== "paid" && new Date(i.due_date) < today)
               .map((i) => ({ ...i, _notifType: "overdue" }))
           : [];
         const dismissed = dismissedNotifIds.current;

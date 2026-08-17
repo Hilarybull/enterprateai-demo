@@ -1343,7 +1343,7 @@ export default function MarketplacePage() {
 
     if (sortBy === "rating")   deduped.sort((a, b) => (b.listing.avg_rating ?? 0) - (a.listing.avg_rating ?? 0));
     else if (sortBy === "reviews") deduped.sort((a, b) => (b.listing.rating_count ?? 0) - (a.listing.rating_count ?? 0));
-    else if (sortBy === "az")  deduped.sort((a, b) => a.listing.company_name.localeCompare(b.listing.company_name));
+    else if (sortBy === "az")  deduped.sort((a, b) => (a.service.service_name || "").localeCompare(b.service.service_name || ""));
     // default "recency": listings already arrive newest-first from API
     return deduped;
   }, [listings, debouncedSearch, filterCategory, sortBy]);
