@@ -1,6 +1,14 @@
 -- Blog category seed (upsert safe)
 INSERT INTO blog_categories (name, slug, description) VALUES
-  ('Getting Started', 'getting-started', 'Guides and walkthroughs to help you get the most out of EnterprateAI from day one.')
+  ('Getting Started',       'getting-started',       'Guides and walkthroughs to help you get the most out of EnterprateAI from day one.'),
+  ('Business Planning',     'business-planning',     'Build comprehensive business plans and strategies to guide your business forward.'),
+  ('Funding Readiness',     'funding-readiness',     'Prepare your business for investment, grants, and lending with confidence.'),
+  ('Invoicing & Cashflow',  'invoicing-cashflow',    'Manage your invoices, quotations, expenses, and cashflow with clarity.'),
+  ('Business Resilience',   'business-resilience',   'Identify vulnerabilities, mitigate risks, and build a more resilient business.'),
+  ('Decision Intelligence', 'decision-intelligence', 'Simulate scenarios and make smarter, data-driven business decisions.'),
+  ('Small Business Growth', 'small-business-growth', 'Practical strategies and insights to help your business scale sustainably.'),
+  ('Marketplace & Sales',   'marketplace-sales',     'Reach more customers, improve your listings, and grow your sales pipeline.'),
+  ('Contract Management',   'contract-management',   'Create, manage, and track contracts and agreements efficiently.')
 ON CONFLICT (slug) DO NOTHING;
 
 -- Article seed

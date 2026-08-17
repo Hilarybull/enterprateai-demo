@@ -637,6 +637,15 @@ async def remove_user_grant(
 async def delete_user(user_id: str, user=Depends(require_admin)) -> Response:
     if user_id == user.get("id"):
         raise HTTPException(status_code=400, detail="Cannot delete your own admin account.")
+    # Clear non-cascading FK reference before deleting the user
+    try:
+        await sb_update(
+            "workspace_invitations",
+            payload={"accepted_by_user_id": None},
+            filters=[("accepted_by_user_id", "eq", user_id)],
+        )
+    except Exception:
+        pass
     await sb_delete("users", filters=[("id", "eq", user_id)])
     return Response(status_code=204)
 

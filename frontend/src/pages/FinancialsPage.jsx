@@ -14,7 +14,9 @@ import WorkspacePrompt from "../components/WorkspacePrompt";
 import { FinancialIllustration, IllustrationCard } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
+import { useAuthStore } from "../store/auth";
 import { hasFeatureAccess } from "../lib/permissions";
+import { normalisePlanKey } from "../lib/plans";
 import { formatCurrency } from "../lib/format";
 import { getProductCostOfSales, getProductSalesPrice } from "../lib/financialIntelligence";
 
@@ -116,6 +118,8 @@ function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "
 }
 
 export default function FinancialsPage() {
+  const subscription = useAuthStore((s) => s.subscription);
+  const isExplorer = normalisePlanKey(subscription?.plan_key) === "explorer";
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
@@ -159,6 +163,7 @@ export default function FinancialsPage() {
   const [contracts, setContracts] = useState([]);
   const [rfqRequests, setRfqRequests] = useState([]);
   const [rfqApproveModal, setRfqApproveModal] = useState(null); // { rfq, items: [{product_name,quantity,unit_price,unit_cost_of_sales}], validityDays }
+  const [rfqTab, setRfqTab] = useState("pending");
   const [integrations, setIntegrations] = useState({
     financial: { quickbooks: "not_connected", sap: "not_connected", zoho_books: "not_connected" },
     crm: { zoho_crm: "not_connected", hubspot: "not_connected", salesforce: "not_connected" }
@@ -179,6 +184,8 @@ export default function FinancialsPage() {
     if (t) { setActiveTab(t); setSearchParams({}, { replace: true }); }
   }, []); // eslint-disable-line
   const [statusDateModal, setStatusDateModal] = useState(null); // { type, id, status, label }
+  const [recordPaymentModal, setRecordPaymentModal] = useState(null); // { invoiceId }
+  const [paymentHistoryModal, setPaymentHistoryModal] = useState(null); // { invoiceId }
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [pendingFinancialReport, setPendingFinancialReport] = useState(null);
   const [reportFilter, setReportFilter] = useState({ kpis: true, invoices: true, quotes: true, expenses: true, contracts: true });
@@ -510,8 +517,11 @@ export default function FinancialsPage() {
     const today = new Date();
     const overdueInvCount = deliveredInvs.filter((i) => i.due_date && new Date(i.due_date) < today).length;
 
-    // Helper: amount actually received for an invoice (partial payments use paid_amount)
+    // Helper: amount actually received for an invoice (supports payments array + legacy paid_amount)
     function receivedAmt(i) {
+      if (i.payments && i.payments.length > 0) {
+        return i.payments.reduce((s, p) => s + Number(p.amount), 0);
+      }
       return (i.payment_type === "partial" && i.paid_amount != null)
         ? Number(i.paid_amount)
         : Number(i.total_amount || i.subtotal_amount || 0);
@@ -522,10 +532,10 @@ export default function FinancialsPage() {
     const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
     const cashBalance = paidRevenue - paidExpTotal;
 
-    // Receivables = delivered invoices (full amount) + remaining balance on partial-paid invoices
-    const partialInvs = revenueInvs.filter((i) => i.payment_type === "partial" && i.paid_amount != null);
+    // Receivables = delivered invoices (full amount) + remaining balance on partially-paid invoices
+    const partialInvs = revenueInvs.filter((i) => receivedAmt(i) < Number(i.total_amount || 0));
     const pendingRec = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0)
-      + partialInvs.reduce((s, i) => s + Math.max(0, Number(i.total_amount || 0) - Number(i.paid_amount)), 0);
+      + partialInvs.reduce((s, i) => s + Math.max(0, Number(i.total_amount || 0) - receivedAmt(i)), 0);
 
     const pendingPay = unpaidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
 
@@ -612,7 +622,17 @@ export default function FinancialsPage() {
       case "invoices-paid":
         return activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid");
       case "invoices-unpaid":
-        return activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" || (String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial"));
+        return activeInvoices.filter((i) => {
+          const s = String(i.status || "").toLowerCase();
+          if (s === "delivered") return true;
+          if (s === "paid") {
+            const paid = i.payments?.length > 0
+              ? i.payments.reduce((a, p) => a + Number(p.amount), 0)
+              : (i.payment_type === "partial" ? Number(i.paid_amount || 0) : Number(i.total_amount || 0));
+            return paid < Number(i.total_amount || 0);
+          }
+          return false;
+        });
       case "invoices-overdue":
         return activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid" && i.due_date && new Date(i.due_date) < new Date());
       case "invoices-pending":
@@ -1826,6 +1846,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
           issued_at: status === "delivered" ? ts : i.issued_at,
           updated_at: new Date().toISOString(),
           ...(status === "paid" ? { payment_type: extraData.payment_type || "full", paid_amount: extraData.paid_amount ?? null } : {}),
+          ...(status === "pending" ? { payments: [], paid_amount: null, payment_type: null } : {}),
         } : i
       );
       setInvoices(next);
@@ -1850,6 +1871,46 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       setQuotes(next);
       await persist({ invoices, quotes: next, expenses, contracts });
     }
+  }
+
+  async function recordPayment(invoiceId, amount, paidAt, note) {
+    const newPayment = { id: crypto.randomUUID(), amount: Number(amount), paid_at: paidAt || new Date().toISOString(), note: note || null };
+    const next = invoices.map((inv) => {
+      if (inv.id !== invoiceId) return inv;
+      const payments = [...(inv.payments || []), newPayment];
+      const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
+      const total = Number(inv.total_amount || inv.subtotal_amount || 0);
+      return {
+        ...inv, payments,
+        paid_amount: totalPaid,
+        payment_type: totalPaid >= total ? "full" : "partial",
+        status: "paid",
+        paid_at: inv.paid_at || paidAt || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    });
+    setInvoices(next);
+    await persist({ invoices: next, quotes, expenses, contracts });
+  }
+
+  async function deletePayment(invoiceId, paymentId) {
+    const next = invoices.map((inv) => {
+      if (inv.id !== invoiceId) return inv;
+      const payments = (inv.payments || []).filter((p) => p.id !== paymentId);
+      const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
+      const total = Number(inv.total_amount || inv.subtotal_amount || 0);
+      if (payments.length === 0) {
+        return { ...inv, payments: [], paid_amount: null, payment_type: null, status: "pending", paid_at: null, updated_at: new Date().toISOString() };
+      }
+      return {
+        ...inv, payments,
+        paid_amount: totalPaid,
+        payment_type: totalPaid >= total ? "full" : "partial",
+        updated_at: new Date().toISOString(),
+      };
+    });
+    setInvoices(next);
+    await persist({ invoices: next, quotes, expenses, contracts });
   }
 
   async function archiveItem(type, id) {
@@ -1946,12 +2007,18 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   }
 
   function openRfqApproveModal(rfq) {
-    const items = (rfq.items || []).map((item) => ({
-      product_name: item.name || "Item",
-      quantity: Math.max(1, Number(item.quantity) || 1),
-      unit_price: 0,
-      unit_cost_of_sales: 0,
-    }));
+    if (isExplorer) { setError("Upgrade to Starter or above to review and send quotations."); return; }
+    const items = (rfq.items || []).map((item) => {
+      const catalogueMatch = products.find(
+        (p) => p.name?.toLowerCase().trim() === (item.name || "").toLowerCase().trim()
+      );
+      return {
+        product_name: item.name || "Item",
+        quantity: Math.max(1, Number(item.quantity) || 1),
+        unit_price: catalogueMatch ? getProductPrice(catalogueMatch) : 0,
+        unit_cost_of_sales: Number(catalogueMatch?.unit_cost_of_sales || 0),
+      };
+    });
     setRfqApproveModal({ rfq, items, validityDays: 30 });
   }
 
@@ -1978,26 +2045,62 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
         company_name: company_name || workspaceName || "Business",
         workspace_id: wsId || workspaceId,
         document_html: quoteHtml,
-        document_markdown: "",
+        document_markdown: `Quotation ${quote.quotation_id || quote.id} for ${rfq.customer_name}`,
       }, { timeoutMs: 120000 });
       if (shareRes?.token) {
         const nextQuotes = quotes.map((q) => q.id === quote.id ? { ...q, share_document_id: shareRes.document_id, share_token: shareRes.token } : q);
         setQuotes(nextQuotes);
         await persist({ invoices, quotes: nextQuotes, expenses, contracts });
         window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
+        if (shareRes.email_sent === false) {
+          setError(`Quotation saved but email delivery failed: ${shareRes.email_error || "unknown error"}. Check your Resend configuration.`);
+        }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to approve RFQ.");
+      setError(((e instanceof Error ? e.message : "") || "Failed to send quotation.").replace(/^HTTP \d+:\s*/i, "") || "Failed to send quotation.");
     }
   }
 
   async function rejectRfq(rfqId) {
     setError(null);
     try {
+      const rfqBefore = rfqRequests.find((r) => r.id === rfqId);
       const rfq = await apiRequest(`/marketplace/rfq/${rfqId}/reject`, "POST", {});
       setRfqRequests((prev) => prev.map((r) => r.id === rfqId ? rfq : r));
+      // Send rejection notification email to customer
+      if (rfqBefore?.customer_email) {
+        const bizName = workspaceName || "Business";
+        const itemList = (rfqBefore.items || []).map((it) => `${it.name}${it.quantity > 1 ? ` ×${it.quantity}` : ""}`).join(", ");
+        const rejectHtml = `<!doctype html><html><head><meta charset="utf-8"/><title>Quotation Request Update</title>
+<style>body{font-family:Inter,Arial,sans-serif;background:#fff;padding:32px;font-size:14px;color:#0f172a;line-height:1.6;}
+.card{border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-top:16px;background:#f8fafc;}
+.muted{color:#64748b;font-size:13px;}</style></head><body>
+<h2 style="margin:0 0 4px;">${bizName}</h2>
+<div class="muted">Quotation request update</div>
+<div class="card">
+  <p>Hi ${rfqBefore.customer_name || "there"},</p>
+  <p>Thank you for your interest. Unfortunately, we are unable to fulfil your recent quotation request for <strong>${itemList || "the requested items"}</strong> at this time.</p>
+  <p>We appreciate you reaching out and encourage you to get in touch again in the future.</p>
+  <p style="margin-top:24px;">Best regards,<br/><strong>${bizName}</strong></p>
+</div></body></html>`;
+        try {
+          await apiRequest("/blueprint/financial-documents/share", "POST", {
+            access_mode: "email",
+            email: rfqBefore.customer_email,
+            expires_in_days: 1,
+            type: `rfq_rejection::${rfqId}`,
+            title: `Quotation Request Update — ${bizName}`,
+            company_name: bizName,
+            workspace_id: workspaceId,
+            document_html: rejectHtml,
+            document_markdown: `Quotation request update from ${bizName}`,
+          }, { timeoutMs: 30000 });
+        } catch (emailErr) {
+          console.warn("Rejection email failed (non-critical):", emailErr);
+        }
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to reject RFQ.");
+      setError(((e instanceof Error ? e.message : "") || "Failed to reject request.").replace(/^HTTP \d+:\s*/i, "") || "Failed to reject request.");
     }
   }
 
@@ -2213,8 +2316,11 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
       />
 
       {error ? (
-        <div className="mt-4">
-          <InlineAlert kind="error" message={error} />
+        <div className="mt-4 flex items-start gap-2">
+          <div className="flex-1"><InlineAlert kind="error" message={error} /></div>
+          <button type="button" onClick={() => setError(null)} className="mt-1 rounded-lg p-1 text-slate-400 hover:bg-slate-100" aria-label="Dismiss">
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
         </div>
       ) : null}
       {hasArchiveWarning ? (
@@ -2243,7 +2349,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
       <div className="mt-6 space-y-4"> {/* overview */}
 
         {/* KPI tiles */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7 xl:grid-cols-7">
           {[
             { label: "Annual Recurring Revenue", value: formatMoney(overviewKpis.arr), sub: "annualised from current revenue", tone: "slate", type: "invoices-paid", wide: true, items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
             { label: "Monthly run rate", value: formatMoney(overviewKpis.monthlyRev), sub: "from paid invoices", tone: "emerald", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
@@ -2256,13 +2362,13 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             return (
               <button key={kpi.label} type="button"
                 onClick={() => setOverviewDrill(isOpen ? null : { label: kpi.label, type: kpi.type, items: kpi.items })}
-                className={`rounded-2xl border bg-white p-4 shadow-sm text-left w-full transition hover:shadow-md ${kpi.wide ? "lg:col-span-2" : ""} ${isOpen ? "border-brand-400 ring-1 ring-brand-200" : "border-slate-200 hover:border-slate-300"}`}
+                className={`rounded-2xl border bg-white p-3 shadow-sm text-left w-full transition hover:shadow-md ${kpi.wide ? "lg:col-span-2" : ""} ${isOpen ? "border-brand-400 ring-1 ring-brand-200" : "border-slate-200 hover:border-slate-300"}`}
               >
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 leading-tight">{kpi.label}</div>
-                <div className={`mt-1.5 text-2xl font-bold ${kpi.tone === "emerald" ? "text-emerald-600" : kpi.tone === "rose" ? "text-rose-600" : kpi.tone === "amber" ? "text-amber-600" : "text-slate-900"}`}>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 leading-tight">{kpi.label}</div>
+                <div className={`mt-1.5 text-lg font-bold leading-tight font-variant-numeric tabular-nums ${kpi.tone === "emerald" ? "text-emerald-600" : kpi.tone === "rose" ? "text-rose-600" : kpi.tone === "amber" ? "text-amber-600" : "text-slate-900"}`}>
                   {kpi.value}
                 </div>
-                <div className="mt-1 text-[11px] text-slate-500">{kpi.sub}</div>
+                <div className="mt-1 text-[10px] text-slate-500 leading-snug">{kpi.sub}</div>
               </button>
             );
           })}
@@ -2786,21 +2892,29 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     {paginated.length ? paginated.map((inv) => {
                       const customer = resolveCustomer(inv.customer_id, inv.customer_name);
                       const product = resolveProduct(inv.product_id, inv.product_name);
+                      const invTotalPaid = (inv.payments || []).reduce((s, p) => s + Number(p.amount), 0);
+                      const invIsPartial = inv.status === "paid" && invTotalPaid > 0 && invTotalPaid < Number(inv.total_amount || 0);
+                      const invLegacyPartial = inv.status === "paid" && inv.payment_type === "partial" && !(inv.payments?.length > 0);
+                      const showPartialBadge = invIsPartial || invLegacyPartial;
                       return (
-                        <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                        <div key={inv.id} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <div className="truncate text-sm font-semibold text-slate-900">
+                              <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
                                 {customer?.name || "Customer"} · {summariseProductNames(inv)}
                               </div>
-                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${inv.status === "paid" && inv.payment_type === "partial" ? "bg-violet-50 text-violet-700" : inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "delivered" ? "bg-blue-50 text-blue-700" : inv.status === "draft" || inv.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
-                                {inv.status === "paid" && inv.payment_type === "partial" ? "partial" : inv.status || "pending"}
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${showPartialBadge ? "bg-violet-50 text-violet-700" : inv.status === "paid" ? "bg-emerald-50 text-emerald-700" : inv.status === "delivered" ? "bg-blue-50 text-blue-700" : inv.status === "draft" || inv.status === "sent" ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700"}`}>
+                                {showPartialBadge ? "partial" : inv.status || "pending"}
                               </span>
                               {sourceBadge(inv)}
                             </div>
                             <div className="mt-0.5 text-xs text-slate-500">
                               Qty {inv.quantity} · {formatMoney(inv.total_amount)} · Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"}
-                              {inv.status === "paid" && inv.paid_at ? ` · Paid ${new Date(inv.paid_at).toLocaleDateString()}${inv.payment_type === "partial" && inv.paid_amount != null ? ` (${formatMoney(inv.paid_amount)})` : ""}` : inv.status === "delivered" && inv.issued_at ? ` · Delivered ${new Date(inv.issued_at).toLocaleDateString()}` : null}
+                              {inv.status === "paid" && inv.payments?.length > 0
+                                ? ` · ${inv.payments.length} payment${inv.payments.length > 1 ? "s" : ""} · ${formatMoney(invTotalPaid)} received`
+                                : inv.status === "paid" && inv.paid_at ? ` · Paid ${new Date(inv.paid_at).toLocaleDateString()}${invLegacyPartial && inv.paid_amount != null ? ` (${formatMoney(inv.paid_amount)})` : ""}` : null}
+                              {inv.status === "delivered" && inv.issued_at ? ` · Delivered ${new Date(inv.issued_at).toLocaleDateString()}` : null}
                             </div>
                           </div>
                           <ActionMenu
@@ -2848,15 +2962,25 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                   });
                                 }
                               },
-                              { label: inv.status === "paid" ? "Mark pending" : "Mark paid", onClick: () => inv.status === "paid" ? updateStatus("invoice", inv.id, "pending") : setStatusDateModal({ type: "invoice", id: inv.id, status: "paid", label: "Date of payment" }) },
+                              ...(inv.status !== "paid"
+                                ? [{ label: "Record payment", onClick: () => setRecordPaymentModal({ invoiceId: inv.id }) }]
+                                : showPartialBadge
+                                ? [
+                                    { label: "Record payment", onClick: () => setRecordPaymentModal({ invoiceId: inv.id }) },
+                                    { label: "Mark pending", onClick: () => updateStatus("invoice", inv.id, "pending") },
+                                  ]
+                                : [{ label: "Mark pending", onClick: () => updateStatus("invoice", inv.id, "pending") }]
+                              ),
                               ...(inv.status !== "delivered" && inv.status !== "paid" ? [{ label: "Mark as delivered", onClick: () => setStatusDateModal({ type: "invoice", id: inv.id, status: "delivered", label: "Date of delivery" }) }] : []),
                               ...(inv.status === "delivered" ? [{ label: "Mark as undelivered", onClick: () => updateStatus("invoice", inv.id, "pending") }] : []),
                               { label: "View invoice", onClick: () => setPreviewInvoiceId(inv.id) },
+                              ...((inv.payments || []).length > 0 ? [{ label: `View payments (${inv.payments.length})`, onClick: () => setPaymentHistoryModal({ invoiceId: inv.id }) }] : []),
                               ...(String(inv.status || "").toLowerCase() === "paid" ? [{ label: "Download receipt", onClick: () => downloadReceipt(inv, resolveCustomer(inv.customer_id, inv.customer_name), resolveProduct(inv.product_id, inv.product_name)) }] : []),
                               { label: "Archive", onClick: () => archiveItem("invoice", inv.id) },
                               { label: "Delete", tone: "danger", onClick: () => deleteItem("invoice", inv.id) }
                             ], "invoice", inv, customer, product)}
                           />
+                          </div>
                         </div>
                       );
                     }) : (
@@ -3177,14 +3301,30 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               const qTotal = Math.max(1, Math.ceil(qFiltered.length / QUOTES_PER_PAGE));
               const qPage = Math.min(quoteListPage, qTotal - 1);
               const qPaginated = qFiltered.slice(qPage * QUOTES_PER_PAGE, (qPage + 1) * QUOTES_PER_PAGE);
+              const tabCounts = { all: activeQuotes.length };
+              for (const q of activeQuotes) {
+                const st = String(q.status || "draft").toLowerCase();
+                tabCounts[st] = (tabCounts[st] || 0) + 1;
+              }
               return (
                 <div className="flex-1 flex flex-col gap-3 mt-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
-                      {["all", "draft", "sent", "accepted", "rejected"].map((s) => (
-                        <button key={s} type="button" onClick={() => { setQuoteStatusFilter(s); setQuoteListPage(0); }}
-                          className={`px-3 py-1.5 font-medium capitalize transition-colors ${quoteStatusFilter === s ? "bg-brand-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>{s}</button>
-                      ))}
+                      {["all", "draft", "sent", "accepted", "rejected"].map((s) => {
+                        const cnt = tabCounts[s] || 0;
+                        const active = quoteStatusFilter === s;
+                        return (
+                          <button key={s} type="button" onClick={() => { setQuoteStatusFilter(s); setQuoteListPage(0); }}
+                            className={`flex items-center gap-1 px-3 py-1.5 font-medium capitalize transition-colors ${active ? "bg-brand-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+                            {s}
+                            {cnt > 0 && (
+                              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none ${active ? "bg-white/30 text-white" : s === "accepted" ? "bg-emerald-100 text-emerald-700" : s === "rejected" ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-500"}`}>
+                                {cnt}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                     <input type="text" placeholder="Search customer, product, ID…" value={quoteSearchQuery}
                       onChange={(e) => { setQuoteSearchQuery(e.target.value); setQuoteListPage(0); }}
@@ -3254,6 +3394,11 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           title="Incoming Requests"
           subtitle="Quotation requests from marketplace visitors."
           className="lg:col-span-5"
+          headerRight={rfqRequests.filter((r) => r.status === "pending").length > 0 ? (
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
+              {rfqRequests.filter((r) => r.status === "pending").length}
+            </span>
+          ) : null}
           icon={
             <CardIcon tone="bg-sky-50 text-sky-600">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -3265,52 +3410,101 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             </CardIcon>
           }
         >
-          <div className="mt-2 space-y-2 max-h-96 overflow-auto pr-1">
-            {rfqRequests.length ? (
-              [...rfqRequests].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((rfq) => {
-                const statusColors = {
-                  pending: "bg-amber-50 text-amber-700 border-amber-200",
-                  approved: "bg-emerald-50 text-emerald-700 border-emerald-200",
-                  rejected: "bg-rose-50 text-rose-700 border-rose-200",
-                };
-                const customerResponse = rfq.customer_response;
-                return (
-                  <div key={rfq.id} className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900">{rfq.customer_name}</div>
-                        <div className="text-xs text-slate-500">{rfq.customer_email}</div>
-                        {rfq.message && <div className="mt-1 text-xs text-slate-500 italic line-clamp-2">"{rfq.message}"</div>}
-                        <div className="mt-1.5 flex flex-wrap gap-1">
-                          {(rfq.items || []).map((item, i) => (
-                            <span key={i} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
-                              {item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}
-                            </span>
-                          ))}
-                        </div>
-                        <div className="mt-1 text-[10px] text-slate-400">{rfq.created_at ? new Date(rfq.created_at).toLocaleDateString() : ""}</div>
-                      </div>
-                      <div className="flex flex-col items-end gap-1.5">
-                        <span className={`rounded-lg border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusColors[rfq.status] || "bg-slate-50 text-slate-600 border-slate-200"}`}>
-                          {customerResponse ? `Customer ${customerResponse}` : rfq.status}
-                        </span>
-                        {rfq.status === "pending" && (
-                          <div className="flex gap-1.5">
-                            <Button onClick={() => openRfqApproveModal(rfq)}>Approve & Send</Button>
-                            <Button variant="secondary" onClick={() => rejectRfq(rfq.id)}>Reject</Button>
-                          </div>
-                        )}
-                        <Button variant="ghost" className="text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => deleteRfq(rfq.id)}>Delete</Button>
-                      </div>
-                    </div>
+          <div className="mt-2 space-y-3">
+            {(() => {
+              const rfqCounts = { pending: 0, approved: 0, rejected: 0 };
+              for (const r of rfqRequests) rfqCounts[r.status] = (rfqCounts[r.status] || 0) + 1;
+              const tabCfg = [
+                { key: "pending", label: "Pending", badge: "bg-amber-100 text-amber-700", activeBadge: "bg-white/30 text-white" },
+                { key: "approved", label: "Approved", badge: "bg-emerald-100 text-emerald-700", activeBadge: "bg-white/30 text-white" },
+                { key: "rejected", label: "Rejected", badge: "bg-rose-100 text-rose-700", activeBadge: "bg-white/30 text-white" },
+              ];
+              const visibleRfqs = [...rfqRequests]
+                .filter((r) => r.status === rfqTab)
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+              return (
+                <>
+                  <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs w-fit">
+                    {tabCfg.map(({ key, label, badge, activeBadge }) => {
+                      const cnt = rfqCounts[key] || 0;
+                      const active = rfqTab === key;
+                      return (
+                        <button key={key} type="button" onClick={() => setRfqTab(key)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 font-medium transition-colors ${active ? "bg-brand-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+                          {label}
+                          {cnt > 0 && (
+                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none ${active ? activeBadge : badge}`}>{cnt}</span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
-                );
-              })
-            ) : (
-              <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-                No incoming requests yet. Once your business is listed in the marketplace, quotation requests will appear here.
-              </div>
-            )}
+                  <div className="space-y-2">
+                    {visibleRfqs.length ? visibleRfqs.map((rfq) => {
+                      const customerResponse = rfq.customer_response;
+                      return (
+                        <div key={rfq.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              {isExplorer ? (
+                                <>
+                                  <div className="flex items-center gap-2">
+                                    <div className="text-sm font-semibold text-slate-400 select-none blur-sm pointer-events-none">Customer Name</div>
+                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Upgrade to view</span>
+                                  </div>
+                                  <div className="text-xs text-slate-300 select-none blur-sm pointer-events-none">customer@email.com</div>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="text-sm font-semibold text-slate-900">{rfq.customer_name}</div>
+                                  <div className="text-xs text-slate-500">{rfq.customer_email}</div>
+                                </>
+                              )}
+                              {rfq.message && <div className="mt-1 text-xs text-slate-500 italic line-clamp-2">"{rfq.message}"</div>}
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {(rfq.items || []).map((item, i) => (
+                                  <span key={i} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
+                                    {item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}
+                                  </span>
+                                ))}
+                              </div>
+                              {customerResponse && (
+                                <div className="mt-1 text-[10px] text-slate-500">Customer: <span className={customerResponse === "accepted" ? "text-emerald-600 font-semibold" : "text-rose-600 font-semibold"}>{customerResponse}</span></div>
+                              )}
+                              <div className="mt-1 text-[10px] text-slate-400">{rfq.created_at ? new Date(rfq.created_at).toLocaleDateString() : ""}</div>
+                            </div>
+                            {isExplorer ? (
+                              <button
+                                type="button"
+                                onClick={() => setError("Upgrade to Starter or above to review and send quotations to customers.")}
+                                className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                              >
+                                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                Upgrade to respond
+                              </button>
+                            ) : (
+                              <ActionMenu items={[
+                                ...(rfq.status === "pending" ? [
+                                  { label: "Review & Send", onClick: () => openRfqApproveModal(rfq) },
+                                  { label: "Reject", onClick: () => rejectRfq(rfq.id) },
+                                ] : []),
+                                { label: "Delete", onClick: () => deleteRfq(rfq.id), tone: "danger" },
+                              ]} />
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
+                        {rfqRequests.length === 0
+                          ? "No incoming requests yet. Once your business is listed in the marketplace, quotation requests will appear here."
+                          : `No ${rfqTab} requests.`}
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </SectionCard>
 
@@ -4542,6 +4736,35 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
       )}
 
       {/* Status date modal — paid / delivered */}
+      {recordPaymentModal && (() => {
+        const inv = invoices.find((i) => i.id === recordPaymentModal.invoiceId);
+        if (!inv) return null;
+        return (
+          <RecordPaymentModal
+            invoice={inv}
+            formatMoney={formatMoney}
+            onConfirm={(amount, paidAt, note) => { recordPayment(recordPaymentModal.invoiceId, amount, paidAt, note); setRecordPaymentModal(null); }}
+            onCancel={() => setRecordPaymentModal(null)}
+          />
+        );
+      })()}
+
+      {paymentHistoryModal && (() => {
+        const inv = invoices.find((i) => i.id === paymentHistoryModal.invoiceId);
+        if (!inv) return null;
+        const customer = resolveCustomer(inv.customer_id, inv.customer_name);
+        return (
+          <PaymentHistoryModal
+            invoice={inv}
+            customer={customer}
+            formatMoney={formatMoney}
+            onDelete={(paymentId) => deletePayment(inv.id, paymentId)}
+            onRecordNew={() => { setPaymentHistoryModal(null); setRecordPaymentModal({ invoiceId: inv.id }); }}
+            onClose={() => setPaymentHistoryModal(null)}
+          />
+        );
+      })()}
+
       {statusDateModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
@@ -4587,7 +4810,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
           <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
               <div>
-                <div className="text-base font-semibold text-slate-900 dark:text-slate-100">Set prices before approving</div>
+                <div className="text-base font-semibold text-slate-900 dark:text-slate-100">Review & send quotation</div>
                 <div className="text-xs text-slate-500 dark:text-slate-400">{rfqApproveModal.rfq.customer_name} · {rfqApproveModal.rfq.customer_email}</div>
               </div>
               <button type="button" onClick={() => setRfqApproveModal(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
@@ -4644,13 +4867,20 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               </div>
             </div>
 
+            {rfqApproveModal.items.some((it) => !it.unit_price || it.unit_price <= 0) && (
+              <div className="mx-6 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                Set a price for all items before sending.
+              </div>
+            )}
             <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4 dark:border-slate-800">
               <Button variant="secondary" onClick={() => setRfqApproveModal(null)}>Cancel</Button>
-              <Button onClick={async () => {
-                const { rfq, items, validityDays } = rfqApproveModal;
-                setRfqApproveModal(null);
-                await approveRfq(rfq.id, items, validityDays);
-              }}>
+              <Button
+                disabled={rfqApproveModal.items.some((it) => !it.unit_price || it.unit_price <= 0)}
+                onClick={async () => {
+                  const { rfq, items, validityDays } = rfqApproveModal;
+                  setRfqApproveModal(null);
+                  await approveRfq(rfq.id, items, validityDays);
+                }}>
                 Confirm & Send
               </Button>
             </div>
@@ -5119,17 +5349,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 function StatusDateForm({ modal, onConfirm, onCancel }) {
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
-  const [paymentType, setPaymentType] = useState("full");
-  const [paidAmount, setPaidAmount] = useState("");
-  const isPaid = modal.status === "paid";
-  const label = isPaid ? "Date of payment" : "Date of delivery";
-
-  function handleConfirm() {
-    const extraData = isPaid
-      ? { payment_type: paymentType, paid_amount: paymentType === "partial" ? Number(paidAmount) || null : null }
-      : {};
-    onConfirm(date || today, extraData);
-  }
+  const label = modal.status === "paid" ? "Date of payment" : "Date of delivery";
 
   return (
     <div className="px-6 py-5 space-y-4">
@@ -5144,43 +5364,157 @@ function StatusDateForm({ modal, onConfirm, onCancel }) {
         />
         <p className="mt-1 text-xs text-slate-400">Defaults to today if left unchanged.</p>
       </div>
-      {isPaid && (
-        <div className="space-y-3">
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Payment type</label>
-          <div className="flex gap-4">
-            {["full", "partial"].map((opt) => (
-              <label key={opt} className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-300">
-                <input
-                  type="radio"
-                  name="payment_type"
-                  value={opt}
-                  checked={paymentType === opt}
-                  onChange={() => setPaymentType(opt)}
-                  className="accent-brand-600"
-                />
-                {opt.charAt(0).toUpperCase() + opt.slice(1)} payment
-              </label>
-            ))}
-          </div>
-          {paymentType === "partial" && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Amount paid</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={paidAmount}
-                onChange={(e) => setPaidAmount(e.target.value)}
-                placeholder="0.00"
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
-            </div>
-          )}
-        </div>
-      )}
       <div className="flex gap-2 justify-end">
         <button type="button" onClick={onCancel} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">Cancel</button>
-        <button type="button" onClick={handleConfirm} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Confirm</button>
+        <button type="button" onClick={() => onConfirm(date || today, {})} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Confirm</button>
+      </div>
+    </div>
+  );
+}
+
+function PaymentHistoryModal({ invoice, customer, formatMoney, onDelete, onRecordNew, onClose }) {
+  const totalAmount = Number(invoice?.total_amount || 0);
+  const payments = invoice?.payments || [];
+  const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
+  const remaining = Math.max(0, totalAmount - totalPaid);
+  const isFullyPaid = totalPaid >= totalAmount && totalAmount > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
+          <div>
+            <div className="text-base font-semibold text-slate-900 dark:text-slate-100">Payment history</div>
+            <div className="mt-0.5 text-xs text-slate-500">{customer?.name || "Customer"} · {formatMoney(totalAmount)}</div>
+          </div>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="px-6 py-4 space-y-3">
+          <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2.5 text-sm dark:bg-slate-800">
+            <span className="text-slate-500 dark:text-slate-400">Received</span>
+            <span className="font-semibold text-slate-900 dark:text-slate-100">{formatMoney(totalPaid)}</span>
+          </div>
+          {!isFullyPaid && (
+            <div className="flex items-center justify-between rounded-lg bg-amber-50 px-3 py-2.5 text-sm dark:bg-amber-900/20">
+              <span className="text-amber-700 dark:text-amber-400">Remaining</span>
+              <span className="font-semibold text-amber-800 dark:text-amber-300">{formatMoney(remaining)}</span>
+            </div>
+          )}
+          <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-xl border border-slate-100 dark:border-slate-800 overflow-hidden">
+            {payments.length === 0 ? (
+              <div className="px-4 py-6 text-center text-xs text-slate-400">No payments recorded yet.</div>
+            ) : payments.map((p, idx) => (
+              <div key={p.id} className="flex items-center justify-between px-4 py-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[10px] font-bold text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+                    {idx + 1}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatMoney(p.amount)}</div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400">
+                      {new Date(p.paid_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                      {p.note && <span className="ml-1 text-slate-400">· {p.note}</span>}
+                    </div>
+                  </div>
+                </div>
+                <button type="button" onClick={() => onDelete(p.id)} title="Remove payment"
+                  className="ml-3 shrink-0 rounded-lg p-1.5 text-slate-300 hover:bg-red-50 hover:text-red-500 transition dark:text-slate-600 dark:hover:bg-red-950/20 dark:hover:text-red-400">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="flex justify-between border-t border-slate-100 px-6 py-4 dark:border-slate-800">
+          <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">Close</button>
+          {!isFullyPaid && (
+            <button type="button" onClick={onRecordNew} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
+              Record payment
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecordPaymentModal({ invoice, formatMoney, onConfirm, onCancel }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const totalAmount = Number(invoice?.total_amount || 0);
+  const totalPaid = (invoice?.payments || []).reduce((s, p) => s + Number(p.amount), 0);
+  const remaining = Math.max(0, totalAmount - totalPaid);
+
+  const [amount, setAmount] = useState(remaining > 0 ? remaining.toFixed(2) : "");
+  const [date, setDate] = useState(today);
+  const [note, setNote] = useState("");
+
+  const numAmount = Number(amount) || 0;
+  const overLimit = numAmount > remaining;
+  const canSubmit = numAmount > 0 && !overLimit;
+  const projectedTotal = Math.min(totalPaid + numAmount, totalAmount);
+  const projectedRemaining = Math.max(0, totalAmount - projectedTotal);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
+          <div className="text-base font-semibold text-slate-900 dark:text-slate-100">Record payment</div>
+          <button type="button" onClick={onCancel} className="text-slate-400 hover:text-slate-600">
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <div className="grid grid-cols-3 divide-x divide-slate-100 rounded-xl border border-slate-100 dark:border-slate-800 dark:divide-slate-800 overflow-hidden">
+            <div className="px-3 py-2.5 text-center">
+              <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Received</div>
+              <div className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-slate-100">{formatMoney(totalPaid)}</div>
+            </div>
+            <div className={`px-3 py-2.5 text-center ${numAmount > 0 && !overLimit ? "bg-emerald-50 dark:bg-emerald-900/20" : ""}`}>
+              <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">This payment</div>
+              <div className={`mt-0.5 text-sm font-semibold ${numAmount > 0 && !overLimit ? "text-emerald-700 dark:text-emerald-400" : "text-slate-400 dark:text-slate-500"}`}>
+                {numAmount > 0 ? formatMoney(numAmount) : "—"}
+              </div>
+            </div>
+            <div className={`px-3 py-2.5 text-center ${projectedRemaining === 0 && numAmount > 0 ? "bg-emerald-50 dark:bg-emerald-900/20" : ""}`}>
+              <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Remaining</div>
+              <div className={`mt-0.5 text-sm font-semibold ${projectedRemaining === 0 && numAmount > 0 ? "text-emerald-700 dark:text-emerald-400" : overLimit ? "text-red-600 dark:text-red-400" : "text-slate-900 dark:text-slate-100"}`}>
+                {overLimit ? "Over limit" : formatMoney(numAmount > 0 ? projectedRemaining : remaining)}
+              </div>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Payment amount</label>
+            <input type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
+              placeholder={remaining.toFixed(2)}
+              className={`w-full rounded-xl border px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-1 dark:bg-slate-800 dark:text-slate-100 ${overLimit ? "border-red-400 bg-red-50 focus:border-red-400 focus:ring-red-300 dark:border-red-600 dark:bg-red-950/20" : "border-slate-200 bg-white focus:border-brand-400 focus:ring-brand-300 dark:border-slate-700"}`}
+            />
+            {overLimit && (
+              <p className="mt-1 text-xs text-red-500">Amount exceeds remaining balance of {formatMoney(remaining)}</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Date received</label>
+            <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Note <span className="text-slate-400 font-normal">(optional)</span></label>
+            <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. Bank transfer, instalment 1"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={onCancel} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">Cancel</button>
+            <button type="button" onClick={() => onConfirm(Number(amount), date || today, note)} disabled={!canSubmit}
+              className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed">
+              Record payment
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

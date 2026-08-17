@@ -99,57 +99,75 @@ async def upload_image(file: UploadFile = File(...), _=Depends(_require_admin)):
 
 @router.get("/categories")
 async def list_categories():
-    return await sb_select("blog_categories", order="name")
+    try:
+        return await sb_select("blog_categories", order="name")
+    except Exception:
+        return []
 
 
 @router.get("/tags")
 async def list_tags():
-    return await sb_select("blog_tags", order="name")
+    try:
+        return await sb_select("blog_tags", order="name")
+    except Exception:
+        return []
 
 
 @router.get("/articles")
 async def list_articles(category: Optional[str] = None, tag: Optional[str] = None):
-    rows = await sb_select(
-        "blog_articles",
-        columns="id,title,slug,excerpt,cover_image_url,author_name,category_id,published_at,created_at",
-        filters=[("status", "eq", "published")],
-        order="published_at",
-        desc=True,
-    )
-    if category:
-        cats = await sb_select("blog_categories", filters=[("slug", "eq", category)])
-        if cats:
-            rows = [r for r in rows if r.get("category_id") == cats[0]["id"]]
-    if tag:
-        tags = await sb_select("blog_tags", filters=[("slug", "eq", tag)])
-        if tags:
-            tag_id = tags[0]["id"]
-            links = await sb_select("blog_article_tags", filters=[("tag_id", "eq", tag_id)])
-            linked_ids = {lnk["article_id"] for lnk in links}
-            rows = [r for r in rows if r["id"] in linked_ids]
-    cats_all = await sb_select("blog_categories")
-    cat_map = {c["id"]: c["name"] for c in cats_all}
-    for r in rows:
-        r["category_name"] = cat_map.get(r.get("category_id"))
+    try:
+        rows = await sb_select(
+            "blog_articles",
+            columns="id,title,slug,excerpt,cover_image_url,author_name,category_id,published_at,created_at",
+            filters=[("status", "eq", "published")],
+            order="published_at",
+            desc=True,
+        )
+    except Exception:
+        return []
+    try:
+        if category:
+            cats = await sb_select("blog_categories", filters=[("slug", "eq", category)])
+            if cats:
+                rows = [r for r in rows if r.get("category_id") == cats[0]["id"]]
+        if tag:
+            tags = await sb_select("blog_tags", filters=[("slug", "eq", tag)])
+            if tags:
+                tag_id = tags[0]["id"]
+                links = await sb_select("blog_article_tags", filters=[("tag_id", "eq", tag_id)])
+                linked_ids = {lnk["article_id"] for lnk in links}
+                rows = [r for r in rows if r["id"] in linked_ids]
+        cats_all = await sb_select("blog_categories")
+        cat_map = {c["id"]: c["name"] for c in cats_all}
+        for r in rows:
+            r["category_name"] = cat_map.get(r.get("category_id"))
+    except Exception:
+        pass
     return rows
 
 
 @router.get("/articles/{slug}")
 async def get_article(slug: str):
-    rows = await sb_select("blog_articles", filters=[("slug", "eq", slug), ("status", "eq", "published")])
+    try:
+        rows = await sb_select("blog_articles", filters=[("slug", "eq", slug), ("status", "eq", "published")])
+    except Exception:
+        raise HTTPException(status_code=404, detail="Article not found.")
     if not rows:
         raise HTTPException(status_code=404, detail="Article not found.")
     article = rows[0]
-    links = await sb_select("blog_article_tags", filters=[("article_id", "eq", article["id"])])
-    tag_ids = [lnk["tag_id"] for lnk in links]
-    tags = []
-    if tag_ids:
-        all_tags = await sb_select("blog_tags")
-        tags = [t for t in all_tags if t["id"] in tag_ids]
-    article["tags"] = tags
-    if article.get("category_id"):
-        cats = await sb_select("blog_categories", filters=[("id", "eq", article["category_id"])])
-        article["category"] = cats[0] if cats else None
+    try:
+        links = await sb_select("blog_article_tags", filters=[("article_id", "eq", article["id"])])
+        tag_ids = [lnk["tag_id"] for lnk in links]
+        tags = []
+        if tag_ids:
+            all_tags = await sb_select("blog_tags")
+            tags = [t for t in all_tags if t["id"] in tag_ids]
+        article["tags"] = tags
+        if article.get("category_id"):
+            cats = await sb_select("blog_categories", filters=[("id", "eq", article["category_id"])])
+            article["category"] = cats[0] if cats else None
+    except Exception:
+        article.setdefault("tags", [])
     return article
 
 

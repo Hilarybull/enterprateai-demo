@@ -619,7 +619,7 @@ async def get_my_subscription(user=Depends(get_current_user)) -> SubscriptionOut
     if sub and sub.get("status") in ("active", "trial"):
         return SubscriptionOut(
             plan_key=sub["plan_key"],
-            billing_period=sub.get("billing_period", "monthly"),
+            billing_period=sub.get("billing_period") or "monthly",
             status=sub["status"],
             current_period_start=sub.get("current_period_start"),
             current_period_end=sub.get("current_period_end"),

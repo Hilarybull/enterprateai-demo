@@ -133,219 +133,153 @@ export default function BookDemoPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-50 via-slate-50 to-white px-4 py-10 sm:px-6">
-      <div className="mx-auto max-w-2xl">
-        {/* Logo */}
-        <Link to="/" className="inline-flex items-center gap-2 mb-10">
+    <div className="flex min-h-screen flex-col">
+
+      {/* NAVBAR */}
+      <nav className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white/90 px-6 py-3 backdrop-blur">
+        <Link to="/" className="inline-flex items-center gap-2">
           <img src={logoUrl} alt="EnterprateAI" className="h-8 w-auto" />
           <span className="rounded-md bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-700">Beta</span>
         </Link>
-
-        {/* Hero */}
-        <div className="text-center mb-10">
-          <span className="inline-block rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-brand-700 mb-4">
-            Interactive Demo Sandbox
-          </span>
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
-            Try EnterprateAI. No sign-up needed
-          </h1>
-          <p className="mt-4 text-base leading-relaxed text-slate-500 max-w-lg mx-auto">
-            Jump straight into a fully loaded demo environment. A guided tour walks you through every feature, or skip the tour and explore freely.
-          </p>
+        <div className="flex items-center gap-3">
+          <Link to="/login" className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">Sign in</Link>
+          <Link to="/login?signup=1" className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">Get Started Free</Link>
         </div>
+      </nav>
 
-        {/* Primary CTA — Sandbox */}
-        <div className="rounded-2xl bg-brand-600 p-6 text-center shadow-lg mb-6">
-          <div className="flex justify-center mb-2">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4.5 16.5c-1.5 1.5-1.5 3.5-1.5 3.5s2 0 3.5-1.5L18 7a3 3 0 0 0-4-4L4.5 16.5z"/>
-              <path d="M9 15l-2 5 5-2"/>
-              <path d="M14.5 9.5l-5 5"/>
-            </svg>
-          </div>
-          <h2 className="text-lg font-bold text-white mb-1">Launch the sandbox</h2>
-          <p className="text-sm text-brand-100 mb-5">
-            Pre-loaded with sample data &middot; All features unlocked &middot; Nothing gets saved
+      {/* SPLIT BODY */}
+      <div className="flex flex-1 flex-col lg:flex-row">
+
+      {/* LEFT PANEL — brand */}
+      <div className="relative flex flex-col justify-between overflow-hidden bg-brand-700 px-8 py-10 text-white lg:w-[45%]">
+        {/* background texture */}
+        <div className="pointer-events-none absolute inset-0 opacity-[0.07]" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "28px 28px" }} />
+        <div className="pointer-events-none absolute -bottom-32 -left-20 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+        <div className="pointer-events-none absolute -top-20 right-0 h-64 w-64 rounded-full bg-brand-500/40 blur-3xl" />
+
+        <div className="relative">
+          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-brand-300">Interactive Sandbox</p>
+          <h1 className="text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl">
+            Try EnterprateAI.<br />No sign-up needed.
+          </h1>
+          <p className="mt-4 text-base leading-relaxed text-white/80">
+            Jump into a fully loaded demo environment with real sample data. A guided tour walks you through every feature, or explore freely at your own pace.
           </p>
+
           <button
             onClick={launchSandbox}
             disabled={sandboxLoading}
-            className="inline-flex items-center gap-2 rounded-xl bg-white px-8 py-3.5 text-sm font-bold text-brand-700 shadow transition hover:bg-brand-50 active:scale-95 disabled:opacity-70"
+            className="mt-8 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white px-6 py-3.5 text-sm font-bold text-brand-700 shadow-lg transition hover:bg-brand-50 active:scale-95 disabled:opacity-70 sm:w-auto"
           >
             {sandboxLoading ? (
-              <>
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand-300 border-t-brand-700 inline-block" />
-                Launching…
-              </>
-            ) : (
-              "Start interactive tour →"
-            )}
+              <><span className="h-4 w-4 animate-spin rounded-full border-2 border-brand-300 border-t-brand-700" />Launching…</>
+            ) : "Start interactive tour →"}
           </button>
-          {sandboxError && (
-            <p className="mt-3 text-xs text-rose-300">{sandboxError}</p>
-          )}
-          <p className="mt-4 text-xs text-brand-200">
+          {sandboxError && <p className="mt-3 text-xs text-rose-300">{sandboxError}</p>}
+          <p className="mt-4 text-sm text-white/60">
             Or{" "}
-            <Link to="/login?signup=1" className="underline hover:text-white transition">
-              create your own free account
-            </Link>
+            <Link to="/login?signup=1" className="text-white/80 underline underline-offset-2 hover:text-white transition">create your own free account</Link>
           </p>
         </div>
 
-        {/* Feature grid */}
-        <p className="text-center text-xs font-semibold uppercase tracking-widest text-slate-400 mb-4">
-          What you'll explore
-        </p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-10">
-          {FEATURES.map(({ icon, title, desc }) => (
-            <div key={title} className="rounded-2xl border border-slate-200 bg-white p-4 text-center shadow-sm">
-              <div className="flex justify-center mb-2 text-brand-600">{FEATURE_ICON[icon]}</div>
-              <div className="text-[12px] font-bold text-slate-900 mb-0.5">{title}</div>
-              <div className="text-[11px] text-slate-500 leading-snug">{desc}</div>
+        {/* Feature list */}
+        <div className="relative mt-10 grid grid-cols-2 gap-x-4 gap-y-2">
+          {FEATURES.map(({ icon, title }) => (
+            <div key={title} className="flex items-center gap-2">
+              <span className="text-brand-300">{FEATURE_ICON[icon]}</span>
+              <span className="text-sm font-medium text-white/90">{title}</span>
             </div>
           ))}
         </div>
-
-        {/* Divider */}
-        <div className="flex items-center gap-4 my-10">
-          <div className="h-px flex-1 bg-slate-200" />
-          <span className="text-xs font-semibold uppercase tracking-widest text-slate-400">or book a personal demo</span>
-          <div className="h-px flex-1 bg-slate-200" />
-        </div>
-
-        {/* Secondary CTA — Booking form */}
-        {formStatus === "success" ? (
-          <div className="rounded-2xl border border-brand-200 bg-white p-8 shadow-sm text-center mb-8">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-brand-100">
-              <svg className="h-7 w-7 text-brand-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-slate-900">Request received!</h2>
-            <p className="mt-3 text-sm leading-relaxed text-slate-500">
-              Our team will reach out within <strong>1 business day</strong> to schedule a walkthrough tailored to your business.
-            </p>
-            <button
-              onClick={() => setFormStatus("idle")}
-              className="mt-5 text-sm font-semibold text-brand-600 hover:underline"
-            >
-              Submit another request
-            </button>
-          </div>
-        ) : (
-          <div className="mb-8">
-            <div className="mb-6">
-              <h2 className="text-xl font-bold text-slate-900">Book a guided walkthrough</h2>
-              <p className="mt-2 text-sm text-slate-500">
-                Prefer a personalised demo with one of our team? Fill in your details and we'll be in touch within 1 business day.
-              </p>
-              <ul className="mt-3 space-y-1">
-                {[
-                  "Live product demo tailored to your business type",
-                  "Q&A with a product specialist",
-                  "Guidance on getting started quickly",
-                ].map((item) => (
-                  <li key={item} className="flex items-start gap-2 text-sm text-slate-600">
-                    <span className="mt-0.5 shrink-0 font-bold text-brand-500">✓</span>
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <form onSubmit={onSubmit} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4 sm:p-8">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="ea-label block mb-1">Full name <span className="text-rose-500">*</span></label>
-                  <input
-                    required
-                    value={form.name}
-                    onChange={set("name")}
-                    placeholder="Jane Smith"
-                    className="ea-input w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-                  />
-                </div>
-                <div>
-                  <label className="ea-label block mb-1">Work email <span className="text-rose-500">*</span></label>
-                  <input
-                    required
-                    type="email"
-                    value={form.email}
-                    onChange={set("email")}
-                    placeholder="jane@company.com"
-                    className="ea-input w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="ea-label block mb-1">Company / Business name <span className="text-rose-500">*</span></label>
-                  <input
-                    required
-                    value={form.company}
-                    onChange={set("company")}
-                    placeholder="Acme Ltd"
-                    className="ea-input w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-                  />
-                </div>
-                <div>
-                  <label className="ea-label block mb-1">Phone <span className="text-slate-400 font-normal">(optional)</span></label>
-                  <input
-                    type="tel"
-                    value={form.phone}
-                    onChange={set("phone")}
-                    placeholder="+44 7700 000000"
-                    className="ea-input w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="ea-label block mb-1">Your role</label>
-                <select
-                  value={form.role}
-                  onChange={set("role")}
-                  className="ea-input w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 bg-white"
-                >
-                  <option value="">Select your role…</option>
-                  {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="ea-label block mb-1">What would you like to see? <span className="text-slate-400 font-normal">(optional)</span></label>
-                <textarea
-                  rows={3}
-                  value={form.message}
-                  onChange={set("message")}
-                  placeholder="e.g. How do I validate my business idea? Can I import my Xero data? How does the marketplace work?"
-                  className="ea-input w-full resize-none rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-                />
-              </div>
-
-              {formStatus === "error" && (
-                <p className="rounded-lg bg-rose-50 px-3 py-2.5 text-sm text-rose-600">{formError}</p>
-              )}
-
-              <button
-                type="submit"
-                disabled={formStatus === "loading"}
-                className="w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-60"
-              >
-                {formStatus === "loading" ? "Sending…" : "Request a Demo →"}
-              </button>
-
-              <p className="text-center text-xs text-slate-400">
-                Prefer to sign up now?{" "}
-                <Link to="/login?signup=1" className="font-semibold text-brand-600 hover:underline">
-                  Create a free account
-                </Link>
-              </p>
-            </form>
-          </div>
-        )}
       </div>
+
+      {/* RIGHT PANEL — booking form */}
+      <div className="flex flex-1 flex-col justify-center bg-slate-50 px-6 py-10 sm:px-10 lg:overflow-y-auto">
+        <div className="mx-auto w-full max-w-md">
+          {formStatus === "success" ? (
+            <div className="text-center">
+              <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-brand-100">
+                <svg className="h-8 w-8 text-brand-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+              </div>
+              <h2 className="text-2xl font-extrabold text-slate-900">Request received!</h2>
+              <p className="mt-3 text-sm leading-relaxed text-slate-500">
+                Our team will reach out within <strong>1 business day</strong> to schedule a walkthrough tailored to your business.
+              </p>
+              <button onClick={() => setFormStatus("idle")} className="mt-6 text-sm font-semibold text-brand-600 hover:underline">Submit another request</button>
+            </div>
+          ) : (
+            <>
+              <div className="mb-6">
+                <h2 className="text-2xl font-extrabold text-slate-900">Book a guided walkthrough</h2>
+                <p className="mt-1 text-sm text-slate-500">Prefer a personalised demo with our team? Fill in your details and we'll be in touch within 1 business day.</p>
+              </div>
+
+              <form onSubmit={onSubmit} className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-700">Full name <span className="text-rose-500">*</span></label>
+                    <input required value={form.name} onChange={set("name")} placeholder="Jane Smith" className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100" />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-700">Work email <span className="text-rose-500">*</span></label>
+                    <input required type="email" value={form.email} onChange={set("email")} placeholder="jane@company.com" className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100" />
+                  </div>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-700">Company <span className="text-rose-500">*</span></label>
+                    <input required value={form.company} onChange={set("company")} placeholder="Acme Ltd" className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100" />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-700">Phone <span className="text-slate-400 font-normal">(optional)</span></label>
+                    <input type="tel" value={form.phone} onChange={set("phone")} placeholder="+44 7700 000000" className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100" />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-700">Your role</label>
+                  <select value={form.role} onChange={set("role")} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100">
+                    <option value="">Select your role…</option>
+                    {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-700">What would you like to see? <span className="text-slate-400 font-normal">(optional)</span></label>
+                  <textarea rows={3} value={form.message} onChange={set("message")} placeholder="e.g. invoicing workflow, idea validation, marketplace listing…" className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100" />
+                </div>
+
+                {formStatus === "error" && (
+                  <p className="rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-600">{formError}</p>
+                )}
+
+                <button type="submit" disabled={formStatus === "loading"} className="w-full rounded-xl bg-brand-600 py-3 text-sm font-bold text-white shadow transition hover:bg-brand-700 active:scale-95 disabled:opacity-60">
+                  {formStatus === "loading" ? "Sending…" : "Request a Demo →"}
+                </button>
+
+                <p className="text-center text-xs text-slate-400">
+                  Prefer to sign up now?{" "}
+                  <Link to="/login?signup=1" className="font-semibold text-brand-600 hover:underline">Create a free account</Link>
+                </p>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+      </div>
+
+      {/* FOOTER */}
+      <footer className="border-t border-slate-200 bg-white py-6 px-6">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 sm:flex-row">
+          <Link to="/" className="inline-flex items-center gap-2">
+            <img src={logoUrl} alt="EnterprateAI" className="h-6 w-auto opacity-80" />
+          </Link>
+          <p className="text-xs text-slate-400">© {new Date().getFullYear()} EnterprateAI. All rights reserved.</p>
+          <div className="flex gap-4 text-xs text-slate-500">
+            <Link to="/privacy" className="hover:text-slate-800 transition">Privacy</Link>
+            <Link to="/terms" className="hover:text-slate-800 transition">Terms</Link>
+            <Link to="/login" className="hover:text-slate-800 transition">Sign in</Link>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

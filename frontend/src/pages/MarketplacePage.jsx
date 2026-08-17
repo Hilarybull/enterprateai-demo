@@ -152,7 +152,7 @@ function FilterChip({ label, active, onClick }) {
 
 // ─── service detail modal ─────────────────────────────────────────────────────
 
-function ServiceDetailModal({ product, onClose, onRequestQuote, isOwnListing, userEmail }) {
+function ServiceDetailModal({ product, onClose, onRequestQuote, onCompanyClick, isOwnListing, userEmail }) {
   const { service, listing } = product;
   const grad = avatarGradient(listing.company_name);
 
@@ -245,12 +245,15 @@ function ServiceDetailModal({ product, onClose, onRequestQuote, isOwnListing, us
             <p className="text-[13px] italic text-slate-400 dark:text-slate-500 mb-4">No description provided.</p>
           )}
 
-          {/* Offered by */}
-          <div className="mb-4 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3">
+          {/* Offered by — click opens business profile */}
+          <button
+            type="button"
+            onClick={() => onCompanyClick && onCompanyClick(listing)}
+            className="mb-4 w-full rounded-2xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3 text-left hover:border-brand-300 hover:bg-brand-50/40 dark:hover:border-brand-700 dark:hover:bg-brand-900/10 transition group/co">
             <CompanyAvatar listing={listing} size="md" />
             <div className="min-w-0 flex-1">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-0.5">Offered by</div>
-              <div className="text-[14px] font-bold text-slate-900 dark:text-slate-100 truncate">{listing.company_name}</div>
+              <div className="text-[14px] font-bold text-slate-900 dark:text-slate-100 group-hover/co:text-brand-700 dark:group-hover/co:text-brand-400 truncate transition-colors">{listing.company_name}</div>
               {listing.tagline && <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">{listing.tagline}</div>}
             </div>
             {listing.avg_rating != null ? (
@@ -258,7 +261,7 @@ function ServiceDetailModal({ product, onClose, onRequestQuote, isOwnListing, us
             ) : (
               <span className="text-[10px] text-slate-400 italic shrink-0">No ratings</span>
             )}
-          </div>
+          </button>
 
           {/* Location + industry */}
           <div className="flex flex-wrap gap-2 mb-5">
@@ -280,13 +283,13 @@ function ServiceDetailModal({ product, onClose, onRequestQuote, isOwnListing, us
           {/* CTA */}
           {!isOwnListing && (
             <button
-              onClick={() => { onClose(); onRequestQuote(listing); }}
+              onClick={() => { onClose(); onRequestQuote && onRequestQuote(listing, service.service_name); }}
               className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 py-3 text-[13px] font-bold text-white hover:bg-brand-700 transition">
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
                 <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
               </svg>
-              Request Quotation from {listing.company_name}
+              Request Quotation for {service.service_name}
             </button>
           )}
 
@@ -331,7 +334,7 @@ function ServiceDetailModal({ product, onClose, onRequestQuote, isOwnListing, us
                 {(!ratingData.user_rating || showReviewBox) && (
                   <div className={`rounded-2xl border p-4 dark:bg-slate-900 ${showReviewBox ? "border-brand-200 bg-brand-50 dark:border-brand-800 dark:bg-brand-900/20" : "border-slate-200 bg-white dark:border-slate-700"}`}>
                     <div className="mb-3 text-[12px] font-semibold text-slate-700 dark:text-slate-300">
-                      {showReviewBox ? "Update your rating" : "Rate this business"}
+                      {showReviewBox ? `Update your rating for ${service.service_name}` : `Rate ${service.service_name}`}
                     </div>
                     <div className="flex items-center gap-3 mb-3">
                       <StarInput value={pendingStar} hover={hoverStar} onHover={setHoverStar} onLeave={() => setHoverStar(0)} onChange={setPendingStar} disabled={submitting} />
@@ -368,10 +371,11 @@ function ServiceDetailModal({ product, onClose, onRequestQuote, isOwnListing, us
 
 // ─── product card ─────────────────────────────────────────────────────────────
 
-function ProductCard({ product, onOpen, onRequestQuote, isOwn }) {
+function ProductCard({ product, onOpen, onRequestQuote, onCompanyClick, isOwn }) {
   const { service, listing } = product;
   const grad = avatarGradient(listing.company_name);
   const hasDesc = !!service.service_description;
+  const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
 
   return (
     <article
@@ -394,24 +398,48 @@ function ProductCard({ product, onOpen, onRequestQuote, isOwn }) {
         {/* Description */}
         <div className="flex-1">
           {hasDesc ? (
-            <p className="text-[12px] leading-relaxed text-slate-500 dark:text-slate-400 line-clamp-3">{service.service_description}</p>
+            <p className="text-[12px] leading-relaxed text-slate-500 dark:text-slate-400 line-clamp-4">{service.service_description}</p>
           ) : (
             <p className="text-[12px] italic text-slate-400 dark:text-slate-500">No description provided.</p>
           )}
         </div>
 
-        {/* Company row */}
-        <div className="border-t border-slate-100 dark:border-slate-800 pt-3 flex items-center gap-2 min-w-0">
-          <CompanyAvatar listing={listing} size="sm" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[11px] font-semibold text-slate-700 dark:text-slate-300">{listing.company_name}</div>
-            {listing.avg_rating != null ? (
-              <StarDisplay rating={listing.avg_rating} count={listing.rating_count} />
+        {/* Company name — click opens business profile */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onCompanyClick(listing); }}
+          className="flex items-center gap-1.5 self-start rounded-lg px-1.5 py-0.5 -ml-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 transition group/biz">
+          {hasLogo ? (
+            <img src={listing.logo_data_url} alt="" className="h-4 w-4 rounded object-cover shrink-0" />
+          ) : (
+            <span className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[8px] font-bold text-white bg-gradient-to-br ${grad}`}>
+              {(listing.company_name || "?")[0].toUpperCase()}
+            </span>
+          )}
+          <span className="text-[11px] font-medium text-slate-500 group-hover/biz:text-brand-600 dark:text-slate-400 dark:group-hover/biz:text-brand-400 transition-colors truncate max-w-[140px]">
+            {listing.company_name}
+          </span>
+        </button>
+
+        {/* Location + rating preview */}
+        <div className="border-t border-slate-100 dark:border-slate-800 pt-3 flex items-center justify-between gap-2 min-w-0">
+          <span className="truncate text-[11px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
+            {[listing.city, listing.country].filter(Boolean).length > 0 ? (
+              <>
+                <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2C8.1 2 5 5.1 5 9c0 5.3 7 13 7 13s7-7.7 7-13c0-3.9-3.1-7-7-7Z" /><circle cx="12" cy="9" r="2.5" />
+                </svg>
+                <span className="truncate">{[listing.city, listing.country].filter(Boolean).join(", ")}</span>
+              </>
             ) : (
-              <span className="text-[10px] italic text-slate-400">No ratings yet</span>
+              <span className="italic">Location not set</span>
             )}
-          </div>
-          <span className="text-[11px] font-semibold text-brand-600 group-hover:text-brand-700 dark:text-brand-400 shrink-0">View →</span>
+          </span>
+          {listing.avg_rating != null ? (
+            <StarDisplay rating={listing.avg_rating} count={listing.rating_count} />
+          ) : (
+            <span className="text-[10px] italic text-slate-400 shrink-0">No ratings</span>
+          )}
         </div>
 
         {/* Actions */}
@@ -549,7 +577,7 @@ function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
 
 function RFQModal({ listing, onClose, prefilledProduct }) {
   const [form, setForm] = useState({ name: "", email: "", message: "" });
-  const [items, setItems] = useState([{ name: prefilledProduct || "", quantity: 1, notes: "" }]);
+  const [items, setItems] = useState([{ name: prefilledProduct || "", quantity: "1", notes: "" }]);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState(null);
@@ -574,12 +602,16 @@ function RFQModal({ listing, onClose, prefilledProduct }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  function addItem() { setItems((p) => [...p, { name: "", quantity: 1, notes: "" }]); }
+  const selectedNames = new Set(items.map((it) => it.name).filter((n) => n && n !== "__other__").map((n) => n.toLowerCase()));
+  function addItem() {
+    const nextAvailable = productOptions.find((o) => !selectedNames.has(o.toLowerCase()));
+    setItems((p) => [...p, { name: nextAvailable || "", quantity: "1", notes: "" }]);
+  }
   function removeItem(idx) { setItems((p) => p.filter((_, i) => i !== idx)); }
   function updateItem(idx, field, value) {
     setItems((p) => p.map((item, i) => {
       if (i !== idx) return item;
-      const u = { ...item, [field]: field === "quantity" ? Math.max(1, Number(value) || 1) : value };
+      const u = { ...item, [field]: value };
       if (field === "name" && value !== "__other__") u.customName = "";
       return u;
     }));
@@ -593,6 +625,9 @@ function RFQModal({ listing, onClose, prefilledProduct }) {
     if (validItems.some((item) => item.name === "__other__" && !(item.customName || "").trim())) {
       setError("Enter a name for the custom product or service."); return;
     }
+    if (validItems.some((item) => !Number(item.quantity) || Number(item.quantity) < 1)) {
+      setError("Quantity must be at least 1 for all items."); return;
+    }
     setSubmitting(true); setError(null);
     try {
       await apiRequest(`/marketplace/rfq/${listing.workspace_id}`, "POST", {
@@ -600,7 +635,7 @@ function RFQModal({ listing, onClose, prefilledProduct }) {
         customer_email: form.email.trim(),
         items: validItems.map((item) => ({
           name: item.name === "__other__" ? item.customName.trim() : item.name.trim(),
-          quantity: item.quantity,
+          quantity: Number(item.quantity) || 1,
           notes: (item.notes || "").trim() || null,
         })),
         message: form.message.trim() || null,
@@ -650,7 +685,9 @@ function RFQModal({ listing, onClose, prefilledProduct }) {
             <div className="mt-4">
               <div className="mb-2 flex items-center justify-between">
                 <label className="ea-label mb-0">Products / Services *</label>
-                <button type="button" onClick={addItem} className="text-[11px] font-semibold text-brand-600 hover:text-brand-700 dark:text-brand-400">+ Add item</button>
+                {(productOptions.length === 0 || productOptions.some((o) => !selectedNames.has(o.toLowerCase())) || selectedNames.has("__other__")) && (
+                  <button type="button" onClick={addItem} className="text-[11px] font-semibold text-brand-600 hover:text-brand-700 dark:text-brand-400">+ Add item</button>
+                )}
               </div>
               <div className="space-y-2">
                 {items.map((item, idx) => (
@@ -666,7 +703,10 @@ function RFQModal({ listing, onClose, prefilledProduct }) {
                             className={`w-full appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-8 py-2.5 text-sm outline-none ring-brand-200 focus:ring-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${!item.name ? "text-slate-400 dark:text-slate-500" : "text-slate-900 dark:text-slate-100"}`}
                             value={item.name} onChange={(e) => updateItem(idx, "name", e.target.value)}>
                             <option value="">Select a product / service</option>
-                            {productOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                            {productOptions.map((opt) => {
+                              const takenByOther = selectedNames.has(opt.toLowerCase()) && item.name.toLowerCase() !== opt.toLowerCase();
+                              return <option key={opt} value={opt} disabled={takenByOther}>{opt}{takenByOther ? " (already added)" : ""}</option>;
+                            })}
                             <option value="__other__">Other / Custom…</option>
                           </select>
                           <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
@@ -676,7 +716,7 @@ function RFQModal({ listing, onClose, prefilledProduct }) {
                       ) : (
                         <input className="ea-input" placeholder="Product or service name" value={item.name} onChange={(e) => updateItem(idx, "name", e.target.value)} />
                       )}
-                      <input type="number" min="1" className="ea-input" placeholder="Qty" value={item.quantity} onChange={(e) => updateItem(idx, "quantity", e.target.value)} />
+                      <input type="number" min="1" className={`ea-input ${(!item.quantity || Number(item.quantity) < 1) ? "border-red-400 focus:border-red-400" : ""}`} placeholder="Qty" value={item.quantity} onChange={(e) => updateItem(idx, "quantity", e.target.value)} />
                       {items.length > 1 ? (
                         <button type="button" onClick={() => removeItem(idx)}
                           className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500 dark:border-slate-700">
@@ -1181,6 +1221,8 @@ export default function MarketplacePage() {
   const [filterType, setFilterType] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+  const [sortBy, setSortBy] = useState("recency");
+  const [showSort, setShowSort] = useState(false);
   const [page, setPage] = useState(1);
 
   const [selected, setSelected] = useState(null);
@@ -1274,8 +1316,37 @@ export default function MarketplacePage() {
           });
       }
     }
-    return products;
-  }, [listings, debouncedSearch, filterCategory]);
+    // Deduplicate: if a catalogue product and a profile service share the same name for the same workspace,
+    // keep the catalogue product (richer data) and drop the service duplicate.
+    // Build a lookup of profile service descriptions so catalogue products can fall back to them.
+    const profileDescMap = new Map();
+    for (const p of products) {
+      if (!p._key.startsWith("cat-") && p.service.service_description) {
+        profileDescMap.set(`${p.listing.workspace_id}||${p.service.service_name.toLowerCase().trim()}`, p.service.service_description);
+      }
+    }
+    const catalogueKeys = new Set(
+      products.filter((p) => p._key.startsWith("cat-"))
+        .map((p) => `${p.listing.workspace_id}||${p.service.service_name.toLowerCase().trim()}`)
+    );
+    const deduped = products
+      .filter(
+        (p) => p._key.startsWith("cat-") ||
+          !catalogueKeys.has(`${p.listing.workspace_id}||${p.service.service_name.toLowerCase().trim()}`)
+      )
+      .map((p) => {
+        if (!p._key.startsWith("cat-") || p.service.service_description) return p;
+        const fallback = profileDescMap.get(`${p.listing.workspace_id}||${p.service.service_name.toLowerCase().trim()}`);
+        if (!fallback) return p;
+        return { ...p, service: { ...p.service, service_description: fallback } };
+      });
+
+    if (sortBy === "rating")   deduped.sort((a, b) => (b.listing.avg_rating ?? 0) - (a.listing.avg_rating ?? 0));
+    else if (sortBy === "reviews") deduped.sort((a, b) => (b.listing.rating_count ?? 0) - (a.listing.rating_count ?? 0));
+    else if (sortBy === "az")  deduped.sort((a, b) => a.listing.company_name.localeCompare(b.listing.company_name));
+    // default "recency": listings already arrive newest-first from API
+    return deduped;
+  }, [listings, debouncedSearch, filterCategory, sortBy]);
 
   function clearFilters() { setFilterIndustry(""); setFilterType(""); setFilterCategory(""); setSearch(""); setPage(1); }
   const hasFilters = filterIndustry || filterType || filterCategory || debouncedSearch;
@@ -1358,23 +1429,10 @@ export default function MarketplacePage() {
           </div>
         </div>
 
-        {/* Tab bar inside hero */}
-        <div className="mt-8 flex justify-center">
-          <div className="inline-flex rounded-t-2xl bg-white/10 backdrop-blur-sm overflow-hidden">
-            {[
-              { id: "products", label: "Products & Services", tourKey: "marketplace-products-tab", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" /><line x1="3" y1="6" x2="21" y2="6" /><path d="M16 10a4 4 0 0 1-8 0" /></svg> },
-              { id: "profiles", label: "Businesses", tourKey: "marketplace-profiles-tab", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg> },
-            ].map((t) => (
-              <button key={t.id} data-tour={t.tourKey} onClick={() => { setActiveTab(t.id); setFilterCategory(""); setFilterIndustry(""); setFilterType(""); }}
-                className={`flex items-center gap-2 px-5 py-3 text-[13px] font-semibold transition ${activeTab === t.id
-                  ? "bg-white text-brand-700 dark:bg-slate-900 dark:text-brand-400"
-                  : "text-white/70 hover:text-white hover:bg-white/10"}`}>
-                {t.icon}
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* Tour-only hidden tab anchor */}
+        <button data-tour="marketplace-products-tab" className="hidden" aria-hidden="true" tabIndex={-1} />
+        <button data-tour="marketplace-profiles-tab" className="hidden" aria-hidden="true" tabIndex={-1} />
+        <div className="mt-6" />
       </div>
 
       {/* Main content */}
@@ -1419,6 +1477,39 @@ export default function MarketplacePage() {
               </span>
             )}
           </button>
+
+          {/* Sort button */}
+          <div className="relative">
+            <button
+              onClick={() => setShowSort((p) => !p)}
+              className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] font-medium transition ${sortBy !== "recency"
+                ? "border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-900/30 dark:text-brand-300"
+                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18M7 12h10M11 18h2" />
+              </svg>
+              {{ recency: "Newest first", rating: "Highest rated", reviews: "Most reviewed", az: "A-Z" }[sortBy]}
+              <svg className={`h-3 w-3 transition-transform ${showSort ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9l6 6 6-6" /></svg>
+            </button>
+            {showSort && (
+              <div className="absolute left-0 top-full z-20 mt-1.5 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                {[
+                  { key: "recency",  label: "Newest first" },
+                  { key: "rating",   label: "Highest rated" },
+                  { key: "reviews",  label: "Most reviewed" },
+                  { key: "az",       label: "Name A-Z" },
+                ].map(({ key, label }) => (
+                  <button key={key} onClick={() => { setSortBy(key); setShowSort(false); }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-[13px] transition hover:bg-slate-50 dark:hover:bg-slate-800 ${sortBy === key ? "font-semibold text-brand-600 dark:text-brand-400" : "text-slate-700 dark:text-slate-300"}`}>
+                    {sortBy === key && <svg className="h-3.5 w-3.5 shrink-0 text-brand-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>}
+                    {sortBy !== key && <span className="w-3.5" />}
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {hasFilters && (
             <button onClick={clearFilters} className="text-[12px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition">Clear all</button>
           )}
@@ -1505,6 +1596,7 @@ export default function MarketplacePage() {
                     key={product._key}
                     product={product}
                     onOpen={setServiceDetail}
+                    onCompanyClick={setSelected}
                     onRequestQuote={(listing, productName) => isLoggedIn ? setRfqTarget({ listing, productName }) : setGateAction("rfq")}
                     isOwn={isOwn}
                   />
@@ -1591,6 +1683,7 @@ export default function MarketplacePage() {
           product={serviceDetail}
           onClose={() => setServiceDetail(null)}
           onRequestQuote={(listing, productName) => { setServiceDetail(null); isLoggedIn ? setRfqTarget({ listing, productName }) : setGateAction("rfq"); }}
+          onCompanyClick={(listing) => { setServiceDetail(null); setSelected(listing); }}
           isOwnListing={isLoggedIn && (myStatus?.workspace_id || workspaceId) === serviceDetail.listing.workspace_id}
           userEmail={userEmail}
         />

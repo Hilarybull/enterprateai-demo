@@ -148,7 +148,7 @@ class BlueprintFinancialShareRequest(BaseModel):
     email: Optional[EmailStr] = None
     expires_in_days: int = Field(default=7, ge=1, le=30)
     document_id: Optional[str] = None
-    type: str = Field(min_length=2, max_length=120)
+    type: str = Field(min_length=2, max_length=200)
     title: str = Field(min_length=2, max_length=120)
     company_name: str = Field(min_length=2, max_length=120)
     workspace_id: Optional[str] = None

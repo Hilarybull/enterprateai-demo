@@ -40,7 +40,7 @@ class CheckoutResponse(BaseModel):
 
 class SubscriptionOut(BaseModel):
     plan_key: str
-    billing_period: str
+    billing_period: str = "monthly"
     status: str
     current_period_start: Optional[str] = None
     current_period_end: Optional[str] = None

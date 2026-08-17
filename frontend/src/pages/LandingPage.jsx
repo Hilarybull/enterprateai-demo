@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import logoUrl from "../enterprate-logo.png";
 import { apiRequest } from "../api/client";
+import { useAuthStore } from "../store/auth";
 
 const PROBLEMS = [
   {
@@ -123,6 +124,8 @@ function FAQItem({ q, a }) {
   );
 }
 
+const ROLES = ["Founder / Co-founder","Business Owner","Operations Manager","Sales / Business Development","Finance / Accounting","Marketing","Product / Tech","Investor / Advisor","Other"];
+
 export default function LandingPage() {
   const [annualBilling, setAnnualBilling] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -131,6 +134,31 @@ export default function LandingPage() {
   const [scrolled, setScrolled] = useState(false);
   const featuresRef = useRef(null);
   const articlesRef = useRef(null);
+  const [bookingOpen, setBookingOpen] = useState(false);
+  const [bookingForm, setBookingForm] = useState({ name: "", email: "", company: "", phone: "", role: "", message: "" });
+  const [bookingStatus, setBookingStatus] = useState("idle");
+  const [bookingError, setBookingError] = useState("");
+
+  function openBooking() { setBookingOpen(true); setBookingStatus("idle"); setBookingError(""); }
+  function closeBooking() { setBookingOpen(false); }
+  function setBookingField(field) { return (e) => setBookingForm(f => ({ ...f, [field]: e.target.value })); }
+  async function submitBooking(e) {
+    e.preventDefault();
+    if (!bookingForm.name.trim() || !bookingForm.email.trim() || !bookingForm.company.trim()) return;
+    setBookingStatus("loading");
+    setBookingError("");
+    try {
+      await apiRequest("/demo/book", "POST", {
+        name: bookingForm.name.trim(), email: bookingForm.email.trim(),
+        company: bookingForm.company.trim(), phone: bookingForm.phone.trim() || undefined,
+        role: bookingForm.role || undefined, message: bookingForm.message.trim() || undefined,
+      });
+      setBookingStatus("success");
+    } catch (err) {
+      setBookingStatus("error");
+      setBookingError(err?.message || "Something went wrong. Please try again.");
+    }
+  }
 
   const [blogCategories, setBlogCategories] = useState([]);
   const [faqs, setFaqs] = useState(FAQS);
@@ -158,10 +186,16 @@ export default function LandingPage() {
     navigate(token ? path : "/login");
   }
 
-  // Generic CTA — go to dashboard if logged in, login otherwise
+  // Generic CTA — go to dashboard if logged in (non-demo), signup otherwise
   function goToApp() {
     const token = localStorage.getItem("ea_token");
-    navigate(token ? "/dashboard" : "/login");
+    const isDemo = localStorage.getItem("ea_email") === "demo";
+    if (isDemo) {
+      logout();
+      navigate("/login?signup=1");
+    } else {
+      navigate(token ? "/dashboard" : "/login?signup=1");
+    }
   }
   useEffect(() => {
     function handleClick(e) {
@@ -175,6 +209,7 @@ export default function LandingPage() {
   const [exitDismissed, setExitDismissed] = useState(false);
   const exitTimerRef = useRef(null);
   const navigate = useNavigate();
+  const logout = useAuthStore((s) => s.logout);
 
   useEffect(() => {
     document.body.style.overflow = "auto";
@@ -337,15 +372,14 @@ export default function LandingPage() {
               )}
             </li>
             <li>
-              <Link to="/research" className="whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600">Research &amp; Development</Link>
+              <Link to="/research" className="whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600">R&amp;D</Link>
             </li>
           </ul>
           <div className="flex shrink-0 items-center gap-3 ml-6">
             <Link to="/login" className="hidden whitespace-nowrap text-sm font-medium text-slate-600 hover:text-slate-900 lg:block">Sign in</Link>
             <Link to="/book-demo" className="hidden whitespace-nowrap rounded-xl border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600 transition hover:bg-brand-50 lg:block">Book a Demo</Link>
             <button type="button" onClick={() => goToApp()} className="hidden whitespace-nowrap rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 lg:block">
-              <span className="inline xl:hidden">Get Started Free</span>
-              <span className="hidden xl:inline">Create My Free Business Workspace</span>
+              Get Started Free
             </button>
             <button type="button" onClick={() => setMobileMenuOpen(v => !v)} className="ml-1 flex h-9 w-9 flex-col items-center justify-center gap-1.5 lg:hidden" aria-label="Menu">
               <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "translate-y-2 rotate-45" : ""}`} />
@@ -361,7 +395,7 @@ export default function LandingPage() {
                 <li key={href}><a href={href} onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">{label}</a></li>
               ))}
               <li><Link to="/blog" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">Articles</Link></li>
-              <li><Link to="/research" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">Research &amp; Development</Link></li>
+              <li><Link to="/research" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">R&amp;D</Link></li>
               <li><Link to="/login" className="block text-sm font-medium text-slate-700">Sign in</Link></li>
               <li><Link to="/book-demo" onClick={() => setMobileMenuOpen(false)} className="block rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white text-center">Book a Demo</Link></li>
             </ul>
@@ -413,7 +447,7 @@ export default function LandingPage() {
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <button type="button" onClick={() => goToApp()} className="w-full rounded-xl border border-white/40 bg-white/10 px-8 py-3.5 text-sm font-bold text-white transition hover:bg-white/20 active:scale-95 sm:w-auto">
-              Create My Free Business Workspace
+              Get Started Free
             </button>
             <Link to="/book-demo" className="flex w-full items-center justify-center rounded-xl bg-white px-8 py-3.5 text-sm font-semibold text-brand-700 transition hover:bg-brand-50 active:scale-95 sm:w-auto">
               Book a Demo
@@ -646,7 +680,7 @@ export default function LandingPage() {
           <p className="mt-4 text-base text-white/80">Input your business data once. Use it to plan, operate, sell, simulate, and grow with intelligence.</p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <button type="button" onClick={() => goToApp()} className="w-full rounded-xl border border-white/40 bg-white/10 px-10 py-4 text-base font-semibold text-white transition hover:bg-white/20 active:scale-95 sm:w-auto">
-              Create My Free Business Workspace
+              Get Started Free
             </button>
             <Link to="/book-demo" className="flex w-full items-center justify-center rounded-xl bg-white px-10 py-4 text-base font-semibold text-brand-700 transition hover:bg-brand-50 active:scale-95 sm:w-auto">
               Book a Demo
@@ -689,7 +723,7 @@ export default function LandingPage() {
               <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-400">Quick Links</h4>
               <ul className="mt-4 space-y-2">
                 <li><a href="#faq" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> FAQ</a></li>
-                <li><Link to="/research" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> Research &amp; Development</Link></li>
+                <li><Link to="/research" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> R&amp;D</Link></li>
                 <li><Link to="/blog" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> Articles</Link></li>
               </ul>
             </div>
@@ -705,6 +739,80 @@ export default function LandingPage() {
           </div>
         </div>
       </footer>
+
+      {/* Book a Demo modal */}
+      {bookingOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.55)", backdropFilter: "blur(4px)" }} onClick={closeBooking}>
+          <div className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-brand-600 px-6 py-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Book a guided walkthrough</h2>
+                  <p className="mt-1 text-sm text-brand-100">We'll reach out within 1 business day to schedule your demo.</p>
+                </div>
+                <button onClick={closeBooking} className="ml-4 mt-0.5 text-brand-200 hover:text-white transition">
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </div>
+            <div className="px-6 py-5">
+              {bookingStatus === "success" ? (
+                <div className="py-6 text-center">
+                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-brand-100">
+                    <svg className="h-7 w-7 text-brand-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900">Request received!</h3>
+                  <p className="mt-2 text-sm text-slate-500">Our team will reach out within <strong>1 business day</strong> to schedule your personalised walkthrough.</p>
+                  <button onClick={closeBooking} className="mt-5 rounded-xl bg-brand-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition">Done</button>
+                </div>
+              ) : (
+                <form onSubmit={submitBooking} className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-700">Full name *</label>
+                      <input value={bookingForm.name} onChange={setBookingField("name")} required placeholder="Jane Smith" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-700">Work email *</label>
+                      <input type="email" value={bookingForm.email} onChange={setBookingField("email")} required placeholder="jane@company.com" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-700">Company *</label>
+                      <input value={bookingForm.company} onChange={setBookingField("company")} required placeholder="Acme Ltd" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-700">Phone</label>
+                      <input type="tel" value={bookingForm.phone} onChange={setBookingField("phone")} placeholder="+44 7700 000000" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-700">Your role</label>
+                    <select value={bookingForm.role} onChange={setBookingField("role")} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+                      <option value="">Select a role…</option>
+                      {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-700">Anything specific you'd like to cover?</label>
+                    <textarea value={bookingForm.message} onChange={setBookingField("message")} rows={2} placeholder="e.g. invoicing workflow, team management…" className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 resize-none" />
+                  </div>
+                  {bookingError && <p className="text-xs text-rose-600">{bookingError}</p>}
+                  <div className="flex items-center gap-3 pt-1">
+                    <button type="submit" disabled={bookingStatus === "loading"} className="flex-1 rounded-xl bg-brand-600 py-2.5 text-sm font-bold text-white shadow transition hover:bg-brand-700 active:scale-95 disabled:opacity-70">
+                      {bookingStatus === "loading" ? "Sending…" : "Request demo →"}
+                    </button>
+                    <Link to="/book-demo" onClick={closeBooking} className="text-xs font-medium text-slate-500 hover:text-brand-600 transition whitespace-nowrap">
+                      Try sandbox instead
+                    </Link>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

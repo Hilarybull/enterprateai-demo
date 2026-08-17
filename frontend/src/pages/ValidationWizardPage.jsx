@@ -2082,6 +2082,7 @@ export default function ValidationWizardPage() {
             const newProduct = {
               id: crypto.randomUUID(),
               name: serviceName,
+              description: String(payload.service_description || "").trim() || null,
               type: "service",
               base_price: Number(payload.price_per_sale ?? payload.estimated_price ?? 0) || 0,
               cost_of_sales: Number(payload.direct_labour_cost_per_sale ?? payload.assumed_cost_per_unit ?? 0) || 0,
@@ -2514,6 +2515,7 @@ export default function ValidationWizardPage() {
           .map((s) => ({
             id: crypto.randomUUID(),
             name: s.service_name,
+            description: String(s.service_description || "").trim() || null,
             type: "service",
             base_price: 0,
             discount: 0,

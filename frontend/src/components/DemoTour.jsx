@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useDemoTour } from "../context/DemoTourContext";
+import { useAuthStore } from "../store/auth";
 import logoUrl from "../enterprate-logo.png";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/home", "/pricing", "/pricing/success", "/book-demo", "/blog", "/research", "/legal/privacy", "/legal/terms", "/legal/disclaimer", "/forgot-password", "/reset-password"]);
@@ -86,6 +87,7 @@ const ICONS = {
 export default function DemoTour() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const logout = useAuthStore((s) => s.logout);
   const tour = useDemoTour();
   const [spotRect, setSpotRect] = useState(null);
   const cardRef = useRef(null);
@@ -131,8 +133,9 @@ export default function DemoTour() {
   }, [tour?.step, tour?.active]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Block clicks in content area during tour (but allow scrolling)
+  const isPublicForBlocker = PUBLIC_PATHS.has(pathname) || pathname.startsWith("/share/") || pathname.startsWith("/join/") || pathname.startsWith("/r/") || pathname.startsWith("/blog/");
   useEffect(() => {
-    if (!tour?.active) return;
+    if (!tour?.active || isPublicForBlocker) return;
     const block = (e) => {
       if (cardRef.current?.contains(e.target)) return;
       if (e.clientX <= SIDEBAR_W) return; // let sidebar clicks through
@@ -145,7 +148,7 @@ export default function DemoTour() {
       document.removeEventListener("mousedown", block, true);
       document.removeEventListener("click", block, true);
     };
-  }, [tour?.active]);
+  }, [tour?.active, isPublicForBlocker]);
 
   useEffect(() => {
     const cardEl = cardRef.current;
@@ -225,13 +228,13 @@ export default function DemoTour() {
             </p>
             <div className="mt-4 space-y-2">
               <button
-                onClick={() => { tour.dismissPostTour(); navigate("/register"); }}
+                onClick={() => { tour.dismissPostTour(); logout(); navigate("/login?signup=1"); }}
                 className="w-full rounded-xl bg-brand-600 py-2.5 text-[13px] font-semibold text-white transition hover:bg-brand-700"
               >
                 Create free account
               </button>
               <button
-                onClick={() => { tour.dismissPostTour(); navigate("/login"); }}
+                onClick={() => { tour.dismissPostTour(); logout(); navigate("/login"); }}
                 className="w-full rounded-xl border border-slate-200 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50"
               >
                 Sign in to existing account
@@ -277,13 +280,13 @@ export default function DemoTour() {
             </p>
             <div className="mt-4 space-y-2">
               <button
-                onClick={() => { tour.closeDemoGate(); navigate("/register"); }}
+                onClick={() => { tour.closeDemoGate(); logout(); navigate("/login?signup=1"); }}
                 className="w-full rounded-xl bg-brand-600 py-2.5 text-[13px] font-semibold text-white transition hover:bg-brand-700"
               >
                 Create free account
               </button>
               <button
-                onClick={() => { tour.closeDemoGate(); navigate("/login"); }}
+                onClick={() => { tour.closeDemoGate(); logout(); navigate("/login"); }}
                 className="w-full rounded-xl border border-slate-200 py-2.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50"
               >
                 Sign in

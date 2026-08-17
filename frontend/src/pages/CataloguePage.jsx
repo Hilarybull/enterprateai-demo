@@ -48,6 +48,7 @@ export default function CataloguePage() {
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [profileServices, setProfileServices] = useState([]);
   const [catalogueIntegrations, setCatalogueIntegrations] = useState({
     crm: { hubspot: "not_connected", salesforce: "not_connected", zoho_crm: "not_connected" },
     inventory: { shopify: "not_connected", woo_commerce: "not_connected", square: "not_connected" }
@@ -461,6 +462,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
         setProducts(nextProducts);
         setCustomers(nextCustomers);
         setVendors(nextVendors);
+        setProfileServices(Array.isArray(ws?.data?.workspace_profile?.services) ? ws.data.workspace_profile.services : []);
         setCatalogueIntegrations({
           crm: {
             hubspot: integ?.catalogue?.crm?.hubspot || "not_connected",
@@ -585,6 +587,26 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     setProducts(next);
     try {
       await persist({ products: next, customers, vendors });
+      // If a description was set, sync it back to the matching workspace profile service
+      if (payload.description) {
+        const matchingService = profileServices.find(
+          (s) => s.service_name?.toLowerCase().trim() === payload.name.toLowerCase().trim()
+        );
+        if (matchingService) {
+          const updatedServices = profileServices.map((s) =>
+            s.service_name?.toLowerCase().trim() === payload.name.toLowerCase().trim()
+              ? { ...s, service_description: payload.description }
+              : s
+          );
+          setProfileServices(updatedServices);
+          // Read current profile to avoid overwriting other profile fields
+          const ws = await apiRequest("/validation/me", "GET");
+          const currentProfile = ws?.data?.workspace_profile || {};
+          await apiRequest("/validation/me", "PATCH", {
+            data: { workspace_profile: { ...currentProfile, services: updatedServices } }
+          });
+        }
+      }
     } catch {
       // persist already sets error state; don't block the UX
     }
@@ -1055,7 +1077,11 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                           </div>
                         </div>
                         <div className="flex gap-2">
-                          <Button variant="secondary" onClick={() => { setEditingProductId(p.id); setProductForm({ name: p.name, type: p.type, description: p.description || "", base_price: String(p.base_price ?? ""), cost_of_sales: String(p.cost_of_sales ?? ""), discount: String(p.discount ?? ""), freight_cost: String(p.freight_cost ?? "") }); }}>Edit</Button>
+                          <Button variant="secondary" onClick={() => {
+                            setEditingProductId(p.id);
+                            const profileMatch = !p.description ? profileServices.find((s) => s.service_name?.toLowerCase().trim() === p.name?.toLowerCase().trim()) : null;
+                            setProductForm({ name: p.name, type: p.type, description: p.description || profileMatch?.service_description || "", base_price: String(p.base_price ?? ""), cost_of_sales: String(p.cost_of_sales ?? ""), discount: String(p.discount ?? ""), freight_cost: String(p.freight_cost ?? "") });
+                          }}>Edit</Button>
                           <Button variant="ghost" onClick={() => archiveEntity("products", p.id)}>Archive</Button>
                           <Button variant="ghost" onClick={() => deleteEntity("products", p.id)}>Delete</Button>
                         </div>

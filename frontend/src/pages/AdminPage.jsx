@@ -1143,89 +1143,6 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
               )}
             </div>
 
-            {/* Subscription & Trial */}
-            <div>
-              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Subscription & trial</h3>
-              {subscriptionLoading ? (
-                <div className="flex items-center gap-2 text-[12px] text-slate-400">
-                  <div className="h-3 w-3 animate-spin rounded-full border border-slate-300 border-t-slate-500" />
-                  Loading…
-                </div>
-              ) : subscription === false ? (
-                <p className="text-[12px] text-slate-400 italic">Could not load subscription data.</p>
-              ) : subscription ? (() => {
-                const isExpired = subscription.status === "expired";
-                const isTrial = subscription.status === "trial";
-                const isActive = subscription.status === "active";
-                const isGrandfathered = subscription.status === "grandfathered";
-                const isFreePlanKey = ["free_trial", "explorer"].includes(subscription.plan_key);
-                const isPaidActive = isActive && !isFreePlanKey;
-                const isFreeActive = isActive && isFreePlanKey;
-                const startDate = fmtAdminDate(subscription.current_period_start);
-                const endDate = fmtAdminDate(subscription.current_period_end);
-                const statusColor = isExpired
-                  ? "border-rose-200 bg-rose-50"
-                  : isPaidActive
-                  ? "border-emerald-100 bg-emerald-50"
-                  : "border-brand-100 bg-brand-50";
-                const dotColor = isExpired ? "bg-rose-500" : isPaidActive ? "bg-emerald-500" : "bg-brand-500";
-                const statusLabel = isExpired ? "Trial expired" : isTrial ? "Free trial" : isFreeActive ? "Free plan" : isPaidActive ? "Paid plan" : "Grandfathered";
-                const plan = getPlan(normalisePlanKey(subscription.plan_key ?? "explorer"));
-                const planName = plan?.label ?? subscription.plan_key ?? "Explorer";
-                const billingPeriod = subscription.billing_period === "annual" ? "Annual" : "Monthly";
-                return (
-                  <div className={`rounded-xl border p-4 ${statusColor}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
-                          <span className="text-sm font-semibold text-slate-800">{statusLabel}</span>
-                          <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{planName}</span>
-                          {isPaidActive && (
-                            <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{billingPeriod}</span>
-                          )}
-                        </div>
-                        {isPaidActive && startDate && endDate && (
-                          <p className="mt-1 text-[11px] text-slate-600">
-                            Paid: {startDate} → {endDate}
-                          </p>
-                        )}
-                        {!isActive && endDate && (
-                          <p className="mt-1 text-[11px] text-slate-500">
-                            {isExpired ? "Expired" : "Expires"}: {endDate}
-                          </p>
-                        )}
-                        {isPaidActive && subscription.stripe_subscription_id && (
-                          <p className="mt-1 text-[11px] text-slate-400">Stripe: {subscription.stripe_subscription_id}</p>
-                        )}
-                        {isActive && plan?.features?.length > 0 && (
-                          <ul className="mt-2.5 space-y-1">
-                            {plan.features.map(f => (
-                              <li key={f} className="flex items-start gap-1.5 text-[11px] text-slate-600">
-                                <svg className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                  <path d="M20 6L9 17l-5-5" />
-                                </svg>
-                                {f}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                      {!isActive && !isGrandfathered && (
-                        <button
-                          type="button"
-                          disabled={trialLoading}
-                          onClick={handleRenewTrial}
-                          className="shrink-0 rounded-xl border border-brand-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 transition hover:bg-brand-50 disabled:opacity-40"
-                        >
-                          {trialLoading ? "Renewing…" : "Renew trial"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })() : null}
-            </div>
 
             {/* AI Credits */}
             <div>
@@ -1252,7 +1169,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                   </div>
                 </div>
               ) : !creditsLoading && (
-                <p className="mb-3 text-[11px] text-slate-400 italic">No wallet found — user has not used AI features yet.</p>
+                <p className="mb-3 text-[11px] text-slate-400 italic">No wallet found. User has not used AI features yet.</p>
               )}
 
               {/* Grant credits form */}
@@ -1340,7 +1257,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                   ))}
                 </div>
               ) : (
-                <p className="mb-3 text-xs text-slate-400">No restrictions — full access based on workspace permissions.</p>
+                <p className="mb-3 text-xs text-slate-400">No restrictions. Full access based on workspace permissions.</p>
               )}
 
               {/* Add restriction form */}
@@ -1420,7 +1337,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                   ))}
                 </div>
               ) : (
-                <p className="mb-3 text-xs text-slate-400">No grants — access follows the user's plan.</p>
+                <p className="mb-3 text-xs text-slate-400">No grants. Access follows the user's plan.</p>
               )}
 
               {/* Add grant form */}
@@ -2328,7 +2245,7 @@ export default function AdminPage() {
       },
       {
         id: "upgrades", color: "emerald", label: "Upgrade intent clicks", count: stats.total_upgrade_clicks ?? 0,
-        description: "Users who clicked an upgrade prompt — warm leads for outreach or product feedback.",
+        description: "Users who clicked an upgrade prompt. Warm leads for outreach or product feedback.",
         onAction: () => goToTab("upgrades"), actionLabel: "View upgrade clicks →",
       },
     ];
@@ -3265,7 +3182,7 @@ export default function AdminPage() {
                 <h2 className="text-sm font-semibold text-slate-800">
                   Upgrade intent clicks <span className="ml-1 text-slate-400 font-normal">({filteredUpgrades.length})</span>
                 </h2>
-                <p className="mt-0.5 text-[11px] text-slate-400">Users who clicked an upgrade prompt — potential leads for outreach.</p>
+                <p className="mt-0.5 text-[11px] text-slate-400">Users who clicked an upgrade prompt. Potential leads for outreach.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {upgradesLoaded && (
@@ -3323,7 +3240,7 @@ export default function AdminPage() {
                 <h2 className="text-sm font-semibold text-slate-800">
                   Module interest <span className="ml-1 text-slate-400 font-normal">({filteredModuleInterest.length})</span>
                 </h2>
-                <p className="mt-0.5 text-[11px] text-slate-400">Users who clicked "Coming Soon" features — one row per email per feature.</p>
+                <p className="mt-0.5 text-[11px] text-slate-400">Users who clicked "Coming Soon" features. One row per email per feature.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {moduleInterestLoaded && (

@@ -232,7 +232,7 @@ async def blueprint_financial_documents_share(
     email_sent = False
     email_error = None
     if payload.email:
-        async with credit_guard(user["id"], "email_share"):
+        try:
             delivery = await send_document_share_email(
                 to_email=payload.email,
                 sender_email=user["email"],
@@ -241,8 +241,11 @@ async def blueprint_financial_documents_share(
                 company_name=payload.company_name,
                 expires_in_days=payload.expires_in_days,
             )
-        email_sent = delivery.sent
-        email_error = delivery.error
+            email_sent = delivery.sent
+            email_error = delivery.error
+        except Exception as exc:
+            email_sent = False
+            email_error = str(exc)
     return BlueprintFinancialShareResponse(
         token=token,
         document_id=document_id,

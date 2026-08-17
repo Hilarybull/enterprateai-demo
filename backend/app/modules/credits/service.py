@@ -60,11 +60,25 @@ async def ensure_wallet(user_id: str) -> dict:
     return wallet  # type: ignore[return-value]
 
 
+async def _get_subscription(user_id: str) -> dict | None:
+    try:
+        return await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+    except Exception:
+        return None
+
+
+async def _get_plan_config(plan_code: str) -> dict | None:
+    try:
+        return await sb_select("plan_credit_config", filters=[("plan_code", "eq", plan_code)], single=True)
+    except Exception:
+        return None
+
+
 async def _initial_credits_for_user(user_id: str) -> tuple[int, str]:
     """Return (credits, plan_code) for a brand-new wallet based on the user's current plan."""
-    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+    sub = await _get_subscription(user_id)
     plan_code = (sub or {}).get("plan_key") or "explorer"
-    plan_cfg = await sb_select("plan_credit_config", filters=[("plan_code", "eq", plan_code)], single=True)
+    plan_cfg = await _get_plan_config(plan_code)
     credits = int((plan_cfg or {}).get("credits_per_period") or 50)
     return credits, plan_code
 
@@ -79,9 +93,9 @@ async def get_balance_info(user_id: str) -> dict:
     wallet = await get_wallet(user_id)
     if not wallet:
         wallet = await ensure_wallet(user_id)
-    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+    sub = await _get_subscription(user_id)
     plan_code = (sub or {}).get("plan_key") or "explorer"
-    plan_cfg = await sb_select("plan_credit_config", filters=[("plan_code", "eq", plan_code)], single=True)
+    plan_cfg = await _get_plan_config(plan_code)
     monthly_allocation = int((plan_cfg or {}).get("credits_per_period") or 0)
     return {
         "available_credits": wallet["available_credits"] if wallet else 0,
@@ -195,7 +209,7 @@ async def provision_plan_credits(user_id: str, plan_code: str, reason: str = "")
     Grant the correct credits for plan_code to user_id.
     Safe to call on plan change — always grants the full allocation.
     """
-    plan_cfg = await sb_select("plan_credit_config", filters=[("plan_code", "eq", plan_code)], single=True)
+    plan_cfg = await _get_plan_config(plan_code)
     credits = int((plan_cfg or {}).get("credits_per_period") or 0)
     if credits <= 0:
         return {"ok": True, "granted": 0}

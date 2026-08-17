@@ -9,7 +9,7 @@ export default function ReferralClickPage() {
 
   useEffect(() => {
     if (!code) {
-      navigate("/register", { replace: true });
+      navigate("/login?signup=1", { replace: true });
       return;
     }
 

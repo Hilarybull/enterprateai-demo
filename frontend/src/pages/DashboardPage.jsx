@@ -94,16 +94,29 @@ export default function DashboardPage() {
     const allExps = snapshot.expenses || [];
     const paidExps = allExps.filter(e => String(e.status || "").toLowerCase() === "paid");
 
-    // Revenue = grand total from paid + delivered (accrual: earned when service delivered)
-    const totalRevenue = [...paidInvs, ...deliveredInvs].reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+    // Supports installment payments array; falls back to legacy paid_amount field
+    const actualReceived = (inv) => {
+      if (inv.payments && inv.payments.length > 0) {
+        return inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      }
+      if (inv.payment_type === "partial" && inv.paid_amount != null) return Number(inv.paid_amount);
+      return Number(inv.total_amount || inv.subtotal_amount || 0);
+    };
+
+    const paidRevenue = paidInvs.reduce((s, i) => s + actualReceived(i), 0);
     const paidCoS = paidInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
     const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-    // Cash = total received (paid invoices grand total) minus total paid out (expenses)
-    const paidRevenue = paidInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+    // Cash = actual received (respects partial amounts) minus paid expenses
     const cashBalance = paidRevenue - paidExpTotal;
-    // Receivables = delivered but not yet paid (unchanged)
-    const receivables = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
-    // Costs = all expenses + CoS from paid invoices
+    // Remaining balance on partially-paid invoices goes to receivables
+    const partialRemaining = paidInvs
+      .filter(i => actualReceived(i) < Number(i.total_amount || 0))
+      .reduce((s, i) => s + Math.max(0, Number(i.total_amount || 0) - actualReceived(i)), 0);
+    const deliveredTotal = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+    // Receivables = delivered (fully unpaid) + remaining on partial payments
+    const receivables = deliveredTotal + partialRemaining;
+    // Revenue = cash actually received + delivered (accrual)
+    const totalRevenue = paidRevenue + deliveredTotal;
     const totalCosts = allExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0) + paidCoS;
 
     return { totalRevenue, cashBalance, receivables, totalCosts };

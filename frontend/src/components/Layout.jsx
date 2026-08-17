@@ -902,14 +902,14 @@ export default function Layout() {
                 <span>You are in Sandbox mode. Data is not saved.</span>
                 <span className="text-amber-400">·</span>
                 <button
-                  onClick={() => navigate("/register")}
+                  onClick={() => { logout(); navigate("/login?signup=1"); }}
                   className="font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-700 dark:text-amber-200 dark:hover:text-amber-100"
                 >
                   Create free account
                 </button>
                 <span className="text-amber-400">·</span>
                 <button
-                  onClick={() => navigate("/login")}
+                  onClick={() => { logout(); navigate("/login"); }}
                   className="font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-700 dark:text-amber-200 dark:hover:text-amber-100"
                 >
                   Sign in
@@ -1304,7 +1304,7 @@ export default function Layout() {
           </header>
 
           <div className="ea-scroll flex-1 overflow-auto" data-tour="content-area">
-            <div className="mx-auto w-full max-w-7xl p-4 pb-24 md:p-6 md:pb-24">
+            <div className="mx-auto w-full max-w-7xl p-4 pb-8 md:p-6 md:pb-10">
               {isCurrentRouteLocked ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
                   <div className={

@@ -1107,7 +1107,7 @@ export default function AccountPage() {
                     <div>
                       <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Password</p>
                       <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {isGoogleOnly ? "Google account — no password set." : "Email & password login active."}
+                        {isGoogleOnly ? "Google account · no password set." : "Email & password login active."}
                       </p>
                     </div>
                     {!pwStep && !isGoogleOnly && (

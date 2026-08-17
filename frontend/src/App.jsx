@@ -36,7 +36,6 @@ import MarketplacePage from "./pages/MarketplacePage";
 import AccountPage from "./pages/AccountPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
-import IntegrationsCallbackPage from "./pages/IntegrationsCallbackPage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import TermsOfServicePage from "./pages/TermsOfServicePage";
 import DisclaimerPage from "./pages/DisclaimerPage";
@@ -46,7 +45,6 @@ import ReferralClickPage from "./pages/ReferralClickPage";
 import BlogPage from "./pages/BlogPage";
 import BlogArticlePage from "./pages/BlogArticlePage";
 import ResearchPage from "./pages/ResearchPage";
-import IntegrationsPage from "./pages/IntegrationsPage";
 import BookDemoPage from "./pages/BookDemoPage";
 
 function Protected({ children }) {
@@ -85,7 +83,6 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/pricing" element={<PricingPage />} />
       <Route path="/pricing/success" element={<PricingSuccessPage />} />
-      <Route path="/integrations/callback" element={<IntegrationsCallbackPage />} />
       <Route path="/legal/privacy" element={<PrivacyPolicyPage />} />
       <Route path="/legal/terms" element={<TermsOfServicePage />} />
       <Route path="/legal/disclaimer" element={<DisclaimerPage />} />
@@ -116,7 +113,6 @@ export default function App() {
         <Route path="account" element={<AccountPage />} />
         <Route path="credits" element={<CreditsPage />} />
         <Route path="referrals" element={<ReferralPage />} />
-        <Route path="integrations" element={<IntegrationsPage />} />
       </Route>
       <Route
         path="ent-admin"
