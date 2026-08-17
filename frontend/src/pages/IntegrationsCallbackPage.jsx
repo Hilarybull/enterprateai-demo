@@ -16,16 +16,18 @@ export default function IntegrationsCallbackPage() {
   const provider = params.get("provider") || "";
   const status   = params.get("status") || "";
   const reason   = params.get("reason") || "";
+  const detail   = params.get("detail") || "";
   const meta     = PROVIDER_META[provider] || { label: provider, dest: "/dashboard" };
   const isError  = status === "error";
 
   useEffect(() => {
+    if (isError) return;
     const t = setTimeout(() => {
       setDone(true);
       navigate(meta.dest);
     }, 2500);
     return () => clearTimeout(t);
-  }, [meta.dest, navigate]);
+  }, [isError, meta.dest, navigate]);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 dark:bg-slate-950">
@@ -44,6 +46,11 @@ export default function IntegrationsCallbackPage() {
               Could not connect <strong>{meta.label}</strong>.
               {reason && <> ({reason.replace(/_/g, " ")})</>}
             </p>
+            {detail && (
+              <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-left text-xs text-rose-700 font-mono break-all">
+                {decodeURIComponent(detail)}
+              </p>
+            )}
           </>
         ) : (
           <>
