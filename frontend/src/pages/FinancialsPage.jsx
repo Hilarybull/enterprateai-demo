@@ -4587,7 +4587,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 
         return (
           <div className="mt-6 space-y-4">
-            <SectionCard title="Invoices" subtitle="All active invoices — paid and pending.">
+            <SectionCard title="Invoices" subtitle="All active invoices, paid and pending.">
               <div className="mt-2">
                 <ReportTable
                   paginate
