@@ -198,8 +198,10 @@ async def callback(provider: Provider, code: str = "", state: str = "", error: s
         extra_meta = {"realm_id": realmId} if provider == "quickbooks" else None
         await _save_tokens(user_id, provider, tokens, extra_meta=extra_meta)
     except Exception as e:
+        import urllib.parse
+        detail = urllib.parse.quote(str(e)[:300])
         logger.error("Failed to store tokens for %s/%s: %s", provider, user_id, e)
-        return RedirectResponse(f"{frontend}/integrations/callback?provider={provider}&status=error&reason=storage_failed")
+        return RedirectResponse(f"{frontend}/integrations/callback?provider={provider}&status=error&reason=storage_failed&detail={detail}")
 
     return RedirectResponse(f"{frontend}/integrations/callback?provider={provider}&status=connected")
 
