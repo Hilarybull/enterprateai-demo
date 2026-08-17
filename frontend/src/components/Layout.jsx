@@ -14,6 +14,7 @@ import { planHasModuleAccess, planLabel } from "../lib/plans";
 import { useDemoTour } from "../context/DemoTourContext";
 
 const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
+const IS_LIVE = typeof window !== "undefined" && window.location.hostname === "enterprate.ai";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid", moduleKey: "dashboard" },
@@ -23,7 +24,7 @@ const NAV = [
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
-  { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: null, public: true },
+  { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: null, public: true, hideOnLive: true },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
   { to: "/referrals", label: "Referrals", subtitle: "Earn 5% per referral", icon: "share", moduleKey: null, public: true },
 ];
@@ -640,7 +641,8 @@ export default function Layout() {
 
   const filteredNav = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
-    const base = !q ? NAV : NAV.filter((i) => `${i.label} ${i.subtitle}`.toLowerCase().includes(q));
+    const visibleNav = IS_LIVE ? NAV.filter((i) => !i.hideOnLive) : NAV;
+    const base = !q ? visibleNav : visibleNav.filter((i) => `${i.label} ${i.subtitle}`.toLowerCase().includes(q));
     return base.map((item) => {
       if (item.public) return { ...item, locked: false, planLocked: false };
       const planLocked = !planHasModuleAccess(
