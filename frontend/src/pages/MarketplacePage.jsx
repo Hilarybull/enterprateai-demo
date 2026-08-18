@@ -1221,7 +1221,7 @@ export default function MarketplacePage() {
   const [filterType, setFilterType] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
   const [showFilters, setShowFilters] = useState(false);
-  const [sortBy, setSortBy] = useState("recency");
+  const [sortBy, setSortBy] = useState("az");
   const [showSort, setShowSort] = useState(false);
   const [page, setPage] = useState(1);
 
@@ -1344,7 +1344,7 @@ export default function MarketplacePage() {
     if (sortBy === "rating")   deduped.sort((a, b) => (b.listing.avg_rating ?? 0) - (a.listing.avg_rating ?? 0));
     else if (sortBy === "reviews") deduped.sort((a, b) => (b.listing.rating_count ?? 0) - (a.listing.rating_count ?? 0));
     else if (sortBy === "az")  deduped.sort((a, b) => (a.service.service_name || "").localeCompare(b.service.service_name || ""));
-    // default "recency": listings already arrive newest-first from API
+    // default "az": listings are shown alphabetically by service name
     return deduped;
   }, [listings, debouncedSearch, filterCategory, sortBy]);
 

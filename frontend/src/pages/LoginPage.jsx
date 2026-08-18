@@ -27,6 +27,29 @@ export default function LoginPage() {
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoError, setDemoError] = useState(null);
 
+  useEffect(() => {
+    const refClickId = searchParams.get("ref_click");
+    const refCode = searchParams.get("ref_code");
+    const refExpiresAt = searchParams.get("ref_expires_at");
+    if (!refClickId && !refCode) return;
+
+    try {
+      const existingRaw = localStorage.getItem("ea_referral");
+      if (existingRaw) return;
+      localStorage.setItem(
+        "ea_referral",
+        JSON.stringify({
+          click_id: refClickId || null,
+          code: refCode || null,
+          expires_at: refExpiresAt || null,
+          stored_at: new Date().toISOString(),
+        })
+      );
+    } catch {
+      // Referral capture should never block login/signup.
+    }
+  }, [searchParams]);
+
   async function tryDemo() {
     setDemoLoading(true);
     setDemoError(null);

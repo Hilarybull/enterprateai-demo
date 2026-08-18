@@ -84,7 +84,7 @@ VALUES
     ('sales_letter_section',     'Regenerate Sales Letter Section',      1,   TRUE, 'starter_insight', TRUE),
     ('scenario_simulation',      'Scenario Simulation',                  10,  TRUE, 'starter_insight', TRUE),
     ('fragility_ai_interpretation', 'AI Fragility Index Interpretation', 3,   TRUE, 'starter_insight', TRUE),
-    ('suggest_field',            'AI Field Suggestion',                  1,   TRUE, 'explorer',        FALSE)
+    ('suggest_field',            'AI Field Suggestion',                  2,   TRUE, 'explorer',        FALSE)
 ON CONFLICT (feature_code) DO NOTHING;
 
 -- ============================================================

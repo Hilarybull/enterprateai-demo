@@ -26,6 +26,10 @@ def _build_listing_item(ws: dict) -> dict | None:
         return None
     published_at = marketplace.get("published_at") or ws.get("updated_at") or datetime.now(timezone.utc).isoformat()
     updated_at = ws.get("updated_at") or published_at
+    services = sorted(
+        profile.get("services") or [],
+        key=lambda s: (str(s.get("service_name") or "").strip().lower(), str(s.get("service_category") or "").strip().lower()),
+    )
     return {
         "workspace_id": str(ws["id"]),
         "company_name": profile.get("company_name", ""),
@@ -41,7 +45,7 @@ def _build_listing_item(ws: dict) -> dict | None:
         "country": profile.get("country", ""),
         "city": profile.get("city", ""),
         "state_or_region": profile.get("state_or_region"),
-        "services": profile.get("services") or [],
+        "services": services,
         "catalogue_products": [
             {"id": p.get("id", ""), "name": p.get("name", ""), "description": p.get("description", ""), "type": p.get("type", "product"), "base_price": p.get("base_price", 0)}
             for p in ((data.get("catalogue") or {}).get("products") or [])

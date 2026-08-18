@@ -17,5 +17,5 @@ CREATE INDEX IF NOT EXISTS idx_credit_transactions_workspace_id ON credit_transa
 
 -- Add suggest_field feature if missing (idempotent)
 INSERT INTO credit_feature_config (feature_code, feature_name, credit_cost, enabled, minimum_plan, refundable_on_failure)
-VALUES ('suggest_field', 'AI Field Suggestion', 1, TRUE, 'explorer', FALSE)
+VALUES ('suggest_field', 'AI Field Suggestion', 2, TRUE, 'explorer', FALSE)
 ON CONFLICT (feature_code) DO NOTHING;

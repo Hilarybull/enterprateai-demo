@@ -75,7 +75,7 @@ async def referral_click_redirect(code: str, request: Request):
 
     # Redirect to frontend with click_id so it can be stored client-side
     redirect_url = (
-        f"{_frontend_url()}/login?signup=1&ref_click={click_id}&ref_code={code}"
+        f"{_frontend_url()}/login?signup=1&ref_click={click_id}&ref_code={code}&ref_expires_at={expires_at}"
     )
     return RedirectResponse(url=redirect_url, status_code=302)
 
