@@ -10,6 +10,7 @@ from app.modules.scenario_intelligence.schemas import (
     ScenarioRecommendation,
     ScenarioTemplate,
 )
+from app.shared.llm.openai_client import AutoLLMClient
 
 ENGINE_VERSION = "scenario_intel_v1.0"
 _MEM_RUNS: Dict[str, Dict[str, Any]] = {}
@@ -1170,6 +1171,50 @@ async def get_recommendations(run_id: str) -> List[Dict[str, Any]]:
     if data:
         return _clean_many(data)
     return _clean_many(_MEM_RECOMMENDATIONS.get(run_id, []))
+
+
+async def generate_scenario_interpretation(run_id: str, user_id: str) -> Dict[str, Any]:
+    run = await get_scenario_run(run_id)
+    if not run:
+        raise ValueError("Scenario run not found")
+
+    timeline = await get_scenario_timeline(run_id)
+    recs = await get_recommendations(run_id)
+
+    baseline = run.get("baseline_snapshot") or {}
+    scenario = run.get("scenario_snapshot") or {}
+    last_month = timeline[-1] if timeline else {}
+
+    prompt = f"""
+Scenario run ID: {run_id}
+Scenario name: {run.get("scenario_name")}
+Scenario type: {run.get("scenario_type")}
+Baseline snapshot: {baseline}
+Scenario snapshot: {scenario}
+Final month output: {last_month}
+Recommendations: {recs}
+
+Write a concise business interpretation for the founder.
+Include:
+1. The likely impact in plain English.
+2. The most important risk or upside.
+3. One practical next step.
+Keep it grounded in the provided numbers and do not invent data.
+"""
+
+    system = (
+        "You are EnterprateAI's scenario interpretation assistant. "
+        "Explain business scenarios clearly, briefly, and without hallucinating any numbers."
+    )
+    client = AutoLLMClient(user_id=user_id)
+    result = await client.generate_text(system=system, prompt=prompt, feature="scenario_ai_interpretation")
+    return {
+        "scenario_run_id": run_id,
+        "interpretation": result.text,
+        "provider": result.provider,
+        "model": result.model,
+        "total_tokens": result.total_tokens,
+    }
 
 
 async def save_decision(

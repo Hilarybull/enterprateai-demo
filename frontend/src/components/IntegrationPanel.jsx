@@ -6,8 +6,9 @@ const PROVIDER_INFO = {
   stripe: {
     label: "Stripe",
     tagline: "Payments & Billing",
-    description: "Import products, customers, and invoices from your Stripe account using an API key.",
-    importSupported: true,
+    description: "Coming soon. Import products, customers, and invoices from your Stripe account using an API key.",
+    importSupported: false,
+    comingSoon: true,
     color: "#635BFF",
     logo: (
       <svg viewBox="0 0 44 44" className="h-11 w-11" fill="none">
@@ -36,8 +37,9 @@ const PROVIDER_INFO = {
   xero: {
     label: "Xero",
     tagline: "Cloud Accounting",
-    description: "Import invoices, bills, customers and suppliers from Xero.",
-    importSupported: true,
+    description: "Coming soon. Import invoices, bills, customers and suppliers from Xero.",
+    importSupported: false,
+    comingSoon: true,
     color: "#13B5EA",
     logo: (
       <svg viewBox="0 0 44 44" className="h-11 w-11" fill="none">
@@ -305,6 +307,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onAskIm
   const connected = status?.connected;
   const isImporting = actionLoading === `import_${provider}`;
   const loading = actionLoading === provider || isImporting;
+  const isComingSoon = !!info.comingSoon;
 
   return (
     <div className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white transition-shadow duration-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
@@ -313,10 +316,15 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onAskIm
       <div className="flex flex-1 flex-col p-5">
         <div className="flex items-start justify-between">
           {info.logo}
-          {connected && (
+          {connected && !isComingSoon && (
             <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               Connected
+            </span>
+          )}
+          {isComingSoon && (
+            <span className="flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
+              Coming soon
             </span>
           )}
         </div>
@@ -330,7 +338,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onAskIm
           {info.description}
         </p>
 
-        {connected && (
+        {connected && !isComingSoon && (
           <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
             {status?.last_sync_at
               ? `Last imported ${fmtDate(status.last_sync_at)}`
@@ -339,9 +347,18 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onAskIm
                 : "Connected · import coming soon."}
           </p>
         )}
+        {isComingSoon && (
+          <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
+            This connector is on the roadmap and will be released soon.
+          </p>
+        )}
 
         <div className="mt-5 flex gap-2">
-          {connected ? (
+          {isComingSoon ? (
+            <div className="flex-1 rounded-xl border border-dashed border-slate-200 py-2.5 text-center text-[11px] font-medium text-slate-400 dark:border-slate-700 dark:text-slate-500">
+              Coming soon
+            </div>
+          ) : connected ? (
             <>
               {info.importSupported ? (
                 <button
@@ -490,9 +507,9 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {providers.map((provider) => {
-          const info = PROVIDER_INFO[provider];
-          if (!info) return null;
+      {providers.map((provider) => {
+        const info = PROVIDER_INFO[provider];
+        if (!info) return null;
           return (
             <ProviderCard
               key={provider}

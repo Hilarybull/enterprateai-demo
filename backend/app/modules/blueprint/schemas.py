@@ -115,6 +115,7 @@ class BlueprintShareLinkResponse(BaseModel):
 
 class BlueprintShareEmailRequest(BaseModel):
     email: EmailStr
+    sender_email: Optional[EmailStr] = None
 
 
 class BlueprintShareEmailResponse(BaseModel):
@@ -130,6 +131,7 @@ class QuotationRespondRequest(BaseModel):
 class BlueprintShareCreateRequest(BaseModel):
     access_mode: str = "link"
     email: Optional[EmailStr] = None
+    sender_email: Optional[EmailStr] = None
     expires_in_days: int = Field(default=7, ge=1, le=30)
 
     @model_validator(mode="after")
@@ -146,6 +148,7 @@ class BlueprintShareCreateRequest(BaseModel):
 class BlueprintFinancialShareRequest(BaseModel):
     access_mode: str = "link"
     email: Optional[EmailStr] = None
+    sender_email: Optional[EmailStr] = None
     expires_in_days: int = Field(default=7, ge=1, le=30)
     document_id: Optional[str] = None
     type: str = Field(min_length=2, max_length=200)

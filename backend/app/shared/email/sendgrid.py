@@ -52,6 +52,7 @@ async def send_email_via_sendgrid(
     subject: str,
     text_content: str,
     html_content: str,
+    reply_to_email: str | None = None,
 ) -> EmailDeliveryResult:
     ready, reason = _email_ready()
     if not ready:
@@ -66,7 +67,7 @@ async def send_email_via_sendgrid(
             "name": settings.app_name,
         },
         "reply_to": {
-            "email": from_email,
+            "email": reply_to_email or from_email,
             "name": settings.app_name,
         },
         "subject": subject,
@@ -244,4 +245,5 @@ async def send_document_share_email(
         subject=subject,
         text_content=text_content,
         html_content=html_content,
+        reply_to_email=sender_email,
     )

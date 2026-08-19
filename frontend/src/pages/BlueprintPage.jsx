@@ -23,7 +23,7 @@ const DOCUMENTS = [
   {
     id: "business_plan",
     title: "Business Plan",
-    desc: "Strategy + structured narrative sections",
+    desc: "Guided business-plan draft with structured sections",
     needsWorkspace: false
   },
   {
@@ -2216,7 +2216,11 @@ export default function BlueprintPage() {
     setShareNotice("Creating link...");
     try {
       await syncSelectedDocumentForExport();
-      const res = await apiRequest(`/blueprint/documents/${docId}/share`, "POST", shareConfig);
+      const resolvedSenderEmail = resolveWithWorkspace(senderEmail, workspaceProfile?.email, dirtyFields.senderEmail);
+      const res = await apiRequest(`/blueprint/documents/${docId}/share`, "POST", {
+        ...shareConfig,
+        sender_email: resolvedSenderEmail || null,
+      });
       const token = res?.token;
       if (!token) throw new Error("Share link could not be created.");
       const url = `${window.location.origin}/share/${token}`;
@@ -2235,7 +2239,11 @@ export default function BlueprintPage() {
   }
 
   async function sendBlueprintShareEmail({ token, email }) {
-    const res = await apiRequest(`/blueprint/share/${token}/email`, "POST", { email });
+    const resolvedSenderEmail = resolveWithWorkspace(senderEmail, workspaceProfile?.email, dirtyFields.senderEmail);
+    const res = await apiRequest(`/blueprint/share/${token}/email`, "POST", {
+      email,
+      sender_email: resolvedSenderEmail || null,
+    });
     window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
     return {
       sent: Boolean(res?.sent),
@@ -2825,7 +2833,7 @@ export default function BlueprintPage() {
                   </div>
                 ) : (
                   <div className="ea-card border-dashed p-6 text-sm text-slate-600">
-                    Click <span className="font-semibold">Generate</span> to preview here.
+                    Click <span className="font-semibold">Generate</span> to build the draft here.
                   </div>
                 )}
                 {isLoading ? (
@@ -2834,9 +2842,13 @@ export default function BlueprintPage() {
                       <div className="flex items-center justify-center">
                         <Spinner />
                       </div>
-                      <div className="mt-3 text-sm font-semibold text-slate-900">Generating your document</div>
+                      <div className="mt-3 text-sm font-semibold text-slate-900">
+                        {selectedDoc === "business_plan" ? "Building your business plan" : "Generating your document"}
+                      </div>
                       <div className="mt-2 text-xs text-slate-500">
-                        {DID_YOU_KNOW_FACTS[didYouKnowIndex]}
+                        {selectedDoc === "business_plan"
+                          ? "This can take a little longer while we assemble sections from your inputs and save drafts as we go."
+                          : DID_YOU_KNOW_FACTS[didYouKnowIndex]}
                       </div>
                     </div>
                   </div>

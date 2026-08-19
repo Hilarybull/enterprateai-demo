@@ -199,6 +199,27 @@ export default function CataloguePage() {
     );
   }
 
+  function ProductTypeIcon({ type, className = "h-4 w-4" }) {
+    const isService = String(type || "").toLowerCase() === "service";
+    return (
+      <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-xl ${isService ? "bg-violet-50 text-violet-600 dark:bg-violet-900/20 dark:text-violet-300" : "bg-sky-50 text-sky-600 dark:bg-sky-900/20 dark:text-sky-300"}`}>
+        {isService ? (
+          <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.9">
+            <path d="M14.7 6.3 17 4l3 3-2.3 2.3" />
+            <path d="m13 8 3 3-8.5 8.5a2.1 2.1 0 0 1-3 0l-.5-.5a2.1 2.1 0 0 1 0-3Z" />
+            <path d="M4.5 19.5 8 16" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.9">
+            <path d="M20 8.5 12 4 4 8.5 12 13z" />
+            <path d="M4 8.5V16l8 4 8-4V8.5" />
+            <path d="M12 13v7" />
+          </svg>
+        )}
+      </span>
+    );
+  }
+
   function daysSince(date) {
     const ts = date ? new Date(date).getTime() : NaN;
     if (!Number.isFinite(ts)) return 0;
@@ -571,6 +592,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       cost_of_sales: Number(productForm.cost_of_sales || 0),
       discount: Number(productForm.discount || 0),
       freight_cost: Number(productForm.freight_cost || 0),
+      marketplace_listed: next.find((p) => p.id === editingProductId)?.marketplace_listed ?? true,
       archived: false,
       updated_at: new Date().toISOString()
     };
@@ -716,6 +738,14 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     setCustomers(nextCustomers);
     setVendors(nextVendors);
     await persist({ products: nextProducts, customers: nextCustomers, vendors: nextVendors });
+  }
+
+  async function toggleMarketplaceListing(productId, currentlyListed) {
+    const nextProducts = products.map((product) =>
+      product.id === productId ? { ...product, marketplace_listed: !currentlyListed } : product
+    );
+    setProducts(nextProducts);
+    await persist({ products: nextProducts, customers, vendors });
   }
 
   function deleteEntity(kind, id) {
@@ -1068,8 +1098,18 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                       <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
+                            <ProductTypeIcon type={p.type} />
                             <div className="text-sm font-semibold text-slate-900">{p.name}</div>
                             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${p.type === "product" ? "bg-sky-50 text-sky-700" : "bg-violet-50 text-violet-700"}`}>{p.type}</span>
+                            {p.marketplace_listed === false ? (
+                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                Hidden
+                              </span>
+                            ) : (
+                              <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                                Listed
+                              </span>
+                            )}
                             {importBadge(p)}
                           </div>
                           <div className="mt-0.5 text-xs text-slate-500">
@@ -1082,6 +1122,9 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             const profileMatch = !p.description ? profileServices.find((s) => s.service_name?.toLowerCase().trim() === p.name?.toLowerCase().trim()) : null;
                             setProductForm({ name: p.name, type: p.type, description: p.description || profileMatch?.service_description || "", base_price: String(p.base_price ?? ""), cost_of_sales: String(p.cost_of_sales ?? ""), discount: String(p.discount ?? ""), freight_cost: String(p.freight_cost ?? "") });
                           }}>Edit</Button>
+                          <Button variant="secondary" onClick={() => toggleMarketplaceListing(p.id, p.marketplace_listed !== false)}>
+                            {p.marketplace_listed === false ? "List" : "Unlist"}
+                          </Button>
                           <Button variant="ghost" onClick={() => archiveEntity("products", p.id)}>Archive</Button>
                           <Button variant="ghost" onClick={() => deleteEntity("products", p.id)}>Delete</Button>
                         </div>
@@ -1768,9 +1811,12 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
             <div className="p-6">
               <div className="mb-1 flex items-center gap-2">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-400">
-                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9"/></svg>
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9" />
+                    <path d="M9 13.5 11 15.5 15.5 11" />
+                  </svg>
                 </span>
-                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Add to Marketplace?</h3>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">List on Marketplace?</h3>
               </div>
               <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">
                 List <strong>{addToMarketModal.name}</strong> on the marketplace so other businesses can discover it.
@@ -1788,7 +1834,13 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                     setAddToMarketModal(null);
                   }}
                 >
-                  Yes, list it
+                  <span className="inline-flex items-center gap-2">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9" />
+                      <path d="M9 13.5 11 15.5 15.5 11" />
+                    </svg>
+                    List it
+                  </span>
                 </button>
                 <button
                   className="flex-1 rounded-xl border border-slate-200 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
@@ -1800,7 +1852,14 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                     setAddToMarketModal(null);
                   }}
                 >
-                  Not now
+                  <span className="inline-flex items-center gap-2">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 19 19 4" />
+                      <path d="M9.5 9.5 3 16s4 5 9 5c1.7 0 3.2-.4 4.6-1.1" />
+                      <path d="M14.5 14.5 21 8s-4-5-9-5c-1.7 0-3.2.4-4.6 1.1" />
+                    </svg>
+                    Keep hidden
+                  </span>
                 </button>
               </div>
             </div>

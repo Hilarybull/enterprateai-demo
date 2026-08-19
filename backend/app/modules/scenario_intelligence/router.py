@@ -27,6 +27,7 @@ from app.modules.scenario_intelligence.service import (
     create_scenario_run,
     detect_risks,
     do_nothing_projection,
+    generate_scenario_interpretation,
     get_recommendations,
     get_scenario_run,
     get_scenario_timeline,
@@ -80,31 +81,30 @@ async def scenario_templates_list(
 @router.post("/scenario-runs", response_model=ScenarioRunResponse)
 async def scenario_runs_create(
     payload: ScenarioRunRequest,
-    user=Depends(get_current_user),
+    _user=Depends(get_current_user),
 ) -> ScenarioRunResponse:
     template = resolve_template(payload.scenario_template_id)
     if not template:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario template not found")
 
-    async with credit_guard(user["id"], "scenario_simulation"):
-        run_doc = await create_scenario_run(
-            tenant_id=payload.tenant_id,
-            business_id=payload.business_id,
-            state_version=payload.state_version,
-            template_id=payload.scenario_template_id,
-            scenario_mode=payload.scenario_mode,
-            scenario_name=payload.scenario_name,
-            scenario_type=template.scenario_type,
-            params=payload.parameters,
-            state=payload.state,
-        )
-        return ScenarioRunResponse(
-            scenario_run_id=run_doc["scenario_run_id"],
-            status=run_doc["status"],
-            engine_version=run_doc["engine_version"],
-            baseline_snapshot_id=run_doc["scenario_run_id"],
-            timeline_months=run_doc["timeline_months"],
-        )
+    run_doc = await create_scenario_run(
+        tenant_id=payload.tenant_id,
+        business_id=payload.business_id,
+        state_version=payload.state_version,
+        template_id=payload.scenario_template_id,
+        scenario_mode=payload.scenario_mode,
+        scenario_name=payload.scenario_name,
+        scenario_type=template.scenario_type,
+        params=payload.parameters,
+        state=payload.state,
+    )
+    return ScenarioRunResponse(
+        scenario_run_id=run_doc["scenario_run_id"],
+        status=run_doc["status"],
+        engine_version=run_doc["engine_version"],
+        baseline_snapshot_id=run_doc["scenario_run_id"],
+        timeline_months=run_doc["timeline_months"],
+    )
 
 
 @router.post("/scenario-runs/{scenario_run_id}/execute")
@@ -113,6 +113,22 @@ async def scenario_runs_execute(
     _user=Depends(get_current_user),
 ) -> dict:
     return {"scenario_run_id": scenario_run_id, "status": "completed"}
+
+
+@router.post("/scenario-runs/{scenario_run_id}/explain")
+async def scenario_runs_explain(
+    scenario_run_id: str,
+    user=Depends(get_current_user),
+) -> dict:
+    run = await get_scenario_run(scenario_run_id)
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario run not found")
+
+    async with credit_guard(user["id"], "scenario_ai_interpretation"):
+        try:
+            return await generate_scenario_interpretation(scenario_run_id, user["id"])
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario run not found")
 
 
 @router.get("/scenario-runs/{scenario_run_id}", response_model=ScenarioRunResult)

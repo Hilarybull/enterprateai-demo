@@ -50,9 +50,62 @@ async def check_credits(body: dict, current_user: dict = Depends(get_current_use
     return result
 
 
+@router.post("/reserve")
+async def reserve_credits(body: dict, current_user: dict = Depends(get_current_user)):
+    feature_code = body.get("feature_code")
+    if not feature_code:
+        raise HTTPException(status_code=400, detail="feature_code required")
+    generation_id = body.get("generation_id")
+    return await credit_svc.reserve_credits(current_user["id"], feature_code, generation_id)
+
+
+@router.post("/commit")
+async def commit_credits(body: dict, current_user: dict = Depends(get_current_user)):
+    generation_id = body.get("generation_id")
+    feature_code = body.get("feature_code")
+    if not generation_id or not feature_code:
+        raise HTTPException(status_code=400, detail="generation_id and feature_code required")
+    return await credit_svc.commit_credits(
+        generation_id,
+        current_user["id"],
+        feature_code,
+        no_hold=bool(body.get("no_hold")),
+    )
+
+
+@router.post("/release")
+async def release_credits(body: dict, current_user: dict = Depends(get_current_user)):
+    generation_id = body.get("generation_id")
+    feature_code = body.get("feature_code")
+    if not generation_id or not feature_code:
+        raise HTTPException(status_code=400, detail="generation_id and feature_code required")
+    return await credit_svc.release_credits(
+        generation_id,
+        current_user["id"],
+        feature_code,
+        no_hold=bool(body.get("no_hold")),
+    )
+
+
 @router.get("/transactions")
-async def get_transactions(limit: int = 50, current_user: dict = Depends(get_current_user)):
-    txns = await credit_svc.get_transactions(current_user["id"], limit=min(limit, 200))
+async def get_transactions(
+    limit: int = 50,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    feature_code: str | None = None,
+    transaction_type: str | None = None,
+    status: str | None = None,
+    current_user: dict = Depends(get_current_user),
+):
+    txns = await credit_svc.get_transactions(
+        current_user["id"],
+        limit=min(limit, 200),
+        start_date=start_date,
+        end_date=end_date,
+        feature_code=feature_code,
+        transaction_type=transaction_type,
+        status=status,
+    )
     return {"transactions": txns}
 
 

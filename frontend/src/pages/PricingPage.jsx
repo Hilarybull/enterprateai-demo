@@ -1072,7 +1072,7 @@ export default function PricingPage() {
                         : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400")
                     }
                   >
-                    Save up to £498
+                    Save up to £118
                   </span>
                 )}
               </button>
@@ -1166,32 +1166,37 @@ export default function PricingPage() {
               {
                 title: "Idea Validation",
                 desc: "Submit a product or service idea and get an AI-driven viability assessment covering market fit, revenue potential, and a clear accept or reject outcome to guide your next step.",
-                plans: ["Explorer", "Starter"],
+                plans: ["Explorer", "Starter", "Decision Engine"],
               },
               {
                 title: "Business Blueprints",
                 desc: "Turn your validated idea into professional documents: business plans, investor-ready proposals, and sales letters, all generated from your actual business profile.",
-                plans: ["Explorer", "Starter"],
+                plans: ["Explorer", "Starter", "Decision Engine"],
               },
               {
                 title: "Catalogue",
                 desc: "Manage products, customers, and vendors in one place. Free on Explorer with no record limits. Starter includes up to 250 products, 500 customers, and 250 vendors.",
-                plans: ["Explorer", "Starter"],
+                plans: ["Explorer", "Starter", "Decision Engine"],
               },
               {
                 title: "Financials",
                 desc: "Create invoices, raise quotations, log expenses, and manage contracts. Explorer includes unlimited invoices and quotations. Starter includes 50 of each per month.",
-                plans: ["Explorer", "Starter"],
+                plans: ["Explorer", "Starter", "Decision Engine"],
               },
               {
                 title: "Scenario Simulation",
                 desc: "Run what-if analyses to see how your business holds up under different conditions. Adjust revenue, costs, and growth assumptions to stress-test decisions before committing.",
-                plans: ["Starter"],
+                plans: ["Starter", "Decision Engine"],
               },
               {
                 title: "Fragility Index",
                 desc: "As you run simulations, the system flags variables that put your business model under stress, surfacing risk signals early so you can course-correct before they become real problems.",
-                plans: ["Starter"],
+                plans: ["Starter", "Decision Engine"],
+              },
+              {
+                title: "Live Plan Intelligence",
+                desc: "Decision Engine adds live-plan import, section refresh, variance interpretation, and board-ready summaries for ongoing operating visibility.",
+                plans: ["Decision Engine"],
               },
             ].map((item) => (
               <div key={item.title} className="space-y-1.5">

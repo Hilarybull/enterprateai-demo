@@ -81,6 +81,16 @@ const PLANS = [
     features: ["Idea validations", "Business plans", "Business proposals", "Sales letters", "Scenario simulation", "Fragility Index", "Adaptive Scenario Intelligence", "Unlimited products, customers & vendors", "Unlimited invoices & quotations", "1 marketplace listing", "1 user"],
     highlight: true, badge: "Best Value",
   },
+  {
+    name: "Decision Engine",
+    monthly: 59,
+    annual: 49.17,
+    annualSaving: 118,
+    free: false,
+    desc: "For teams that need deeper AI support, live-plan intelligence, and multi-user decision making",
+    features: ["2,000 monthly credits", "Business plans", "Business proposals", "Sales letters", "Live plan refreshes", "Scenario intelligence", "Fragility Index", "Adaptive Scenario Intelligence", "Unlimited products, customers & vendors", "Unlimited invoices & quotations", "3 users included"],
+    highlight: false,
+  },
 ];
 
 const FAQS = [

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.core.supabase import sb_select, sb_upsert, sb_update
+from app.modules.credits.service import normalise_plan_key
 from app.shared.auth.deps import get_current_user
 from app.shared.auth.security import create_access_token, decode_token
 from app.modules.idea_validation.service import get_user_workspace, upsert_user_workspace
@@ -41,6 +42,32 @@ PROVIDERS: dict[str, dict] = {
     "zoho_crm":   {"label": "Zoho CRM",   "group": "catalogue"},
     "stripe":     {"label": "Stripe",     "group": "financial"},
 }
+
+INTEGRATIONS_MIN_PLAN = "decision_engine"
+PLAN_ORDER = ("explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os")
+PLAN_RANK = {plan: index for index, plan in enumerate(PLAN_ORDER)}
+
+
+def _meets_min_plan(plan_key: str | None, minimum_plan: str = INTEGRATIONS_MIN_PLAN) -> bool:
+    plan = normalise_plan_key(plan_key)
+    return PLAN_RANK.get(plan, 0) >= PLAN_RANK.get(minimum_plan, 0)
+
+
+async def _user_meets_integration_plan(user_id: str) -> bool:
+    try:
+        sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+    except Exception:
+        return False
+    if not sub:
+        return False
+    if str(sub.get("status") or "").lower() in {"expired", "cancelled", "canceled"}:
+        return False
+    return _meets_min_plan(sub.get("plan_key"))
+
+
+async def _require_integration_plan(user_id: str) -> None:
+    if not await _user_meets_integration_plan(user_id):
+        raise HTTPException(status_code=403, detail="Integrations are available on the Decision Engine plan only.")
 
 
 def _backend_url() -> str:
@@ -130,6 +157,7 @@ async def _save_tokens(user_id: str, provider: str, tokens: dict, extra_meta: di
 async def connect(provider: Provider, user=Depends(get_current_user)) -> dict:
     if provider not in PROVIDERS:
         raise HTTPException(status_code=400, detail="Unknown provider.")
+    await _require_integration_plan(user["id"])
     client_id, client_secret = _get_credentials(provider)
     if not client_id or not client_secret:
         id_name, secret_name = _PROVIDER_ENV_NAMES.get(provider, (f"{provider.upper()}_CLIENT_ID", f"{provider.upper()}_CLIENT_SECRET"))
@@ -172,6 +200,8 @@ async def callback(provider: Provider, code: str = "", state: str = "", error: s
         user_id: str = payload["sub"]
         if payload.get("provider") != provider or payload.get("type") != "oauth_state":
             raise ValueError("Invalid state")
+        if not await _user_meets_integration_plan(user_id):
+            return RedirectResponse(f"{frontend}/integrations/callback?provider={provider}&status=error&reason=plan_locked")
     except Exception:
         return RedirectResponse(f"{frontend}/integrations/callback?provider={provider}&status=error&reason=invalid_state")
 
@@ -219,6 +249,8 @@ async def qb_callback(code: str = "", state: str = "", realmId: str = "", error:
         user_id: str = payload["sub"]
         if payload.get("provider") != "quickbooks" or payload.get("type") != "oauth_state":
             raise ValueError("Invalid state")
+        if not await _user_meets_integration_plan(user_id):
+            return RedirectResponse(f"{frontend}/integrations/callback?provider=quickbooks&status=error&reason=plan_locked")
     except Exception:
         return RedirectResponse(f"{frontend}/integrations/callback?provider=quickbooks&status=error&reason=invalid_state")
 
@@ -247,6 +279,7 @@ async def qb_callback(code: str = "", state: str = "", realmId: str = "", error:
 
 @router.get("/status")
 async def status(user=Depends(get_current_user)) -> dict:
+    await _require_integration_plan(user["id"])
     result = {}
     for provider in PROVIDERS:
         row = await _load_token_row(user["id"], provider)
@@ -264,6 +297,7 @@ async def status(user=Depends(get_current_user)) -> dict:
 async def disconnect(provider: Provider, user=Depends(get_current_user)) -> dict:
     if provider not in PROVIDERS:
         raise HTTPException(status_code=400, detail="Unknown provider.")
+    await _require_integration_plan(user["id"])
     try:
         from app.core.supabase import sb_delete
         await sb_delete("integration_tokens", filters=[("user_id", "eq", user["id"]), ("provider", "eq", provider)])
@@ -368,6 +402,7 @@ def _get_workspace_currency(ws_data: dict) -> str:
 async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depends(get_current_user)) -> dict:
     if provider not in PROVIDERS:
         raise HTTPException(status_code=400, detail="Unknown provider.")
+    await _require_integration_plan(user["id"])
     direction = (payload.direction if payload else "import").lower()
     mode: ImportMode = (payload.mode if payload and payload.mode else "new_only")
     user_source_currency: str | None = (payload.source_currency or "").upper() or None if payload else None

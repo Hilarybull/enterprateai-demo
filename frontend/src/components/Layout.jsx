@@ -24,7 +24,7 @@ const NAV = [
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
   { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
   { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
-  { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: null, public: true },
+  { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: "integrations" },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
   { to: "/referrals", label: "Referrals", subtitle: "Earn 5% per referral", icon: "share", moduleKey: null, public: true },
 ];
@@ -225,9 +225,11 @@ function SidebarLink({ item, onClick, forceInactive, locked, tourActive }) {
   }
   if (locked) {
     return (
-      <div
-        className="group mx-1 flex cursor-not-allowed items-center gap-3 rounded-2xl px-3 py-2.5 opacity-35 select-none"
-        title="You don't have access to this module"
+      <NavLink
+        to={item.to}
+        onClick={onClick}
+        className="group mx-1 flex items-center gap-3 rounded-2xl px-3 py-2.5 opacity-55 transition hover:bg-slate-50 hover:opacity-80 dark:hover:bg-slate-900"
+        title="Upgrade to access this module"
       >
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-400 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800">
           <Icon name={item.icon} className="h-5 w-5" />
@@ -235,8 +237,10 @@ function SidebarLink({ item, onClick, forceInactive, locked, tourActive }) {
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-semibold text-slate-500 dark:text-slate-500">{item.label}</div>
         </div>
-        <Icon name="lock" className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-      </div>
+        <div className="shrink-0 rounded-full bg-brand-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-brand-600 dark:bg-brand-900/20 dark:text-brand-400">
+          Upgrade
+        </div>
+      </NavLink>
     );
   }
 
@@ -670,6 +674,7 @@ export default function Layout() {
     if (path.startsWith("/catalogue")) return "catalogue";
     if (path.startsWith("/financials")) return "financials";
     if (path.startsWith("/registration")) return "registration";
+    if (path.startsWith("/integrations")) return "integrations";
     if (path.startsWith("/reports")) return "reports";
     return null;
   }, [location.pathname]);

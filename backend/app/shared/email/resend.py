@@ -51,6 +51,7 @@ async def send_email_via_resend(
     text_content: str,
     html_content: str,
     sender_name: str | None = None,
+    reply_to_email: str | None = None,
 ) -> EmailDeliveryResult:
     ready, reason = _email_ready()
     if not ready:
@@ -62,7 +63,7 @@ async def send_email_via_resend(
 
     payload = {
         "from": f"{display_name} <{from_email}>",
-        "reply_to": from_email,
+        "reply_to": reply_to_email or from_email,
         "to": [to_email],
         "subject": subject,
         "text": text_content,
@@ -261,4 +262,5 @@ async def send_document_share_email(
         text_content=text_content,
         html_content=html_content,
         sender_name=sender_label,
+        reply_to_email=sender_email,
     )
