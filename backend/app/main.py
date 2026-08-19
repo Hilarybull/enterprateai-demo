@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -123,7 +124,9 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup():
-        await connect_to_mongo()
+        # Keep startup fast for Railway health checks.
+        # MongoDB is still lazily initialized when first needed.
+        asyncio.create_task(connect_to_mongo())
 
     @app.on_event("shutdown")
     async def shutdown():
