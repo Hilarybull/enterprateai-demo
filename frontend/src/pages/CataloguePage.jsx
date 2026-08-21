@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useRef } from "react";
 import html2pdf from "html2pdf.js";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
@@ -195,6 +196,59 @@ export default function CataloguePage() {
     return (
       <div className={`flex h-9 w-9 items-center justify-center rounded-2xl ${tone}`}>
         {children}
+      </div>
+    );
+  }
+
+  function ActionMenu({ items, label = "More actions" }) {
+    const [open, setOpen] = useState(false);
+    const menuRef = useRef(null);
+
+    useEffect(() => {
+      if (!open) return;
+      function handleClickOutside(event) {
+        if (!menuRef.current || menuRef.current.contains(event.target)) return;
+        setOpen(false);
+      }
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [open]);
+
+    return (
+      <div ref={menuRef} className="relative shrink-0">
+        <button
+          type="button"
+          aria-label={label}
+          onClick={() => setOpen((v) => !v)}
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+        >
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="12" r="2" />
+            <circle cx="12" cy="12" r="2" />
+            <circle cx="19" cy="12" r="2" />
+          </svg>
+        </button>
+        {open ? (
+          <div className="absolute right-0 top-full z-30 mt-2 w-44 rounded-xl border border-slate-200 bg-white p-1 text-sm shadow-lg">
+            {items.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  item.onClick?.();
+                }}
+                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs ${
+                  item.tone === "danger"
+                    ? "text-rose-600 hover:bg-rose-50"
+                    : "text-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1116,18 +1170,31 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             {formatCurrency(p.base_price, currency)} base · {formatCurrency(p.cost_of_sales || 0, currency)} CoS{p.discount ? ` · ${formatCurrency(p.discount, currency)} off` : ""}{p.freight_cost ? ` · ${formatCurrency(p.freight_cost, currency)} freight` : ""}
                           </div>
                         </div>
-                        <div className="flex gap-2">
-                          <Button variant="secondary" onClick={() => {
-                            setEditingProductId(p.id);
-                            const profileMatch = !p.description ? profileServices.find((s) => s.service_name?.toLowerCase().trim() === p.name?.toLowerCase().trim()) : null;
-                            setProductForm({ name: p.name, type: p.type, description: p.description || profileMatch?.service_description || "", base_price: String(p.base_price ?? ""), cost_of_sales: String(p.cost_of_sales ?? ""), discount: String(p.discount ?? ""), freight_cost: String(p.freight_cost ?? "") });
-                          }}>Edit</Button>
-                          <Button variant="secondary" onClick={() => toggleMarketplaceListing(p.id, p.marketplace_listed !== false)}>
-                            {p.marketplace_listed === false ? "List" : "Unlist"}
-                          </Button>
-                          <Button variant="ghost" onClick={() => archiveEntity("products", p.id)}>Archive</Button>
-                          <Button variant="ghost" onClick={() => deleteEntity("products", p.id)}>Delete</Button>
-                        </div>
+                        <ActionMenu
+                          items={[
+                            {
+                              label: "Edit",
+                              onClick: () => {
+                                setEditingProductId(p.id);
+                                const profileMatch = !p.description ? profileServices.find((s) => s.service_name?.toLowerCase().trim() === p.name?.toLowerCase().trim()) : null;
+                                setProductForm({ name: p.name, type: p.type, description: p.description || profileMatch?.service_description || "", base_price: String(p.base_price ?? ""), cost_of_sales: String(p.cost_of_sales ?? ""), discount: String(p.discount ?? ""), freight_cost: String(p.freight_cost ?? "") });
+                              },
+                            },
+                            {
+                              label: p.marketplace_listed === false ? "List on Marketplace" : "Unlist from Marketplace",
+                              onClick: () => toggleMarketplaceListing(p.id, p.marketplace_listed !== false),
+                            },
+                            {
+                              label: "Archive",
+                              onClick: () => archiveEntity("products", p.id),
+                            },
+                            {
+                              label: "Delete",
+                              tone: "danger",
+                              onClick: () => deleteEntity("products", p.id),
+                            },
+                          ]}
+                        />
                       </div>
                     )) : (
                       <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No active products yet.</div>
@@ -1174,14 +1241,19 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                         Archived {age} days ago • Expires in {expiring} days
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button variant="secondary" onClick={() => restoreEntity("products", p.id)}>
-                        Activate
-                      </Button>
-                      <Button variant="ghost" onClick={() => deleteEntity("products", p.id)}>
-                        Delete
-                      </Button>
-                    </div>
+                    <ActionMenu
+                      items={[
+                        {
+                          label: "Activate",
+                          onClick: () => restoreEntity("products", p.id),
+                        },
+                        {
+                          label: "Delete",
+                          tone: "danger",
+                          onClick: () => deleteEntity("products", p.id),
+                        },
+                      ]}
+                    />
                   </div>
                 );
               })
