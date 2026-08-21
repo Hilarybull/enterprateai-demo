@@ -206,6 +206,7 @@ export default function DemoTour() {
   }, [spotRect]);
 
   const isPublic = PUBLIC_PATHS.has(pathname) || pathname.startsWith("/share/") || pathname.startsWith("/join/") || pathname.startsWith("/r/") || pathname.startsWith("/blog/");
+  const isBookDemoTour = pathname === "/book-demo" && tour?.active;
 
   // Post-tour "Create Account" prompt
   if (tour?.showPostTour && !isPublic) {
@@ -302,7 +303,7 @@ export default function DemoTour() {
   }
 
   if (!tour?.active) return null;
-  if (isPublic) return null;
+  if (isPublic && !isBookDemoTour) return null;
 
   const { currentStep, step, totalSteps, next, prev, skip, goToStep } = tour;
   const isFirst = step === 0;

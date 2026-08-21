@@ -3,6 +3,16 @@ import { useNavigate } from "react-router-dom";
 
 export const TOUR_STEPS = [
   {
+    key: "demo-intro",
+    path: "/book-demo",
+    navKey: null,
+    icon: "account",
+    selector: "[data-tour='book-demo-start']",
+    title: "Start with a guided tour",
+    description: "We’ll walk you through the demo first, then take you into the sandbox so you can explore with sample data.",
+    hint: "Click Next to enter the sandbox tour.",
+  },
+  {
     key: "workspace",
     path: "/dashboard",
     navKey: null,

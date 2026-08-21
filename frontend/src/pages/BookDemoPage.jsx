@@ -177,6 +177,7 @@ export default function BookDemoPage() {
           <button
             onClick={launchSandbox}
             disabled={sandboxLoading}
+            data-tour="book-demo-start"
             className="mt-8 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white px-6 py-3.5 text-sm font-bold text-brand-700 shadow-lg transition hover:bg-brand-50 active:scale-95 disabled:opacity-70 sm:w-auto"
           >
             {sandboxLoading ? (

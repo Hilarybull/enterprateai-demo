@@ -48,6 +48,12 @@ async function fetchSubscription() {
 
 const DEFAULT_SUB = { plan_key: "explorer", billing_period: "monthly", status: "active" };
 
+function clearDemoTourState() {
+  sessionStorage.removeItem("ea_tour_active");
+  sessionStorage.removeItem("ea_tour_step");
+  sessionStorage.removeItem("ea_tour_done");
+}
+
 export const useAuthStore = create((set, get) => ({
   token: null,
   email: null,
@@ -71,6 +77,7 @@ export const useAuthStore = create((set, get) => ({
     const email = localStorage.getItem("ea_email");
 
     if (!token) {
+      clearDemoTourState();
       set({ token: null, email: null, hydrated: true });
       return;
     }
@@ -97,9 +104,11 @@ export const useAuthStore = create((set, get) => ({
         subscription: sub ?? DEFAULT_SUB,
         hydrated: true,
       });
+      if ((me?.email ?? email) !== "demo") clearDemoTourState();
     } catch {
       localStorage.removeItem("ea_token");
       localStorage.removeItem("ea_email");
+      clearDemoTourState();
       set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true });
     }
   },
@@ -145,6 +154,7 @@ export const useAuthStore = create((set, get) => ({
       if (!token) throw new Error("AUTH_RESPONSE_INVALID");
       localStorage.setItem("ea_token", token);
       localStorage.setItem("ea_email", email);
+      clearDemoTourState();
       set({ token, email });
       const [me, restrictions, grants, sub] = await Promise.all([
         apiRequest("/auth/me", "GET").catch(() => null),
@@ -189,6 +199,7 @@ export const useAuthStore = create((set, get) => ({
       localStorage.setItem("ea_token", token);
       const me = await apiRequest("/auth/me", "GET");
       localStorage.setItem("ea_email", me.email);
+      if (me.email !== "demo") clearDemoTourState();
       set({ token, email: me.email, name: me?.name ?? null, picture: me?.picture ?? null, authProvider: me?.auth_provider ?? null, hasPassword: me?.has_password ?? false });
       const [restrictions, grants, sub] = await Promise.all([
         fetchPlatformRestrictions(),
@@ -208,6 +219,7 @@ export const useAuthStore = create((set, get) => ({
   logout: () => {
     localStorage.removeItem("ea_token");
     localStorage.removeItem("ea_email");
+    clearDemoTourState();
     set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true, platformRestrictions: [], platformGrants: [], subscription: DEFAULT_SUB, creditBalance: null, creditInfo: null });
   }
 }));
