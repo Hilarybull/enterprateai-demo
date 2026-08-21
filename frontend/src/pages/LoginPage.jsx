@@ -252,8 +252,8 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="mt-3 flex-1 space-y-2 overflow-hidden pr-1">
-              <div className="mx-auto w-full max-w-[460px]">
+            <div className="mt-3 flex-1 space-y-3 overflow-y-auto px-1 pb-3 pt-4">
+              <div className="relative z-10 mx-auto w-full max-w-[460px] overflow-visible pt-3">
                 <GoogleSignInButton disabled={isLoading} onCredential={(cred) => googleLogin(cred)} />
               </div>
 

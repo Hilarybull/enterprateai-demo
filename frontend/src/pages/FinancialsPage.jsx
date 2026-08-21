@@ -18,6 +18,7 @@ import { useAuthStore } from "../store/auth";
 import { hasFeatureAccess } from "../lib/permissions";
 import { normalisePlanKey } from "../lib/plans";
 import { formatCurrency } from "../lib/format";
+import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
 import { getProductCostOfSales, getProductSalesPrice } from "../lib/financialIntelligence";
 
 const OTHER_PRODUCT_ID = "__other__";
@@ -219,6 +220,7 @@ export default function FinancialsPage() {
     invoice_id: "",
     customer_id: "",
     contract_id: "",
+    currency: currency || "GBP",
     product_ids: [],
     items: [],
     extra_items: [],
@@ -747,8 +749,8 @@ export default function FinancialsPage() {
     return getProductCostOfSales(product);
   }
 
-  function formatMoney(value) {
-    return formatCurrency(Number(value || 0), currency || "GBP");
+  function formatMoney(value, overrideCurrency) {
+    return formatCurrency(Number(value || 0), overrideCurrency || currency || "GBP");
   }
 
   function sourceBadge(item) {
@@ -969,7 +971,7 @@ export default function FinancialsPage() {
         <td>${item?.product_name || "Product / Service"}</td>
         <td class="right">${qty}</td>
         <td class="right">${formatMoney(unitPrice)}</td>
-        <td class="right"><strong>${formatMoney(subtotalFull)}</strong></td>
+        <td class="right"><strong>${formatMoney(subtotalFull, previewInvoice.currency || currency)}</strong></td>
       </tr>`;
       }).join("")}
     </tbody>
@@ -977,7 +979,7 @@ export default function FinancialsPage() {
   <div class="card">
     <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatMoney(Number(invoice?.subtotal_amount || 0))}</span></div>
     ${Number(invoice?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatMoney(Number(invoice?.vat_amount || 0))}</span></div>` : ""}
-    <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatMoney(grandTotal, previewInvoice.currency || currency)}</strong></div>
   </div>
   <div class="muted" style="margin-top:16px;">Thank you for your business.</div>
 </body>
@@ -1060,7 +1062,7 @@ export default function FinancialsPage() {
   <div class="card">
     <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatMoney(Number(quote?.subtotal_amount || 0))}</span></div>
     ${Number(quote?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${quote.vat_rate}%)</span><span>${formatMoney(Number(quote?.vat_amount || 0))}</span></div>` : ""}
-    <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatMoney(grandTotal, previewInvoice.currency || currency)}</strong></div>
   </div>
   <div class="muted" style="margin-top:16px;">This quotation is valid for ${quote?.validity_days || 30} days unless otherwise stated.</div>
 </body>
@@ -1093,7 +1095,7 @@ export default function FinancialsPage() {
       `Items: ${itemName}`,
       `Subtotal: ${formatMoney(Number(record?.subtotal_amount || 0))}`,
       ...(Number(record?.vat_rate) > 0 ? [`VAT (${Number(record.vat_rate)}%): ${formatMoney(Number(record?.vat_amount || 0))}`] : []),
-      `Grand total: ${formatMoney(grandTotal)}`,
+      `Grand total: ${formatMoney(grandTotal, previewInvoice.currency || currency)}`,
       `Status: ${record?.status || "paid"}`,
       ...(record?.paid_at ? [`Payment date: ${new Date(record.paid_at).toLocaleDateString()}`] : []),
     ].join("\n");
@@ -1244,7 +1246,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
         return `<tr>
           <td>${item?.product_name || "Product / Service"}</td>
           <td class="right">${qty}</td>
-          <td class="right">${formatMoney(unitFull)}</td>
+          <td class="right">${formatMoney(unitFull, previewInvoice.currency || currency)}</td>
           <td class="right">${formatMoney(unitFull * qty)}</td>
         </tr>`;
       }).join("")}
@@ -1254,10 +1256,10 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     <div class="totals-row"><span class="muted">Total</span><span>${formatMoney(preTaxTotal)}</span></div>
     ${Number(invoice?.vat_rate) > 0 ? `<div class="totals-row"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatMoney(Number(invoice?.vat_amount || 0))}</span></div>` : ""}
     ${isPartial ? `
-    <div class="totals-row" style="border-top:1px solid #e2e8f0; margin-top:6px; padding-top:8px;"><span class="muted">Invoice Total</span><span>${formatMoney(grandTotal)}</span></div>
+    <div class="totals-row" style="border-top:1px solid #e2e8f0; margin-top:6px; padding-top:8px;"><span class="muted">Invoice Total</span><span>${formatMoney(grandTotal, previewInvoice.currency || currency)}</span></div>
     <div class="totals-row grand"><span>Amount Paid</span><span>${formatMoney(amountPaid)}</span></div>
     <div class="totals-row"><span class="muted">Balance Due</span><span>${formatMoney(balanceDue)}</span></div>
-    ` : `<div class="totals-row grand"><span>Grand Total</span><span>${formatMoney(grandTotal)}</span></div>`}
+    ` : `<div class="totals-row grand"><span>Grand Total</span><span>${formatMoney(grandTotal, previewInvoice.currency || currency)}</span></div>`}
   </div>
   <hr class="divider"/>
   <div class="muted" style="font-size:11px; text-align:center;">Thank you for your payment. This is your official receipt.</div>
@@ -1512,7 +1514,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", product_ids: [], items: [], extra_items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", currency: currency || "GBP", product_ids: [], items: [], extra_items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "" });
     setEditingInvoiceId(null);
     setPreviewInvoiceId(null);
     setInvoiceFormError(null);
@@ -1635,7 +1637,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
           return;
         }
         if (grandTotal > remaining.total + 0.001) {
-          setInvoiceFormError(`Invoice grand total (${formatMoney(grandTotal)}) exceeds the remaining contract balance of ${formatMoney(remaining.total)}. Reduce the amount or unlink the contract.`);
+          setInvoiceFormError(`Invoice grand total (${formatMoney(grandTotal, previewInvoice.currency || currency)}) exceeds the remaining contract balance of ${formatMoney(remaining.total)}. Reduce the amount or unlink the contract.`);
           return;
         }
       }
@@ -1660,6 +1662,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       vat_rate: vatRate,
       vat_amount: vatAmount,
       total_amount: grandTotal,
+      currency: String(invoiceForm.currency || currency || "GBP").toUpperCase(),
       status: editingInvoiceId ? next.find((i) => i.id === editingInvoiceId)?.status || "pending" : "pending",
       issued_at: invoiceForm.issued_at || null,
       due_date: invoiceForm.due_date || null,
@@ -2177,7 +2180,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
   </tbody>
 </table>
 <div class="card">
-  <div style="display:flex;justify-content:space-between;gap:12px;"><span>Grand Total</span><strong>${formatMoney(grandTotal)}</strong></div>
+  <div style="display:flex;justify-content:space-between;gap:12px;"><span>Grand Total</span><strong>${formatMoney(grandTotal, previewInvoice.currency || currency)}</strong></div>
 </div>
 <p class="muted" style="margin-top:16px;">This quotation is valid for ${quote.validity_days || 30} days.</p>
 <div class="muted" style="margin-top:24px;font-size:13px;">Please use the buttons below to accept or reject this quotation.</div>
@@ -2571,6 +2574,20 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   onChange={(e) => setInvoiceForm((f) => ({ ...f, customer_id: e.target.value, contract_id: "" }))}
                 />
               </div>
+              <div>
+                <div className="ea-label">Currency *</div>
+                <select
+                  className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-brand-200 focus:ring-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  value={invoiceForm.currency || "GBP"}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, currency: e.target.value }))}
+                >
+                  {CURRENCY_CODES.map((code) => (
+                    <option key={code} value={code}>
+                      {currencyLabel(code)}
+                    </option>
+                  ))}
+                </select>
+              </div>
               {customerSalesContracts.length > 0 && (
                 <div>
                   <div className="ea-label">Link to contract (optional)</div>
@@ -2792,9 +2809,9 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               />
             </div>
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
-              <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(invoiceSubtotal)}</span></div>
-              {invoiceVatAmount > 0 && <div className="flex justify-between"><span>VAT ({invoiceVatRate}%)</span><span>{formatMoney(invoiceVatAmount)}</span></div>}
-              <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(invoiceGrandTotal)}</span></div>
+              <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(invoiceSubtotal, invoiceForm.currency)}</span></div>
+              {invoiceVatAmount > 0 && <div className="flex justify-between"><span>VAT ({invoiceVatRate}%)</span><span>{formatMoney(invoiceVatAmount, invoiceForm.currency)}</span></div>}
+              <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(invoiceGrandTotal, invoiceForm.currency)}</span></div>
             </div>
             {invoiceSubmitAttempted && invoiceContractWarning ? <InlineAlert kind="error" message={invoiceContractWarning} /> : null}
             {linkedContract && contractInvoiceLimit !== null && (
@@ -2910,10 +2927,10 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                               {sourceBadge(inv)}
                             </div>
                             <div className="mt-0.5 text-xs text-slate-500">
-                              Qty {inv.quantity} · {formatMoney(inv.total_amount)} · Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"}
+                              Qty {inv.quantity} · {formatMoney(inv.total_amount, inv.currency)} · Due {inv.due_date ? new Date(inv.due_date).toLocaleDateString() : "Not set"}
                               {inv.status === "paid" && inv.payments?.length > 0
-                                ? ` · ${inv.payments.length} payment${inv.payments.length > 1 ? "s" : ""} · ${formatMoney(invTotalPaid)} received`
-                                : inv.status === "paid" && inv.paid_at ? ` · Paid ${new Date(inv.paid_at).toLocaleDateString()}${invLegacyPartial && inv.paid_amount != null ? ` (${formatMoney(inv.paid_amount)})` : ""}` : null}
+                                ? ` · ${inv.payments.length} payment${inv.payments.length > 1 ? "s" : ""} · ${formatMoney(invTotalPaid, inv.currency)} received`
+                                : inv.status === "paid" && inv.paid_at ? ` · Paid ${new Date(inv.paid_at).toLocaleDateString()}${invLegacyPartial && inv.paid_amount != null ? ` (${formatMoney(inv.paid_amount, inv.currency)})` : ""}` : null}
                               {inv.status === "delivered" && inv.issued_at ? ` · Delivered ${new Date(inv.issued_at).toLocaleDateString()}` : null}
                             </div>
                           </div>
@@ -2953,6 +2970,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                     invoice_id: inv.invoice_id || "",
                                     customer_id: inv.customer_name || inv.customer_id,
                                     contract_id: inv.contract_id || "",
+                                    currency: String(inv.currency || currency || "GBP").toUpperCase(),
                                     product_ids: resolvedProductIds,
                                     items: resolvedItems,
                                     extra_items: resolvedExtras,
@@ -3043,7 +3061,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 return (
                   <div key={inv.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-900">{customer?.name || "Customer"} • {formatMoney(inv.total_amount)}</div>
+                      <div className="text-sm font-semibold text-slate-900">{customer?.name || "Customer"} • {formatMoney(inv.total_amount, inv.currency)}</div>
                       <div className="text-xs text-slate-500">Archived {age} days ago • Expires in {expiring} days</div>
                     </div>
                     <div className="flex gap-2">
@@ -4322,7 +4340,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                       <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
                         <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(subtotal)}</span></div>
                         {vatRate > 0 && <div className="flex justify-between"><span>VAT ({vatRate}%)</span><span>{formatMoney(vatAmount)}</span></div>}
-                        <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand total</span><span>{formatMoney(grandTotal)}</span></div>
+                        <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand total</span><span>{formatMoney(grandTotal, previewInvoice.currency || currency)}</span></div>
                       </div>
                       <div>
                         <div className="ea-label">Notes</div>
@@ -4410,7 +4428,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                               <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Paid</span>
                             </div>
                             <div className="mt-0.5 text-xs text-slate-500">
-                              {inv.invoice_id ? `#${inv.invoice_id}` : ""}{inv.invoice_id && dateStr ? " · " : ""}{dateStr ? new Date(dateStr).toLocaleDateString() : ""}{" · "}{formatMoney(grandTotal)}
+                              {inv.invoice_id ? `#${inv.invoice_id}` : ""}{inv.invoice_id && dateStr ? " · " : ""}{dateStr ? new Date(dateStr).toLocaleDateString() : ""}{" · "}{formatMoney(grandTotal, previewInvoice.currency || currency)}
                             </div>
                           </div>
                           <ActionMenu
@@ -5076,7 +5094,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Invoice summary</div>
                   <div className="mt-2 text-xs text-slate-500">Grand Total</div>
-                  <div className="text-lg font-semibold text-slate-900">{formatMoney(getDocumentGrandTotal(previewInvoice))}</div>
+                  <div className="text-lg font-semibold text-slate-900">{formatMoney(getDocumentGrandTotal(previewInvoice), previewInvoice.currency || currency)}</div>
                 </div>
               </div>
 
@@ -5101,8 +5119,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
                       <div className="col-span-6">{item.product_name || "Product / Service"}</div>
                       <div className="col-span-2 text-right">{qty}</div>
-                      <div className="col-span-2 text-right">{formatMoney(unitFull)}</div>
-                      <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(subtotalFull)}</div>
+                      <div className="col-span-2 text-right">{formatMoney(unitFull, previewInvoice.currency || currency)}</div>
+                      <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(subtotalFull, previewInvoice.currency || currency)}</div>
                     </div>
                   );
                 })}
@@ -5117,17 +5135,17 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   <div className="mt-4 border-t border-slate-200 pt-3 flex flex-col items-end gap-1.5 text-sm">
                     <div className="flex justify-end gap-6">
                       <span className="text-slate-500">Total</span>
-                      <span className="text-slate-700">{formatMoney(preVatTotal)}</span>
+                      <span className="text-slate-700">{formatMoney(preVatTotal, previewInvoice.currency || currency)}</span>
                     </div>
                     {Number(previewInvoice.vat_rate) > 0 && (
                     <div className="flex justify-end gap-6">
                       <span className="text-slate-500">VAT ({Number(previewInvoice.vat_rate)}%)</span>
-                      <span className="text-slate-700">{formatMoney(vatAmt)}</span>
+                      <span className="text-slate-700">{formatMoney(vatAmt, previewInvoice.currency || currency)}</span>
                     </div>
                     )}
                     <div className="flex justify-end gap-6 border-t border-slate-200 pt-1.5 mt-0.5">
                       <span className="font-semibold text-slate-900">Grand Total</span>
-                      <span className="font-bold text-slate-900">{formatMoney(grandTotal)}</span>
+                      <span className="font-bold text-slate-900">{formatMoney(grandTotal, previewInvoice.currency || currency)}</span>
                     </div>
                   </div>
                 );
@@ -5229,8 +5247,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
                       <div className="col-span-6">{item.product_name || "Product / Service"}</div>
                       <div className="col-span-2 text-right">{qty}</div>
-                      <div className="col-span-2 text-right">{formatMoney(unitFull)}</div>
-                      <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(subtotalFull)}</div>
+                      <div className="col-span-2 text-right">{formatMoney(unitFull, previewInvoice.currency || currency)}</div>
+                      <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(subtotalFull, previewInvoice.currency || currency)}</div>
                     </div>
                   );
                 })}
@@ -5519,3 +5537,4 @@ function RecordPaymentModal({ invoice, formatMoney, onConfirm, onCancel }) {
     </div>
   );
 }
+
