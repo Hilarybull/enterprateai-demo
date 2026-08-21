@@ -422,7 +422,7 @@ async def check_credits(user_id: str, feature_code: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
-async def credit_guard(user_id: str, feature_code: str):
+async def credit_guard(user_id: str, feature_code: str, generation_id: str | None = None):
     """
     Usage:
         async with credit_guard(user_id, "idea_validation"):
@@ -431,7 +431,7 @@ async def credit_guard(user_id: str, feature_code: str):
     Atomically reserves credits before the AI call, commits on success,
     releases on failure. Raises HTTP 402 if the user has insufficient credits.
     """
-    gen_id = str(uuid.uuid4())
+    gen_id = str(generation_id).strip() if generation_id and str(generation_id).strip() else str(uuid.uuid4())
     reservation = await reserve_credits(user_id, feature_code, gen_id)
 
     if not reservation.get("ok"):

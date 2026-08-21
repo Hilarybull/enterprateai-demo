@@ -576,23 +576,31 @@ async def evaluate(
                 market_fit=market_fit_res,
                 research_data=research_res
             )
-            final_result["result_id"] = result_id
-            
-            # G. Sync with Workspace for immediate UI hydration on refresh
-            # We clear "decision" to ensure a fresh validation starts as 'PENDING'.
-            if workspace_id:
+        except Exception as e:
+            logger.exception("Failed to persist validation result")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Validation completed but could not be saved. Please try again.",
+            ) from e
+
+        final_result["result_id"] = result_id
+
+        # G. Sync with Workspace for immediate UI hydration on refresh
+        # We clear "decision" to ensure a fresh validation starts as 'PENDING'.
+        if workspace_id:
+            try:
                 await update_workspace(
-                    user_id=user_id, 
-                    workspace_id=workspace_id, 
+                    user_id=user_id,
+                    workspace_id=workspace_id,
                     data_patch={
                         "idea_validation_result": final_result,
                         "decision": None
                     }
                 )
-                
-            logger.info(f"Validation result saved and workspace synced: {result_id}")
-        except Exception as e:
-            logger.warning(f"Failed to persist validation result: {e}")
+            except Exception as e:
+                logger.warning("Workspace sync failed after validation save: %s", e)
+
+        logger.info(f"Validation result saved and workspace synced: {result_id}")
         
         return final_result
 
@@ -1125,7 +1133,11 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
         )
         final_result["result_id"] = result_id
     except Exception as exc:
-        logger.warning("V4 result persist failed: %s", exc)
+        logger.exception("V4 result persist failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Validation completed but could not be saved. Please try again.",
+        ) from exc
 
     return final_result
 

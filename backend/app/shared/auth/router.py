@@ -17,6 +17,9 @@ from app.shared.email.resend import send_password_reset_email, send_password_otp
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+DEMO_USER_ID = "demo@enterprate.ai"
+DEMO_USER_EMAIL = "demo@enterprate.ai"
+DEMO_USER_PASSWORD = "enterprateai-demo-access"
 
 
 async def _resolve_referral_attribution(new_user_id: str, ref_click_id: str | None, ref_code: str | None) -> None:
@@ -107,11 +110,10 @@ async def login(payload: LoginRequest) -> TokenResponse:
 @router.post("/demo", response_model=TokenResponse)
 async def demo_login() -> TokenResponse:
     settings = get_settings()
-    if not settings.demo_email or not settings.demo_password:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Demo account not available")
-    user = await sb_select("users", filters=[("id", "eq", settings.demo_email.lower())], single=True)
-    if not user or not verify_password(settings.demo_password, user.get("password_hash", "")):
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Demo account unavailable")
+    user = await _ensure_demo_user(
+        email=(settings.demo_email or DEMO_USER_EMAIL).lower().strip(),
+        password=(settings.demo_password or DEMO_USER_PASSWORD),
+    )
     token = create_access_token(subject=user["id"])
     # Ensure demo user has a pre-seeded workspace with sample data (non-fatal)
     try:
@@ -119,6 +121,32 @@ async def demo_login() -> TokenResponse:
     except Exception as e:
         logger.warning("Demo workspace seed failed (non-fatal): %s", e)
     return TokenResponse(access_token=token)
+
+
+async def _ensure_demo_user(*, email: str, password: str) -> dict:
+    user = await sb_select("users", filters=[("id", "eq", email)], single=True)
+    if user and verify_password(password, user.get("password_hash", "")):
+        return user
+
+    password_hash = hash_password(password)
+    record = {
+        "id": email,
+        "email": email,
+        "password_hash": password_hash,
+        "is_blocked": False,
+    }
+    if user:
+        await sb_update("users", filters=[("id", "eq", email)], payload=record)
+        updated = await sb_select("users", filters=[("id", "eq", email)], single=True)
+        if updated:
+            return updated
+    else:
+        await sb_insert("users", record)
+        created = await sb_select("users", filters=[("id", "eq", email)], single=True)
+        if created:
+            return created
+
+    return record
 
 
 async def _ensure_demo_workspace(user_id: str) -> None:

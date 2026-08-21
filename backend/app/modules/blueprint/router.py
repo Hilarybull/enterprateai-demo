@@ -120,7 +120,7 @@ async def blueprint_generate(
                 )
 
     feature_code = _blueprint_feature_code(payload.type, payload.sections)
-    async with credit_guard(user_id, feature_code):
+    async with credit_guard(user_id, feature_code, payload.generation_id):
         return await generate_blueprint(payload, user_id=user_id)
 
 

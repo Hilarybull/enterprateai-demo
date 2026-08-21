@@ -3815,6 +3815,9 @@ export default function ValidationWizardPage() {
                   else { setV4Step(0); }
                 }
 
+                const v4IdeaNameError = v4Step === 1 && v4Error && /idea name/i.test(v4Error) ? v4Error : "";
+                const v4IdeaTypeError = v4Step === 1 && v4Error && /idea type/i.test(v4Error) ? v4Error : "";
+
                 return (
                   <div className="space-y-4">
                     {/* Progress bar */}
@@ -3867,7 +3870,14 @@ export default function ValidationWizardPage() {
                         <div className="space-y-5">
                           <div>
                             <FieldLabel>Idea name <span className="text-rose-500">*</span></FieldLabel>
-                            <Input value={getV4(1,"idea_name")} onChange={(e) => setV4Field(1,"idea_name",e.target.value)} placeholder="e.g. Real-Time Local Social Connection Platform" />
+                            <Input
+                              value={getV4(1,"idea_name")}
+                              onChange={(e) => setV4Field(1,"idea_name",e.target.value)}
+                              placeholder="e.g. Real-Time Local Social Connection Platform"
+                              aria-invalid={Boolean(v4IdeaNameError)}
+                              className={v4IdeaNameError ? "border-rose-300 focus:border-rose-400 focus:ring-rose-200" : ""}
+                            />
+                            {v4IdeaNameError ? <div className="mt-1 text-xs font-medium text-rose-600">{v4IdeaNameError}</div> : null}
                           </div>
                           <div>
                             <FieldLabel info="One sentence only — summarise the idea as if explaining it to a stranger.">One-sentence description</FieldLabel>
@@ -3883,10 +3893,16 @@ export default function ValidationWizardPage() {
                           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div>
                               <FieldLabel>Idea type <span className="text-rose-500">*</span></FieldLabel>
-                              <select className="ea-input w-full" value={getV4(1,"idea_type")} onChange={(e) => setV4Field(1,"idea_type",e.target.value)}>
+                              <select
+                                className={"ea-input w-full " + (v4IdeaTypeError ? "border-rose-300 focus:border-rose-400 focus:ring-rose-200" : "")}
+                                value={getV4(1,"idea_type")}
+                                onChange={(e) => setV4Field(1,"idea_type",e.target.value)}
+                                aria-invalid={Boolean(v4IdeaTypeError)}
+                              >
                                 <option value="">Select type...</option>
                                 {V4_IDEA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                               </select>
+                              {v4IdeaTypeError ? <div className="mt-1 text-xs font-medium text-rose-600">{v4IdeaTypeError}</div> : null}
                             </div>
                             <div>
                               <FieldLabel>Sector</FieldLabel>

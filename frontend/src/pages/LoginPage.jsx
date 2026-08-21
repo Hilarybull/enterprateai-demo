@@ -10,6 +10,66 @@ import SegmentedTabs from "../components/SegmentedTabs";
 import logoUrl from "../enterprate-logo.png";
 import { apiRequest } from "../api/client";
 
+const FEATURE_STEPS = [
+  {
+    n: "1",
+    title: "Create your business workspace",
+    body: "Tell us briefly about your business or idea.",
+  },
+  {
+    n: "2",
+    title: "Choose what you want to achieve",
+    body: "Validate an idea, create a business plan, get funding-ready, or grow an existing business.",
+  },
+  {
+    n: "3",
+    title: "Let EnterprateAI guide you",
+    body: "Get structured insights, recommendations, and next actions.",
+  },
+];
+
+const TRUST_POINTS = ["Start free", "No credit card required", "Private & secure"];
+
+const QUICK_STARTS = [
+  { label: "Validate\nMy Idea", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
+  { label: "Create My\nBusiness Plan", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2" },
+  { label: "Get\nFunding-Ready", icon: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" },
+  { label: "Launch My\nProduct or Service", icon: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17" },
+  { label: "Improve My\nExisting Business", icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" },
+];
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-5 w-5 text-brand-700">
+      <path d="M16.5 5.75 8.25 14l-4.75-4.75" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4 text-slate-400">
+      <path d="M6.5 8V6.75a3.5 3.5 0 0 1 7 0V8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <rect x="4.75" y="8" width="10.5" height="7.5" rx="1.8" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function EyeIcon({ open = false }) {
+  return open ? (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4 text-slate-400">
+      <path d="M2.5 10s2.5-5 7.5-5 7.5 5 7.5 5-2.5 5-7.5 5-7.5-5-7.5-5Z" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M10 12.5A2.5 2.5 0 1 0 10 7a2.5 2.5 0 0 0 0 5.5Z" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4 text-slate-400">
+      <path d="M3 3l14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M7.4 7.4A4.9 4.9 0 0 0 2.5 10s2.5 5 7.5 5c.93 0 1.8-.12 2.6-.34" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M12.05 12.05A2.5 2.5 0 0 1 7.95 7.95" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
@@ -20,9 +80,11 @@ export default function LoginPage() {
   const error = useAuthStore((s) => s.error);
 
   const [searchParams] = useSearchParams();
-  const [mode, setMode] = useState(searchParams.get("signup") ? "signup" : "signin"); // signin | signup
+  const [mode, setMode] = useState(searchParams.get("signup") ? "signup" : "signin");
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [forgotNotice, setForgotNotice] = useState(null);
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoError, setDemoError] = useState(null);
@@ -84,134 +146,226 @@ export default function LoginPage() {
   async function onSubmit(e) {
     e.preventDefault();
     setForgotNotice(null);
-    if (mode === "signup") return register(email, password);
+    if (mode === "signup") {
+      const name = fullName.trim();
+      if (name) sessionStorage.setItem("ea_signup_name", name);
+      return register(email, password);
+    }
     return login(email, password);
   }
 
   return (
-    <div className="relative flex h-[100dvh] items-center justify-center overflow-hidden px-4 py-6 sm:px-6">
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-brand-50 via-slate-50 to-white" />
-      <div className="pointer-events-none absolute -top-28 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-brand-200/40 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-28 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-brand-300/20 blur-3xl" />
+    <div className="relative min-h-[100dvh] overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(98,121,255,0.14),_transparent_32%),linear-gradient(135deg,_#f7f8ff_0%,_#ffffff_55%,_#fff2f5_100%)]">
+      <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-1/3 bg-[radial-gradient(circle_at_left_center,_rgba(77,106,255,0.12),_transparent_55%)] lg:block" />
+      <div className="pointer-events-none absolute -left-32 top-24 hidden h-96 w-96 rounded-full bg-brand-200/25 blur-3xl lg:block" />
+      <div className="pointer-events-none absolute bottom-0 right-0 hidden h-72 w-72 rounded-full bg-rose-200/30 blur-3xl lg:block" />
 
-      <div className="relative w-full max-w-[520px] pb-10">
-        <div className="text-center">
-          <div className="mx-auto inline-flex items-center gap-2">
-            <img src={logoUrl} alt="EnterprateAI" className="h-10 w-auto object-contain sm:h-12" />
-            <span className="rounded-md bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-700">Beta</span>
-          </div>
-          <div className="mt-3 text-[28px] font-semibold tracking-tight text-brand-700 sm:text-3xl [@media(max-height:760px)]:mt-2 [@media(max-height:760px)]:text-2xl">
-            Welcome to EnterprateAI
-          </div>
-          <div className="mt-1 text-sm text-slate-600 [@media(max-height:760px)]:hidden">Your AI operating system for business</div>
-        </div>
+      <div className="relative mx-auto grid min-h-[100dvh] w-full max-w-[1520px] gap-6 px-4 py-4 sm:px-6 lg:grid-cols-[1.02fr_0.98fr] lg:gap-12 lg:px-10 lg:py-8">
+        <section className="relative hidden flex-col justify-between overflow-hidden rounded-[2rem] border border-white/70 bg-white/40 p-8 shadow-[0_24px_80px_rgba(77,106,255,0.10)] backdrop-blur sm:p-10 lg:flex">
+          <div className="pointer-events-none absolute -left-24 top-40 h-80 w-80 rounded-full border border-brand-100/80 bg-brand-100/40" />
+          <div className="pointer-events-none absolute -bottom-24 right-4 h-64 w-64 rounded-full bg-rose-100/55" />
 
-        <div className="mt-4 ea-card p-5 shadow-sm [@media(max-height:760px)]:mt-3 [@media(max-height:760px)]:p-4">
-          <div className="text-sm font-semibold text-slate-900">{mode === "signup" ? "Create account" : "Sign in"}</div>
-          <div className="mt-1 text-xs text-slate-500 [@media(max-height:760px)]:hidden">Choose your preferred login method</div>
-
-          <div className="mt-4 [@media(max-height:760px)]:mt-3">
-            <SegmentedTabs
-              ariaLabel="Authentication mode"
-              value={mode}
-              onChange={(v) => {
-                setMode(v);
-                setForgotNotice(null);
-              }}
-              options={[
-                { value: "signin", label: "Sign in" },
-                { value: "signup", label: "Create account" }
-              ]}
-            />
-          </div>
-
-          <div className="mt-4 space-y-3 [@media(max-height:760px)]:mt-3">
-            <GoogleSignInButton disabled={isLoading} onCredential={(cred) => googleLogin(cred)} />
-            <div className="flex items-center gap-3 [@media(max-height:760px)]:hidden">
-              <div className="h-px flex-1 bg-slate-200" />
-              <div className="text-xs font-medium text-slate-500">or continue with</div>
-              <div className="h-px flex-1 bg-slate-200" />
+          <div className="relative">
+            <div className="inline-flex items-center gap-2">
+              <img src={logoUrl} alt="EnterprateAI" className="h-12 w-auto object-contain" />
             </div>
 
-            <form className="space-y-3 [@media(max-height:760px)]:space-y-2.5" onSubmit={onSubmit}>
-              <div>
-                <div className="ea-label">Email</div>
-                <Input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
-              </div>
-              <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <div className="ea-label mb-0">Password</div>
-                  <Link
-                    to={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ""}`}
-                    className="text-xs font-semibold text-brand-700 hover:underline"
-                  >
-                    Forgot password?
-                  </Link>
+            <h1 className="mt-10 max-w-xl text-6xl font-black leading-[0.96] tracking-[-0.05em] text-slate-950 xl:text-[4.8rem]">
+              Build a More
+              <br />
+              Resilient Business
+              <br />
+              with <span className="text-rose-500">Intelligence.</span>
+            </h1>
+
+            <p className="mt-6 max-w-xl text-lg leading-8 text-slate-600 xl:text-[1.15rem]">
+              Validate your idea, build your business plan, understand your risks, and simulate decisions before you act, all from one business workspace.
+            </p>
+
+            <p className="mt-6 text-xl font-semibold text-slate-900">
+              Get your first business insight in less than 20 minutes.
+            </p>
+
+            <div className="mt-8 space-y-7">
+              {FEATURE_STEPS.map((step) => (
+                <div key={step.n} className="flex gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-700 text-lg font-bold text-white shadow-lg shadow-brand-700/20">
+                    {step.n}
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold text-slate-900">{step.title}</div>
+                    <div className="mt-1 max-w-lg text-base leading-7 text-slate-600">{step.body}</div>
+                  </div>
                 </div>
-                <Input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                />
+              ))}
+            </div>
+
+            <div className="mt-10 flex flex-wrap items-center gap-x-8 gap-y-4 text-sm font-medium text-slate-700">
+              {TRUST_POINTS.map((point) => (
+                <div key={point} className="flex items-center gap-2">
+                  <CheckIcon />
+                  <span>{point}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="relative mt-10 max-w-md text-2xl font-semibold leading-tight text-slate-900 xl:text-[2rem]">
+            Small Businesses Need Intelligence.
+            <br />
+            <span className="text-brand-700">EnterprateAI</span> Delivers It.
+          </div>
+        </section>
+
+        <section className="flex items-center justify-center lg:justify-end">
+          <div className="w-full max-w-[640px] rounded-[2rem] border border-slate-200/80 bg-white/95 p-5 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur sm:p-7 lg:p-8">
+            <div className="text-center">
+              <h2 className="text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Welcome to EnterprateAI</h2>
+              <p className="mt-2 text-sm text-slate-500 sm:text-base">Create your workspace and get guided business intelligence.</p>
+            </div>
+
+            <div className="mt-6">
+              <SegmentedTabs
+                ariaLabel="Authentication mode"
+                value={mode}
+                onChange={(v) => {
+                  setMode(v);
+                  setForgotNotice(null);
+                }}
+                options={[
+                  { value: "signup", label: "Create Account" },
+                  { value: "signin", label: "Sign In" },
+                ]}
+              />
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <GoogleSignInButton disabled={isLoading} onCredential={(cred) => googleLogin(cred)} />
+
+              <div className="flex items-center gap-4">
+                <div className="h-px flex-1 bg-slate-200" />
+                <div className="text-sm text-slate-500">or continue with email</div>
+                <div className="h-px flex-1 bg-slate-200" />
               </div>
 
-              {forgotNotice ? <InlineAlert kind="warn" message={forgotNotice} /> : null}
+              <form className="space-y-4" onSubmit={onSubmit}>
+                {mode === "signup" ? (
+                  <div>
+                    <div className="ea-label">Full name</div>
+                    <Input value={fullName} onChange={(e) => setFullName(e.target.value)} autoComplete="name" placeholder="Enter your full name" />
+                  </div>
+                ) : null}
 
-              {error ? (
-                <div className="space-y-2">
-                  <InlineAlert kind="error" message={error} />
-                  {String(error).includes("Account already exists") ? (
-                    <button type="button" className="text-sm font-semibold text-brand-700 hover:underline" onClick={() => setMode("signin")}>
-                      Switch to sign in
+                <div>
+                  <div className="ea-label">Email address</div>
+                  <Input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="Enter your email address" />
+                </div>
+
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <div className="ea-label mb-0">Password</div>
+                    <Link
+                      to={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ""}`}
+                      className="text-xs font-semibold text-brand-700 hover:underline"
+                    >
+                      Forgot password?
+                    </Link>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                      placeholder="Create a strong password"
+                      className="pr-11"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 hover:text-slate-600"
+                    >
+                      <EyeIcon open={showPassword} />
                     </button>
-                  ) : null}
+                  </div>
                 </div>
-              ) : null}
 
-              <Button disabled={isLoading} type="submit" className="w-full">
-                {isLoading ? <Spinner size={16} /> : null}
-                {mode === "signup" ? "Create account" : "Sign in"}
-              </Button>
-            </form>
+                {forgotNotice ? <InlineAlert kind="warn" message={forgotNotice} /> : null}
 
-            <div className="text-center text-sm text-slate-600">
-              {mode === "signup" ? (
-                <>
-                  Already have an account?{" "}
-                  <button type="button" className="font-semibold text-brand-700 hover:underline" onClick={() => setMode("signin")}>
-                    Sign in
+                {error ? (
+                  <div className="space-y-2">
+                    <InlineAlert kind="error" message={error} />
+                    {String(error).includes("Account already exists") ? (
+                      <button type="button" className="text-sm font-semibold text-brand-700 hover:underline" onClick={() => setMode("signin")}>
+                        Switch to sign in
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <Button disabled={isLoading} type="submit" className="w-full py-3.5 text-base">
+                  {isLoading ? <Spinner size={16} /> : null}
+                  {mode === "signup" ? "Create My Free Workspace" : "Sign In"}
+                  <span aria-hidden="true">→</span>
+                </Button>
+              </form>
+
+              <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
+                <LockIcon />
+                <span>No credit card required</span>
+              </div>
+
+              <div className="text-center text-sm text-slate-600">
+                {mode === "signup" ? (
+                  <>
+                    Already have an account?{" "}
+                    <button type="button" className="font-semibold text-brand-700 hover:underline" onClick={() => setMode("signin")}>
+                      Sign in
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    New here?{" "}
+                    <button type="button" className="font-semibold text-brand-700 hover:underline" onClick={() => setMode("signup")}>
+                      Create an account
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={tryDemo}
+                  disabled={demoLoading}
+                  className="text-sm font-semibold text-brand-700 hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {demoLoading ? "Loading demo..." : "Explore EnterprateAI Demo →"}
+                </button>
+                {demoError && <p className="mt-1 text-xs text-rose-500">{demoError}</p>}
+              </div>
+            </div>
+
+            <div className="mt-7 border-t border-slate-100 pt-6">
+              <div className="text-sm font-semibold text-slate-800">What do you want help with first?</div>
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                {QUICK_STARTS.map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    className="flex min-h-[110px] flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-2 py-3 text-center text-[13px] font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-7 w-7 text-brand-700">
+                      <path d={item.icon} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span className="whitespace-pre-line leading-5">{item.label}</span>
                   </button>
-                </>
-              ) : (
-                <>
-                  Don't have an account?{" "}
-                  <button type="button" className="font-semibold text-brand-700 hover:underline" onClick={() => setMode("signup")}>
-                    Create one
-                  </button>
-                </>
-              )}
+                ))}
+              </div>
             </div>
           </div>
-
-          <div className="mt-4 text-xs text-slate-500 [@media(max-height:760px)]:hidden">By continuing, you agree to keep your credentials secure.</div>
-        </div>
-
-        <div className="mt-3 text-center">
-          <button
-            type="button"
-            onClick={tryDemo}
-            disabled={demoLoading}
-            className="text-sm font-medium text-slate-500 hover:text-brand-600 transition disabled:opacity-60"
-          >
-            {demoLoading ? "Loading demo…" : "Explore demo account →"}
-          </button>
-          {demoError && <p className="mt-1 text-xs text-rose-500">{demoError}</p>}
-        </div>
-
-        <div className="pointer-events-none fixed bottom-4 left-0 right-0 text-center text-xs text-slate-500">
-          © 2026 Enterprate. All rights reserved.
-        </div>
+        </section>
       </div>
     </div>
   );

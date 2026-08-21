@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Spinner from './Spinner';
 
 const STEPS = [
@@ -17,16 +17,25 @@ export default function ValidationLoadingOverlay({ isVisible }) {
     const [currentStep, setCurrentStep] = useState(0);
     const [progress, setProgress] = useState(0);
     const [finalising, setFinalising] = useState(false);
+    const [elapsedMs, setElapsedMs] = useState(0);
+    const startedAtRef = useRef(0);
 
     useEffect(() => {
         if (!isVisible) {
             setCurrentStep(0);
             setProgress(0);
             setFinalising(false);
+            setElapsedMs(0);
+            startedAtRef.current = 0;
             return;
         }
 
         let isMounted = true;
+        startedAtRef.current = Date.now();
+        const tick = setInterval(() => {
+            if (!isMounted) return;
+            setElapsedMs(Date.now() - startedAtRef.current);
+        }, 1000);
 
         const runSteps = async () => {
             for (let i = 0; i < STEPS.length; i++) {
@@ -61,6 +70,7 @@ export default function ValidationLoadingOverlay({ isVisible }) {
 
         return () => {
             isMounted = false;
+            clearInterval(tick);
         };
     }, [isVisible]);
 
@@ -88,6 +98,12 @@ export default function ValidationLoadingOverlay({ isVisible }) {
                     </p>
 
                     <div className="w-full space-y-6">
+                        {finalising && elapsedMs > 120000 ? (
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-800">
+                                This is taking longer than usual. You can leave this page open and check back in Validation History.
+                            </div>
+                        ) : null}
+
                         {/* Steps Indicator */}
                         <div className="space-y-3">
                             {STEPS.map((step, idx) => {
@@ -133,7 +149,7 @@ export default function ValidationLoadingOverlay({ isVisible }) {
                             </div>
                             <div className="flex justify-between mt-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                                 <span>{finalising ? "Finalising results…" : "Progress"}</span>
-                                <span>{finalising ? "Almost done" : `${Math.round(progress)}%`}</span>
+                                <span>{finalising ? (elapsedMs > 120000 ? "Still working" : "Almost done") : `${Math.round(progress)}%`}</span>
                             </div>
                         </div>
                         <style>{`@keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }`}</style>

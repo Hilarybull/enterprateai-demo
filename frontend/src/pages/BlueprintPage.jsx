@@ -1771,7 +1771,8 @@ export default function BlueprintPage() {
     throw lastError;
   }
 
-	  async function generateSelected() {
+  async function generateSelected() {
+    const generationId = crypto.randomUUID();
     const resolvedCompanyName = resolveWithWorkspace(companyName, workspaceProfile?.company_name, dirtyFields.companyName);
     const resolvedIndustry = resolveWithWorkspace(industry, workspaceProfile?.primary_industry, dirtyFields.industry);
     const resolvedValueProp = resolveWithWorkspace(
@@ -1839,6 +1840,7 @@ export default function BlueprintPage() {
       // FIX 4: Use retry wrapper
       const generateBody = {
         document_id: docIdByType[selectedDoc] || null,
+        generation_id: generationId,
         type: selectedDoc,
         company_name: resolvedCompanyName,
         logo_data_url: documentLogo || workspaceProfile?.logo_data_url || workspaceLogoStored || null,
@@ -2006,6 +2008,7 @@ export default function BlueprintPage() {
 
   async function generateSectionDrafts(overrideSections = null) {
     if (!selectedDoc) return;
+    const generationId = crypto.randomUUID();
     const chosen = overrideSections || draftSectionsByDoc[selectedDoc] || [];
     if (!chosen.length) {
       setError("Select at least one section to generate.");
@@ -2053,6 +2056,7 @@ export default function BlueprintPage() {
     try {
       // FIX 4: Use retry wrapper
       const res = await apiRequestWithRetry("/blueprint/generate", "POST", {
+        generation_id: generationId,
         type: selectedDoc,
         company_name: resolvedCompanyName,
         logo_data_url: documentLogo || workspaceProfile?.logo_data_url || workspaceLogoStored || null,
