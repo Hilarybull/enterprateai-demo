@@ -92,6 +92,14 @@ export default function BookDemoPage() {
     return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
   }
 
+  function exitDemoMode() {
+    localStorage.removeItem("ea_token");
+    localStorage.removeItem("ea_email");
+    sessionStorage.removeItem("ea_tour_active");
+    sessionStorage.removeItem("ea_tour_step");
+    sessionStorage.removeItem("ea_tour_done");
+  }
+
   async function launchSandbox() {
     setSandboxLoading(true);
     setSandboxError(null);
@@ -142,8 +150,8 @@ export default function BookDemoPage() {
           <span className="rounded-md bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-700">Beta</span>
         </Link>
         <div className="flex items-center gap-3">
-          <Link to="/login" className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">Sign in</Link>
-          <Link to="/login?signup=1" className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">Get Started Free</Link>
+          <Link to="/login" onClick={exitDemoMode} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">Sign in</Link>
+          <Link to="/login?signup=1" onClick={exitDemoMode} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">Get Started Free</Link>
         </div>
       </nav>
 
@@ -178,7 +186,7 @@ export default function BookDemoPage() {
           {sandboxError && <p className="mt-3 text-xs text-rose-300">{sandboxError}</p>}
           <p className="mt-4 text-sm text-white/60">
             Or{" "}
-            <Link to="/login?signup=1" className="text-white/80 underline underline-offset-2 hover:text-white transition">create your own free account</Link>
+            <Link to="/login?signup=1" onClick={exitDemoMode} className="text-white/80 underline underline-offset-2 hover:text-white transition">create your own free account</Link>
           </p>
         </div>
 
@@ -257,7 +265,7 @@ export default function BookDemoPage() {
 
                 <p className="text-center text-xs text-slate-400">
                   Prefer to sign up now?{" "}
-                  <Link to="/login?signup=1" className="font-semibold text-brand-600 hover:underline">Create a free account</Link>
+                  <Link to="/login?signup=1" onClick={exitDemoMode} className="font-semibold text-brand-600 hover:underline">Create a free account</Link>
                 </p>
               </form>
             </>

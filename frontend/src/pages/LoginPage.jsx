@@ -6,7 +6,6 @@ import InlineAlert from "../components/InlineAlert";
 import { useAuthStore } from "../store/auth";
 import Spinner from "../components/Spinner";
 import GoogleSignInButton from "../components/GoogleSignInButton";
-import SegmentedTabs from "../components/SegmentedTabs";
 import logoUrl from "../enterprate-logo.png";
 import { apiRequest } from "../api/client";
 
@@ -156,21 +155,21 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(98,121,255,0.14),_transparent_32%),linear-gradient(135deg,_#f7f8ff_0%,_#ffffff_55%,_#fff2f5_100%)]">
-      <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-1/3 bg-[radial-gradient(circle_at_left_center,_rgba(77,106,255,0.12),_transparent_55%)] lg:block" />
-      <div className="pointer-events-none absolute -left-32 top-24 hidden h-96 w-96 rounded-full bg-brand-200/25 blur-3xl lg:block" />
-      <div className="pointer-events-none absolute bottom-0 right-0 hidden h-72 w-72 rounded-full bg-rose-200/30 blur-3xl lg:block" />
+      <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-1/3 bg-[radial-gradient(circle_at_left_center,_rgba(77,106,255,0.10),_transparent_58%)] lg:block" />
+      <div className="pointer-events-none absolute -left-32 top-24 hidden h-96 w-96 rounded-full bg-brand-200/20 blur-3xl lg:block" />
+      <div className="pointer-events-none absolute bottom-0 right-0 hidden h-72 w-72 rounded-full bg-rose-200/24 blur-3xl lg:block" />
 
-      <div className="relative mx-auto grid min-h-[100dvh] w-full max-w-[1520px] gap-6 px-4 py-4 sm:px-6 lg:grid-cols-[1.02fr_0.98fr] lg:gap-12 lg:px-10 lg:py-8">
-        <section className="relative hidden flex-col justify-between overflow-hidden rounded-[2rem] border border-white/70 bg-white/40 p-8 shadow-[0_24px_80px_rgba(77,106,255,0.10)] backdrop-blur sm:p-10 lg:flex">
+      <div className="relative mx-auto grid min-h-[100dvh] w-full max-w-none gap-5 px-3 py-3 sm:px-4 sm:py-4 lg:grid-cols-[minmax(0,1.14fr)_minmax(0,0.86fr)] lg:items-stretch lg:gap-5 lg:px-5 lg:py-4 xl:px-8 2xl:px-12 max-[900px]:gap-4 max-[900px]:py-2.5">
+        <section className="relative hidden flex-col justify-between overflow-hidden rounded-[2rem] border border-white/70 bg-white/40 p-7 shadow-[0_24px_80px_rgba(77,106,255,0.10)] backdrop-blur sm:p-9 lg:flex max-[900px]:p-6">
           <div className="pointer-events-none absolute -left-24 top-40 h-80 w-80 rounded-full border border-brand-100/80 bg-brand-100/40" />
           <div className="pointer-events-none absolute -bottom-24 right-4 h-64 w-64 rounded-full bg-rose-100/55" />
 
           <div className="relative">
             <div className="inline-flex items-center gap-2">
-              <img src={logoUrl} alt="EnterprateAI" className="h-12 w-auto object-contain" />
+              <img src={logoUrl} alt="EnterprateAI" className="h-11 w-auto object-contain" />
             </div>
 
-            <h1 className="mt-10 max-w-xl text-6xl font-black leading-[0.96] tracking-[-0.05em] text-slate-950 xl:text-[4.8rem]">
+            <h1 className="mt-7 max-w-xl text-[3.35rem] font-black leading-[0.92] tracking-[-0.05em] text-[#0b1026] xl:text-[4.05rem] 2xl:text-[4.45rem] max-[900px]:mt-5 max-[900px]:text-[3.1rem]">
               Build a More
               <br />
               Resilient Business
@@ -178,29 +177,29 @@ export default function LoginPage() {
               with <span className="text-rose-500">Intelligence.</span>
             </h1>
 
-            <p className="mt-6 max-w-xl text-lg leading-8 text-slate-600 xl:text-[1.15rem]">
+            <p className="mt-4 max-w-xl text-[0.92rem] leading-6 text-slate-600 xl:text-[1.02rem] max-[900px]:mt-3 max-[900px]:text-[0.88rem] max-[900px]:leading-5">
               Validate your idea, build your business plan, understand your risks, and simulate decisions before you act, all from one business workspace.
             </p>
 
-            <p className="mt-6 text-xl font-semibold text-slate-900">
+            <p className="mt-4 text-[1rem] font-semibold text-[#0f172a] xl:text-[1.06rem] max-[900px]:mt-3 max-[900px]:text-[0.92rem]">
               Get your first business insight in less than 20 minutes.
             </p>
 
-            <div className="mt-8 space-y-7">
+            <div className="mt-5 space-y-4 xl:space-y-5 max-[900px]:mt-4 max-[900px]:space-y-3.5">
               {FEATURE_STEPS.map((step) => (
                 <div key={step.n} className="flex gap-4">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-700 text-lg font-bold text-white shadow-lg shadow-brand-700/20">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#1f3fd3] text-sm font-bold text-white shadow-lg shadow-[#1f3fd3]/18 xl:h-11 xl:w-11 xl:text-base max-[900px]:h-9 max-[900px]:w-9 max-[900px]:text-[0.75rem]">
                     {step.n}
                   </div>
                   <div>
-                    <div className="text-lg font-bold text-slate-900">{step.title}</div>
-                    <div className="mt-1 max-w-lg text-base leading-7 text-slate-600">{step.body}</div>
+                    <div className="text-sm font-bold text-[#111827] xl:text-[0.98rem] max-[900px]:text-[0.82rem]">{step.title}</div>
+                    <div className="mt-1 max-w-lg text-[0.82rem] leading-5 text-slate-600 xl:text-sm xl:leading-6 max-[900px]:text-[0.78rem]">{step.body}</div>
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="mt-10 flex flex-wrap items-center gap-x-8 gap-y-4 text-sm font-medium text-slate-700">
+            <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[0.82rem] font-medium text-slate-700 xl:mt-7 xl:gap-x-5 xl:gap-y-2.5 xl:text-[0.85rem] max-[900px]:mt-4 max-[900px]:gap-x-3.5 max-[900px]:text-[0.76rem]">
               {TRUST_POINTS.map((point) => (
                 <div key={point} className="flex items-center gap-2">
                   <CheckIcon />
@@ -210,63 +209,79 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div className="relative mt-10 max-w-md text-2xl font-semibold leading-tight text-slate-900 xl:text-[2rem]">
-            Small Businesses Need Intelligence.
+          <div className="relative mt-5 max-w-none text-[0.98rem] font-semibold leading-tight text-[#0f172a] xl:mt-7 xl:text-[1.45rem] max-[950px]:mt-4 max-[950px]:text-[0.92rem]">
+            <span className="whitespace-nowrap">Small Businesses Need Intelligence.</span>
             <br />
             <span className="text-brand-700">EnterprateAI</span> Delivers It.
           </div>
         </section>
 
         <section className="flex items-center justify-center lg:justify-end">
-          <div className="w-full max-w-[640px] rounded-[2rem] border border-slate-200/80 bg-white/95 p-5 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur sm:p-7 lg:p-8">
+          <div className="flex h-full w-full max-w-[740px] flex-col overflow-hidden rounded-[2rem] border border-[#dbe3f2] bg-white/95 p-4 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur sm:p-5 lg:h-[calc(100dvh-4rem)] lg:p-5 xl:p-7 max-[900px]:p-4">
             <div className="text-center">
-              <h2 className="text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Welcome to EnterprateAI</h2>
-              <p className="mt-2 text-sm text-slate-500 sm:text-base">Create your workspace and get guided business intelligence.</p>
+              <h2 className="text-[1.9rem] font-black tracking-tight text-[#0b1026] sm:text-[2.1rem] max-[900px]:text-[1.6rem]">Welcome to EnterprateAI</h2>
+              <p className="mt-1.5 text-[0.86rem] text-slate-500 sm:text-[0.92rem] max-[900px]:text-[0.8rem]">Create your workspace and get guided business intelligence.</p>
             </div>
 
-            <div className="mt-6">
-              <SegmentedTabs
-                ariaLabel="Authentication mode"
-                value={mode}
-                onChange={(v) => {
-                  setMode(v);
-                  setForgotNotice(null);
-                }}
-                options={[
+            <div className="mt-3 rounded-2xl bg-[#eef2f8] p-1 ring-1 ring-[#dbe3f2]">
+              <div className="grid grid-cols-2 gap-1">
+                {[
                   { value: "signup", label: "Create Account" },
                   { value: "signin", label: "Sign In" },
-                ]}
-              />
+                ].map((opt) => {
+                  const selected = mode === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => {
+                        setMode(opt.value);
+                        setForgotNotice(null);
+                      }}
+                      className={
+                        "rounded-xl px-4 py-2.5 text-[0.95rem] font-semibold transition " +
+                        (selected
+                          ? "bg-white text-[#1f3fd3] shadow-sm ring-1 ring-[#dbe3f2]"
+                          : "text-slate-500 hover:text-slate-800")
+                      }
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="mt-5 space-y-4">
-              <GoogleSignInButton disabled={isLoading} onCredential={(cred) => googleLogin(cred)} />
+            <div className="mt-3 flex-1 space-y-2 overflow-hidden pr-1">
+              <div className="mx-auto w-full max-w-[460px]">
+                <GoogleSignInButton disabled={isLoading} onCredential={(cred) => googleLogin(cred)} />
+              </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
                 <div className="h-px flex-1 bg-slate-200" />
-                <div className="text-sm text-slate-500">or continue with email</div>
+                <div className="text-[0.82rem] text-slate-500">or continue with email</div>
                 <div className="h-px flex-1 bg-slate-200" />
               </div>
 
-              <form className="space-y-4" onSubmit={onSubmit}>
+              <form className="space-y-3" onSubmit={onSubmit}>
                 {mode === "signup" ? (
                   <div>
-                    <div className="ea-label">Full name</div>
+                    <div className="ea-label text-[0.8rem] text-[#5b6474]">Full name</div>
                     <Input value={fullName} onChange={(e) => setFullName(e.target.value)} autoComplete="name" placeholder="Enter your full name" />
                   </div>
                 ) : null}
 
                 <div>
-                  <div className="ea-label">Email address</div>
+                  <div className="ea-label text-[0.8rem] text-[#5b6474]">Email address</div>
                   <Input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="Enter your email address" />
                 </div>
 
                 <div>
                   <div className="mb-1 flex items-center justify-between">
-                    <div className="ea-label mb-0">Password</div>
+                    <div className="ea-label mb-0 text-[0.8rem] text-[#5b6474]">Password</div>
                     <Link
                       to={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ""}`}
-                      className="text-xs font-semibold text-brand-700 hover:underline"
+                      className="text-[0.78rem] font-semibold text-[#1f3fd3] hover:underline"
                     >
                       Forgot password?
                     </Link>
@@ -304,30 +319,34 @@ export default function LoginPage() {
                   </div>
                 ) : null}
 
-                <Button disabled={isLoading} type="submit" className="w-full py-3.5 text-base">
+                <Button
+                  disabled={isLoading}
+                  type="submit"
+                  className="w-full py-3 text-[0.95rem] sm:text-[1rem] !bg-none !bg-[#1f3fd3] hover:!bg-[#1535a7] !shadow-[0_10px_24px_rgba(31,63,211,0.18)]"
+                >
                   {isLoading ? <Spinner size={16} /> : null}
                   {mode === "signup" ? "Create My Free Workspace" : "Sign In"}
                   <span aria-hidden="true">→</span>
                 </Button>
               </form>
 
-              <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
+              <div className="flex items-center justify-center gap-2 text-[0.8rem] text-slate-500">
                 <LockIcon />
                 <span>No credit card required</span>
               </div>
 
-              <div className="text-center text-sm text-slate-600">
+              <div className="text-center text-[0.82rem] text-slate-600">
                 {mode === "signup" ? (
                   <>
                     Already have an account?{" "}
-                    <button type="button" className="font-semibold text-brand-700 hover:underline" onClick={() => setMode("signin")}>
+                    <button type="button" className="font-semibold text-[#1f3fd3] hover:underline" onClick={() => setMode("signin")}>
                       Sign in
                     </button>
                   </>
                 ) : (
                   <>
                     New here?{" "}
-                    <button type="button" className="font-semibold text-brand-700 hover:underline" onClick={() => setMode("signup")}>
+                    <button type="button" className="font-semibold text-[#1f3fd3] hover:underline" onClick={() => setMode("signup")}>
                       Create an account
                     </button>
                   </>
@@ -339,7 +358,7 @@ export default function LoginPage() {
                   type="button"
                   onClick={tryDemo}
                   disabled={demoLoading}
-                  className="text-sm font-semibold text-brand-700 hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+                  className="text-[0.82rem] font-semibold text-[#1f3fd3] hover:underline disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {demoLoading ? "Loading demo..." : "Explore EnterprateAI Demo →"}
                 </button>
@@ -347,19 +366,19 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="mt-7 border-t border-slate-100 pt-6">
-              <div className="text-sm font-semibold text-slate-800">What do you want help with first?</div>
-              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <div className="mt-3 border-t border-slate-100 pt-3 [@media(max-height:950px)]:hidden max-[900px]:mt-2.5 max-[900px]:pt-2.5">
+              <div className="text-[0.85rem] font-semibold text-slate-800">What do you want help with first?</div>
+              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
                 {QUICK_STARTS.map((item) => (
                   <button
                     key={item.label}
                     type="button"
-                    className="flex min-h-[110px] flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-2 py-3 text-center text-[13px] font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+                    className="flex min-h-[84px] flex-col items-center justify-center gap-1.5 rounded-2xl border border-[#dbe3f2] bg-white px-3 py-2 text-center text-[11px] font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-[#bfd1ff] hover:shadow-md max-[900px]:min-h-[76px]"
                   >
-                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-7 w-7 text-brand-700">
-                      <path d={item.icon} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-6 w-6 text-[#4f46e5]">
+                      <path d={item.icon} stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
-                    <span className="whitespace-pre-line leading-5">{item.label}</span>
+                    <span className="whitespace-pre-line leading-4">{item.label}</span>
                   </button>
                 ))}
               </div>
