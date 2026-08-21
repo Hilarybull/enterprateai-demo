@@ -76,7 +76,9 @@ class Settings(BaseSettings):
     xero_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("XERO_CLIENT_SECRET",))
     zoho_client_id: str | None = Field(default=None, validation_alias=AliasChoices("ZOHO_CLIENT_ID",))
     zoho_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("ZOHO_CLIENT_SECRET",))
-    zoho_region: str = Field(default="com", validation_alias=AliasChoices("ZOHO_REGION",))
+    # Zoho apps are region-bound; default to EU so the hosted deployment matches the
+    # EU Zoho console unless Railway overrides this explicitly.
+    zoho_region: str = Field(default="eu", validation_alias=AliasChoices("ZOHO_REGION",))
 
     # Stripe
     stripe_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_SECRET_KEY", "STRIPE_LIVE_KEY"))
