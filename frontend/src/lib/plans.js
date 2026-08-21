@@ -142,6 +142,7 @@ export const PLAN_MODULE_ACCESS = {
 // Minimum plan needed to access a module (for upgrade prompts)
 export const MODULE_MIN_PLAN = {
   simulation: "explorer",
+  integrations: "decision_engine",
 };
 
 // Scenario templates available for manual runs on the Starter plan.

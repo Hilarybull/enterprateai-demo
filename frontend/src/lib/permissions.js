@@ -5,6 +5,7 @@ export const MODULES = [
   { key: "simulation", label: "Simulation", subtitle: "What-if scenarios" },
   { key: "catalogue", label: "Catalogue", subtitle: "Products & offers" },
   { key: "financials", label: "Financials", subtitle: "Invoicing & tracking" },
+  { key: "integrations", label: "Integrations", subtitle: "External service connections" },
   { key: "registration", label: "Business Registration", subtitle: "Legal & compliance" },
 ];
 
@@ -40,6 +41,13 @@ export const FEATURES = {
     { key: "expenses", label: "Expenses" },
     { key: "contracts", label: "Contracts" },
     { key: "export_reports", label: "Export Reports" },
+  ],
+  integrations: [
+    { key: "connect_quickbooks", label: "Connect QuickBooks" },
+    { key: "connect_xero", label: "Connect Xero" },
+    { key: "connect_zoho", label: "Connect Zoho" },
+    { key: "connect_stripe", label: "Connect Stripe" },
+    { key: "sync_integrations", label: "Sync Integrations" },
   ],
   registration: [
     { key: "registration_guide", label: "Registration Guide" },
