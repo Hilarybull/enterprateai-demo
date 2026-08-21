@@ -58,6 +58,16 @@ async def _user_meets_integration_plan(user_id: str) -> bool:
         sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
     except Exception:
         return False
+    try:
+        grants = await sb_select(
+            "user_platform_grants",
+            filters=[("user_id", "eq", user_id), ("module_key", "eq", "integrations")],
+            columns="id,module_key,feature_key",
+        )
+        if grants:
+            return True
+    except Exception:
+        pass
     if not sub:
         return False
     if str(sub.get("status") or "").lower() in {"expired", "cancelled", "canceled"}:
