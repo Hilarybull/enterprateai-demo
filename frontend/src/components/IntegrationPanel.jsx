@@ -400,7 +400,7 @@ function ProviderCard({ provider, info, status, onConnect, onDisconnect, onAskIm
   );
 }
 
-export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
+export default function IntegrationPanel({ providers, onWorkspaceRefresh, refreshHint = "" }) {
   const [statuses, setStatuses] = useState({});
   const [actionLoading, setActionLoading] = useState(null);
   const [syncResult, setSyncResult] = useState(null);
@@ -420,10 +420,19 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
 
   useEffect(() => {
     loadStatuses();
+    if (!refreshHint) return;
+    const timers = [
+      window.setTimeout(() => loadStatuses(), 900),
+      window.setTimeout(() => loadStatuses(), 2000),
+      window.setTimeout(() => loadStatuses(), 3500),
+    ];
     const handler = () => loadStatuses();
     window.addEventListener("focus", handler);
-    return () => window.removeEventListener("focus", handler);
-  }, [loadStatuses]);
+    return () => {
+      window.removeEventListener("focus", handler);
+      timers.forEach((t) => window.clearTimeout(t));
+    };
+  }, [loadStatuses, refreshHint]);
 
   async function handleConnect(provider) {
     setActionLoading(provider);

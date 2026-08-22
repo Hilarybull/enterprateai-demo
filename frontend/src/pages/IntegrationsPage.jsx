@@ -6,6 +6,7 @@ export default function IntegrationsPage() {
   const refreshWorkspaceData = useWorkspaceStore((s) => s.refreshWorkspaceData);
   const [params] = useSearchParams();
   const panelKey = params.toString() || "integrations";
+  const connectedProvider = params.get("connected") || "";
 
   return (
     <div className="px-4 py-8 sm:px-8">
@@ -37,6 +38,7 @@ export default function IntegrationsPage() {
         key={panelKey}
         providers={["stripe", "zoho_crm", "quickbooks", "xero"]}
         onWorkspaceRefresh={refreshWorkspaceData}
+        refreshHint={connectedProvider}
       />
     </div>
   );
