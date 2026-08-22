@@ -410,7 +410,8 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh }) {
 
   const loadStatuses = useCallback(async () => {
     try {
-      const data = await apiRequest("/integrations/status", "GET");
+      const cacheBust = Date.now().toString(36);
+      const data = await apiRequest(`/integrations/status?ts=${cacheBust}`, "GET");
       setStatuses(data);
     } catch (e) {
       // silently fail
