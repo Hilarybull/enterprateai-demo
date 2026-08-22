@@ -294,6 +294,16 @@ async def status(user=Depends(get_current_user)) -> dict:
     for provider in PROVIDERS:
         row = await _load_token_row(user["id"], provider)
         connected = bool(row and (row.get("access_token") or row.get("refresh_token")))
+        if provider == "zoho_crm":
+            logger.info(
+                "Zoho integration status user_id=%s connected=%s access_token=%s refresh_token=%s connected_at=%s last_sync_at=%s",
+                user["id"],
+                connected,
+                bool(row and row.get("access_token")),
+                bool(row and row.get("refresh_token")),
+                (row or {}).get("connected_at"),
+                (row or {}).get("last_sync_at"),
+            )
         result[provider] = {
             "connected": connected,
             "connected_at": (row or {}).get("connected_at"),
