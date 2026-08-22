@@ -1,15 +1,14 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import logoUrl from "../enterprate-logo.png";
 
 const PROVIDER_META = {
   quickbooks: { label: "QuickBooks", dest: "/financials" },
   xero:       { label: "Xero",       dest: "/financials" },
-  zoho_crm:   { label: "Zoho CRM",   dest: "/catalogue" },
+  zoho_crm:   { label: "Zoho CRM",   dest: "/integrations?connected=zoho_crm" },
 };
 
 export default function IntegrationsCallbackPage() {
-  const navigate = useNavigate();
   const [params] = useSearchParams();
   const [done, setDone] = useState(false);
 
@@ -24,10 +23,10 @@ export default function IntegrationsCallbackPage() {
     if (isError) return;
     const t = setTimeout(() => {
       setDone(true);
-      navigate(meta.dest);
+      window.location.assign(meta.dest);
     }, 2500);
     return () => clearTimeout(t);
-  }, [isError, meta.dest, navigate]);
+  }, [isError, meta.dest]);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 dark:bg-slate-950">
@@ -70,7 +69,7 @@ export default function IntegrationsCallbackPage() {
 
         <button
           type="button"
-          onClick={() => navigate(meta.dest)}
+          onClick={() => window.location.assign(meta.dest)}
           className="mt-6 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition"
         >
           {isError ? "Back" : "Continue"}

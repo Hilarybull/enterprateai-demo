@@ -1,8 +1,11 @@
+import { useSearchParams } from "react-router-dom";
 import { useWorkspaceStore } from "../store/workspace";
 import IntegrationPanel from "../components/IntegrationPanel";
 
 export default function IntegrationsPage() {
   const refreshWorkspaceData = useWorkspaceStore((s) => s.refreshWorkspaceData);
+  const [params] = useSearchParams();
+  const panelKey = params.toString() || "integrations";
 
   return (
     <div className="px-4 py-8 sm:px-8">
@@ -31,6 +34,7 @@ export default function IntegrationsPage() {
       </div>
 
       <IntegrationPanel
+        key={panelKey}
         providers={["stripe", "zoho_crm", "quickbooks", "xero"]}
         onWorkspaceRefresh={refreshWorkspaceData}
       />
