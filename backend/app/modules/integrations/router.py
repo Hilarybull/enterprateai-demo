@@ -293,8 +293,9 @@ async def status(user=Depends(get_current_user)) -> dict:
     result = {}
     for provider in PROVIDERS:
         row = await _load_token_row(user["id"], provider)
+        connected = bool(row and (row.get("access_token") or row.get("refresh_token")))
         result[provider] = {
-            "connected": bool(row and row.get("access_token")),
+            "connected": connected,
             "connected_at": (row or {}).get("connected_at"),
             "last_sync_at": (row or {}).get("last_sync_at"),
         }
@@ -420,7 +421,7 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         raise HTTPException(status_code=400, detail="Only 'import' direction is supported. Push/sync to external services is disabled.")
 
     row = await _load_token_row(user["id"], provider)
-    if not row or not row.get("access_token"):
+    if not row or not (row.get("access_token") or row.get("refresh_token")):
         raise HTTPException(status_code=400, detail=f"{PROVIDERS[provider]['label']} is not connected.")
 
     client_id, client_secret = _get_credentials(provider)
