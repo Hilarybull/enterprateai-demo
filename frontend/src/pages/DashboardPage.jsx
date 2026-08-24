@@ -214,12 +214,6 @@ export default function DashboardPage() {
             </div>
           ) : null
         }
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => navigate("/validation")}>Run Idea Validation</Button>
-            <Button onClick={() => navigate("/simulation")}>Run Simulation</Button>
-          </div>
-        }
       />
 
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
@@ -236,12 +230,6 @@ export default function DashboardPage() {
       ) : null}
 
       {financialHealthSection}
-
-      <WorkspacePrompt
-        workspaceId={workspaceId}
-        title="Launchpad"
-        subtitle="Select an action to move your business forward."
-      />
 
       {loading ? (
         <div className="flex items-center justify-center py-12"><Spinner /></div>
