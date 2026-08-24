@@ -205,4 +205,47 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION grant_credits(
+    p_user_id TEXT,
+    p_amount INTEGER,
+    p_type TEXT,
+    p_reason TEXT,
+    p_next_reset_at TIMESTAMPTZ DEFAULT NULL
+) RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_wallet credit_wallets%ROWTYPE;
+BEGIN
+    INSERT INTO credit_wallets (user_id)
+    VALUES (p_user_id)
+    ON CONFLICT (user_id) DO NOTHING;
+
+    SELECT * INTO v_wallet
+    FROM credit_wallets
+    WHERE user_id = p_user_id
+    FOR UPDATE;
+
+    UPDATE credit_wallets
+    SET available_credits = available_credits + p_amount,
+        lifetime_credits_issued = lifetime_credits_issued + p_amount,
+        next_reset_at = COALESCE(p_next_reset_at, next_reset_at),
+        last_reset_at = CASE WHEN p_type IN ('allocation', 'monthly') THEN NOW() ELSE last_reset_at END,
+        free_allocation_issued = CASE WHEN p_type = 'allocation' THEN TRUE ELSE free_allocation_issued END,
+        updated_at = NOW()
+    WHERE user_id = p_user_id;
+
+    INSERT INTO credit_transactions (
+        wallet_id, user_id, transaction_type, credits,
+        balance_before, balance_after, status, description
+    ) VALUES (
+        v_wallet.id, p_user_id, p_type, p_amount,
+        v_wallet.available_credits, v_wallet.available_credits + p_amount,
+        'completed', p_reason
+    );
+
+    RETURN jsonb_build_object('ok', TRUE, 'new_balance', v_wallet.available_credits + p_amount);
+END;
+$$;
+
 NOTIFY pgrst, 'reload schema';
