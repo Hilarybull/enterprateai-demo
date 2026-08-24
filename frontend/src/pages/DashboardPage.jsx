@@ -151,9 +151,6 @@ export default function DashboardPage() {
 
   const financialHealthSection = (
     <section className="space-y-4">
-      <div className="text-2xl font-semibold tracking-tight text-slate-950">
-        Current Financial Performance &amp; Health
-      </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
         {financialHealthCards.map((card) => (
           <div

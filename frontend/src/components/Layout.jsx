@@ -509,7 +509,7 @@ export default function Layout() {
     }
 
     fetchCredits();
-    const id = setInterval(fetchCredits, 10000);
+    const id = setInterval(fetchCredits, 60000);
     window.addEventListener("ea:credits:refresh", fetchCredits);
     return () => {
       cancelled = true;
@@ -697,7 +697,7 @@ export default function Layout() {
     new URLSearchParams(location.search).get("from") === "module";
 
   const Sidebar = (
-    <aside className="flex h-full w-[260px] flex-col border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[280px] lg:px-5">
+    <aside className="flex h-full min-h-0 w-[260px] flex-col overflow-hidden border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[280px] lg:px-5">
       <div className="mx-1 flex items-start justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -756,7 +756,7 @@ export default function Layout() {
         ))}
       </nav>
 
-      <div data-tour="workspace-panel" className="mt-3 shrink-0 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900/70 dark:ring-slate-800">
+      <div data-tour="workspace-panel" className="mt-3 max-h-[45%] shrink-0 overflow-y-auto rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900/70 dark:ring-slate-800">
         <div className="flex items-center justify-between">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
             {isMemberMode ? "Shared workspace" : "Workspace"}
@@ -903,13 +903,13 @@ export default function Layout() {
   );
 
   return (
-    <div className="relative h-[100dvh] bg-slate-50 dark:bg-slate-950">
+    <div className="relative h-[100dvh] overflow-hidden bg-slate-50 dark:bg-slate-950">
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-purple-50 via-blue-50 to-purple-50 dark:from-slate-900 dark:via-slate-950 dark:to-slate-900" />
       <div className="pointer-events-none absolute -top-24 left-1/3 h-72 w-72 -translate-x-1/2 rounded-full bg-purple-200/35 blur-3xl dark:bg-purple-900/30" />
       <div className="pointer-events-none absolute -bottom-24 left-2/3 h-72 w-72 -translate-x-1/2 rounded-full bg-blue-200/30 blur-3xl dark:bg-blue-900/20" />
 
       <div className="relative flex h-full w-full overflow-hidden">
-        <div className="hidden md:block">{Sidebar}</div>
+        <div className="hidden h-full min-h-0 md:block">{Sidebar}</div>
 
         {mobileOpen ? (
           <div className="fixed inset-0 z-50 md:hidden">
@@ -1331,7 +1331,7 @@ export default function Layout() {
           </header>
 
           <div className="ea-scroll flex-1 overflow-auto" data-tour="content-area">
-            <div className="mx-auto w-full max-w-7xl p-4 pb-0 md:p-6 md:pb-0">
+            <div className="mx-auto w-full max-w-7xl p-4 pb-8 md:p-6 md:pb-10">
               {isCurrentRouteLocked ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
                   <div className={

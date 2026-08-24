@@ -113,6 +113,34 @@ async def _get_plan_feature_entitlement(plan_code: str, feature_code: str) -> di
         return None
 
 
+async def _has_platform_grant(user_id: str, feature_code: str) -> bool:
+    module_key = "blueprint" if feature_code.startswith(("business_plan", "proposal", "sales_letter", "live_plan")) else None
+    if not module_key:
+        return False
+    feature_key = {
+        "business_plan": "business_plan",
+        "business_plan_full": "business_plan",
+        "business_plan_section": "business_plan",
+        "proposal_full": "business_proposal",
+        "proposal_section": "business_proposal",
+        "sales_letter_full": "sales_letter",
+        "sales_letter_section": "sales_letter",
+        "live_plan_import_extract": "business_plan",
+        "live_plan_scenario_adopt": "business_plan",
+        "live_plan_kpi_refresh": "business_plan",
+        "live_plan_narrative_refresh": "business_plan",
+    }.get(feature_code)
+    try:
+        rows = await sb_select(
+            "user_platform_grants",
+            filters=[("user_id", "eq", user_id), ("module_key", "eq", module_key)],
+            columns="module_key,feature_key",
+        )
+        return any(not row.get("feature_key") or row.get("feature_key") == feature_key for row in rows)
+    except Exception:
+        return False
+
+
 async def _feature_entitled(plan_code: str, feature_code: str, minimum_plan: str | None) -> bool:
     entitlement = await _get_plan_feature_entitlement(plan_code, feature_code)
     if entitlement is not None:
@@ -220,7 +248,7 @@ async def reserve_credits(
 
     credit_cost = int(config.get("credit_cost") or 0)
     plan_code, _status = await _current_plan_for_user(user_id)
-    entitled = await _feature_entitled(plan_code, feature_code, config.get("minimum_plan"))
+    entitled = await _feature_entitled(plan_code, feature_code, config.get("minimum_plan")) or await _has_platform_grant(user_id, feature_code)
     if not entitled:
         return {
             "ok": False,
@@ -397,7 +425,7 @@ async def check_credits(user_id: str, feature_code: str) -> dict:
     balance = await get_balance(user_id)
     cost = int(config.get("credit_cost") or 0)
     plan_code, _status = await _current_plan_for_user(user_id)
-    entitled = await _feature_entitled(plan_code, feature_code, config.get("minimum_plan"))
+    entitled = await _feature_entitled(plan_code, feature_code, config.get("minimum_plan")) or await _has_platform_grant(user_id, feature_code)
     credit_controlled = _is_credit_controlled(config)
     allowed = bool(config.get("enabled", True)) and entitled and (not credit_controlled or balance >= cost)
     return {

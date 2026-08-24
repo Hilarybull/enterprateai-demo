@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Iterable
 from uuid import uuid4
@@ -145,6 +146,13 @@ async def _safe_insert(table: str, payload: Any):
         return None
 
 
+async def _required_insert(table: str, payload: Any):
+    try:
+        return await sb_insert(table, payload)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to insert {table}: {exc}") from exc
+
+
 async def _safe_update(table: str, *, payload: dict[str, Any], filters: list[tuple[str, str, Any]]):
     try:
         return await sb_update(table, payload=payload, filters=filters)
@@ -167,12 +175,7 @@ async def _load_workspace(user_id: str, business_id: str) -> dict[str, Any] | No
     )
     if ws:
         return _clean(ws)
-    ws = await _safe_select(
-        "workspaces",
-        filters=[("id", "eq", business_id)],
-        single=True,
-    )
-    return _clean(ws)
+    return None
 
 
 async def _load_blueprint_document(user_id: str, business_id: str) -> dict[str, Any] | None:
@@ -185,7 +188,14 @@ async def _load_blueprint_document(user_id: str, business_id: str) -> dict[str, 
     )
     if isinstance(doc, list) and doc:
         return _clean(doc[0])
-    return None
+    fallback = await _safe_select(
+        "blueprint_documents",
+        filters=[("user_id", "eq", user_id), ("type", "eq", "business_plan")],
+        order="updated_at",
+        desc=True,
+        limit=1,
+    )
+    return _clean(fallback[0]) if isinstance(fallback, list) and fallback else None
 
 
 async def _get_live_plan_record(user_id: str, business_id: str) -> dict[str, Any] | None:
@@ -219,41 +229,13 @@ async def _load_version_bundle(live_plan_id: str, version_id: str) -> dict[str, 
     version = await _safe_select("live_plan_versions", filters=[("id", "eq", version_id), ("live_plan_id", "eq", live_plan_id)], single=True)
     if not version:
         raise ValueError("VERSION_NOT_FOUND")
-    assumptions = await _safe_select(
-        "live_plan_assumptions",
-        filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)],
-        order="created_at",
-        desc=False,
-    )
-    changes = await _safe_select(
-        "planned_entity_changes",
-        filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)],
-        order="created_at",
-        desc=False,
-    )
-    kpis = await _safe_select(
-        "plan_kpis",
-        filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)],
-        order="code",
-        desc=False,
-    )
-    observations = await _safe_select(
-        "kpi_observations",
-        filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)],
-        order="observed_at",
-        desc=False,
-    )
-    variances = await _safe_select(
-        "plan_variances",
-        filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)],
-        order="detected_at",
-        desc=True,
-    )
-    alerts = await _safe_select(
-        "live_plan_alerts",
-        filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)],
-        order="created_at",
-        desc=True,
+    assumptions, changes, kpis, observations, variances, alerts = await asyncio.gather(
+        _safe_select("live_plan_assumptions", filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)], order="created_at", desc=False),
+        _safe_select("planned_entity_changes", filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)], order="created_at", desc=False),
+        _safe_select("plan_kpis", filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)], order="code", desc=False),
+        _safe_select("kpi_observations", filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)], order="observed_at", desc=False),
+        _safe_select("plan_variances", filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)], order="detected_at", desc=True),
+        _safe_select("live_plan_alerts", filters=[("live_plan_id", "eq", live_plan_id), ("live_plan_version_id", "eq", version_id)], order="created_at", desc=True),
     )
     return {
         "version": _clean(version),
@@ -389,6 +371,15 @@ def _initial_change_rows(doc: dict[str, Any] | None, markdown: str | None) -> li
 
 
 def _assemble_narrative(plan: dict[str, Any], version: dict[str, Any], kpis: list[dict[str, Any]], variances: list[dict[str, Any]], alerts: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    source_narrative = str(plan.get("narrative_markdown") or "").strip()
+    if source_narrative:
+        return source_narrative, {
+            "version_number": version.get("version_number"),
+            "kpi_count": len(kpis),
+            "variance_count": len(variances),
+            "alert_count": len(alerts),
+            "source": "blueprint_document",
+        }
     current_version = version.get("version_number")
     title = plan.get("business_id") or "Business"
     sections: list[str] = []
@@ -570,7 +561,7 @@ async def ensure_live_plan(*, user_id: str, business_id: str, source_document_id
         "current_version_id": version_id,
         "source_document_id": (blueprint or {}).get("id"),
         "created_by": user_id,
-        "narrative_markdown": None,
+            "narrative_markdown": markdown or None,
         "narrative_json": {},
         "narrative_updated_at": None,
         "created_at": now,
@@ -589,7 +580,7 @@ async def ensure_live_plan(*, user_id: str, business_id: str, source_document_id
         "created_at": now,
     }
 
-    inserted = await _safe_insert("live_business_plans", plan_payload)
+    inserted = await _required_insert("live_business_plans", plan_payload)
     if not inserted:
         raise RuntimeError("Failed to create live business plan")
     await _safe_insert("live_plan_versions", version_payload)
@@ -633,17 +624,19 @@ async def ensure_live_plan(*, user_id: str, business_id: str, source_document_id
             }
         )
 
+    seed_writes = []
     if assumption_rows:
-        await _safe_insert("live_plan_assumptions", assumption_rows)
+        seed_writes.append(_safe_insert("live_plan_assumptions", assumption_rows))
     if kpi_rows:
-        await _safe_insert("plan_kpis", kpi_rows)
+        seed_writes.append(_safe_insert("plan_kpis", kpi_rows))
     if change_rows:
-        await _safe_insert("planned_entity_changes", change_rows)
+        seed_writes.append(_safe_insert("planned_entity_changes", change_rows))
+    if seed_writes:
+        await asyncio.gather(*seed_writes)
 
     plan = await _get_live_plan_record(user_id, business_id)
     if not plan:
         raise RuntimeError("Failed to load created live plan")
-    await _sync_variances_and_alerts(live_plan=plan, version_id=version_id)
     return _clean(plan) or plan
 
 
@@ -653,12 +646,51 @@ async def get_existing_live_plan(*, user_id: str, business_id: str) -> dict[str,
 
 
 async def get_live_plan(*, user_id: str, business_id: str) -> dict[str, Any]:
-    plan = await ensure_live_plan(user_id=user_id, business_id=business_id)
+    plan = await get_existing_live_plan(user_id=user_id, business_id=business_id)
+    if not plan:
+        raise ValueError("LIVE_PLAN_NOT_FOUND")
+    if not plan.get("narrative_markdown"):
+        blueprint = None
+        if plan.get("source_document_id"):
+            blueprint = await _safe_select(
+                "blueprint_documents",
+                filters=[("id", "eq", plan["source_document_id"]), ("user_id", "eq", user_id)],
+                single=True,
+            )
+        blueprint = _clean(blueprint) or await _load_blueprint_document(user_id, business_id)
+        source_markdown = str((blueprint or {}).get("document_markdown") or "").strip()
+        if source_markdown:
+            await _safe_update(
+                "live_business_plans",
+                payload={"narrative_markdown": source_markdown, "updated_at": _now_iso()},
+                filters=[("id", "eq", plan["id"]), ("user_id", "eq", user_id)],
+            )
+            plan["narrative_markdown"] = source_markdown
+        source_name = (blueprint or {}).get("company_name") or (blueprint or {}).get("title")
+        if source_name:
+            plan["business_name"] = source_name
     current = await _get_current_version(plan) if plan else None
     if not current:
         raise RuntimeError("Plan version missing")
     bundle = await _load_version_bundle(plan["id"], current["id"])
     narrative, narrative_meta = _assemble_narrative(plan, bundle["version"], bundle["kpis"], bundle["variances"], bundle["alerts"])
+    variances = bundle["variances"]
+    performance = {
+        "summary": {
+            "kpi_count": len(bundle["kpis"]),
+            "observation_count": len(bundle["observations"]),
+            "variance_count": len(variances),
+            "on_track_count": sum(1 for item in variances if item.get("status") == "on_track"),
+            "watch_count": sum(1 for item in variances if item.get("status") == "watch"),
+            "off_track_count": sum(1 for item in variances if item.get("status") == "off_track"),
+            "latest_observation_at": bundle["observations"][-1].get("observed_at") if bundle["observations"] else None,
+            "health": "healthy" if not any(item.get("status") == "off_track" for item in variances) else "at_risk",
+        },
+        "kpis": bundle["kpis"],
+        "observations": bundle["observations"],
+        "variances": variances,
+        "alerts": bundle["alerts"],
+    }
     return {
         "plan": plan,
         "current_version": bundle["version"],
@@ -670,17 +702,23 @@ async def get_live_plan(*, user_id: str, business_id: str) -> dict[str, Any]:
         "variances": bundle["variances"],
         "alerts": bundle["alerts"],
         "narrative": narrative,
+        "source_document_markdown": plan.get("narrative_markdown"),
         "narrative_meta": narrative_meta,
+        "performance": performance,
     }
 
 
 async def list_versions(*, user_id: str, business_id: str) -> list[dict[str, Any]]:
-    plan = await ensure_live_plan(user_id=user_id, business_id=business_id)
+    plan = await get_existing_live_plan(user_id=user_id, business_id=business_id)
+    if not plan:
+        return []
     return await _get_versions(plan["id"])
 
 
 async def get_version(*, user_id: str, business_id: str, version_id: str) -> dict[str, Any]:
-    plan = await ensure_live_plan(user_id=user_id, business_id=business_id)
+    plan = await get_existing_live_plan(user_id=user_id, business_id=business_id)
+    if not plan:
+        raise ValueError("LIVE_PLAN_NOT_FOUND")
     bundle = await _load_version_bundle(plan["id"], version_id)
     return bundle
 
@@ -700,7 +738,9 @@ def _diff_rows(rows_a: list[dict[str, Any]], rows_b: list[dict[str, Any]], *, ke
 
 
 async def compare_versions(*, user_id: str, business_id: str, version_a: str, version_b: str) -> dict[str, Any]:
-    plan = await ensure_live_plan(user_id=user_id, business_id=business_id)
+    plan = await get_existing_live_plan(user_id=user_id, business_id=business_id)
+    if not plan:
+        raise ValueError("LIVE_PLAN_NOT_FOUND")
     bundle_a = await _load_version_bundle(plan["id"], version_a)
     bundle_b = await _load_version_bundle(plan["id"], version_b)
     return {
@@ -724,7 +764,9 @@ async def _latest_kpi_rows(live_plan_id: str, live_plan_version_id: str) -> list
 
 
 async def list_kpis(*, user_id: str, business_id: str) -> list[dict[str, Any]]:
-    plan = await ensure_live_plan(user_id=user_id, business_id=business_id)
+    plan = await get_existing_live_plan(user_id=user_id, business_id=business_id)
+    if not plan:
+        return []
     current = await _get_current_version(plan)
     if not current:
         return []
@@ -884,7 +926,9 @@ async def record_kpi_observation(
 
 
 async def list_variances(*, user_id: str, business_id: str) -> list[dict[str, Any]]:
-    plan = await ensure_live_plan(user_id=user_id, business_id=business_id)
+    plan = await get_existing_live_plan(user_id=user_id, business_id=business_id)
+    if not plan:
+        return []
     current = await _get_current_version(plan)
     if not current:
         return []
@@ -898,7 +942,9 @@ async def list_variances(*, user_id: str, business_id: str) -> list[dict[str, An
 
 
 async def list_alerts(*, user_id: str, business_id: str) -> list[dict[str, Any]]:
-    plan = await ensure_live_plan(user_id=user_id, business_id=business_id)
+    plan = await get_existing_live_plan(user_id=user_id, business_id=business_id)
+    if not plan:
+        return []
     current = await _get_current_version(plan)
     if not current:
         return []

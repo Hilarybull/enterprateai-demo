@@ -47,9 +47,12 @@ async def create_live_plan(
     user=Depends(get_current_user),
 ) -> LivePlanResponse:
     payload = payload or LivePlanCreateRequest()
-    async with credit_guard(user["id"], "live_plan_import_extract", payload.idempotency_key):
-        plan = await ensure_live_plan(user_id=user["id"], business_id=business_id, source_document_id=payload.source_document_id)
-    return LivePlanResponse(business_id=business_id, plan=plan)
+    # Initial plan seeding is deterministic; AI extraction is not performed here.
+    await ensure_live_plan(user_id=user["id"], business_id=business_id, source_document_id=payload.source_document_id)
+    return LivePlanResponse(
+        business_id=business_id,
+        plan=await get_live_plan(user_id=user["id"], business_id=business_id),
+    )
 
 
 @router.get("", response_model=LivePlanResponse)
@@ -57,9 +60,12 @@ async def get_live_plan_endpoint(
     business_id: str,
     user=Depends(get_current_user),
 ) -> LivePlanResponse:
-    plan = await get_existing_live_plan(user_id=user["id"], business_id=business_id)
-    if not plan:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Live plan not found")
+    try:
+        plan = await get_live_plan(user_id=user["id"], business_id=business_id)
+    except ValueError as exc:
+        if str(exc) == "LIVE_PLAN_NOT_FOUND":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Live plan not found")
+        raise
     return LivePlanResponse(business_id=business_id, plan=plan)
 
 

@@ -14,7 +14,7 @@ import WorkspacePrompt from "../components/WorkspacePrompt";
 import { BlueprintIllustration, IllustrationCard } from "../components/Illustrations";
 import SegmentedTabs from "../components/SegmentedTabs";
 import { imageFileToDataUrl } from "../lib/files";
-import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
+import { hasFeatureAccess, isPlatformFeatureGranted, isPlatformFeatureRestricted } from "../lib/permissions";
 import ConfirmDialog from "../components/ConfirmDialog";
 import CreditConfirmModal from "../components/CreditConfirmModal";
 import { useDemoTour } from "../context/DemoTourContext";
@@ -320,6 +320,7 @@ export default function BlueprintPage() {
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
+  const platformGrants = useAuthStore((s) => s.platformGrants);
   const authEmail = useAuthStore((s) => s.email);
   const subscription = useAuthStore((s) => s.subscription);
   const livePlanHref = "/business-plan";
@@ -328,11 +329,12 @@ export default function BlueprintPage() {
     ["free_trial", "explorer", "expired"].includes(subscription?.plan_key) ||
     subscription?.status === "trial" ||
     subscription?.status === "expired";
+  const hasBlueprintGrant = isPlatformFeatureGranted("blueprint", "business_plan", platformGrants);
 
   function canBlueprintDoc(docId) {
     const featureKey = DOC_FEATURE_KEY[docId];
     if (!featureKey) return true;
-    if ((docId === "client_proposal" || docId === "sales_letter") && isFreeOrTrial) return false;
+    if ((docId === "client_proposal" || docId === "sales_letter") && isFreeOrTrial && !hasBlueprintGrant) return false;
     if (isPlatformFeatureRestricted("blueprint", featureKey, platformRestrictions)) return false;
     return !isMemberMode || hasFeatureAccess("blueprint", featureKey, memberPermissionType, memberPermissions);
   }
@@ -1815,7 +1817,7 @@ export default function BlueprintPage() {
       setShowInputs(true);
       return;
     }
-    if (isFreeOrTrial && selectedDoc === "business_plan") {
+    if (isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant) {
       const existingBizPlans = savedDocs.filter(d => d.type === "business_plan" && !String(d.id || "").startsWith("local:"));
       if (existingBizPlans.length >= 1 && !docIdByType["business_plan"]) {
         setError("Free plan allows 1 Business Plan. Delete the existing one or upgrade to generate more.");
@@ -2814,7 +2816,7 @@ export default function BlueprintPage() {
                   </div>
                 ) : selectedDocResult?.document_markdown ? (
                   <div className="flex h-full min-h-0 flex-col gap-3">
-                    {isFreeOrTrial && selectedDoc === "business_plan" ? (
+                    {isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant ? (
                       <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                         Free plan read only. <Link to="/pricing" className="font-semibold underline hover:text-amber-900">Upgrade</Link> to edit, copy, share, or download.
                       </div>
@@ -2823,8 +2825,8 @@ export default function BlueprintPage() {
                       <span className="font-semibold">AI output disclaimer: </span>
                       This document is AI-generated and may be incomplete or inaccurate. Review carefully before using for any business, legal, or financial purpose. <Link to="/legal/disclaimer" className="underline hover:text-amber-900">Learn more</Link>.
                     </div>
-                    <div className={`flex-1 min-h-0 relative${isFreeOrTrial && selectedDoc === "business_plan" ? " select-none" : ""}`}>
-                      {isFreeOrTrial && selectedDoc === "business_plan" && (
+                    <div className={`flex-1 min-h-0 relative${isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant ? " select-none" : ""}`}>
+                      {isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant && (
                         <div
                           aria-hidden="true"
                           className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
@@ -2838,11 +2840,11 @@ export default function BlueprintPage() {
                         title={selectedMeta.title}
                         markdown={injectChartsIntoMarkdown(selectedDocResult.document_markdown)}
                         initialHtml={selectedDoc === "business_plan" ? "" : (selectedDocResult.document_html || "")}
-                        onHtmlChange={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : (h) => setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: h }))}
-                        onDownload={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : downloadExport}
-                        onSave={isFreeOrTrial && selectedDoc === "business_plan" ? undefined : saveEdits}
-                        hideShare={isFreeOrTrial && selectedDoc === "business_plan"}
-                        readOnly={isFreeOrTrial && selectedDoc === "business_plan"}
+                        onHtmlChange={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant ? undefined : (h) => setEditedHtmlByType((prev) => ({ ...prev, [selectedDoc]: h }))}
+                        onDownload={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant ? undefined : downloadExport}
+                        onSave={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant ? undefined : saveEdits}
+                        hideShare={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant}
+                        readOnly={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant}
                         defaultMode="preview"
                         compactPreview
                         shareMenuItems={[

@@ -35,6 +35,7 @@ from app.modules.blueprint.share_repository import (
 from app.shared.email.resend import send_document_share_email
 from app.shared.auth.deps import get_current_user
 from app.modules.credits.service import credit_guard
+from app.modules.credits.service import _has_platform_grant
 
 router = APIRouter(prefix="/blueprint", tags=["blueprint"])
 
@@ -111,7 +112,8 @@ async def blueprint_generate(
 
     if payload.type == "business_plan":
         plan_key, plan_status = await get_user_plan_info(user_id)
-        if plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}:
+        has_blueprint_grant = await _has_platform_grant(user_id, "business_plan")
+        if (plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}) and not has_blueprint_grant:
             existing = await list_documents(user_id=user_id, type="business_plan", limit=2)
             if len(existing) >= _LIFETIME_BLUEPRINT_LIMIT:
                 raise HTTPException(
@@ -442,7 +444,8 @@ async def blueprint_export_pdf_from_html(
         doc = await get_document(user_id=user_id, document_id=body.document_id)
         if doc and doc.type == "business_plan":
             plan_key, plan_status = await get_user_plan_info(user_id)
-            if plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}:
+            has_blueprint_grant = await _has_platform_grant(user_id, "business_plan_full")
+            if (plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}) and not has_blueprint_grant:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Downloading a business plan requires a paid plan. Upgrade to export.",

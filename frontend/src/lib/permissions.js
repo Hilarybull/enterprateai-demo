@@ -108,6 +108,15 @@ export function isPlatformModuleGranted(moduleKey, platformGrants) {
 }
 
 /**
+ * Returns true if an admin granted this feature or its entire module.
+ */
+export function isPlatformFeatureGranted(moduleKey, featureKey, platformGrants) {
+  return (platformGrants || []).some(
+    (g) => g.module_key === moduleKey && (!g.feature_key || g.feature_key === featureKey)
+  );
+}
+
+/**
  * Returns true if an admin has blocked the entire module for this user platform-wide.
  */
 export function isPlatformModuleRestricted(moduleKey, platformRestrictions) {

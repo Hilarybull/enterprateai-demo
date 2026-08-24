@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { apiRequest } from "../api/client";
+import { apiRequest, getApiBaseUrl } from "../api/client";
 import Button from "../components/Button";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import Spinner from "../components/Spinner";
 import { markdownToHtml } from "../components/DocumentEditor";
 import { useWorkspaceStore } from "../store/workspace";
+import { isPlatformFeatureGranted } from "../lib/permissions";
+import { useAuthStore } from "../store/auth";
 
 function StatCard({ label, value, tone = "slate", detail }) {
   const toneClass =
@@ -42,15 +44,16 @@ export default function BusinessPlanPage() {
   const [searchParams] = useSearchParams();
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
+  const platformGrants = useAuthStore((s) => s.platformGrants);
   const businessId = searchParams.get("business_id") || searchParams.get("workspace_id") || workspaceIdStored || "";
   const sourceDocumentId = searchParams.get("source_document_id") || "";
+  const hasBlueprintGrant = isPlatformFeatureGranted("blueprint", "business_plan", platformGrants);
 
   const [plan, setPlan] = useState(null);
   const [versions, setVersions] = useState([]);
   const [performance, setPerformance] = useState(null);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [entitlement, setEntitlement] = useState(null);
   const [error, setError] = useState("");
   const [planMissing, setPlanMissing] = useState(false);
   const [showLivePlanWorkspace, setShowLivePlanWorkspace] = useState(false);
@@ -68,6 +71,7 @@ export default function BusinessPlanPage() {
   }, [plan?.current_version_id, normalizedVersions]);
 
   const narrativeHtml = useMemo(() => markdownToHtml(String(plan?.narrative_markdown || "")), [plan?.narrative_markdown]);
+  const planTitle = plan?.business_name || plan?.company_name || workspaceName || "Business Plan";
   const summary = performance?.summary || {};
   const kpis = Array.isArray(performance?.kpis) ? performance.kpis : [];
   const variances = Array.isArray(performance?.variances) ? performance.variances : [];
@@ -80,17 +84,21 @@ export default function BusinessPlanPage() {
     setPlanMissing(false);
     try {
       const planResponse = await apiRequest(`/businesses/${businessId}/live-plan`, "GET");
-      const planData = planResponse?.plan || null;
+      const detail = planResponse?.plan || null;
+      const planData = detail?.plan
+        ? { ...detail.plan, ...detail, narrative_markdown: detail.source_document_markdown || detail.narrative }
+        : detail;
       setPlan(planData);
       if (planData) {
         setShowLivePlanWorkspace(true);
+      } else {
+        setVersions([]);
+        setPerformance(null);
+        setPlanMissing(true);
+        return;
       }
-      const [versionsRes, performanceRes] = await Promise.all([
-        apiRequest(`/businesses/${businessId}/live-plan/versions`, "GET").catch(() => null),
-        apiRequest(`/businesses/${businessId}/live-plan/performance`, "GET").catch(() => null),
-      ]);
-      setVersions(Array.isArray(versionsRes?.versions) ? versionsRes.versions : []);
-      setPerformance(performanceRes?.performance || null);
+      setVersions(Array.isArray(detail?.versions) ? detail.versions : []);
+      setPerformance(detail?.performance || null);
     } catch (err) {
       const message = String(err?.message || "");
       if (message.includes("HTTP 404")) {
@@ -100,7 +108,7 @@ export default function BusinessPlanPage() {
         setPlanMissing(true);
       } else {
         if (message.includes("FEATURE_NOT_ENTITLED")) {
-          setError("Upgrade to the Decision Engine plan to create a live business plan.");
+          if (!hasBlueprintGrant) setError("Upgrade to the Decision Engine plan to create a live business plan.");
         } else if (message.includes("NETWORK_ERROR")) {
           setError("Network error - please try again.");
         } else {
@@ -112,35 +120,29 @@ export default function BusinessPlanPage() {
     }
   }
 
-  async function loadLivePlanEntitlement() {
-    if (!businessId) return;
-    try {
-      const response = await apiRequest("/credits/check", "POST", { feature_code: "live_plan_import_extract" });
-      setEntitlement(response || null);
-    } catch {
-      setEntitlement(null);
-    }
-  }
-
   async function createLivePlan() {
     if (!businessId) return;
-    if (entitlement && entitlement.allowed === false) {
-      setError("Upgrade to the Decision Engine plan to create a live business plan.");
-      return;
-    }
     setCreating(true);
     setError("");
     try {
-      await apiRequest(`/businesses/${businessId}/live-plan`, "POST", {
+      const createdResponse = await apiRequest(`/businesses/${businessId}/live-plan`, "POST", {
         idempotency_key: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
         source_document_id: sourceDocumentId || undefined,
         note: "Created from the live business plan page",
       });
-      await loadLivePlan();
+      const createdDetail = createdResponse?.plan || null;
+      const createdPlan = createdDetail?.plan
+        ? { ...createdDetail.plan, ...createdDetail, narrative_markdown: createdDetail.source_document_markdown || createdDetail.narrative }
+        : createdDetail;
+      if (createdPlan) {
+        setPlan(createdPlan);
+        setPlanMissing(false);
+        setShowLivePlanWorkspace(true);
+      }
     } catch (err) {
       const message = String(err?.message || "");
       if (message.includes("FEATURE_NOT_ENTITLED")) {
-        setError("Upgrade to the Decision Engine plan to create a live business plan.");
+        setError("Your account is not entitled to create a live business plan. Ask the admin to grant Blueprint access.");
       } else if (message.includes("NETWORK_ERROR")) {
         setError("Network error - please try again.");
       } else {
@@ -151,14 +153,37 @@ export default function BusinessPlanPage() {
     }
   }
 
+  async function downloadLivePlanPdf() {
+    const source = String(plan?.narrative_markdown || "").trim();
+    if (!source) {
+      setError("Generate a business plan before downloading the PDF.");
+      return;
+    }
+    try {
+      const token = localStorage.getItem("ea_token");
+      const response = await fetch(`${getApiBaseUrl()}/blueprint/documents/export-pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ html: narrativeHtml, title: `${planTitle} Live Business Plan`, document_id: plan?.source_document_id || "" }),
+      });
+      if (!response.ok) throw new Error((await response.text().catch(() => "")) || "PDF export failed");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${planTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-live-business-plan.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(String(err?.message || "PDF export failed").replace(/^HTTP \d+:\s*/, ""));
+    }
+  }
+
   useEffect(() => {
     if (!businessId) return;
     loadLivePlan();
-    loadLivePlanEntitlement();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [businessId]);
-
-  const entitlementBlocked = entitlement && entitlement.allowed === false;
+  }, [businessId, hasBlueprintGrant]);
 
   const healthTone = summary.health === "healthy" ? "emerald" : summary.health === "critical" ? "rose" : "amber";
   const statusTone = String(plan?.status || "").toUpperCase() === "ACTIVE" ? "emerald" : "slate";
@@ -217,15 +242,31 @@ export default function BusinessPlanPage() {
 
         <div
           ref={livePlanSectionRef}
-          className={`overflow-hidden transition-all duration-300 ease-out ${
-            showLivePlanWorkspace ? "max-h-[5000px] opacity-100 translate-y-0" : "max-h-0 opacity-0 -translate-y-2 pointer-events-none"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Live Business Plan workspace"
+          className={`fixed inset-0 z-40 overflow-y-auto bg-slate-950/35 p-4 backdrop-blur-[2px] transition-all duration-200 md:p-8 ${
+            showLivePlanWorkspace ? "opacity-100" : "pointer-events-none invisible opacity-0"
           }`}
         >
-          <div className="pt-1">
+          <div className="mx-auto max-w-6xl pt-1">
             <SectionCard
               title="Live plan workspace"
               subtitle={workspaceName ? `Workspace: ${workspaceName}` : "Select a workspace to begin."}
             >
+            <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Live Business Plan</div>
+                <div className="text-xs text-slate-500">Structured plan state, monitoring, and version history</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLivePlanWorkspace(false)}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
           {!businessId ? (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
               Choose a workspace first, then create a live plan from that business context.
@@ -246,16 +287,15 @@ export default function BusinessPlanPage() {
                 <div className="text-sm font-semibold text-slate-900">No live plan yet</div>
                 <div className="mt-1 text-xs leading-6 text-slate-600">
                   Create a live business plan to seed assumptions, KPIs, and version history from your current workspace.
-                  This is an additional option and does not change the existing blueprint business plan.
                 </div>
               </div>
               <div className="flex shrink-0 gap-2">
                 <Button
                   onClick={createLivePlan}
-                  disabled={creating || entitlementBlocked}
+                  disabled={creating}
                 >
                   {creating ? <Spinner size={16} /> : null}
-                  {creating ? "Creating..." : entitlementBlocked ? "Upgrade to continue" : "Create live plan"}
+                  {creating ? "Creating..." : "Create live plan"}
                 </Button>
                 <Button variant="secondary" onClick={loadLivePlan} disabled={creating}>
                   Refresh
@@ -291,7 +331,12 @@ export default function BusinessPlanPage() {
                   />
                 </div>
 
-                <SectionCard title="Narrative" subtitle="Auto-generated from the current live plan version.">
+                <SectionCard title={planTitle} subtitle="Live Business Plan">
+                  <div className="mb-4 flex justify-end">
+                    <Button variant="secondary" onClick={downloadLivePlanPdf}>
+                      Download PDF
+                    </Button>
+                  </div>
                   <div className="prose prose-slate max-w-none rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-7">
                     {plan?.narrative_markdown ? (
                       <div dangerouslySetInnerHTML={{ __html: narrativeHtml }} />
@@ -308,8 +353,8 @@ export default function BusinessPlanPage() {
                 <SectionCard title="Plan details" subtitle="What this live plan is tracking right now.">
                   <div className="space-y-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-slate-500">Business ID</span>
-                      <span className="font-semibold text-slate-900">{businessId}</span>
+                      <span className="text-slate-500">Business</span>
+                      <span className="font-semibold text-slate-900">{planTitle}</span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-slate-500">Source document</span>
@@ -379,7 +424,7 @@ export default function BusinessPlanPage() {
                             <Pill tone={kpi.direction === "down" ? "amber" : "emerald"}>{String(kpi.domain || "").toLowerCase()}</Pill>
                           </div>
                           <div className="mt-1 text-xs text-slate-600">
-                            Target: {String(kpi.target_value ?? "n/a")} {kpi.unit ? ` ${kpi.unit}` : ""}
+                            Target: {String(kpi.target_value_json ?? "n/a")} {kpi.unit ? ` ${kpi.unit}` : ""}
                             {kpi.actual_value_json !== undefined && kpi.actual_value_json !== null ? ` · Actual: ${String(kpi.actual_value_json)}` : ""}
                           </div>
                         </div>
