@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
-import StatTile from "../components/StatTile";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
 import WorkspacePrompt from "../components/WorkspacePrompt";
@@ -32,6 +31,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [comingSoonFeature, setComingSoonFeature] = useState(null);
+  const [workspaceGateOpen, setWorkspaceGateOpen] = useState(() => !workspaceId);
 
   function openComingSoon(feature) {
     setComingSoonFeature(feature);
@@ -47,6 +47,10 @@ export default function DashboardPage() {
     catalogue: { products: [], customers: [], vendors: [] }
   });
   const [acceptedValidation, setAcceptedValidation] = useState(null);
+
+  useEffect(() => {
+    setWorkspaceGateOpen(!workspaceId);
+  }, [workspaceId]);
 
   useEffect(() => {
     let alive = true;
@@ -87,7 +91,6 @@ export default function DashboardPage() {
   );
 
   const primaryRecommendation = metrics.recommendations[0] || null;
-
   const snapshotKpis = useMemo(() => {
     const paidInvs = (snapshot.invoices || []).filter(i => String(i.status || "").toLowerCase() === "paid");
     const deliveredInvs = (snapshot.invoices || []).filter(i => String(i.status || "").toLowerCase() === "delivered");
@@ -122,14 +125,80 @@ export default function DashboardPage() {
     return { totalRevenue, cashBalance, receivables, totalCosts };
   }, [snapshot]);
 
+  const financialHealthCards = [
+    {
+      label: "Total Revenue",
+      value: formatCurrency(snapshotKpis.totalRevenue, currency),
+    },
+    {
+      label: "Cash",
+      value: formatCurrency(snapshotKpis.cashBalance, currency),
+    },
+    {
+      label: "Expenses + cost of sales",
+      value: formatCurrency(snapshotKpis.totalCosts, currency),
+      highlight: true,
+    },
+    {
+      label: "Receivables",
+      value: formatCurrency(snapshotKpis.receivables, currency),
+    },
+    {
+      label: "Active risks",
+      value: metrics.riskItems.length ? formatNumber(metrics.riskItems.length) : "0",
+    },
+  ];
+
+  const financialHealthSection = (
+    <section className="space-y-4">
+      <div className="text-2xl font-semibold tracking-tight text-slate-950">
+        Current Financial Performance &amp; Health
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        {financialHealthCards.map((card) => (
+          <div
+            key={card.label}
+            className={
+              "min-h-[126px] rounded-2xl border p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex flex-col " +
+              (card.highlight ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white")
+            }
+          >
+            <div className="text-[0.95rem] font-medium text-slate-500">{card.label}</div>
+            <div className="mt-2 text-[1.8rem] font-semibold tracking-tight text-slate-950">
+              {card.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
   if (!workspaceId) {
     return (
-      <WorkspacePrompt
-        title="Create your workspace"
-        subtitle="Save your workspace and unlock the rest of the platform."
-        ctaLabel="Create Workspace"
-        ctaHref="/validation"
-      />
+      <div className="space-y-6">
+        {workspaceGateOpen ? (
+          <WorkspacePrompt
+            modal
+            title="Create your workspace"
+            subtitle="We'll take you to the workspace form so you can unlock the rest of the platform."
+            ctaLabel="Continue to workspace form"
+            ctaTo="/validation?from=module&return=/dashboard"
+            onClose={() => setWorkspaceGateOpen(false)}
+          />
+        ) : (
+          <WorkspacePrompt
+            title="Create your workspace"
+            subtitle="Save your workspace and unlock the rest of the platform."
+            onActionClick={() => setWorkspaceGateOpen(true)}
+            onCtaClick={() => setWorkspaceGateOpen(true)}
+          />
+        )}
+        {loading ? (
+          <div className="flex items-center justify-center py-12"><Spinner /></div>
+        ) : (
+          financialHealthSection
+        )}
+      </div>
     );
   }
 
@@ -154,30 +223,30 @@ export default function DashboardPage() {
       />
 
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
+
+      {workspaceGateOpen ? (
+        <WorkspacePrompt
+          modal
+          title="Create your workspace"
+          subtitle="We'll take you to the workspace form so you can unlock the rest of the platform."
+          ctaLabel="Continue to workspace form"
+          ctaTo="/validation?from=module&return=/dashboard"
+          onClose={() => setWorkspaceGateOpen(false)}
+        />
+      ) : null}
+
+      {financialHealthSection}
+
+      <WorkspacePrompt
+        workspaceId={workspaceId}
+        title="Launchpad"
+        subtitle="Select an action to move your business forward."
+      />
+
       {loading ? (
         <div className="flex items-center justify-center py-12"><Spinner /></div>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <StatTile label="Total Revenue" value={formatCurrency(snapshotKpis.totalRevenue, currency)} />
-            <StatTile label="Cash" value={formatCurrency(snapshotKpis.cashBalance, currency)} tone={snapshotKpis.cashBalance >= 0 ? "default" : "warn"} />
-            <StatTile label="Expenses + cost of sales" value={formatCurrency(snapshotKpis.totalCosts, currency)} tone="warn" />
-            <StatTile label="Receivables" value={formatCurrency(snapshotKpis.receivables, currency)} />
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm min-h-[124px] flex flex-col">
-              <div className="text-[12px] font-semibold text-slate-500">Active risks</div>
-              <div className="mt-1 text-[20px] font-semibold tracking-tight text-slate-900">
-                {metrics.riskItems.length ? formatNumber(metrics.riskItems.length) : "No active risks"}
-              </div>
-              {metrics.riskItems?.length ? (
-                <div className="mt-2 text-xs text-slate-500 max-h-16 overflow-auto pr-1">
-                  {metrics.riskItems.map((risk, idx) => (
-                    <div key={`${risk.reason_code}-${idx}`} className="truncate">{risk.title}</div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
-
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <SectionCard title="Recommended next step" subtitle="Based on your latest validation and financials.">
               <div className="space-y-3 text-sm text-slate-600">

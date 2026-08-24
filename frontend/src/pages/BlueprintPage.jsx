@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import DocumentEditor, { markdownToHtml } from "../components/DocumentEditor";
 import DocumentShareModal from "../components/DocumentShareModal";
 import Input from "../components/Input";
@@ -305,6 +305,7 @@ function writeBlueprintCache(ownerKey, docs) {
 
 export default function BlueprintPage() {
   const { triggerDemoGate } = useDemoTour() || {};
+  const navigate = useNavigate();
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
   const workspaceLogoStored = useWorkspaceStore((s) => s.workspaceLogo);
   const setWorkspaceIdStored = useWorkspaceStore((s) => s.setWorkspaceId);
@@ -321,6 +322,7 @@ export default function BlueprintPage() {
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
   const authEmail = useAuthStore((s) => s.email);
   const subscription = useAuthStore((s) => s.subscription);
+  const livePlanHref = "/business-plan";
 
   const isFreeOrTrial = !subscription ||
     ["free_trial", "explorer", "expired"].includes(subscription?.plan_key) ||
@@ -341,7 +343,12 @@ export default function BlueprintPage() {
   useEffect(() => {
     const d = bpSearchParams.get("doc");
     const vws = bpSearchParams.get("validation_workspace");
-    if (d) { setSelectedDoc(d); }
+    if (d) {
+      setSelectedDoc(d);
+      setError(null);
+      setShowInputs(true);
+      setIsModalOpen(true);
+    }
     if (vws) {
       setWorkspaceId(vws);
       setSelectedDoc("business_plan");
@@ -2565,7 +2572,14 @@ export default function BlueprintPage() {
                 <button
                   key={d.id}
                   type="button"
-                  onClick={() => canAccess ? openDoc(d.id) : null}
+                  onClick={() => {
+                    if (!canAccess) return;
+                    if (d.id === "business_plan") {
+                      navigate(livePlanHref);
+                      return;
+                    }
+                    openDoc(d.id);
+                  }}
                   disabled={!canAccess}
                   className={`ea-card relative p-4 text-left border-slate-200 ${canAccess ? "ea-card-hover" : "cursor-not-allowed opacity-60 bg-slate-50"}`}
                 >
@@ -2598,6 +2612,28 @@ export default function BlueprintPage() {
                 </button>
               );
             })}
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          title="Live Business Plan"
+          subtitle="Create a rolling plan for tracking KPIs, assumptions, and scenario updates."
+        >
+          <div className="flex flex-col gap-4 rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/40 p-4 md:flex-row md:items-center md:justify-between">
+            <div className="max-w-2xl">
+              <div className="text-sm font-semibold text-slate-900">Track your plan over time</div>
+              <div className="mt-1 text-xs leading-6 text-slate-600">
+                Use the live business plan to monitor assumptions, KPIs, variances, and scenario updates alongside your existing blueprint plan.
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Link
+                to={livePlanHref}
+                className="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700"
+              >
+                Open live plan
+              </Link>
+            </div>
           </div>
         </SectionCard>
 

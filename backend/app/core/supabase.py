@@ -8,9 +8,6 @@ from supabase import Client, create_client
 
 from app.core.config import get_settings
 
-_client: Client | None = None
-
-
 def _make_client() -> Client:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
@@ -19,10 +16,11 @@ def _make_client() -> Client:
 
 
 def get_supabase_client(reset: bool = False) -> Client:
-    global _client
-    if _client is None or reset:
-        _client = _make_client()
-    return _client
+    # The Supabase Python client is not safe for our threaded request wrapper
+    # when shared globally. Return a fresh client per call so concurrent
+    # requests do not race through the same underlying HTTP state.
+    _ = reset
+    return _make_client()
 
 
 _RETRIABLE = frozenset({
@@ -45,7 +43,6 @@ def _is_retriable(exc: BaseException) -> bool:
 
 def _run_with_retry(fn, *, max_attempts: int = 3, base_delay: float = 0.4):
     """Execute fn() retrying up to max_attempts times on transient connection errors."""
-    global _client
     last_exc: Exception | None = None
     for attempt in range(max_attempts):
         try:
@@ -53,7 +50,6 @@ def _run_with_retry(fn, *, max_attempts: int = 3, base_delay: float = 0.4):
         except Exception as exc:
             if _is_retriable(exc):
                 last_exc = exc
-                _client = None
                 if attempt < max_attempts - 1:
                     time.sleep(base_delay * (attempt + 1))
                 continue

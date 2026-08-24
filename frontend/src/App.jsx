@@ -22,6 +22,7 @@ import ValidationWizardPage from "./pages/ValidationWizardPage";
 import ResultsPage from "./pages/ResultsPage";
 import SimulationPage from "./pages/SimulationPage";
 import BlueprintPage from "./pages/BlueprintPage";
+import BusinessPlanPage from "./pages/LivePlanPage";
 import RegistrationPage from "./pages/RegistrationPage";
 import CataloguePage from "./pages/CataloguePage";
 import FinancialsPage from "./pages/FinancialsPage";
@@ -109,6 +110,8 @@ export default function App() {
         <Route path="results" element={<ResultsPage />} />
         <Route path="simulation" element={<SimulationPage />} />
         <Route path="blueprint" element={<BlueprintPage />} />
+        <Route path="business-plan" element={<BusinessPlanPage />} />
+        <Route path="live-plan" element={<Navigate to="/business-plan" replace />} />
         <Route path="registration" element={<RegistrationPage />} />
         <Route path="catalogue" element={<CataloguePage />} />
         <Route path="financials" element={<FinancialsPage />} />

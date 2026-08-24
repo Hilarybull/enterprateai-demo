@@ -7,6 +7,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import BusinessAssistant from "./BusinessAssistant";
 import InviteModal from "./InviteModal";
 import OnboardingModal, { hasSeenOnboarding } from "./OnboardingModal";
+import WorkspacePrompt from "./WorkspacePrompt";
 import { WorkspaceProfilePanel } from "./WorkspaceProfileCard";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 import { hasModuleAccess, isPlatformModuleGranted, isPlatformModuleRestricted } from "../lib/permissions";
@@ -310,6 +311,8 @@ export default function Layout() {
   const [feedbackError, setFeedbackError] = useState(null);
   const [showInviteUpgrade, setShowInviteUpgrade] = useState(false);
   const [workspaceProfileOpen, setWorkspaceProfileOpen] = useState(false);
+  const [workspaceGateOpen, setWorkspaceGateOpen] = useState(false);
+  const [workspaceGateReturn, setWorkspaceGateReturn] = useState("/dashboard");
   const creditBalance = useAuthStore((s) => s.creditBalance);
   const creditInfo = useAuthStore((s) => s.creditInfo);
   const setCreditInfo = useAuthStore((s) => s.setCreditInfo);
@@ -732,7 +735,17 @@ export default function Layout() {
           <SidebarLink
             key={item.to}
             item={item}
-            onClick={() => setMobileOpen(false)}
+            onClick={(e) => {
+              const allowWithoutWorkspace = item.public && (item.to === "/marketplace" || item.to === "/referrals");
+              if (!workspaceId && !allowWithoutWorkspace) {
+                e.preventDefault();
+                setWorkspaceGateReturn(item.to);
+                setWorkspaceGateOpen(true);
+                setMobileOpen(false);
+                return;
+              }
+              setMobileOpen(false);
+            }}
             forceInactive={item.to === "/validation" && isCreateWorkspaceRoute}
             locked={item.locked}
             tourActive={
@@ -763,7 +776,14 @@ export default function Layout() {
         </div>
         <button
           type="button"
-          onClick={() => workspaceId && navigate("/account")}
+          onClick={() => {
+            if (workspaceId) {
+              navigate("/account");
+              return;
+            }
+            setWorkspaceGateReturn(location.pathname || "/dashboard");
+            setWorkspaceGateOpen(true);
+          }}
           className={
             "mt-2 w-full text-left text-base font-semibold text-slate-900 dark:text-slate-100 " +
             (workspaceId ? "cursor-pointer hover:text-brand-600 dark:hover:text-brand-400 transition-colors" : "cursor-default")
@@ -1311,7 +1331,7 @@ export default function Layout() {
           </header>
 
           <div className="ea-scroll flex-1 overflow-auto" data-tour="content-area">
-            <div className="mx-auto w-full max-w-7xl p-4 pb-8 md:p-6 md:pb-10">
+            <div className="mx-auto w-full max-w-7xl p-4 pb-0 md:p-6 md:pb-0">
               {isCurrentRouteLocked ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
                   <div className={
@@ -1375,6 +1395,16 @@ export default function Layout() {
         </main>
       </div>
       {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}
+      {workspaceGateOpen && !workspaceId && !demoTour?.active && (
+        <WorkspacePrompt
+          modal
+          title="Create your workspace"
+          subtitle="You need a workspace before you can open that section."
+          ctaLabel="Continue to workspace form"
+          ctaTo={`/validation?from=module&return=${encodeURIComponent(workspaceGateReturn || "/dashboard")}`}
+          onClose={() => setWorkspaceGateOpen(false)}
+        />
+      )}
       {onboardingOpen && !workspaceId && !demoTour?.active && (
         <OnboardingModal onDismiss={() => setOnboardingOpen(false)} userId={email} />
       )}

@@ -1,0 +1,1656 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EnterprateAI: Full Product Overview</title>
+<style>
+/* ── Print + screen tokens ─────────────────────────────────── */
+:root {
+  --ink:        #0D1626;
+  --ink2:       #3A4563;
+  --ink3:       #6E7A9A;
+  --rule:       #D8DCF0;
+  --accent:     #4338CA;
+  --accent-lt:  #EEF0FF;
+  --green:      #059669;
+  --green-lt:   #ECFDF5;
+  --amber:      #B45309;
+  --amber-lt:   #FFFBEB;
+  --page:       #F4F5FB;
+  --surface:    #FFFFFF;
+  --navy:       #0D1626;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--page);
+  color: var(--ink);
+  line-height: 1.6;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+a { color: var(--accent); }
+
+/* ── Page shell ─────────────────────────────────────────────── */
+.page-wrap {
+  max-width: 900px;
+  margin: 0 auto;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--rule), 0 8px 48px rgba(0,0,0,0.07);
+}
+
+/* ── Cover ──────────────────────────────────────────────────── */
+.cover {
+  background: var(--navy);
+  color: #fff;
+  padding: 64px 56px 52px;
+  position: relative;
+  overflow: hidden;
+}
+.cover::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent, transparent 71px,
+    rgba(255,255,255,0.04) 71px, rgba(255,255,255,0.04) 72px
+  );
+}
+.cover::after {
+  content: '';
+  position: absolute;
+  bottom: -100px; right: -60px;
+  width: 360px; height: 360px;
+  background: radial-gradient(circle, rgba(99,102,241,0.3) 0%, transparent 65%);
+}
+.cover-inner { position: relative; z-index: 1; }
+.cover-tag {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.4);
+  margin-bottom: 24px;
+}
+.cover h1 {
+  font-size: 42px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+  margin-bottom: 18px;
+}
+.cover h1 span { color: #818CF8; }
+.cover-sub {
+  font-size: 15.5px;
+  color: rgba(255,255,255,0.6);
+  max-width: 520px;
+  line-height: 1.65;
+  margin-bottom: 36px;
+}
+.cover-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 28px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+}
+.cover-pill {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.14);
+  color: rgba(255,255,255,0.7);
+  padding: 5px 12px;
+  border-radius: 20px;
+}
+
+/* ── Body ───────────────────────────────────────────────────── */
+.body { padding: 0 56px 72px; }
+
+/* ── Section heading ────────────────────────────────────────── */
+.sec {
+  margin-top: 52px;
+}
+.sec-eyebrow {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.sec h2 {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.sec .intro {
+  font-size: 13.5px;
+  color: var(--ink2);
+  line-height: 1.7;
+  max-width: 680px;
+  margin-bottom: 20px;
+}
+hr.rule { border: none; border-top: 1px solid var(--rule); margin: 48px 0 0; }
+
+/* ── Module card ────────────────────────────────────────────── */
+.mod-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.mod {
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 20px 22px;
+  background: var(--surface);
+}
+.mod-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.mod-icon {
+  width: 34px; height: 34px;
+  border-radius: 9px;
+  background: var(--accent-lt);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.mod-title { font-size: 13.5px; font-weight: 800; color: var(--ink); }
+.mod-sub   { font-size: 10.5px; color: var(--ink3); margin-top: 1px; }
+.mod-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mod-list li {
+  font-size: 12px;
+  color: var(--ink2);
+  padding-left: 14px;
+  position: relative;
+  line-height: 1.5;
+}
+.mod-list li::before {
+  content: '·';
+  position: absolute;
+  left: 3px;
+  color: var(--accent);
+  font-weight: 900;
+}
+
+/* ── Feature detail block ───────────────────────────────────── */
+.feat-block { margin-bottom: 28px; }
+.feat-block h3 {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--ink);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.feat-block h3 .badge {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: var(--accent-lt);
+  color: var(--accent);
+  padding: 2px 7px;
+  border-radius: 20px;
+}
+.feat-block h3 .badge-green {
+  background: var(--green-lt);
+  color: var(--green);
+}
+.feat-block p {
+  font-size: 12.5px;
+  color: var(--ink2);
+  line-height: 1.65;
+  margin-bottom: 10px;
+}
+.feat-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 32px;
+}
+.feat-col-head {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin-bottom: 6px;
+}
+.feat-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.feat-list li {
+  font-size: 12px;
+  color: var(--ink2);
+  padding-left: 16px;
+  position: relative;
+  line-height: 1.5;
+}
+.feat-list li::before {
+  content: '→';
+  position: absolute;
+  left: 0;
+  font-size: 10px;
+  color: var(--accent);
+}
+
+/* ── Divider with label ─────────────────────────────────────── */
+.labeled-rule {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 32px 0 24px;
+}
+.labeled-rule::before, .labeled-rule::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+.labeled-rule span {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  white-space: nowrap;
+}
+
+/* ── Pricing table ──────────────────────────────────────────── */
+.price-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.plan {
+  border: 1.5px solid var(--rule);
+  border-radius: 12px;
+  padding: 22px 22px 18px;
+}
+.plan.featured { border-color: var(--accent); }
+.plan-badge {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: var(--accent);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 20px;
+  display: inline-block;
+  margin-bottom: 8px;
+}
+.plan-name { font-size: 17px; font-weight: 800; margin-bottom: 2px; }
+.plan-tagline { font-size: 11.5px; color: var(--ink3); margin-bottom: 14px; }
+.plan-price { font-size: 34px; font-weight: 900; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.plan-price .unit { font-size: 13px; font-weight: 500; color: var(--ink3); }
+.plan-note { font-size: 11px; color: var(--green); font-weight: 600; margin-top: 2px; margin-bottom: 14px; }
+.plan-divider { border: none; border-top: 1px solid var(--rule); margin: 14px 0; }
+.plan-feats { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.plan-feats li { font-size: 12px; color: var(--ink2); display: flex; gap: 7px; }
+.plan-feats li .ck { color: var(--green); }
+
+/* ── Addon table ────────────────────────────────────────────── */
+.addon-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+.addon-table th {
+  background: #F4F5FB;
+  border: 1px solid var(--rule);
+  padding: 8px 12px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  text-align: left;
+}
+.addon-table td {
+  border: 1px solid var(--rule);
+  padding: 8px 12px;
+  color: var(--ink2);
+}
+.addon-table tr:nth-child(even) td { background: #FAFBFE; }
+
+/* ── Two-col layout ─────────────────────────────────────────── */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.box {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 16px 18px;
+  background: var(--surface);
+}
+.box h4 { font-size: 12.5px; font-weight: 800; margin-bottom: 8px; color: var(--ink); }
+.box ul { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.box ul li { font-size: 11.5px; color: var(--ink2); padding-left: 14px; position: relative; line-height: 1.5; }
+.box ul li::before { content: '·'; position: absolute; left: 3px; color: var(--accent); font-weight: 900; }
+
+/* ── Inline chips ───────────────────────────────────────────── */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chip {
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent-lt);
+  color: var(--accent);
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid rgba(67,56,202,0.15);
+}
+.chip.green { background: var(--green-lt); color: var(--green); border-color: rgba(5,150,105,0.15); }
+.chip.amber { background: var(--amber-lt); color: var(--amber); border-color: rgba(180,83,9,0.15); }
+
+/* ── Matrix table ───────────────────────────────────────────── */
+.matrix { width: 100%; border-collapse: collapse; font-size: 12px; }
+.matrix th {
+  background: #F4F5FB;
+  border: 1px solid var(--rule);
+  padding: 9px 14px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  text-align: left;
+}
+.matrix th:not(:first-child) { text-align: center; }
+.matrix td {
+  border: 1px solid var(--rule);
+  padding: 8px 14px;
+  color: var(--ink2);
+  vertical-align: middle;
+}
+.matrix td:not(:first-child) { text-align: center; }
+.matrix .grp td {
+  background: var(--accent-lt) !important;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: 6px 14px;
+}
+.matrix tr:nth-child(even):not(.grp) td { background: #FAFBFE; }
+.ck { color: var(--green); font-weight: 700; }
+.da { color: var(--ink3); }
+.matrix-wrap { overflow-x: auto; }
+
+/* ── Info box ───────────────────────────────────────────────── */
+.info {
+  background: var(--accent-lt);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--ink2);
+  line-height: 1.65;
+  margin-top: 14px;
+}
+.info strong { color: var(--ink); }
+
+.green-info {
+  background: var(--green-lt);
+  border-left: 3px solid var(--green);
+  border-radius: 0 8px 8px 0;
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--ink2);
+  line-height: 1.65;
+  margin-top: 14px;
+}
+
+/* ── Footer ─────────────────────────────────────────────────── */
+.doc-footer {
+  border-top: 1px solid var(--rule);
+  margin: 52px 56px 0;
+  padding: 20px 0 28px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--ink3);
+}
+
+/* ── Print ──────────────────────────────────────────────────── */
+@media print {
+  @page {
+    size: A4;
+    margin: 16mm 14mm;
+  }
+  body { background: #fff; font-size: 12px; }
+  .page-wrap { box-shadow: none; max-width: 100%; }
+  .cover { padding: 40px 36px 36px; }
+  .cover h1 { font-size: 32px; }
+  .body { padding: 0 36px 40px; }
+  .sec { margin-top: 36px; }
+  .feat-block { page-break-inside: avoid; }
+  .mod { page-break-inside: avoid; }
+  .plan { page-break-inside: avoid; }
+  .doc-footer { margin: 36px 36px 0; }
+  hr.rule { margin: 32px 0 0; }
+  .sec h2 { font-size: 18px; }
+}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+<!-- ── COVER ─────────────────────────────────────────────────── -->
+<div class="cover">
+  <div class="cover-inner">
+    <div class="cover-tag">Full Product Overview · enterprate.ai</div>
+    <h1>EnterprateAI<br><span>Business Operating System</span></h1>
+    <p class="cover-sub">
+      A comprehensive intelligent platform built for UK small businesses, covering the entire operating cycle from idea validation through planning, operations, sales, decision intelligence, and growth.
+    </p>
+    <div class="cover-pills">
+      <div class="cover-pill">Plan</div>
+      <div class="cover-pill">Operate</div>
+      <div class="cover-pill">Sell</div>
+      <div class="cover-pill">Decide</div>
+      <div class="cover-pill">ICO Registered</div>
+      <div class="cover-pill">GDPR Compliant</div>
+      <div class="cover-pill">TLS 1.3 · AES-256</div>
+      <div class="cover-pill">UK Registered Company</div>
+      <div class="cover-pill">Free to start · No card required</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── BODY ───────────────────────────────────────────────────── -->
+<div class="body">
+
+<!-- 1. PLATFORM OVERVIEW -->
+<div class="sec">
+  <div class="sec-eyebrow">Platform Overview</div>
+  <h2>What is EnterprateAI?</h2>
+  <p class="intro">
+    EnterprateAI is a Business Operating System (BOS) for UK small businesses. It replaces a fragmented stack of disconnected tools with a single integrated workspace where business data is entered once and reused automatically across every module: planning, operations, sales, and decision-making. The platform is AI-powered throughout, using an AI credit system to run intelligent features on demand.
+  </p>
+
+  <div class="two-col">
+    <div class="box">
+      <h4>The Problem It Solves</h4>
+      <ul>
+        <li>Business data entered repeatedly across multiple tools</li>
+        <li>High cost of maintaining a fragmented software stack</li>
+        <li>Decisions made without data, simulation, or risk insight</li>
+        <li>No unified view of business health, risk, or performance</li>
+        <li>Professional documents take hours to create from scratch</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>Who It Is Built For</h4>
+      <ul>
+        <li>Founders and early-stage startups (UK)</li>
+        <li>Freelancers and independent consultants</li>
+        <li>Service-based small businesses</li>
+        <li>Suppliers and product businesses</li>
+        <li>Marketing agencies and professional service firms</li>
+        <li>Small businesses seeking investors or funding</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 2. SYSTEM MODULES AT A GLANCE -->
+<div class="sec">
+  <div class="sec-eyebrow">System Architecture</div>
+  <h2>All modules at a glance</h2>
+  <p class="intro">The platform is organized into 13 distinct functional modules, all sharing a common workspace data layer so information entered in one module is automatically available across the others.</p>
+
+  <div class="mod-grid">
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">📊</div>
+        <div>
+          <div class="mod-title">Dashboard</div>
+          <div class="mod-sub">Business health &amp; analytics overview</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Real-time business health score and BI band</li>
+        <li>Revenue, expense, and cash flow summary</li>
+        <li>Invoice and quotation pipeline metrics</li>
+        <li>Quick-access navigation to all modules</li>
+        <li>AI-powered PDF report download panel</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">💡</div>
+        <div>
+          <div class="mod-title">Idea Validation</div>
+          <div class="mod-sub">AI-powered business idea assessment</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Business idea validation wizard (multi-stage)</li>
+        <li>Service-specific validation pathway</li>
+        <li>AI viability scoring with accept / reject outcome</li>
+        <li>Market data refresh with live intelligence</li>
+        <li>Validation PDF report download</li>
+        <li>Accepted validation feeds all other modules</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">📄</div>
+        <div>
+          <div class="mod-title">Business Blueprints</div>
+          <div class="mod-sub">AI document generation</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Business Plan (14 sections, fully AI-generated)</li>
+        <li>Client / Business Proposals (12 sections)</li>
+        <li>Sales Letters (11 sections)</li>
+        <li>Section-by-section regeneration</li>
+        <li>AI field suggestion ("AI Fill") on all inputs</li>
+        <li>Document editor with export and public share link</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">🗂</div>
+        <div>
+          <div class="mod-title">Catalogue</div>
+          <div class="mod-sub">Products, customers &amp; vendors</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Product and service catalogue management</li>
+        <li>Customer records with revenue tracking</li>
+        <li>Vendor records with expense tracking</li>
+        <li>Archive / unarchive (60-day warning, 90-day expiry)</li>
+        <li>Catalogue overview with financial analytics</li>
+        <li>Catalogue PDF report export</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">💰</div>
+        <div>
+          <div class="mod-title">Financials</div>
+          <div class="mod-sub">Invoicing, expenses &amp; contracts</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Invoice generation from product/customer data</li>
+        <li>Quotation creation and management</li>
+        <li>Expense logging and tracking</li>
+        <li>Contract management</li>
+        <li>PDF invoice and financial report export</li>
+        <li>Status tracking (paid, pending, overdue)</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">🔮</div>
+        <div>
+          <div class="mod-title">Decision Simulation</div>
+          <div class="mod-sub">What-if scenarios &amp; fragility</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Adaptive Scenario Intelligence (ASI): auto-runs</li>
+        <li>Manual scenario templates (client loss, payment delay, etc.)</li>
+        <li>Business Fragility Index (0-100 scale)</li>
+        <li>BI score with band classification</li>
+        <li>Risk signals and strategic recommendations</li>
+        <li>6-month projection timeline</li>
+        <li>Simulation history and decision saving</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">📑</div>
+        <div>
+          <div class="mod-title">PDF Reports</div>
+          <div class="mod-sub">Downloadable business intelligence</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Business Health Report: full assessment</li>
+        <li>Investor Summary: concise scorecard</li>
+        <li>Scenario Analysis Report: simulation output</li>
+        <li>Fragility Report: vulnerability &amp; mitigation</li>
+        <li>Stability Report: financials, runway, margin</li>
+        <li>Report history tracking</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">🏛</div>
+        <div>
+          <div class="mod-title">Business Registration</div>
+          <div class="mod-sub">UK company setup guidance</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Step-by-step UK company registration guide</li>
+        <li>Company name availability check</li>
+        <li>SIC code lookup tool</li>
+        <li>Legal structure guidance</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">🛒</div>
+        <div>
+          <div class="mod-title">Marketplace</div>
+          <div class="mod-sub">Business discovery &amp; RFQ</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Business listing creation and management</li>
+        <li>Industry filtering (11 categories)</li>
+        <li>Star rating system (1-5 with half-star)</li>
+        <li>RFQ (Request for Quotation) system for buyers</li>
+        <li>Featured listing boosts (add-on)</li>
+        <li>RFQ credit packs for responding to buyers</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">🔗</div>
+        <div>
+          <div class="mod-title">Integrations</div>
+          <div class="mod-sub">Third-party software connections</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>QuickBooks: financial sync (in progress)</li>
+        <li>Xero: financial sync (in progress)</li>
+        <li>Zoho CRM: catalogue sync (in progress)</li>
+        <li>All connections via secure OAuth 2.0</li>
+        <li>EU region support for Zoho</li>
+        <li>Coming soon: HubSpot, Salesforce, Shopify, WooCommerce, Square</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">👥</div>
+        <div>
+          <div class="mod-title">Team Management</div>
+          <div class="mod-sub">Collaborate with granular permissions</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Invite team members via unique invite link</li>
+        <li>Module-level permissions (access to entire modules)</li>
+        <li>Feature-level permissions (granular access per feature)</li>
+        <li>View and manage active, pending, and expired invites</li>
+        <li>Revoke or remove members at any time</li>
+      </ul>
+    </div>
+
+    <div class="mod">
+      <div class="mod-header">
+        <div class="mod-icon">🎁</div>
+        <div>
+          <div class="mod-title">Referral Programme</div>
+          <div class="mod-sub">Earn 5% per subscriber you refer</div>
+        </div>
+      </div>
+      <ul class="mod-list">
+        <li>Unique referral link and code for every user</li>
+        <li>5% commission when a referral subscribes</li>
+        <li>Transaction history and earnings tracking</li>
+        <li>Payout profile: bank transfer or PayPal</li>
+        <li>Admin payout queue and approval workflow</li>
+        <li>Fraud detection and self-referral prevention</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 3. IDEA VALIDATION: DEEP DIVE -->
+<div class="sec">
+  <div class="sec-eyebrow">Module Deep Dive</div>
+  <h2>Idea Validation</h2>
+  <p class="intro">The Validation Wizard takes a business or service idea through a multi-stage structured assessment, using AI to evaluate viability, market fit, revenue potential, and risk, producing a clear accept or reject decision that feeds every other module in the platform.</p>
+
+  <div class="feat-block">
+    <h3>Validation Pathways <span class="badge">2 Paths</span></h3>
+    <div class="feat-cols">
+      <div>
+        <div class="feat-col-head">Business Idea Validation</div>
+        <ul class="feat-list">
+          <li>Business name and type classification</li>
+          <li>Industry and sector selection</li>
+          <li>Location, currency, and country setup</li>
+          <li>Problem statement and solution description</li>
+          <li>Target market definition</li>
+          <li>Revenue model and pricing inputs</li>
+          <li>Team composition and founder details</li>
+          <li>Competitor analysis fields</li>
+          <li>Initial financial projections</li>
+          <li>Services offered (multi-select)</li>
+          <li>AI field suggestion on every field</li>
+          <li>Stage-default persistence across sessions</li>
+        </ul>
+      </div>
+      <div>
+        <div class="feat-col-head">Service Validation</div>
+        <ul class="feat-list">
+          <li>Service-specific validation pathway</li>
+          <li>Service name and description</li>
+          <li>Target client type and market</li>
+          <li>Delivery frequency (daily / weekly / monthly / yearly / custom)</li>
+          <li>Pricing and revenue model</li>
+          <li>Competitive positioning</li>
+          <li>Accept / reject with scoring breakdown</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="feat-block">
+    <h3>AI Output and Scoring</h3>
+    <ul class="feat-list">
+      <li>Viability score (0-100) with band classification</li>
+      <li>Market fit assessment</li>
+      <li>Revenue potential signal</li>
+      <li>Risk flags and mitigation notes</li>
+      <li>Accept or Reject recommendation with reasoning</li>
+      <li>Market data refresh: re-runs live intelligence on accepted validation</li>
+      <li>PDF export of full validation insight report</li>
+    </ul>
+  </div>
+
+  <div class="info"><strong>Cross-module data flow:</strong> Once a validation is accepted, its data (business name, sector, services, pricing, team size, etc.) pre-populates all downstream modules: blueprints, simulation, catalogue, and financials, eliminating repeated data entry.</div>
+</div>
+
+<hr class="rule" />
+
+<!-- 4. BUSINESS BLUEPRINTS: DEEP DIVE -->
+<div class="sec">
+  <div class="sec-eyebrow">Module Deep Dive</div>
+  <h2>Business Blueprints</h2>
+  <p class="intro">The Blueprint module generates professional business documents using the workspace data. Each document type has defined section templates that can be generated all at once or section by section, and can be edited, exported, and shared via a public link.</p>
+
+  <div class="labeled-rule"><span>Document Types</span></div>
+
+  <div class="feat-block">
+    <h3>Business Plan <span class="badge">14 Sections</span></h3>
+    <div class="feat-cols">
+      <div>
+        <ul class="feat-list">
+          <li>Cover page</li>
+          <li>Executive summary</li>
+          <li>Business overview</li>
+          <li>Products &amp; services</li>
+          <li>Market analysis</li>
+          <li>Competitive analysis</li>
+          <li>Business model</li>
+        </ul>
+      </div>
+      <div>
+        <ul class="feat-list">
+          <li>Marketing &amp; sales strategy</li>
+          <li>Operations plan</li>
+          <li>Management &amp; organisation</li>
+          <li>Financial snapshot</li>
+          <li>Funding requirements</li>
+          <li>Risk analysis &amp; mitigation</li>
+          <li>Conclusion</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="feat-block">
+    <h3>Business Proposals (Client Proposal) <span class="badge">12 Sections</span></h3>
+    <div class="feat-cols">
+      <div>
+        <ul class="feat-list">
+          <li>Cover page</li>
+          <li>Executive summary</li>
+          <li>Client needs / problem</li>
+          <li>Proposed solution</li>
+          <li>Scope of work</li>
+          <li>Methodology / approach</li>
+        </ul>
+      </div>
+      <div>
+        <ul class="feat-list">
+          <li>Timeline / delivery schedule</li>
+          <li>Pricing &amp; payment terms</li>
+          <li>Value proposition / benefits</li>
+          <li>Company profile</li>
+          <li>Terms &amp; conditions</li>
+          <li>Acceptance / next steps</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="feat-block">
+    <h3>Sales Letter <span class="badge">11 Sections</span></h3>
+    <div class="feat-cols">
+      <div>
+        <ul class="feat-list">
+          <li>Headline</li>
+          <li>Opening / hook</li>
+          <li>Problem statement</li>
+          <li>Solution introduction</li>
+          <li>Benefits</li>
+          <li>Proof / credibility</li>
+        </ul>
+      </div>
+      <div>
+        <ul class="feat-list">
+          <li>Offer</li>
+          <li>Call to action</li>
+          <li>Urgency / scarcity</li>
+          <li>Closing</li>
+          <li>Follow-up summary</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="feat-block">
+    <h3>Document Features</h3>
+    <ul class="feat-list">
+      <li>Generate all sections at once or individual section-by-section</li>
+      <li>Regenerate any single section independently</li>
+      <li>Inline document editor for manual edits post-generation</li>
+      <li>Business logo upload and display in documents</li>
+      <li>Share document via public link (SharedBlueprintPage)</li>
+      <li>AI field suggestion ("AI Fill") on context inputs</li>
+    </ul>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 5. CATALOGUE: DEEP DIVE -->
+<div class="sec">
+  <div class="sec-eyebrow">Module Deep Dive</div>
+  <h2>Catalogue: Products, Customers &amp; Vendors</h2>
+  <p class="intro">The Catalogue is the central data layer of the platform. Products, customers, and vendors entered here flow automatically into invoices, quotations, scenario simulations, and financial analytics: true "input once, use everywhere."</p>
+
+  <div class="feat-block">
+    <h3>Products &amp; Services</h3>
+    <ul class="feat-list">
+      <li>Product / service name, description, and category</li>
+      <li>Sales price and cost of sales per unit</li>
+      <li>Margin calculation (auto-computed)</li>
+      <li>Archive / unarchive (60-day warning, 90-day auto-expiry)</li>
+      <li>Product feeds invoice and quotation line items directly</li>
+      <li>Product-level revenue breakdown in catalogue report</li>
+    </ul>
+  </div>
+
+  <div class="feat-block">
+    <h3>Customers</h3>
+    <ul class="feat-list">
+      <li>Customer name, contact details, address</li>
+      <li>Revenue tracking across all paid invoices</li>
+      <li>Outstanding (pending) invoice tracking per customer</li>
+      <li>Customer concentration used in Fragility Index calculation</li>
+      <li>Customer list feeds invoice "Bill To" field automatically</li>
+    </ul>
+  </div>
+
+  <div class="feat-block">
+    <h3>Vendors</h3>
+    <ul class="feat-list">
+      <li>Vendor name, contact, and category</li>
+      <li>Expense tracking per vendor</li>
+      <li>Supplier concentration used in Fragility Index calculation</li>
+      <li>Vendor list available for expense logging</li>
+    </ul>
+  </div>
+
+  <div class="feat-block">
+    <h3>Catalogue Overview &amp; Reports</h3>
+    <ul class="feat-list">
+      <li>Summary of active vs archived records across all entities</li>
+      <li>Revenue contribution per customer (from paid invoices)</li>
+      <li>Pending invoice amounts per customer</li>
+      <li>Top products by revenue contribution</li>
+      <li>PDF catalogue report export (selectable: products / customers / vendors)</li>
+    </ul>
+  </div>
+
+  <div class="feat-block">
+    <h3>Integrations via Catalogue</h3>
+    <div class="chips">
+      <span class="chip amber">Zoho CRM: In Progress</span>
+      <span class="chip amber">HubSpot: Coming Soon</span>
+      <span class="chip amber">Salesforce: Coming Soon</span>
+      <span class="chip amber">Shopify: Coming Soon</span>
+      <span class="chip amber">WooCommerce: Coming Soon</span>
+      <span class="chip amber">Square: Coming Soon</span>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 6. FINANCIALS: DEEP DIVE -->
+<div class="sec">
+  <div class="sec-eyebrow">Module Deep Dive</div>
+  <h2>Financials: Invoicing, Expenses &amp; Contracts</h2>
+  <p class="intro">The Financials module generates professional financial documents from catalogue data and tracks the financial health of the business. All records flow into the Dashboard metrics, the Simulation engine, and the Fragility Index automatically.</p>
+
+  <div class="feat-block">
+    <h3>Invoices</h3>
+    <ul class="feat-list">
+      <li>Create invoice from saved products and customers (no re-entry)</li>
+      <li>Multi-line item invoices with quantity, unit price, and cost of sales</li>
+      <li>Tax and discount fields</li>
+      <li>Status tracking: Pending → Paid → Overdue</li>
+      <li>Issue date and due date with overdue detection</li>
+      <li>PDF invoice generation and download</li>
+      <li>Share invoice via public link</li>
+      <li>Invoice totals feed Dashboard revenue metrics</li>
+    </ul>
+  </div>
+
+  <div class="feat-block">
+    <h3>Quotations</h3>
+    <ul class="feat-list">
+      <li>Create quotation from saved products and customers</li>
+      <li>Multi-line items with quantities and pricing</li>
+      <li>Validity date and terms</li>
+      <li>Convert quotation to invoice (workflow)</li>
+      <li>PDF quotation export</li>
+    </ul>
+  </div>
+
+  <div class="feat-block">
+    <h3>Expenses</h3>
+    <ul class="feat-list">
+      <li>Log expenses by vendor, category, and amount</li>
+      <li>Expense date and reference tracking</li>
+      <li>Status: Pending / Paid</li>
+      <li>Expense totals feed Dashboard cash flow and simulation engine</li>
+    </ul>
+  </div>
+
+  <div class="feat-block">
+    <h3>Contracts</h3>
+    <ul class="feat-list">
+      <li>Contract creation with client, value, and duration</li>
+      <li>Archive and active status management</li>
+      <li>Contract value feeds stability and fragility calculations</li>
+    </ul>
+  </div>
+
+  <div class="feat-block">
+    <h3>Integrations via Financials</h3>
+    <div class="chips">
+      <span class="chip amber">QuickBooks: In Progress (customers, vendors, invoices, expenses)</span>
+      <span class="chip amber">Xero: In Progress (contacts, invoices, expenses)</span>
+    </div>
+    <div class="info" style="margin-top:10px;">All integrations are OAuth 2.0 with token refresh. Data syncs from EnterprateAI to the connected platform, not the other way around. Sync can be triggered manually from the integration panel.</div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 7. SIMULATION: DEEP DIVE -->
+<div class="sec">
+  <div class="sec-eyebrow">Module Deep Dive</div>
+  <h2>Decision Simulation: Scenario Intelligence &amp; Fragility</h2>
+  <p class="intro">The Simulation module is the most powerful intelligence layer of the platform. It combines real-time financial data from the workspace with AI engines to produce scenario projections, risk signals, fragility scores, and strategic recommendations, before any decision is acted upon.</p>
+
+  <div class="feat-block">
+    <h3>Adaptive Scenario Intelligence (ASI) <span class="badge">Auto</span></h3>
+    <p>ASI automatically monitors the workspace financial snapshot and runs in the background. It detects changes in the business state and updates intelligence without requiring user input.</p>
+    <ul class="feat-list">
+      <li>Auto-triggered projection run ("Do nothing" baseline)</li>
+      <li>Auto-detected risk signals from financial state</li>
+      <li>Strategic recommendations tailored to business context</li>
+      <li>6-month forward projection timeline with monthly breakdown</li>
+      <li>BI (Business Intelligence) score with colour-coded band</li>
+      <li>Fragility Index score with severity classification</li>
+    </ul>
+  </div>
+
+  <div class="feat-block">
+    <h3>Manual Scenario Templates <span class="badge">Starter+</span></h3>
+    <p>Users on the Starter plan can manually select and run specific scenario templates. All paid plans above Starter get access to the full template library.</p>
+    <div class="feat-cols">
+      <div>
+        <div class="feat-col-head">Available on Starter</div>
+        <ul class="feat-list">
+          <li>Client Loss scenario</li>
+          <li>Payment Delay scenario</li>
+        </ul>
+      </div>
+      <div>
+        <div class="feat-col-head">All scenario templates include</div>
+        <ul class="feat-list">
+          <li>Custom scenario name</li>
+          <li>Parameter configuration (revenue change %, cost change %, timeline)</li>
+          <li>Product-specific scenario options (from catalogue)</li>
+          <li>6-month simulation timeline output</li>
+          <li>Save simulation as a named decision</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="feat-block">
+    <h3>Business Intelligence (BI) Score</h3>
+    <p>A composite 0-100 health score that classifies the business into performance bands with colour coding.</p>
+    <ul class="feat-list">
+      <li>80-100: Strong (green): healthy, growing business</li>
+      <li>65-79: Stable (blue): solid fundamentals</li>
+      <li>50-64: Caution (amber): visible stress signals</li>
+      <li>30-49: At Risk (orange): action required</li>
+      <li>0-29: Critical (red): urgent intervention needed</li>
+    </ul>
+  </div>
+
+  <div class="feat-block">
+    <h3>Business Fragility Index</h3>
+    <p>Measures structural vulnerability across 6 dimensions, scored 0-100 where higher means more fragile.</p>
+    <div class="feat-cols">
+      <div>
+        <div class="feat-col-head">Fragility Dimensions</div>
+        <ul class="feat-list">
+          <li>Cash / runway fragility</li>
+          <li>Revenue predictability fragility</li>
+          <li>Customer concentration fragility</li>
+          <li>Operational dependency fragility</li>
+          <li>Capacity health fragility</li>
+          <li>Market exposure fragility</li>
+        </ul>
+      </div>
+      <div>
+        <div class="feat-col-head">Fragility Levels</div>
+        <ul class="feat-list">
+          <li>0-20: Resilient (green)</li>
+          <li>21-40: Stable with Exposure (blue)</li>
+          <li>41-60: Fragile (amber)</li>
+          <li>61-80: Highly Fragile (orange)</li>
+          <li>81-100: Critical Fragility (red)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="feat-block">
+    <h3>Simulation History &amp; Decisions</h3>
+    <ul class="feat-list">
+      <li>Full history of all simulation runs stored per workspace</li>
+      <li>Each run stored with scenario name, parameters, and timeline output</li>
+      <li>Decision saving: mark a simulation as an accepted or rejected decision</li>
+      <li>Projection comparison (scenario vs do-nothing baseline)</li>
+    </ul>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 8. REPORTS: DEEP DIVE -->
+<div class="sec">
+  <div class="sec-eyebrow">Module Deep Dive</div>
+  <h2>PDF Reports</h2>
+  <p class="intro">The Reports module generates downloadable PDF intelligence documents from live workspace data. Reports are board-ready, investor-ready, or operational, depending on the type selected. All reports are generated on demand and logged in report history.</p>
+
+  <div class="two-col">
+    <div class="box">
+      <h4>📊 Business Health Report</h4>
+      <ul>
+        <li>Full business assessment across all engines</li>
+        <li>Health scores, risk flags, and classifications</li>
+        <li>Actionable recommendations and next steps</li>
+        <li>Suitable for internal review or advisor sharing</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>💼 Investor Summary</h4>
+      <ul>
+        <li>Concise scorecard of health and classification</li>
+        <li>Strategic position snapshot</li>
+        <li>Designed for investor or funder meetings</li>
+        <li>Clean one-page style output</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>🔮 Scenario Analysis Report</h4>
+      <ul>
+        <li>Detailed output from the latest simulation run</li>
+        <li>Timeline projections (monthly, 6-month)</li>
+        <li>Scenario parameters and assumptions</li>
+        <li>Comparison vs baseline (do-nothing) projection</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>🧱 Fragility Report</h4>
+      <ul>
+        <li>Structural vulnerability breakdown by dimension</li>
+        <li>Concentration risk analysis (customer, supplier)</li>
+        <li>Operational dependency assessment</li>
+        <li>Risk mitigation recommendations</li>
+      </ul>
+    </div>
+  </div>
+  <div class="box" style="margin-top:14px;">
+    <h4>⚖️ Stability Report</h4>
+    <ul>
+      <li>Monthly financial performance analysis</li>
+      <li>Gross margin and net margin tracking</li>
+      <li>Cash runway estimation</li>
+      <li>Stability classification and trend analysis</li>
+    </ul>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 9. MARKETPLACE: DEEP DIVE -->
+<div class="sec">
+  <div class="sec-eyebrow">Module Deep Dive</div>
+  <h2>Marketplace</h2>
+  <p class="intro">The EnterprateAI Marketplace allows businesses to list their services and products publicly, be discovered by buyers, and respond to Request for Quotation (RFQ) requests. It is a built-in B2B discovery layer within the platform.</p>
+
+  <div class="two-col">
+    <div class="box">
+      <h4>Listing Features</h4>
+      <ul>
+        <li>Create and manage business listings</li>
+        <li>Industry category tagging (11 categories)</li>
+        <li>Service and product description</li>
+        <li>Featured listing highlight (paid add-on)</li>
+        <li>Listing performance tracking</li>
+        <li>Archive inactive listings</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>Buyer &amp; Discovery Features</h4>
+      <ul>
+        <li>Browse and search listings by industry</li>
+        <li>Star rating display (1-5 with half-star)</li>
+        <li>Review and rating submission by buyers</li>
+        <li>RFQ creation: buyers send quotation requests</li>
+        <li>RFQ response using credits (20/50/100 credit packs)</li>
+        <li>Seller notified on new RFQ</li>
+      </ul>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;">
+    <p style="font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform: uppercase;color: var(--ink3);margin-bottom:8px;">Industry Categories</p>
+    <div class="chips">
+      <span class="chip">Technology</span>
+      <span class="chip">Finance</span>
+      <span class="chip">Healthcare</span>
+      <span class="chip">Education</span>
+      <span class="chip">Retail</span>
+      <span class="chip">E-commerce</span>
+      <span class="chip">Consulting</span>
+      <span class="chip">Logistics</span>
+      <span class="chip">Manufacturing</span>
+      <span class="chip">Real Estate</span>
+      <span class="chip">Marketing</span>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 10. TEAM MANAGEMENT -->
+<div class="sec">
+  <div class="sec-eyebrow">Module Deep Dive</div>
+  <h2>Team Management &amp; Permissions</h2>
+  <p class="intro">Workspace owners can invite team members and control precisely what each member can see and do within the platform. Two permission models are supported.</p>
+
+  <div class="two-col">
+    <div class="box">
+      <h4>Module-Level Permissions</h4>
+      <ul>
+        <li>Grant access to entire modules at once</li>
+        <li>Modules: Dashboard, Validation, Blueprints, Simulation, Catalogue, Financials, Registration</li>
+        <li>All features within a granted module are accessible</li>
+        <li>Fastest way to onboard a team member</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>Feature-Level Permissions</h4>
+      <ul>
+        <li>Granular control: grant specific features only</li>
+        <li>Example: grant "Invoices" only, not "Expenses" or "Contracts"</li>
+        <li>Example: grant "Run Simulation" without "Risk Detection"</li>
+        <li>Ideal for contractors or limited-role team members</li>
+      </ul>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;" class="info">
+    <strong>Grantable features per module:</strong><br/>
+    Dashboard: View Dashboard · Validation: Evaluate Idea, Service Idea Validation · Blueprints: Business Plan, Business Proposal, Sales Letter · Simulation: Run Simulation, Scenario Intelligence, Risk Detection, Recommendations · Catalogue: View Catalogue, Manage Products, Customers, Vendors · Financials: View Financials, Invoices, Quotations, Expenses, Contracts, Export Reports · Registration: Registration Guide, Company Name Check, SIC Code Lookup
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 11. AI CREDITS -->
+<div class="sec">
+  <div class="sec-eyebrow">Platform Feature</div>
+  <h2>AI Credit System</h2>
+  <p class="intro">AI-powered features consume credits from the user's credit balance. Credits can be topped up as needed. Every credit-consuming action is logged in the credit transaction history.</p>
+
+  <div class="two-col">
+    <div class="box">
+      <h4>Features That Use Credits</h4>
+      <ul>
+        <li>Idea Validation (full run)</li>
+        <li>Market Data Refresh</li>
+        <li>Business Plan: Full generation</li>
+        <li>Business Plan: Section generation</li>
+        <li>Business Proposal: Full generation</li>
+        <li>Business Proposal: Section generation</li>
+        <li>Sales Letter: Full generation</li>
+        <li>Sales Letter: Section generation</li>
+        <li>Scenario Simulation run</li>
+        <li>Fragility Index AI interpretation</li>
+        <li>AI Field Suggestion ("AI Fill")</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>Credit Transaction Types</h4>
+      <ul>
+        <li>Allocation: monthly plan credit grant</li>
+        <li>Deduction: credit consumed by a feature</li>
+        <li>Hold: credits reserved for in-progress task</li>
+        <li>Hold Released: unreserved on task failure</li>
+        <li>Refund: returned on task failure</li>
+        <li>Expiry: unused monthly credits expired</li>
+        <li>Top-up: purchased additional credits</li>
+        <li>Admin Adjustment: manual admin change</li>
+        <li>Promotion: promotional credit grant</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="green-info">
+    <strong>Explorer plan:</strong> 50 AI credits included as a one-time allocation. <strong>Starter plan:</strong> higher credit allocation with access to all AI features. Credit balance and full transaction history visible from the Credits page, with filters by feature, transaction type, and status.
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 12. REFERRAL PROGRAMME -->
+<div class="sec">
+  <div class="sec-eyebrow">Platform Feature</div>
+  <h2>Referral Programme</h2>
+  <p class="intro">Every registered user can enrol in the EnterprateAI Referral Programme. After accepting the programme terms, each user receives a unique referral link and code that can be shared to earn rewards.</p>
+
+  <div class="feat-block">
+    <h3>How It Works</h3>
+    <ul class="feat-list">
+      <li>User enrols and accepts referral terms from the Referral page</li>
+      <li>Receives unique link: enterprate.ai/r/[CODE] and a short code</li>
+      <li>Shares link with potential subscribers</li>
+      <li>When a new user signs up and activates a paid plan via that link, the referrer earns 5%</li>
+      <li>Fraud detection and self-referral prevention are built in</li>
+      <li>Click tracking: each link click is recorded with referral code</li>
+    </ul>
+  </div>
+
+  <div class="two-col">
+    <div class="box">
+      <h4>Referral Dashboard (3 tabs)</h4>
+      <ul>
+        <li>Overview: total clicks, conversions, pending earnings</li>
+        <li>Transactions: full history of referral reward entries</li>
+        <li>Payout Profile: set bank transfer or PayPal details</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>Payout Options</h4>
+      <ul>
+        <li>Bank Transfer (BACS): account name, number, sort code</li>
+        <li>PayPal: PayPal email address</li>
+        <li>Admin payout queue: reviewed and approved by admin</li>
+        <li>Status tracking: Pending → Approved → Paid</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 13. BUSINESS REGISTRATION -->
+<div class="sec">
+  <div class="sec-eyebrow">Module Deep Dive</div>
+  <h2>Business Registration</h2>
+  <p class="intro">A guidance module for UK founders setting up their company for the first time. Not a registration service itself, but a structured intelligence layer that walks the user through UK company formation requirements.</p>
+
+  <ul class="feat-list">
+    <li>Step-by-step UK company registration guide</li>
+    <li>Company name availability check tool</li>
+    <li>SIC code lookup: find the right Standard Industrial Classification code</li>
+    <li>Legal structure guidance (Sole Trader, Limited Company, LLP, etc.)</li>
+    <li>Compliance reminders and post-registration checklist</li>
+  </ul>
+</div>
+
+<hr class="rule" />
+
+<!-- 14. BLOG / ARTICLES -->
+<div class="sec">
+  <div class="sec-eyebrow">Platform Feature</div>
+  <h2>Business Intelligence Hub (Articles)</h2>
+  <p class="intro">A public-facing articles and knowledge hub accessible without login. Content is managed by the platform admin and organized by category and tag.</p>
+
+  <div class="two-col">
+    <div class="box">
+      <h4>Public Features</h4>
+      <ul>
+        <li>Article listing with category filters and tag cloud</li>
+        <li>Full article reading with rich content (headings, lists, images)</li>
+        <li>Related articles recommendation within same category</li>
+        <li>Breadcrumb navigation and category tags</li>
+        <li>Embedded CTA to registration</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>Admin Features</h4>
+      <ul>
+        <li>Create, edit, and publish articles</li>
+        <li>Rich text editor with toolbar (B, I, U, H2, H3, lists, blockquote, links, images)</li>
+        <li>Article preview mode before publish</li>
+        <li>Category and tag management</li>
+        <li>Cover image upload to Supabase Storage</li>
+        <li>Article status: draft / published</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 15. PRICING -->
+<div class="sec">
+  <div class="sec-eyebrow">Pricing</div>
+  <h2>Plans &amp; Pricing</h2>
+  <p class="intro">Two active plans: Explorer (free forever) and Starter Insight (£19/month). Additional plans (Decision Engine, Growth Navigator, Strategic Business OS) are in the product roadmap but currently paused. All plans include the full module suite; the primary differentiators are AI capabilities and simulation access.</p>
+
+  <div class="price-grid">
+    <div class="plan">
+      <div class="plan-name">Explorer</div>
+      <div class="plan-tagline">Free forever: no credit card needed</div>
+      <div class="plan-price">£0<span class="unit">/mo</span></div>
+      <div class="plan-note">No credit card · Free forever</div>
+      <div class="plan-divider"></div>
+      <ul class="plan-feats">
+        <li><span class="ck">✓</span>50 AI credits (one-time)</li>
+        <li><span class="ck">✓</span>Basic idea validation</li>
+        <li><span class="ck">✓</span>Business plan access</li>
+        <li><span class="ck">✓</span>Unlimited products, customers &amp; vendors</li>
+        <li><span class="ck">✓</span>Unlimited invoices &amp; quotations</li>
+        <li><span class="ck">✓</span>Business registration guide</li>
+        <li><span class="ck">✓</span>1 marketplace listing</li>
+        <li><span class="ck">✓</span>Dashboard &amp; all basic modules</li>
+      </ul>
+    </div>
+    <div class="plan featured">
+      <div class="plan-badge">Best Value</div>
+      <div class="plan-name">Starter <span style="font-size:10px;font-weight:700;background:#EEF0FF;color:#4338CA;padding:2px 7px;border-radius:20px;vertical-align: middle;letter-spacing:0.1em;">Insight</span></div>
+      <div class="plan-tagline">Solo founders &amp; new service businesses</div>
+      <div class="plan-price">£19<span class="unit">/mo</span></div>
+      <div class="plan-note">£190/yr annually · Save £38/yr (£15.83/mo)</div>
+      <div class="plan-divider"></div>
+      <ul class="plan-feats">
+        <li><span class="ck">✓</span>Basic &amp; comprehensive idea validation</li>
+        <li><span class="ck">✓</span>Business blueprints &amp; proposals</li>
+        <li><span class="ck">✓</span>Sales letters</li>
+        <li><span class="ck">✓</span>Scenario simulation (what-if)</li>
+        <li><span class="ck">✓</span>Business Fragility Index</li>
+        <li><span class="ck">✓</span>Adaptive Scenario Intelligence (ASI)</li>
+        <li><span class="ck">✓</span>Unlimited products, customers &amp; vendors</li>
+        <li><span class="ck">✓</span>Unlimited invoices &amp; quotations</li>
+        <li><span class="ck">✓</span>1 marketplace listing · 1 user</li>
+        <li><span class="ck">✓</span>Integrations: QuickBooks, Xero, Zoho CRM (in progress)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="labeled-rule"><span>Marketplace Add-ons</span></div>
+
+  <table class="addon-table">
+    <thead>
+      <tr>
+        <th>Add-on</th>
+        <th>Type</th>
+        <th>Price</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>1 Extra Featured Listing</td><td>Monthly subscription</td><td>£15/mo</td><td>1 additional featured listing slot</td></tr>
+      <tr><td>5 Listing Boosts</td><td>Monthly subscription</td><td>£49/mo</td><td>5 featured boosts per month</td></tr>
+      <tr><td>20 Listing Boosts</td><td>Monthly subscription</td><td>£149/mo</td><td>20 featured boosts per month</td></tr>
+      <tr><td>20 RFQ Credits</td><td>One-time purchase</td><td>£10</td><td>Respond to 20 buyer RFQ requests</td></tr>
+      <tr><td>50 RFQ Credits</td><td>One-time purchase</td><td>£20</td><td>Respond to 50 buyer RFQ requests</td></tr>
+      <tr><td>100 RFQ Credits</td><td>One-time purchase</td><td>£35</td><td>Respond to 100 buyer requests</td></tr>
+    </tbody>
+  </table>
+
+  <div class="labeled-rule"><span>Payment Methods</span></div>
+  <div class="chips">
+    <span class="chip">Visa</span>
+    <span class="chip">Mastercard</span>
+    <span class="chip">Verve</span>
+    <span class="chip">PayPal</span>
+    <span class="chip">Bank Transfer (BACS)</span>
+    <span class="chip">Faster Payments</span>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 16. FULL FEATURE MATRIX -->
+<div class="sec">
+  <div class="sec-eyebrow">Feature Matrix</div>
+  <h2>Complete feature comparison</h2>
+  <p class="intro">A full breakdown of every feature in the platform mapped to plan availability.</p>
+
+  <div class="matrix-wrap">
+    <table class="matrix">
+      <thead>
+        <tr>
+          <th style="width:52%">Feature</th>
+          <th>Explorer (Free)</th>
+          <th>Starter £19/mo</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="grp"><td colspan="3">Dashboard</td></tr>
+        <tr><td>Business health score &amp; BI band</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Revenue, expense &amp; cash flow metrics</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Invoice &amp; quotation pipeline summary</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>PDF report download panel</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+
+        <tr class="grp"><td colspan="3">Idea Validation</td></tr>
+        <tr><td>Basic idea validation</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Comprehensive idea validation</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Service idea validation</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>AI field suggestion ("AI Fill")</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Market data refresh</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Validation PDF report</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+
+        <tr class="grp"><td colspan="3">Business Blueprints</td></tr>
+        <tr><td>Business plan (all 14 sections)</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Business proposals (all 12 sections)</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Sales letters (all 11 sections)</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Section-by-section generation</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Document editor &amp; editing</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Public share link</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+
+        <tr class="grp"><td colspan="3">Catalogue</td></tr>
+        <tr><td>Product &amp; service management</td><td>Unlimited</td><td>Unlimited</td></tr>
+        <tr><td>Customer records</td><td>Unlimited</td><td>Unlimited</td></tr>
+        <tr><td>Vendor records</td><td>Unlimited</td><td>Unlimited</td></tr>
+        <tr><td>Archive &amp; unarchive records</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Catalogue PDF report export</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Zoho CRM integration (in progress)</td><td class="da">No</td><td class="ck">✓</td></tr>
+
+        <tr class="grp"><td colspan="3">Financials</td></tr>
+        <tr><td>Invoice generation &amp; management</td><td>Unlimited</td><td>Unlimited</td></tr>
+        <tr><td>Quotation generation</td><td>Unlimited</td><td>Unlimited</td></tr>
+        <tr><td>Expense logging &amp; tracking</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Contract management</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>PDF invoice &amp; report export</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Public invoice share link</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>QuickBooks integration (in progress)</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Xero integration (in progress)</td><td class="da">No</td><td class="ck">✓</td></tr>
+
+        <tr class="grp"><td colspan="3">Decision Simulation</td></tr>
+        <tr><td>Adaptive Scenario Intelligence (ASI)</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Manual scenario templates</td><td class="da">No</td><td>2 templates</td></tr>
+        <tr><td>Business Fragility Index (6 dimensions)</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>BI health score &amp; band</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Risk signals &amp; recommendations</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>6-month projection timeline</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Simulation history</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Decision saving</td><td class="da">No</td><td class="ck">✓</td></tr>
+
+        <tr class="grp"><td colspan="3">PDF Reports</td></tr>
+        <tr><td>Business Health Report</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Investor Summary</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Scenario Analysis Report</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Fragility Report</td><td class="da">No</td><td class="ck">✓</td></tr>
+        <tr><td>Stability Report</td><td class="da">No</td><td class="ck">✓</td></tr>
+
+        <tr class="grp"><td colspan="3">Business Registration</td></tr>
+        <tr><td>UK registration step-by-step guide</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Company name availability check</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>SIC code lookup</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+
+        <tr class="grp"><td colspan="3">Marketplace</td></tr>
+        <tr><td>Business listing</td><td>1 listing</td><td>1 listing</td></tr>
+        <tr><td>Star ratings &amp; reviews</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>RFQ (request for quotation) system</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Featured listing boosts (add-on)</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+
+        <tr class="grp"><td colspan="3">Team &amp; Collaboration</td></tr>
+        <tr><td>Team member invites</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Module-level permission control</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Feature-level granular permissions</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+
+        <tr class="grp"><td colspan="3">Platform</td></tr>
+        <tr><td>AI credits</td><td>50 (one-time)</td><td>Included</td></tr>
+        <tr><td>AI credit transaction history</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Referral programme (5% commission)</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Business Intelligence Hub (blog)</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Multi-currency support</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Dark mode support</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Account settings &amp; profile management</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 17. SECURITY & COMPLIANCE -->
+<div class="sec">
+  <div class="sec-eyebrow">Security &amp; Compliance</div>
+  <h2>Data security and regulatory compliance</h2>
+  <p class="intro">EnterprateAI handles business-sensitive financial and operational data and is built with security and regulatory compliance at its core.</p>
+
+  <div class="two-col">
+    <div class="box">
+      <h4>Security Measures</h4>
+      <ul>
+        <li>TLS 1.3 encryption for all data in transit</li>
+        <li>AES-256 encryption for all data at rest</li>
+        <li>Supabase Row Level Security (RLS) enforced</li>
+        <li>JWT-based authentication with token refresh</li>
+        <li>OAuth 2.0 for all third-party integrations</li>
+        <li>No passwords stored: hashed only</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>Regulatory &amp; Trust</h4>
+      <ul>
+        <li>ICO Registered (UK Information Commissioner)</li>
+        <li>GDPR compliant data handling</li>
+        <li>UK registered company</li>
+        <li>Data never sold or shared with third parties</li>
+        <li>User data deletable at any time</li>
+        <li>Data retained 30 days post-cancellation</li>
+        <li>Cancel anytime: no lock-in contracts</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- 18. CONTACT -->
+<div class="sec">
+  <div class="sec-eyebrow">Contact</div>
+  <h2>Contact &amp; Support</h2>
+  <div class="two-col">
+    <div class="box">
+      <h4>Platform &amp; Registration</h4>
+      <ul>
+        <li>Website: enterprate.ai</li>
+        <li>Register: enterprate.ai/register</li>
+        <li>Pricing: enterprate.ai/pricing</li>
+        <li>Articles: enterprate.ai/blog</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>Support Contacts</h4>
+      <ul>
+        <li>Support: support@enterprate.ai</li>
+        <li>Technical: tech.support@enterprateai.com</li>
+        <li>Billing / Subscriptions: via Pricing page</li>
+        <li>Referral / Payouts: via Referral page</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+</div><!-- /body -->
+
+<!-- ── FOOTER ──────────────────────────────────────────────────── -->
+<div class="doc-footer">
+  <div><strong style="color: var(--ink2)">EnterprateAI</strong>: Business Operating System for UK Small Businesses</div>
+  <div>enterprate.ai · ICO Registered · GDPR Compliant · Confidential</div>
+</div>
+
+</div><!-- /page-wrap -->
+</body>
+</html>
