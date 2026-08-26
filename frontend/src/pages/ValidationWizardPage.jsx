@@ -9,7 +9,7 @@ import Spinner from "../components/Spinner";
 import SegmentedTabs from "../components/SegmentedTabs";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
-import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
+import { hasFeatureAccess, isPlatformFeatureRestricted, isPlatformModuleGranted } from "../lib/permissions";
 import { useAuthStore } from "../store/auth";
 import InfoTip from "../components/InfoTip";
 import NumberInput, { parseIntSafe, parseNumber } from "../components/NumberInput";
@@ -382,10 +382,13 @@ export default function ValidationWizardPage() {
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
+  const platformGrants = useAuthStore((s) => s.platformGrants);
+  const refreshGrants = useAuthStore((s) => s.refreshGrants);
   const subscription = useAuthStore((s) => s.subscription);
-  const canAccessComprehensive = subscription &&
+  const hasValidationGrant = isPlatformModuleGranted("validation", platformGrants);
+  const canAccessComprehensive = hasValidationGrant || (subscription &&
     !["free_trial", "explorer", "expired", ""].includes(subscription.plan_key ?? "") &&
-    !["trial", "expired"].includes(subscription.status ?? "");
+    !["trial", "expired"].includes(subscription.status ?? ""));
 
   const canEvaluateIdea =
     !isPlatformFeatureRestricted("validation", "evaluate_idea", platformRestrictions) &&
@@ -424,6 +427,8 @@ export default function ValidationWizardPage() {
     const id = `${Date.now()}-${Math.random()}`;
     setToasts((t) => [...t, { id, message, kind }]);
   }, []);
+
+  useEffect(() => { refreshGrants(); }, []);
 
   // Bridge: convert error / savedNotice state to branded toasts
   useEffect(() => {
