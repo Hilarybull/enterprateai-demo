@@ -646,13 +646,19 @@ export default function BlueprintPage() {
     const offer = acceptedIdeaValidation.offer || {};
     const prob = acceptedIdeaValidation.problem || {};
 
-    if (!dirtyFields.companyName && !companyName && ctx.business_name) setCompanyName(ctx.business_name);
-    if (!dirtyFields.industry && !industry) setIndustry(ctx.primary_industry || ctx.business_type || "");
-    if (!dirtyFields.targetMarket && !targetMarket && prob.customer_segment) setTargetMarket(prob.customer_segment);
+    // Workspace profile is master data — it wins over idea validation for all master fields
+    if (!dirtyFields.companyName && !companyName) {
+      const name = workspaceProfile?.company_name || ctx.business_name || "";
+      if (name) setCompanyName(name);
+    }
+    if (!dirtyFields.industry && !industry)
+      setIndustry(workspaceProfile?.primary_industry || ctx.primary_industry || ctx.business_type || "");
+    if (!dirtyFields.targetMarket && !targetMarket)
+      setTargetMarket(workspaceProfile?.target_customer_type || prob.customer_segment || "");
     if (!dirtyFields.problem && !problem && prob.problem_type) setProblem(prob.problem_type);
     if (!dirtyFields.solution && !solution && offer.service_type) setSolution(offer.service_type);
     if (!dirtyFields.valueProp && !valueProp) {
-      const vp = String(ctx.business_offering || ctx.description || offer.service_type || "").trim();
+      const vp = String(workspaceProfile?.key_offering_focus || workspaceProfile?.tagline || ctx.business_offering || ctx.description || offer.service_type || "").trim();
       if (vp) setValueProp(vp);
     }
 
@@ -662,7 +668,7 @@ export default function BlueprintPage() {
       else if (pm === "retainer") setPricingModel("Retainer");
       else if (pm === "fixed_job") setPricingModel("One-time");
     }
-  }, [acceptedIdeaValidation, companyName, dirtyFields, industry, pricingModel, problem, solution, targetMarket, valueProp]);
+  }, [acceptedIdeaValidation, workspaceProfile, companyName, dirtyFields, industry, pricingModel, problem, solution, targetMarket, valueProp]);
 
   useEffect(() => {
     if (serviceDecisionStatus !== "accepted" || !draftServiceIdea) return;
@@ -767,53 +773,36 @@ export default function BlueprintPage() {
           setDocumentLogo(String(workspaceProfile?.logo_data_url || workspaceLogoStored || ""));
         }
 
-        // Use accepted idea_validation from server if the store's copy is missing
+        // Workspace profile is master data — always seeded first regardless of idea validation.
         const serverIV = ws?.data?.idea_validation;
         const serverDecision = ws?.data?.decision?.status;
         const iv = acceptedIdeaValidation || (serverDecision === "accepted" && serverIV ? serverIV : null);
+        const ivCtx = iv?.context || {};
+        const ivOffer = iv?.offer || {};
+        const ivProb = iv?.problem || {};
 
+        // Master data fields: workspace profile always wins; idea validation only fills genuine gaps
+        if (!dirtyFields.companyName && !companyName)
+          setCompanyName(workspaceProfile.company_name || profile.business_name || "");
+        if (!dirtyFields.industry && !industry)
+          setIndustry(workspaceProfile.primary_industry || profile.primary_industry || profile.business_type || ivCtx.primary_industry || ivCtx.business_type || "");
+        if (!dirtyFields.targetMarket && !targetMarket)
+          setTargetMarket(workspaceProfile.target_customer_type || ivProb.customer_segment || "");
+        if (!dirtyFields.valueProp && !valueProp) {
+          const vp = String(workspaceProfile.key_offering_focus || workspaceProfile.tagline || profile.value_proposition || ivCtx.business_offering || ivCtx.description || ivOffer.service_type || "").trim();
+          if (vp) setValueProp(vp);
+        }
+
+        // Idea-specific context fields (no workspace profile equivalent)
         if (iv) {
-          const ctx = iv.context || {};
-          const offer = iv.offer || {};
-          const prob = iv.problem || {};
-          if (!dirtyFields.companyName && !companyName && ctx.business_name) setCompanyName(ctx.business_name);
-          if (!dirtyFields.industry && !industry) setIndustry(ctx.primary_industry || ctx.business_type || workspaceProfile.primary_industry || profile.primary_industry || "");
-          if (!dirtyFields.targetMarket && !targetMarket && (prob.customer_segment || workspaceProfile.target_customer_type)) setTargetMarket(prob.customer_segment || workspaceProfile.target_customer_type);
-          if (!dirtyFields.problem && !problem && prob.problem_type) setProblem(prob.problem_type);
-          if (!dirtyFields.solution && !solution && offer.service_type) setSolution(offer.service_type);
-          if (!dirtyFields.valueProp && !valueProp) {
-            const vp = String(ctx.business_offering || ctx.description || offer.service_type || workspaceProfile.key_offering_focus || workspaceProfile.tagline || "").trim();
-            if (vp) setValueProp(vp);
-          }
-          const pm = String(offer.pricing_model || "").toLowerCase();
+          if (!dirtyFields.problem && !problem && ivProb.problem_type) setProblem(ivProb.problem_type);
+          if (!dirtyFields.solution && !solution && ivOffer.service_type) setSolution(ivOffer.service_type);
+          const pm = String(ivOffer.pricing_model || "").toLowerCase();
           if (pm && pricingModel === "Subscription") {
             if (pm === "hourly") setPricingModel("Hourly");
             else if (pm === "retainer") setPricingModel("Retainer");
             else if (pm === "fixed_job") setPricingModel("One-time");
           }
-          return;
-        }
-
-        // No accepted validation — fall back to workspace profile data
-        if (!dirtyFields.companyName && !companyName && (workspaceProfile.company_name || profile.business_name)) {
-          setCompanyName(workspaceProfile.company_name || profile.business_name);
-        }
-        if (
-          !dirtyFields.industry &&
-          !industry &&
-          (workspaceProfile.primary_industry || profile.primary_industry || profile.business_type)
-        ) {
-          setIndustry(workspaceProfile.primary_industry || profile.primary_industry || profile.business_type);
-        }
-        if (
-          !dirtyFields.valueProp &&
-          !valueProp &&
-          (workspaceProfile.key_offering_focus || workspaceProfile.tagline || profile.value_proposition)
-        ) {
-          setValueProp(workspaceProfile.key_offering_focus || workspaceProfile.tagline || profile.value_proposition);
-        }
-        if (!dirtyFields.targetMarket && !targetMarket && workspaceProfile.target_customer_type) {
-          setTargetMarket(workspaceProfile.target_customer_type);
         }
         if (!dirtyFields.solution && !solution && wpServices.length) {
           const joined = wpServices
