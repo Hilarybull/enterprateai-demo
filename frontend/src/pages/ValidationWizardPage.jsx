@@ -2111,22 +2111,14 @@ export default function ValidationWizardPage() {
         }
       }
 
-      // When accepting a business idea validation, promote its payload to idea_validation
-      // so other modules see the accepted idea's data (not the draft from the last run).
-      const acceptedVEntry = status === "accepted" ? vHistory.find((e) => e?.id === entryId) : null;
-      const acceptedPayload = acceptedVEntry?.payload || null;
-
       await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
         data: {
           validation_history: nextVHistory,
           service_validation_history: nextSHistory,
           ...(status === "accepted" ? { active_validation_id: entryId } : {}),
-          ...(status === "accepted" && acceptedPayload ? { idea_validation: acceptedPayload } : {}),
           ...cataloguePatch,
         }
       });
-
-      if (status === "accepted" && acceptedPayload) setIdeaValidation(acceptedPayload);
 
       setValidationHistory((prev) =>
         prev.map((e) => e.id === entryId ? { ...e, status } : e)
