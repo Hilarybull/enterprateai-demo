@@ -826,7 +826,7 @@ export default function Layout() {
                     onClick={() => navigate("/pricing")}
                     className={
                       "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold transition " +
-                      (subscription?.plan_key && !["free_trial", "explorer"].includes(subscription.plan_key)
+                      (platformGrants.length > 0 || (subscription?.plan_key && !["free_trial", "explorer"].includes(subscription.plan_key))
                         ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
                         : "bg-brand-50 text-brand-700 hover:bg-brand-100 dark:bg-slate-800 dark:text-brand-400 dark:hover:bg-slate-700")
                     }
@@ -834,9 +834,11 @@ export default function Layout() {
                     <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2Z" />
                     </svg>
-                    {planLabel(subscription?.plan_key, subscription?.status)}
+                    {platformGrants.length > 0 && ["free_trial", "explorer", "expired", ""].includes(subscription?.plan_key ?? "")
+                      ? "Privileged"
+                      : planLabel(subscription?.plan_key, subscription?.status)}
                   </button>
-                  {(!subscription?.plan_key || ["free_trial", "explorer"].includes(subscription.plan_key)) && (
+                  {platformGrants.length === 0 && (!subscription?.plan_key || ["free_trial", "explorer"].includes(subscription.plan_key)) && (
                     <button
                       type="button"
                       onClick={() => navigate("/pricing")}
@@ -864,7 +866,7 @@ export default function Layout() {
                   ? `${creditBalance.toLocaleString()} credits`
                   : <span className="inline-block h-3.5 w-16 rounded bg-brand-200 dark:bg-slate-600 animate-pulse" />}
               </div>
-              {creditInfo?.plan_code === "explorer" && (
+              {creditInfo?.plan_code === "explorer" && platformGrants.length === 0 && (
                 <div className="text-[10px] text-brand-400 dark:text-brand-500 mt-0.5">Free trial allocation</div>
               )}
             </button>
