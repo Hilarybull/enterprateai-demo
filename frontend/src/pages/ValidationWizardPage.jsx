@@ -2111,14 +2111,22 @@ export default function ValidationWizardPage() {
         }
       }
 
+      // On acceptance, promote the idea payload so modules can use it —
+      // workspace_profile (master data) is a separate key and is never touched here.
+      const acceptedVEntry = status === "accepted" ? vHistory.find((e) => e?.id === entryId) : null;
+      const acceptedPayload = acceptedVEntry?.payload || null;
+
       await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
         data: {
           validation_history: nextVHistory,
           service_validation_history: nextSHistory,
           ...(status === "accepted" ? { active_validation_id: entryId } : {}),
+          ...(status === "accepted" && acceptedPayload ? { idea_validation: acceptedPayload } : {}),
           ...cataloguePatch,
         }
       });
+
+      if (status === "accepted" && acceptedPayload) setIdeaValidation(acceptedPayload);
 
       setValidationHistory((prev) =>
         prev.map((e) => e.id === entryId ? { ...e, status } : e)
