@@ -2111,14 +2111,22 @@ export default function ValidationWizardPage() {
         }
       }
 
+      // When accepting a business idea validation, promote its payload to idea_validation
+      // so other modules see the accepted idea's data (not the draft from the last run).
+      const acceptedVEntry = status === "accepted" ? vHistory.find((e) => e?.id === entryId) : null;
+      const acceptedPayload = acceptedVEntry?.payload || null;
+
       await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", {
         data: {
           validation_history: nextVHistory,
           service_validation_history: nextSHistory,
           ...(status === "accepted" ? { active_validation_id: entryId } : {}),
+          ...(status === "accepted" && acceptedPayload ? { idea_validation: acceptedPayload } : {}),
           ...cataloguePatch,
         }
       });
+
+      if (status === "accepted" && acceptedPayload) setIdeaValidation(acceptedPayload);
 
       setValidationHistory((prev) =>
         prev.map((e) => e.id === entryId ? { ...e, status } : e)
@@ -2618,13 +2626,11 @@ export default function ValidationWizardPage() {
       payload.cash.starting_cash = parseNumber(payload.cash.starting_cash, 0);
       payload.cash.upfront_costs = parseNumber(payload.cash.upfront_costs, 0);
       setCurrency(payload.context.currency || "GBP");
-      // Only write idea_validation to the live field when the user explicitly accepts.
-      // All other saves (draft, insight generation) stay in draft_idea_validation only
-      // so other modules never see unaccepted data.
+      // idea_validation is only written on explicit "Accept" — not on run.
+      // Draft stays in draft_idea_validation so other modules never see unaccepted data.
       const workspacePatch = {
         draft_idea_validation: isProductPath ? null : payload,
         draft_service_idea: isProductPath ? serviceForm : null,
-        ...(shouldEvaluate && !isProductPath ? { idea_validation: payload } : {}),
       };
       if (wsId) {
         await apiRequest(
@@ -2636,9 +2642,7 @@ export default function ValidationWizardPage() {
         setWorkspaceId(wsId);
         // Don't touch the workspace name — validation is separate from workspace identity
         if (!isProductPath) setDecisionStatus(null);
-        // Only update the live ideaValidation store on explicit acceptance
-        if (shouldEvaluate && !isProductPath) setIdeaValidation(payload);
-        else setDraftIdeaValidation(payload);
+        setDraftIdeaValidation(payload);
       } else {
         const ws = await apiRequest(
           "/validation/me",
@@ -2650,8 +2654,7 @@ export default function ValidationWizardPage() {
         setWorkspaceId(wsId);
         setWorkspaceNameStore(ws.name || wsName);
         if (!isProductPath) setDecisionStatus(null);
-        if (shouldEvaluate && !isProductPath) setIdeaValidation(payload);
-        else setDraftIdeaValidation(payload);
+        setDraftIdeaValidation(payload);
       }
 
       if (enabledForms.workspace_profile) {
