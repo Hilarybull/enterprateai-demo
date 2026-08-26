@@ -39,10 +39,12 @@ import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import IntegrationsPage from "./pages/IntegrationsPage";
 import IntegrationsCallbackPage from "./pages/IntegrationsCallbackPage";
+import VerifyEmailPage from "./pages/VerifyEmailPage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import TermsOfServicePage from "./pages/TermsOfServicePage";
 import DisclaimerPage from "./pages/DisclaimerPage";
 import CreditsPage from "./pages/CreditsPage";
+import RequireWorkspace from "./components/RequireWorkspace";
 import ReferralPage from "./pages/ReferralPage";
 import ReferralClickPage from "./pages/ReferralClickPage";
 import BlogPage from "./pages/BlogPage";
@@ -87,6 +89,7 @@ export default function App() {
       <Route path="/pricing" element={<PricingPage />} />
       <Route path="/pricing/success" element={<PricingSuccessPage />} />
       <Route path="/integrations/callback" element={<IntegrationsCallbackPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/legal/privacy" element={<PrivacyPolicyPage />} />
       <Route path="/legal/terms" element={<TermsOfServicePage />} />
       <Route path="/legal/disclaimer" element={<DisclaimerPage />} />
@@ -108,13 +111,13 @@ export default function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="validation" element={<ValidationWizardPage />} />
         <Route path="results" element={<ResultsPage />} />
-        <Route path="simulation" element={<SimulationPage />} />
-        <Route path="blueprint" element={<BlueprintPage />} />
-        <Route path="business-plan" element={<BusinessPlanPage />} />
+        <Route path="simulation" element={<RequireWorkspace><SimulationPage /></RequireWorkspace>} />
+        <Route path="blueprint" element={<RequireWorkspace><BlueprintPage /></RequireWorkspace>} />
+        <Route path="business-plan" element={<RequireWorkspace><BusinessPlanPage /></RequireWorkspace>} />
         <Route path="live-plan" element={<Navigate to="/business-plan" replace />} />
-        <Route path="registration" element={<RegistrationPage />} />
-        <Route path="catalogue" element={<CataloguePage />} />
-        <Route path="financials" element={<FinancialsPage />} />
+        <Route path="registration" element={<RequireWorkspace><RegistrationPage /></RequireWorkspace>} />
+        <Route path="catalogue" element={<RequireWorkspace><CataloguePage /></RequireWorkspace>} />
+        <Route path="financials" element={<RequireWorkspace><FinancialsPage /></RequireWorkspace>} />
         <Route path="team" element={<TeamPage />} />
         <Route path="account" element={<AccountPage />} />
         <Route path="credits" element={<CreditsPage />} />

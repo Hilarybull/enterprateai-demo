@@ -113,30 +113,48 @@ async def _get_plan_feature_entitlement(plan_code: str, feature_code: str) -> di
         return None
 
 
+_FEATURE_TO_MODULE: dict[str, str] = {
+    # blueprint module
+    "business_plan": "blueprint",
+    "business_plan_full": "blueprint",
+    "business_plan_section": "blueprint",
+    "proposal_full": "blueprint",
+    "proposal_section": "blueprint",
+    "sales_letter_full": "blueprint",
+    "sales_letter_section": "blueprint",
+    "live_plan_import_extract": "blueprint",
+    "live_plan_scenario_adopt": "blueprint",
+    "live_plan_kpi_refresh": "blueprint",
+    "live_plan_narrative_refresh": "blueprint",
+    "live_plan_full_refresh": "blueprint",
+    "email_share": "blueprint",
+    # validation module
+    "idea_validation": "validation",
+    "service_validation": "validation",
+    "suggest_field": "validation",
+    "market_data_refresh": "validation",
+    # simulation module
+    "scenario_ai_interpretation": "simulation",
+    "run_simulation": "simulation",
+}
+
+
 async def _has_platform_grant(user_id: str, feature_code: str) -> bool:
-    module_key = "blueprint" if feature_code.startswith(("business_plan", "proposal", "sales_letter", "live_plan")) else None
+    module_key = _FEATURE_TO_MODULE.get(feature_code)
     if not module_key:
-        return False
-    feature_key = {
-        "business_plan": "business_plan",
-        "business_plan_full": "business_plan",
-        "business_plan_section": "business_plan",
-        "proposal_full": "business_proposal",
-        "proposal_section": "business_proposal",
-        "sales_letter_full": "sales_letter",
-        "sales_letter_section": "sales_letter",
-        "live_plan_import_extract": "business_plan",
-        "live_plan_scenario_adopt": "business_plan",
-        "live_plan_kpi_refresh": "business_plan",
-        "live_plan_narrative_refresh": "business_plan",
-    }.get(feature_code)
+        # Unknown feature — fall back to checking all grants for this user
+        try:
+            rows = await sb_select("user_platform_grants", filters=[("user_id", "eq", user_id)], columns="module_key,feature_key")
+            return len(rows) > 0
+        except Exception:
+            return False
     try:
         rows = await sb_select(
             "user_platform_grants",
             filters=[("user_id", "eq", user_id), ("module_key", "eq", module_key)],
             columns="module_key,feature_key",
         )
-        return any(not row.get("feature_key") or row.get("feature_key") == feature_key for row in rows)
+        return any(not row.get("feature_key") for row in rows)
     except Exception:
         return False
 

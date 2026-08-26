@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import base64
+import io
+import xml.etree.ElementTree as _ET
+import zipfile
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from app.modules.credits.service import credit_guard
+from app.core.config import get_settings
 from app.shared.auth.deps import get_current_user
 from app.modules.live_plan.schemas import (
     LivePlanAdoptRequest,
+    LivePlanImportExtractRequest,
     LivePlanAlertResponse,
     LivePlanCompareResponse,
     LivePlanCreateRequest,
@@ -20,6 +27,7 @@ from app.modules.live_plan.schemas import (
 )
 from app.modules.live_plan.service import (
     activate_live_plan,
+    import_extract_plan,
     acknowledge_alert,
     adopt_scenario,
     build_performance,
@@ -79,6 +87,103 @@ async def adopt_live_plan_endpoint(
     async with credit_guard(user["id"], "live_plan_scenario_adopt", payload.idempotency_key):
         plan = await activate_live_plan(user_id=user["id"], business_id=business_id)
     return LivePlanResponse(business_id=business_id, plan=plan)
+
+
+@router.post("/import-extract")
+async def import_extract_live_plan(
+    business_id: str,
+    payload: LivePlanImportExtractRequest | None = None,
+    user=Depends(get_current_user),
+) -> dict:
+    """Adopt a blueprint document or raw text — AI extracts fields and seeds the live plan."""
+    payload = payload or LivePlanImportExtractRequest()
+    async with credit_guard(user["id"], "live_plan_import_extract", payload.idempotency_key):
+        result = await import_extract_plan(
+            user_id=user["id"],
+            business_id=business_id,
+            document_id=payload.document_id,
+            raw_content=payload.raw_content,
+        )
+    return {"business_id": business_id, **result}
+
+
+@router.post("/import-file")
+async def import_file_live_plan(
+    business_id: str,
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+) -> dict:
+    """Upload a PDF, Word doc, image, or text file and extract a live plan from it."""
+    content = await file.read()
+    filename = (file.filename or "").lower()
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+
+    raw_content: str | None = None
+
+    if ext in ("txt", "md"):
+        raw_content = content.decode("utf-8", errors="replace")
+
+    elif ext == "pdf":
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(content))
+            pages = [page.extract_text() or "" for page in reader.pages]
+            raw_content = "\n\n".join(p for p in pages if p.strip())
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Could not read PDF: {exc}")
+
+    elif ext == "docx":
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as z:
+                xml_bytes = z.read("word/document.xml")
+            root = _ET.fromstring(xml_bytes)
+            ns_t = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"
+            texts = [el.text or "" for el in root.iter(ns_t)]
+            raw_content = " ".join(t for t in texts if t.strip())
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Could not read Word document: {exc}")
+
+    elif ext in ("jpg", "jpeg", "png", "webp", "gif"):
+        settings = get_settings()
+        if not settings.openai_api_key:
+            raise HTTPException(status_code=503, detail="Vision extraction not configured")
+        mime = file.content_type or f"image/{ext}"
+        b64 = base64.b64encode(content).decode()
+        import httpx as _httpx
+        payload = {
+            "model": "gpt-4o",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Extract and return all the text from this business plan document image. Return only the extracted text, nothing else."},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                    ],
+                }
+            ],
+            "max_tokens": 4000,
+        }
+        async with _httpx.AsyncClient(timeout=120) as cli:
+            resp = await cli.post(
+                "https://api.openai.com/v1/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+            )
+            resp.raise_for_status()
+        raw_content = resp.json()["choices"][0]["message"]["content"]
+    else:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type: .{ext}. Upload a PDF, Word (.docx), image (JPG/PNG/WEBP), or plain text file.")
+
+    if not raw_content or not raw_content.strip():
+        raise HTTPException(status_code=422, detail="No text could be extracted from the uploaded file.")
+
+    async with credit_guard(user["id"], "live_plan_import_extract", None):
+        result = await import_extract_plan(
+            user_id=user["id"],
+            business_id=business_id,
+            raw_content=raw_content,
+        )
+    return {"business_id": business_id, **result}
 
 
 @router.get("/versions")

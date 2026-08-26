@@ -77,6 +77,9 @@ export default function LoginPage() {
   const googleLogin = useAuthStore((s) => s.googleLogin);
   const isLoading = useAuthStore((s) => s.isLoading);
   const error = useAuthStore((s) => s.error);
+  const verificationPending = useAuthStore((s) => s.verificationPending);
+  const verificationEmail = useAuthStore((s) => s.verificationEmail);
+  const clearVerificationPending = useAuthStore((s) => s.clearVerificationPending);
 
   const [searchParams] = useSearchParams();
   const [mode, setMode] = useState(searchParams.get("signup") ? "signup" : "signin");
@@ -148,9 +151,36 @@ export default function LoginPage() {
     if (mode === "signup") {
       const name = fullName.trim();
       if (name) sessionStorage.setItem("ea_signup_name", name);
-      return register(email, password);
+      return register(email, password, name ? { full_name: name } : {});
     }
     return login(email, password);
+  }
+
+  if (verificationPending) {
+    return (
+      <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-slate-50 px-4">
+        <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-xl">
+          <img src={logoUrl} alt="EnterprateAI" className="mx-auto mb-6 h-7 w-auto object-contain" />
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-brand-100">
+            <svg className="h-7 w-7 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <h1 className="mt-4 text-lg font-bold text-slate-900">Check your inbox</h1>
+          <p className="mt-2 text-sm text-slate-500">
+            We sent a verification link to <strong className="text-slate-700">{verificationEmail}</strong>. Click the link to activate your account.
+          </p>
+          <p className="mt-3 text-xs text-slate-400">Didn't receive it? Check spam or junk folders.</p>
+          <button
+            type="button"
+            onClick={() => { clearVerificationPending(); setMode("signin"); }}
+            className="mt-6 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition"
+          >
+            Back to Sign In
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

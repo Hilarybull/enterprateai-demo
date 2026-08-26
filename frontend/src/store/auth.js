@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { apiRequest } from "../api/client";
+import { useWorkspaceStore } from "./workspace";
 
 function humanizeAuthError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
@@ -12,6 +13,9 @@ function humanizeAuthError(e) {
   if (msg.startsWith("HTTP 403:")) {
     const lower = msg.toLowerCase();
     if (lower.includes("suspended") || lower.includes("blocked")) {
+      return msg.replace(/^HTTP 403:\s*/, "");
+    }
+    if (lower.includes("email not verified") || lower.includes("verification")) {
       return msg.replace(/^HTTP 403:\s*/, "");
     }
     return "Access denied.";
@@ -69,6 +73,9 @@ export const useAuthStore = create((set, get) => ({
   subscription: DEFAULT_SUB,
   creditBalance: null,
   creditInfo: null,
+  verificationPending: false,
+  verificationEmail: null,
+  clearVerificationPending: () => set({ verificationPending: false, verificationEmail: null }),
   setCreditBalance: (v) => set({ creditBalance: typeof v === "number" ? v : null }),
   setCreditInfo: (info) => set({ creditInfo: info || null, creditBalance: typeof info?.available_credits === "number" ? info.available_credits : null }),
 
@@ -119,9 +126,15 @@ export const useAuthStore = create((set, get) => ({
     return sub;
   },
 
+  refreshGrants: async () => {
+    const grants = await fetchPlatformGrants();
+    set({ platformGrants: grants ?? [] });
+    return grants;
+  },
+
   setPlatformRestrictions: (restrictions) => set({ platformRestrictions: restrictions }),
 
-  register: async (email, password) => {
+  register: async (email, password, extra = {}) => {
     set({ isLoading: true, error: null });
     try {
       // Attach referral click data if stored from a /r/:code visit
@@ -137,7 +150,11 @@ export const useAuthStore = create((set, get) => ({
           localStorage.removeItem("ea_referral");
         }
       } catch (_) {}
-      await apiRequest("/auth/register", "POST", { email, password, ...refData });
+      const result = await apiRequest("/auth/register", "POST", { email, password, ...extra, ...refData });
+      if (result?.email_verification_sent) {
+        set({ verificationPending: true, verificationEmail: email });
+        return;
+      }
       await get().login(email, password);
     } catch (e) {
       set({ error: humanizeAuthError(e) });
@@ -155,14 +172,14 @@ export const useAuthStore = create((set, get) => ({
       localStorage.setItem("ea_token", token);
       localStorage.setItem("ea_email", email);
       clearDemoTourState();
-      set({ token, email });
-      const [me, restrictions, grants, sub] = await Promise.all([
+      useWorkspaceStore.getState().resetForUser(email);
+      set({ token, email, hydrated: true });
+      Promise.all([
         apiRequest("/auth/me", "GET").catch(() => null),
         fetchPlatformRestrictions(),
         fetchPlatformGrants(),
         fetchSubscription(),
-      ]);
-      set({
+      ]).then(([me, restrictions, grants, sub]) => set({
         name: me?.name ?? null,
         picture: me?.picture ?? null,
         authProvider: me?.auth_provider ?? null,
@@ -170,7 +187,7 @@ export const useAuthStore = create((set, get) => ({
         platformRestrictions: restrictions,
         platformGrants: grants ?? [],
         subscription: sub ?? DEFAULT_SUB,
-      });
+      })).catch(() => {});
     } catch (e) {
       set({ error: humanizeAuthError(e) });
     } finally {
@@ -197,16 +214,27 @@ export const useAuthStore = create((set, get) => ({
       const token = tokenRes?.access_token ?? tokenRes?.token ?? null;
       if (!token) throw new Error("AUTH_RESPONSE_INVALID");
       localStorage.setItem("ea_token", token);
-      const me = await apiRequest("/auth/me", "GET");
-      localStorage.setItem("ea_email", me.email);
-      if (me.email !== "demo") clearDemoTourState();
-      set({ token, email: me.email, name: me?.name ?? null, picture: me?.picture ?? null, authProvider: me?.auth_provider ?? null, hasPassword: me?.has_password ?? false });
-      const [restrictions, grants, sub] = await Promise.all([
+      set({ token, hydrated: true });
+      Promise.all([
+        apiRequest("/auth/me", "GET").catch(() => null),
         fetchPlatformRestrictions(),
         fetchPlatformGrants(),
         fetchSubscription(),
-      ]);
-      set({ platformRestrictions: restrictions, platformGrants: grants ?? [], subscription: sub ?? DEFAULT_SUB });
+      ]).then(([me, restrictions, grants, sub]) => {
+        if (me?.email) localStorage.setItem("ea_email", me.email);
+        if (me?.email && me.email !== "demo") clearDemoTourState();
+        if (me?.email) useWorkspaceStore.getState().resetForUser(me.email);
+        set({
+          email: me?.email ?? null,
+          name: me?.name ?? null,
+          picture: me?.picture ?? null,
+          authProvider: me?.auth_provider ?? null,
+          hasPassword: me?.has_password ?? false,
+          platformRestrictions: restrictions,
+          platformGrants: grants ?? [],
+          subscription: sub ?? DEFAULT_SUB,
+        });
+      }).catch(() => {});
     } catch (e) {
       set({ error: humanizeAuthError(e) });
     } finally {
@@ -220,6 +248,7 @@ export const useAuthStore = create((set, get) => ({
     localStorage.removeItem("ea_token");
     localStorage.removeItem("ea_email");
     clearDemoTourState();
+    useWorkspaceStore.getState().resetForUser(null);
     set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true, platformRestrictions: [], platformGrants: [], subscription: DEFAULT_SUB, creditBalance: null, creditInfo: null });
   }
 }));

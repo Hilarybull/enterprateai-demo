@@ -394,7 +394,8 @@ async def blueprint_documents_export(
 
     if doc.type == "business_plan":
         plan_key, plan_status = await get_user_plan_info(user_id)
-        if plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}:
+        has_blueprint_grant = await _has_platform_grant(user_id, "business_plan_full")
+        if (plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}) and not has_blueprint_grant:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Downloading a business plan requires a paid plan. Upgrade to export.",

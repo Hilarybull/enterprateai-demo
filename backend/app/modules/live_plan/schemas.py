@@ -87,6 +87,12 @@ class LivePlanNarrativeRefreshRequest(BaseModel):
     section: str | None = None
 
 
+class LivePlanImportExtractRequest(BaseModel):
+    idempotency_key: str | None = None
+    document_id: str | None = None   # existing blueprint document ID
+    raw_content: str | None = None   # pasted/uploaded text content
+
+
 class LivePlanResponse(BaseModel):
     business_id: str
     plan: dict[str, Any]

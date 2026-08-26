@@ -10,7 +10,6 @@ import { apiRequest, getApiBaseUrl } from "../api/client";
 import Button from "../components/Button";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
-import WorkspacePrompt from "../components/WorkspacePrompt";
 import { BlueprintIllustration, IllustrationCard } from "../components/Illustrations";
 import SegmentedTabs from "../components/SegmentedTabs";
 import { imageFileToDataUrl } from "../lib/files";
@@ -321,9 +320,12 @@ export default function BlueprintPage() {
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
   const platformGrants = useAuthStore((s) => s.platformGrants);
+  const refreshGrants = useAuthStore((s) => s.refreshGrants);
   const authEmail = useAuthStore((s) => s.email);
   const subscription = useAuthStore((s) => s.subscription);
   const livePlanHref = "/business-plan";
+
+  useEffect(() => { refreshGrants(); }, []);
 
   const isFreeOrTrial = !subscription ||
     ["free_trial", "explorer", "expired"].includes(subscription?.plan_key) ||
@@ -2541,10 +2543,6 @@ export default function BlueprintPage() {
       value_proposition: valueProp,
       selected_services: resolveSelectedServices(),
     };
-  }
-
-  if (!workspaceIdStored) {
-    return <WorkspacePrompt />;
   }
 
   return (

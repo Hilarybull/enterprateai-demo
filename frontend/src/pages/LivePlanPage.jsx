@@ -45,6 +45,7 @@ export default function BusinessPlanPage() {
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
   const workspaceName = useWorkspaceStore((s) => s.workspaceName);
   const platformGrants = useAuthStore((s) => s.platformGrants);
+  const refreshGrants = useAuthStore((s) => s.refreshGrants);
   const businessId = searchParams.get("business_id") || searchParams.get("workspace_id") || workspaceIdStored || "";
   const sourceDocumentId = searchParams.get("source_document_id") || "";
   const hasBlueprintGrant = isPlatformFeatureGranted("blueprint", "business_plan", platformGrants);
@@ -58,6 +59,16 @@ export default function BusinessPlanPage() {
   const [planMissing, setPlanMissing] = useState(false);
   const [showLivePlanWorkspace, setShowLivePlanWorkspace] = useState(false);
   const livePlanSectionRef = useRef(null);
+
+  // Adoption flow
+  const [blueprints, setBlueprints] = useState([]);
+  const [blueprintsLoading, setBlueprintsLoading] = useState(false);
+  const [adopting, setAdopting] = useState(false);
+  const [adoptResult, setAdoptResult] = useState(null);
+  const [uploadText, setUploadText] = useState("");
+  const [uploadFile, setUploadFile] = useState(null);
+  const [adoptTab, setAdoptTab] = useState("generated"); // "generated" | "upload"
+  const [showAdoptPanel, setShowAdoptPanel] = useState(false);
 
   const normalizedVersions = useMemo(() => {
     const list = Array.isArray(versions) ? [...versions] : [];
@@ -155,8 +166,9 @@ export default function BusinessPlanPage() {
 
   async function downloadLivePlanPdf() {
     const source = String(plan?.narrative_markdown || "").trim();
-    if (!source) {
-      setError("Generate a business plan before downloading the PDF.");
+    const hasRealContent = source && !source.startsWith("Live Business Plan —") && source.length > 200;
+    if (!hasRealContent) {
+      setError("Adopt a business plan first to generate meaningful PDF content.");
       return;
     }
     try {
@@ -179,11 +191,92 @@ export default function BusinessPlanPage() {
     }
   }
 
+  async function loadBlueprints() {
+    setBlueprintsLoading(true);
+    try {
+      const res = await apiRequest("/blueprint/documents?type=business_plan&limit=10", "GET");
+      setBlueprints(Array.isArray(res) ? res : []);
+    } catch {
+      setBlueprints([]);
+    } finally {
+      setBlueprintsLoading(false);
+    }
+  }
+
+  async function adoptPlan({ documentId, rawContent } = {}) {
+    if (!businessId) return;
+    setAdopting(true);
+    setError("");
+    setAdoptResult(null);
+    try {
+      const res = await apiRequest(`/businesses/${businessId}/live-plan/import-extract`, "POST", {
+        idempotency_key: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+        document_id: documentId || undefined,
+        raw_content: rawContent || undefined,
+      });
+      setAdoptResult(res);
+      setShowAdoptPanel(false);
+      const planData = res?.plan?.plan ? { ...res.plan.plan, ...res.plan, narrative_markdown: res.plan.source_document_markdown || res.plan.narrative } : res?.plan;
+      if (planData) {
+        setPlan(planData);
+        setPlanMissing(false);
+        setShowLivePlanWorkspace(true);
+      }
+    } catch (err) {
+      const msg = String(err?.message || "");
+      setError(msg.replace(/^HTTP \d+:\s*/, "") || "Adoption failed. Please try again.");
+    } finally {
+      setAdopting(false);
+    }
+  }
+
+  async function adoptFile(file) {
+    if (!businessId || !file) return;
+    setAdopting(true);
+    setError("");
+    setAdoptResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const baseUrl = getApiBaseUrl();
+      const token = localStorage.getItem("ea_token");
+      const resp = await fetch(`${baseUrl}/businesses/${businessId}/live-plan/import-file`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw new Error(errData?.detail || `HTTP ${resp.status}`);
+      }
+      const res = await resp.json();
+      setAdoptResult(res);
+      setShowAdoptPanel(false);
+      const planData = res?.plan?.plan ? { ...res.plan.plan, ...res.plan } : res?.plan;
+      if (planData) {
+        setPlan(planData);
+        setPlanMissing(false);
+        setShowLivePlanWorkspace(true);
+      }
+    } catch (err) {
+      setError(String(err?.message || "File adoption failed."));
+    } finally {
+      setAdopting(false);
+    }
+  }
+
+  useEffect(() => { refreshGrants(); }, []);
+
   useEffect(() => {
     if (!businessId) return;
     loadLivePlan();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId, hasBlueprintGrant]);
+
+  useEffect(() => {
+    if (showLivePlanWorkspace && businessId) loadBlueprints();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showLivePlanWorkspace, businessId]);
 
   const healthTone = summary.health === "healthy" ? "emerald" : summary.health === "critical" ? "rose" : "amber";
   const statusTone = String(plan?.status || "").toUpperCase() === "ACTIVE" ? "emerald" : "slate";
@@ -281,178 +374,101 @@ export default function BusinessPlanPage() {
               <Spinner size={18} />
               Loading live plan...
             </div>
-          ) : planMissing || !plan ? (
-            <div className="flex flex-col gap-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 md:flex-row md:items-center md:justify-between">
-              <div className="max-w-2xl">
-                <div className="text-sm font-semibold text-slate-900">No live plan yet</div>
-                <div className="mt-1 text-xs leading-6 text-slate-600">
-                  Create a live business plan to seed assumptions, KPIs, and version history from your current workspace.
-                </div>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <Button
-                  onClick={createLivePlan}
-                  disabled={creating}
-                >
-                  {creating ? <Spinner size={16} /> : null}
-                  {creating ? "Creating..." : "Create live plan"}
-                </Button>
-                <Button variant="secondary" onClick={loadLivePlan} disabled={creating}>
-                  Refresh
-                </Button>
-              </div>
-            </div>
           ) : (
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-              <div className="flex-1 space-y-4">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <StatCard
-                    label="Plan status"
-                    value={String(plan?.status || "Draft").toLowerCase()}
-                    tone={statusTone}
-                    detail={plan?.current_version_id ? "Current version is active in this workspace" : "No current version linked"}
-                  />
-                  <StatCard
-                    label="Health"
-                    value={String(summary.health || "pending").replaceAll("_", " ")}
-                    tone={healthTone}
-                    detail="Derived from KPI variance signals"
-                  />
-                  <StatCard
-                    label="Alerts"
-                    value={String(alerts.length)}
-                    tone={alerts.length ? "amber" : "emerald"}
-                    detail={`${summary.off_track_count || 0} KPIs off track`}
-                  />
-                  <StatCard
-                    label="Versions"
-                    value={String(normalizedVersions.length)}
-                    detail={currentVersion ? `Current v${currentVersion.version_number}` : "No version history yet"}
-                  />
+            <div className="space-y-4">
+              {adoptResult && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <div className="mb-0.5 text-xs font-semibold text-emerald-700">Modules updated from: {adoptResult.source_title || "your plan"}</div>
+                  <div className="text-xs text-emerald-600">Populated: {(adoptResult.fields_populated || []).join(", ") || "plan seeded successfully"}</div>
+                </div>
+              )}
+              {plan && !adoptResult && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 flex items-center gap-3">
+                  <div className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
+                  <div className="text-xs text-slate-600">A plan is already active for this workspace. Adopt below to update your modules with a new plan.</div>
+                </div>
+              )}
+              <div className="rounded-2xl border border-indigo-200 bg-indigo-50/30 p-5">
+                <div className="mb-1 text-sm font-semibold text-slate-900">Adopt a Business Plan</div>
+                <p className="text-xs text-slate-500 mb-4">Select a generated plan to scan, extract and populate your modules — or upload your own.</p>
+
+                {/* Tabs */}
+                <div className="mb-4 flex gap-1 rounded-xl border border-slate-200 bg-white p-1 w-fit">
+                  {[["generated", "From generated plans"], ["upload", "Paste / upload text"]].map(([key, label]) => (
+                    <button key={key} type="button"
+                      onClick={() => setAdoptTab(key)}
+                      className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition ${adoptTab === key ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
+                      {label}
+                    </button>
+                  ))}
                 </div>
 
-                <SectionCard title={planTitle} subtitle="Live Business Plan">
-                  <div className="mb-4 flex justify-end">
-                    <Button variant="secondary" onClick={downloadLivePlanPdf}>
-                      Download PDF
-                    </Button>
-                  </div>
-                  <div className="prose prose-slate max-w-none rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-7">
-                    {plan?.narrative_markdown ? (
-                      <div dangerouslySetInnerHTML={{ __html: narrativeHtml }} />
-                    ) : (
-                      <div className="text-slate-500">
-                        Create or refresh the live plan to generate a narrative summary from the current assumptions and KPI signals.
-                      </div>
-                    )}
-                  </div>
-                </SectionCard>
-              </div>
-
-              <div className="w-full space-y-4 lg:max-w-md">
-                <SectionCard title="Plan details" subtitle="What this live plan is tracking right now.">
-                  <div className="space-y-3 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-slate-500">Business</span>
-                      <span className="font-semibold text-slate-900">{planTitle}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-slate-500">Source document</span>
-                      <span className="font-semibold text-slate-900">{plan?.source_document_id || "Workspace blueprint"}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-slate-500">Current version</span>
-                      <span className="font-semibold text-slate-900">{currentVersion ? `v${currentVersion.version_number}` : "Not set"}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-slate-500">Observation count</span>
-                      <span className="font-semibold text-slate-900">{String(summary.observation_count || 0)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-slate-500">Variance count</span>
-                      <span className="font-semibold text-slate-900">{String(summary.variance_count || variances.length || 0)}</span>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Pill tone={statusTone}>{String(plan?.status || "draft").toUpperCase()}</Pill>
-                    <Pill tone={healthTone}>{String(summary.health || "pending").replaceAll("_", " ").toUpperCase()}</Pill>
-                    <Pill tone={alerts.length ? "amber" : "emerald"}>{alerts.length} alerts</Pill>
-                  </div>
-                  <div className="mt-4 flex gap-2">
-                    <Button onClick={loadLivePlan} disabled={loading}>
-                      {loading ? <Spinner size={16} /> : null}
-                      Refresh
-                    </Button>
-                    <Button variant="secondary" onClick={loadLivePlan} disabled={creating}>
-                      {creating ? <Spinner size={16} /> : null}
-                      Refresh plan
-                    </Button>
-                  </div>
-                </SectionCard>
-
-                <SectionCard title="Versions" subtitle="Versioned plan history.">
+                {adoptTab === "generated" && (
                   <div className="space-y-2">
-                    {normalizedVersions.length ? (
-                      normalizedVersions.slice().reverse().map((version) => (
-                        <div key={version.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-sm font-semibold text-slate-900">Version {version.version_number}</div>
-                            <Pill tone={String(version.id) === String(plan?.current_version_id) ? "emerald" : "slate"}>
-                              {String(version.id) === String(plan?.current_version_id) ? "Current" : "Archived"}
-                            </Pill>
+                    {blueprintsLoading ? (
+                      <div className="flex items-center gap-2 py-4 text-xs text-slate-400"><Spinner size={14} /> Loading your generated plans…</div>
+                    ) : blueprints.length === 0 ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-center text-xs text-slate-500">
+                        No generated business plans found.{" "}
+                        <Link to="/blueprint?doc=business_plan" className="font-semibold text-indigo-600 hover:underline">Generate one first →</Link>
+                      </div>
+                    ) : (
+                      blueprints.map((doc) => (
+                        <div key={doc.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-800">{doc.title || "Business Plan"}</div>
+                            <div className="text-xs text-slate-400">{doc.company_name || ""}{doc.created_at ? ` · ${new Date(doc.created_at).toLocaleDateString()}` : ""}</div>
                           </div>
-                          <div className="mt-1 text-xs text-slate-600">
-                            {version.change_summary || "No summary available."}
-                          </div>
+                          <button type="button" disabled={adopting}
+                            onClick={() => adoptPlan({ documentId: doc.id })}
+                            className="ml-4 shrink-0 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-40">
+                            {adopting ? <span className="flex items-center gap-1.5"><Spinner size={12} />Scanning…</span> : "Adopt Plan"}
+                          </button>
                         </div>
                       ))
-                    ) : (
-                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">
-                        Version history will appear here after the live plan is created.
-                      </div>
                     )}
                   </div>
-                </SectionCard>
+                )}
 
-                <SectionCard title="KPIs" subtitle="Latest KPI snapshot from the live plan.">
-                  <div className="space-y-2">
-                    {kpis.length ? (
-                      kpis.slice(0, 6).map((kpi) => (
-                        <div key={kpi.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-sm font-semibold text-slate-900">{kpi.name || kpi.code}</div>
-                            <Pill tone={kpi.direction === "down" ? "amber" : "emerald"}>{String(kpi.domain || "").toLowerCase()}</Pill>
-                          </div>
-                          <div className="mt-1 text-xs text-slate-600">
-                            Target: {String(kpi.target_value_json ?? "n/a")} {kpi.unit ? ` ${kpi.unit}` : ""}
-                            {kpi.actual_value_json !== undefined && kpi.actual_value_json !== null ? ` · Actual: ${String(kpi.actual_value_json)}` : ""}
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">
-                        KPIs will appear here after the live plan is seeded.
+                {adoptTab === "upload" && (
+                  <div className="space-y-3">
+                    {/* File upload */}
+                    <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 hover:border-indigo-400 hover:bg-indigo-50/40 transition">
+                      <svg className="h-5 w-5 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1M12 12V4m0 0L8 8m4-4l4 4"/></svg>
+                      <div className="min-w-0">
+                        {uploadFile ? (
+                          <span className="block truncate text-xs font-semibold text-indigo-700">{uploadFile.name}</span>
+                        ) : (
+                          <span className="text-xs text-slate-500">Upload PDF, Word (.docx), image or text file</span>
+                        )}
+                        <span className="text-[10px] text-slate-400">PDF · DOCX · JPG · PNG · WEBP · TXT</span>
                       </div>
-                    )}
-                  </div>
-                </SectionCard>
+                      <input type="file" className="hidden"
+                        accept=".pdf,.docx,.doc,.txt,.md,.jpg,.jpeg,.png,.webp,.gif"
+                        onChange={(e) => { setUploadFile(e.target.files?.[0] || null); setUploadText(""); }}
+                      />
+                    </label>
 
-                <SectionCard title="Alerts" subtitle="Open signals that need attention.">
-                  <div className="space-y-2">
-                    {alerts.length ? (
-                      alerts.slice(0, 6).map((alert) => (
-                        <div key={alert.id} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-                          <div className="text-sm font-semibold text-slate-900">{alert.title || alert.alert_type || "Alert"}</div>
-                          <div className="mt-1 text-xs text-slate-600">{alert.description || "No description available."}</div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">
-                        No open alerts right now.
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                      <div className="h-px flex-1 bg-slate-200" />or paste text below<div className="h-px flex-1 bg-slate-200" />
+                    </div>
+
+                    <textarea
+                      rows={6}
+                      placeholder="Paste your business plan text here…"
+                      value={uploadText}
+                      onChange={(e) => { setUploadText(e.target.value); setUploadFile(null); }}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    />
+                    <button type="button"
+                      disabled={adopting || (!uploadText.trim() && !uploadFile)}
+                      onClick={() => uploadFile ? adoptFile(uploadFile) : adoptPlan({ rawContent: uploadText })}
+                      className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-40">
+                      {adopting ? <span className="flex items-center gap-1.5"><Spinner size={12} />Scanning…</span> : "Scan & Adopt"}
+                    </button>
                   </div>
-                </SectionCard>
+                )}
+
               </div>
             </div>
           )}

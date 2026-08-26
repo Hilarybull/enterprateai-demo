@@ -7,6 +7,9 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     # bcrypt limit is 72 bytes; enforce to avoid runtime errors
     password: str = Field(min_length=8, max_length=72)
+    full_name: str | None = Field(default=None, max_length=100)
+    phone: str | None = Field(default=None, max_length=30)
+    company: str | None = Field(default=None, max_length=150)
     ref_click_id: str | None = None
     ref_code: str | None = None
 
@@ -28,6 +31,7 @@ class UserPublic(BaseModel):
     picture: str | None = None
     auth_provider: str | None = None
     has_password: bool = False
+    email_verification_sent: bool = False
 
 
 class UpdateProfileRequest(BaseModel):

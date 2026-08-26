@@ -36,15 +36,16 @@ async def _select_restrictions(user_id: str, columns: str = "id,module_key,featu
         return []
 
 
-async def _select_users_with_block(columns: str = "id,email,created_at,is_blocked,block_reason", **kwargs) -> list:
+async def _select_users_with_block(columns: str = "id,email,name,phone,company,created_at,is_blocked,block_reason,email_verified", **kwargs) -> list:
     """Falls back to base columns if is_blocked column doesn't exist yet (pre-migration)."""
     try:
         return await sb_select("users", columns=columns, **kwargs)
     except Exception:
-        rows = await sb_select("users", columns="id,email,created_at", **kwargs)
+        rows = await sb_select("users", columns="id,email,name,created_at", **kwargs)
         for r in rows:
             r.setdefault("is_blocked", False)
             r.setdefault("block_reason", None)
+            r.setdefault("email_verified", None)
         return rows
 
 
@@ -188,9 +189,13 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
             {
                 "id": u["id"],
                 "email": u["email"],
+                "name": u.get("name"),
+                "phone": u.get("phone"),
+                "company": u.get("company"),
                 "created_at": u.get("created_at"),
                 "is_blocked": bool(u.get("is_blocked", False)),
                 "block_reason": u.get("block_reason"),
+                "email_verified": u.get("email_verified"),
             }
             for u in users
         ],
@@ -439,7 +444,10 @@ async def get_user_full_data(user_id: str, user=Depends(require_admin)) -> dict:
             "id": target["id"],
             "email": target["email"],
             "name": target.get("name"),
+            "phone": target.get("phone"),
+            "company": target.get("company"),
             "auth_provider": target.get("auth_provider"),
+            "email_verified": target.get("email_verified"),
             "created_at": target.get("created_at"),
             "is_blocked": bool(target.get("is_blocked", False)),
             "block_reason": target.get("block_reason"),
@@ -615,6 +623,62 @@ async def add_user_grant(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Run the user_platform_grants schema migration first. ({e})")
+
+
+ALL_MODULE_KEYS = [
+    "dashboard", "validation", "blueprint", "simulation",
+    "catalogue", "financials", "integrations", "registration",
+]
+
+
+@router.post("/users/{user_id}/grants/full-access")
+async def grant_full_access(user_id: str, user=Depends(require_admin)) -> dict:
+    """Grant all modules to a user in one shot."""
+    # Fetch existing grants in one query
+    try:
+        existing_rows = await sb_select(
+            "user_platform_grants",
+            filters=[("user_id", "eq", user_id)],
+            columns="module_key,feature_key",
+        )
+    except Exception:
+        existing_rows = []
+
+    existing_keys = {r["module_key"] for r in existing_rows if not r.get("feature_key")}
+    added = []
+    already = []
+    docs = []
+    for module_key in ALL_MODULE_KEYS:
+        if module_key in existing_keys:
+            already.append(module_key)
+        else:
+            docs.append({
+                "id": str(uuid4()),
+                "user_id": user_id,
+                "module_key": module_key,
+                "feature_key": "",
+                "created_by": user.get("id"),
+            })
+            added.append(module_key)
+
+    if docs:
+        try:
+            for doc in docs:
+                await sb_insert("user_platform_grants", doc)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to insert grants: {e}")
+
+    return {"added": added, "already_existed": already}
+
+
+@router.delete("/users/{user_id}/grants/full-access", status_code=204, response_class=Response)
+async def revoke_full_access(user_id: str, user=Depends(require_admin)) -> Response:
+    """Remove all module grants from a user."""
+    try:
+        await sb_delete("user_platform_grants", filters=[("user_id", "eq", user_id)])
+    except Exception:
+        pass
+    return Response(status_code=204)
 
 
 @router.delete("/users/{user_id}/grants/{grant_id}", status_code=204, response_class=Response)

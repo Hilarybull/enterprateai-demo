@@ -670,6 +670,8 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   const [grantModule, setGrantModule] = useState("");
   const [addingGrant, setAddingGrant] = useState(false);
   const [removingGrantId, setRemovingGrantId] = useState(null);
+  const [grantingFullAccess, setGrantingFullAccess] = useState(false);
+  const [revokingFullAccess, setRevokingFullAccess] = useState(false);
   const [blockLoading, setBlockLoading] = useState(false);
   const [showBlockForm, setShowBlockForm] = useState(false);
   const [blockReasonInput, setBlockReasonInput] = useState("");
@@ -769,6 +771,35 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
       showToast("error", e.message || "Failed to remove grant.");
     } finally {
       setRemovingGrantId(null);
+    }
+  }
+
+  async function handleGrantFullAccess() {
+    if (grantingFullAccess) return;
+    setGrantingFullAccess(true);
+    try {
+      const res = await apiRequest(`/admin/users/${user.id}/grants/full-access`, "POST");
+      await loadGrants(user.id);
+      const added = (res?.added || []).length;
+      showToast("success", added > 0 ? `Full access granted (${added} modules unlocked).` : "All modules were already granted.");
+    } catch (e) {
+      showToast("error", e.message || "Failed to grant full access.");
+    } finally {
+      setGrantingFullAccess(false);
+    }
+  }
+
+  async function handleRevokeFullAccess() {
+    if (revokingFullAccess) return;
+    setRevokingFullAccess(true);
+    try {
+      await apiRequest(`/admin/users/${user.id}/grants/full-access`, "DELETE");
+      setGrants([]);
+      showToast("success", "All module grants removed.");
+    } catch (e) {
+      showToast("error", e.message || "Failed to revoke access.");
+    } finally {
+      setRevokingFullAccess(false);
     }
   }
 
@@ -999,6 +1030,25 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                 </div>
               ))}
             </div>
+
+            {(user.name || user.phone || user.company || user.email_verified != null) && (
+              <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 space-y-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-2">Account details</div>
+                {user.name && <div className="flex gap-2 text-xs"><span className="text-slate-400 w-20 shrink-0">Full name</span><span className="font-medium text-slate-700">{user.name}</span></div>}
+                {user.phone && <div className="flex gap-2 text-xs"><span className="text-slate-400 w-20 shrink-0">Phone</span><span className="font-medium text-slate-700">{user.phone}</span></div>}
+                {user.company && <div className="flex gap-2 text-xs"><span className="text-slate-400 w-20 shrink-0">Company</span><span className="font-medium text-slate-700">{user.company}</span></div>}
+                <div className="flex gap-2 text-xs">
+                  <span className="text-slate-400 w-20 shrink-0">Email verified</span>
+                  {user.email_verified === true ? (
+                    <span className="font-semibold text-emerald-600">Yes</span>
+                  ) : user.email_verified === false ? (
+                    <span className="font-semibold text-rose-600">No — awaiting verification</span>
+                  ) : (
+                    <span className="text-slate-400">Legacy (pre-verification)</span>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Owned workspaces ({ownedWorkspaces.length})</h3>
@@ -1305,6 +1355,28 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
               <p className="mb-3 text-[11px] text-slate-500 leading-relaxed">
                 Grants unlock plan-locked modules for this user, overriding their current subscription limits.
               </p>
+
+              {/* Full access actions */}
+              <div className="mb-3 flex gap-2">
+                <button
+                  type="button"
+                  disabled={grantingFullAccess}
+                  onClick={handleGrantFullAccess}
+                  className="flex-1 rounded-xl bg-emerald-600 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  {grantingFullAccess ? "Granting…" : "Grant Full Access"}
+                </button>
+                {grants.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={revokingFullAccess}
+                    onClick={handleRevokeFullAccess}
+                    className="flex-1 rounded-xl border border-rose-200 bg-rose-50 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-100 disabled:opacity-40"
+                  >
+                    {revokingFullAccess ? "Revoking…" : "Revoke All"}
+                  </button>
+                )}
+              </div>
 
               {/* Current grants */}
               {grants.length > 0 ? (
@@ -2162,7 +2234,8 @@ export default function AdminPage() {
 
   const filteredUsers = useMemo(() =>
     (stats?.users || []).filter((u) =>
-      !q || u.email?.toLowerCase().includes(q) || u.id?.toLowerCase().includes(q)
+      !q || u.email?.toLowerCase().includes(q) || u.id?.toLowerCase().includes(q) ||
+      u.name?.toLowerCase().includes(q) || u.company?.toLowerCase().includes(q)
     ), [stats?.users, q]);
 
   const filteredMembers = useMemo(() =>
@@ -3020,6 +3093,10 @@ export default function AdminPage() {
                   onClick={() => downloadCSV(stats?.users || [], [
                     { key: "id", label: "ID" },
                     { key: "email", label: "Email" },
+                    { key: "name", label: "Name" },
+                    { key: "phone", label: "Phone" },
+                    { key: "company", label: "Company" },
+                    { key: "email_verified", label: "Email Verified" },
                     { key: "created_at", label: "Joined" },
                   ], "users.csv")}
                   className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 transition hover:bg-slate-50"
@@ -3032,11 +3109,15 @@ export default function AdminPage() {
             <DataTable
               columns={[
                 { key: "email", label: "Email", render: (r) => (
-                  <div className="flex items-center gap-2">
-                    <span className={`font-medium ${r.email === ADMIN_EMAIL ? "text-rose-600" : "text-slate-800"}`}>{r.email}</span>
-                    {r.email === ADMIN_EMAIL && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">admin</span>}
-                    {r.is_blocked && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">Blocked</span>}
-                  </div>
+                  <>
+                    <div className="flex items-center gap-2">
+                      <span className={`font-medium ${r.email === ADMIN_EMAIL ? "text-rose-600" : "text-slate-800"}`}>{r.email}</span>
+                      {r.email === ADMIN_EMAIL && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">admin</span>}
+                      {r.is_blocked && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">Blocked</span>}
+                      {r.email_verified === false && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Unverified</span>}
+                    </div>
+                    {r.name && <div className="text-[11px] text-slate-400">{r.name}{r.company ? ` · ${r.company}` : ""}</div>}
+                  </>
                 )},
                 { key: "id", label: "ID", render: (r) => <span className="font-mono text-[11px] text-slate-400">{r.id.slice(0, 12)}…</span> },
                 { key: "created_at", label: "Joined", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },

@@ -12,7 +12,7 @@ from app.shared.auth.google import verify_google_id_token
 from app.shared.auth.schemas import ChangePasswordRequest, ForgotPasswordRequest, GoogleAuthRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserPublic
 from app.shared.auth.security import create_access_token, hash_password, verify_password
 from app.shared.auth.deps import get_current_user
-from app.shared.email.resend import send_password_reset_email, send_password_otp_email
+from app.shared.email.resend import send_password_reset_email, send_password_otp_email, send_email_verification_email
 
 logger = logging.getLogger(__name__)
 
@@ -87,13 +87,44 @@ async def _resolve_referral_attribution(new_user_id: str, ref_click_id: str | No
 
 @router.post("/register", response_model=UserPublic)
 async def register(payload: RegisterRequest) -> UserPublic:
+    settings = get_settings()
     existing = await sb_select("users", filters=[("email", "eq", payload.email.lower())], single=True)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
-    user_doc = {"id": payload.email.lower(), "email": payload.email.lower(), "password_hash": hash_password(payload.password)}
+    verification_token = secrets.token_urlsafe(32)
+    user_doc = {
+        "id": payload.email.lower(),
+        "email": payload.email.lower(),
+        "password_hash": hash_password(payload.password),
+        "email_verified": False,
+        "email_verification_token": verification_token,
+        "name": payload.full_name,
+        "phone": payload.phone,
+        "company": payload.company,
+    }
     await sb_insert("users", user_doc)
     await _resolve_referral_attribution(user_doc["id"], payload.ref_click_id, payload.ref_code)
-    return UserPublic(id=user_doc["id"], email=user_doc["email"])
+    try:
+        # frontend_url may alias CORS_ORIGINS which can be a comma-separated list
+        frontend_base = str(settings.frontend_url).split(",")[0].strip().rstrip("/")
+        verify_url = f"{frontend_base}/verify-email?token={verification_token}"
+        await send_email_verification_email(to_email=payload.email, verify_url=verify_url, name=payload.full_name)
+    except Exception as e:
+        logger.warning("Verification email send failed for %s: %s", payload.email, e)
+    return UserPublic(id=user_doc["id"], email=user_doc["email"], email_verification_sent=True)
+
+
+@router.get("/verify-email")
+async def verify_email(token: str) -> dict:
+    user = await sb_select("users", filters=[("email_verification_token", "eq", token)], single=True)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification link.")
+    await sb_update(
+        "users",
+        filters=[("id", "eq", user["id"])],
+        payload={"email_verified": True, "email_verification_token": None},
+    )
+    return {"verified": True, "email": user["email"]}
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -101,6 +132,8 @@ async def login(payload: LoginRequest) -> TokenResponse:
     user = await sb_select("users", filters=[("id", "eq", payload.email.lower())], single=True)
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    if user.get("email_verified") is False:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email not verified. Please check your inbox and click the verification link.")
     if user.get("is_blocked"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account suspended. Contact support at tech.support@enterprateai.com")
     token = create_access_token(subject=user["id"])
@@ -414,7 +447,7 @@ async def forgot_password(payload: ForgotPasswordRequest) -> dict:
         payload={"reset_token": token, "reset_token_expires_at": expires_at},
     )
 
-    reset_url = f"{settings.frontend_url}/reset-password?token={token}"
+    reset_url = f"{str(settings.frontend_url).split(',')[0].strip().rstrip('/')}/reset-password?token={token}"
     await send_password_reset_email(
         to_email=user["email"],
         reset_url=reset_url,

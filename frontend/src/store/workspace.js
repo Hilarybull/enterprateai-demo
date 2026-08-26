@@ -87,7 +87,8 @@ export const useWorkspaceStore = create(
               memberWorkspaceName: null,
             };
           }
-          if (state.workspaceOwnerEmail && state.workspaceOwnerEmail !== email) {
+          const ownerMismatch = state.workspaceOwnerEmail && state.workspaceOwnerEmail !== email;
+          if (ownerMismatch) {
             return {
               workspaceId: null,
               workspaceName: null,

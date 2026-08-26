@@ -343,7 +343,12 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
 
   const [companyName, setCompanyName] = useState(p.company_name || "");
   const [businessType, setBusinessType] = useState(p.business_type || "");
-  const [primaryIndustry, setPrimaryIndustry] = useState(p.primary_industry || "");
+  const [primaryIndustry, setPrimaryIndustry] = useState(
+    p.primary_industry && !INDUSTRIES.some((o) => o.value === p.primary_industry) ? "Other" : (p.primary_industry || "")
+  );
+  const [customIndustry, setCustomIndustry] = useState(
+    p.primary_industry && !INDUSTRIES.some((o) => o.value === p.primary_industry) ? p.primary_industry : ""
+  );
   const [tagline, setTagline] = useState(p.tagline || "");
   const [logo, setLogo] = useState(p.logo_data_url || null);
   const [yearEstablished, setYearEstablished] = useState(p.year_established ? String(p.year_established) : "");
@@ -402,7 +407,8 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
     setMsg(null);
     if (!companyName.trim()) return setMsg({ type: "error", text: "Company name is required." });
     if (!businessType) return setMsg({ type: "error", text: "Business type is required." });
-    if (!primaryIndustry) return setMsg({ type: "error", text: "Primary industry is required." });
+    const resolvedIndustry = primaryIndustry === "Other" ? customIndustry.trim() : primaryIndustry;
+    if (!resolvedIndustry) return setMsg({ type: "error", text: "Primary industry is required." });
     if (!aboutCompany.trim()) return setMsg({ type: "error", text: "About company is required." });
     const resolvedCountry = country === "Other" ? customCountry.trim() : country.trim();
     const resolvedCity = city === "Other" ? customCity.trim() : city.trim();
@@ -421,7 +427,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
     const profile = {
       company_name: companyName.trim(),
       business_type: businessType,
-      primary_industry: primaryIndustry,
+      primary_industry: resolvedIndustry,
       about_company: aboutCompany.trim(),
       services: validServices,
       country: resolvedCountry,
@@ -501,9 +507,18 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
             </SelectInput>
           </Field>
           <Field label="Primary industry *">
-            <SelectInput value={primaryIndustry} onChange={(e) => setPrimaryIndustry(e.target.value)} placeholder="Select industry">
+            <SelectInput value={primaryIndustry} onChange={(e) => { setPrimaryIndustry(e.target.value); setCustomIndustry(""); }} placeholder="Select industry">
               {INDUSTRIES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </SelectInput>
+            {primaryIndustry === "Other" && (
+              <Input
+                className="mt-2"
+                value={customIndustry}
+                onChange={(e) => setCustomIndustry(e.target.value)}
+                placeholder="Enter your industry"
+                maxLength={80}
+              />
+            )}
           </Field>
           <Field label="Company size">
             <SelectInput value={companySize} onChange={(e) => setCompanySize(e.target.value)} placeholder="Select size">

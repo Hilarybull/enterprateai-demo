@@ -1169,3 +1169,180 @@ async def build_performance(*, user_id: str, business_id: str) -> dict[str, Any]
         "health": "healthy" if off_track == 0 else "at_risk" if off_track < max(1, len(kpis) // 2) else "critical",
     }
     return {"plan": plan, "current_version": current, "summary": summary, "kpis": kpis, "observations": observations, "variances": variances, "alerts": bundle["alerts"]}
+
+
+async def import_extract_plan(
+    *,
+    user_id: str,
+    business_id: str,
+    document_id: str | None = None,
+    raw_content: str | None = None,
+) -> dict[str, Any]:
+    """
+    Adopt a business plan (from a blueprint document or raw text), use AI to extract
+    structured fields, seed the live plan, and update the workspace profile.
+    Returns a summary of what was populated.
+    """
+    from app.shared.llm.openai_client import pick_llm_for_user
+
+    # 1 — resolve markdown source
+    markdown: str = ""
+    doc_title: str = "Business Plan"
+    doc_meta: dict[str, Any] = {}
+
+    if document_id:
+        try:
+            from app.modules.blueprint.repository import get_document
+            doc = await get_document(user_id=user_id, document_id=document_id)
+            if doc:
+                markdown = str(doc.get("document_markdown") or "")
+                doc_title = str(doc.get("title") or doc.get("type") or "Business Plan")
+                doc_meta = {
+                    "id": doc.get("id"),
+                    "title": doc_title,
+                    "company_name": doc.get("company_name"),
+                    "industry": doc.get("industry"),
+                }
+        except Exception:
+            pass
+
+    if not markdown and raw_content:
+        markdown = raw_content.strip()
+
+    if not markdown:
+        raise ValueError("No content to extract from. Provide a document_id or raw_content.")
+
+    # 2 — AI extraction
+    extracted: dict[str, Any] = {}
+    try:
+        llm = await pick_llm_for_user(user_id)
+        extraction_prompt = f"""Extract structured business information from the following business plan document.
+Return ONLY valid JSON with these fields (use null for anything not found):
+{{
+  "business_name": "...",
+  "industry": "...",
+  "target_market": "...",
+  "products_services": ["...", "..."],
+  "pricing_model": "...",
+  "monthly_revenue_target": <number or null>,
+  "gross_margin_pct": <number 0-100 or null>,
+  "cash_runway_months": <number or null>,
+  "active_customers_target": <number or null>,
+  "key_assumptions": ["...", "..."],
+  "main_risks": ["...", "..."],
+  "unique_value_proposition": "..."
+}}
+
+Business plan:
+{markdown[:6000]}"""
+
+        response = await llm.chat_completions_create(
+            messages=[{"role": "user", "content": extraction_prompt}],
+            model=None,
+            temperature=0.1,
+            max_tokens=800,
+        )
+        raw = (response.choices[0].message.content or "").strip()
+        # strip markdown fences if present
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:])
+            raw = raw.rsplit("```", 1)[0].strip()
+        extracted = json.loads(raw)
+    except Exception:
+        # fall back to regex extraction
+        extracted = {
+            "business_name": doc_meta.get("company_name") or _extract_business_name(markdown),
+            "industry": doc_meta.get("industry"),
+            "monthly_revenue_target": _extract_first_number(markdown, ("revenue", "turnover", "sales")),
+            "gross_margin_pct": _extract_first_number(markdown, ("gross margin", "margin")),
+            "cash_runway_months": _extract_first_number(markdown, ("runway",)),
+            "active_customers_target": _extract_first_number(markdown, ("customers", "clients")),
+        }
+
+    # 3 — merge doc_meta into extracted
+    if doc_meta.get("company_name") and not extracted.get("business_name"):
+        extracted["business_name"] = doc_meta["company_name"]
+    if doc_meta.get("industry") and not extracted.get("industry"):
+        extracted["industry"] = doc_meta["industry"]
+
+    # 4 — create or update live plan with source document
+    plan = await ensure_live_plan(
+        user_id=user_id,
+        business_id=business_id,
+        source_document_id=document_id,
+    )
+
+    # 5 — patch live plan's assumption rows with richer extracted data
+    plan_id = plan["id"]
+    now = _now_iso()
+    current = await _get_current_version(plan)
+    version_id = current["id"] if current else None
+
+    fields_populated: list[str] = []
+
+    async def _upsert_assumption(metric_code: str, name: str, value: Any, domain: str, confidence: float = 0.85) -> None:
+        if value is None:
+            return
+        existing = await _safe_select(
+            "live_plan_assumptions",
+            filters=[("live_plan_id", "eq", plan_id), ("metric_code", "eq", metric_code)],
+            single=True,
+        )
+        payload = {
+            "assumption_value_json": value,
+            "target_value_json": value,
+            "source_type": "IMPORTED_PLAN",
+            "source_reference_id": document_id,
+            "confidence_score": confidence,
+            "updated_at": now,
+        }
+        if existing:
+            await _safe_update("live_plan_assumptions", payload=payload, filters=[("id", "eq", existing["id"])])
+        else:
+            await _safe_insert("live_plan_assumptions", {
+                "id": str(uuid4()), "live_plan_id": plan_id,
+                "live_plan_version_id": version_id,
+                "domain": domain, "entity_type": "business", "entity_id": business_id,
+                "metric_code": metric_code, "assumption_name": name,
+                "created_at": now, "updated_at": now,
+                **payload,
+            })
+        fields_populated.append(name)
+
+    await _upsert_assumption("business_name", "Business name", extracted.get("business_name"), "STRATEGIC", 1.0)
+    await _upsert_assumption("industry", "Primary industry", extracted.get("industry"), "MARKET")
+    await _upsert_assumption("target_market", "Target market", extracted.get("target_market"), "MARKET")
+    await _upsert_assumption("pricing_model", "Pricing model", extracted.get("pricing_model"), "COMMERCIAL")
+    await _upsert_assumption("unique_value_proposition", "Value proposition", extracted.get("unique_value_proposition"), "STRATEGIC")
+    await _upsert_assumption("monthly_revenue_target", "Monthly revenue target", extracted.get("monthly_revenue_target"), "FINANCIAL")
+    await _upsert_assumption("gross_margin_pct", "Gross margin %", extracted.get("gross_margin_pct"), "FINANCIAL")
+    await _upsert_assumption("cash_runway_months", "Cash runway (months)", extracted.get("cash_runway_months"), "FINANCIAL")
+    await _upsert_assumption("active_customers_target", "Active customers target", extracted.get("active_customers_target"), "CUSTOMER")
+
+    products = extracted.get("products_services") or []
+    if isinstance(products, list) and products:
+        await _upsert_assumption("products_services", "Products / services", products, "COMMERCIAL")
+
+    # 6 — activate plan
+    await _safe_update(
+        "live_business_plans",
+        payload={"status": "ACTIVE", "adopted_at": now, "updated_at": now, "narrative_markdown": markdown or None},
+        filters=[("id", "eq", plan_id), ("user_id", "eq", user_id)],
+    )
+
+    return {
+        "plan": await get_live_plan(user_id=user_id, business_id=business_id),
+        "extracted": extracted,
+        "fields_populated": fields_populated,
+        "source_title": doc_title,
+    }
+
+
+def _extract_business_name(markdown: str) -> str | None:
+    for line in markdown.splitlines():
+        line = line.strip()
+        if line.startswith("#"):
+            name = line.lstrip("#").strip()
+            if name:
+                return name
+    return None

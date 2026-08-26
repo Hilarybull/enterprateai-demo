@@ -331,6 +331,7 @@ export default function Layout() {
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
   const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const setWorkspaceCompanyName = useWorkspaceStore((s) => s.setWorkspaceCompanyName);
+  const setWorkspaceOwnerEmail = useWorkspaceStore((s) => s.setWorkspaceOwnerEmail);
   const workspaceCompanyName = useWorkspaceStore((s) => s.workspaceCompanyName);
   const setDecisionStatus = useWorkspaceStore((s) => s.setDecisionStatus);
   const setServiceDecisionStatus = useWorkspaceStore((s) => s.setServiceDecisionStatus);
@@ -360,6 +361,7 @@ export default function Layout() {
   const userPicture = useAuthStore((s) => s.picture);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
   const platformGrants = useAuthStore((s) => s.platformGrants);
+  const refreshGrants = useAuthStore((s) => s.refreshGrants);
   const subscription = useAuthStore((s) => s.subscription);
   const profileInitials = userName
     ? (userName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || initialsFromEmail(email))
@@ -519,6 +521,10 @@ export default function Layout() {
   }, [token]);
 
   useEffect(() => {
+    if (token) refreshGrants();
+  }, [token]);
+
+  useEffect(() => {
     if (!token) return;
     let cancelled = false;
 
@@ -557,6 +563,7 @@ export default function Layout() {
         setWorkspaceName(ws.name || null);
         setWorkspaceLogo(ws?.data?.workspace_profile?.logo_data_url || null);
         setWorkspaceCompanyName(ws?.data?.workspace_profile?.company_name || null);
+        setWorkspaceOwnerEmail(email || null);
         setWorkspaceLoadedAt(new Date().toISOString());
         const rfqList = ws?.data?.financials?.rfq_requests;
         const pendingRfqs = Array.isArray(rfqList)
@@ -644,7 +651,7 @@ export default function Layout() {
       cancelled = true;
       window.removeEventListener("ea:workspace:refresh", loadWorkspace);
     };
-  }, [token, setCurrency, setDecisionStatus, setDraftIdeaValidation, setDraftServiceIdea, setIdeaValidation, setInputs, setServiceDecisionStatus, setValidation, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, setWorkspaceLoadedAt, setMemberMode, clearMemberMode]);
+  }, [token, email, setCurrency, setDecisionStatus, setDraftIdeaValidation, setDraftServiceIdea, setIdeaValidation, setInputs, setServiceDecisionStatus, setValidation, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, setWorkspaceOwnerEmail, setWorkspaceLoadedAt, setMemberMode, clearMemberMode]);
 
   const filteredNav = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
