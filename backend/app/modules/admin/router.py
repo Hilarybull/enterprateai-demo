@@ -665,8 +665,7 @@ async def grant_full_access(user_id: str, user=Depends(require_admin)) -> dict:
 
     if docs:
         try:
-            for doc in docs:
-                await sb_insert("user_platform_grants", doc)
+            await sb_insert("user_platform_grants", docs)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to insert grants: {e}")
 
@@ -1011,13 +1010,16 @@ async def admin_grant_user_credits(user_id: str, payload: CreditGrantPayload, us
     from app.modules.credits import service as credit_svc
     if payload.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive.")
-    result = await credit_svc.grant_credits(
-        user_id,
-        payload.amount,
-        grant_type=payload.grant_type or "admin_adjustment",
-        reason=payload.reason or "Admin credit grant",
-    )
-    return result
+    try:
+        result = await credit_svc.grant_credits(
+            user_id,
+            payload.amount,
+            grant_type=payload.grant_type or "admin_adjustment",
+            reason=payload.reason or "Admin credit grant",
+        )
+        return result or {"status": "granted", "user_id": user_id, "amount": payload.amount}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Credit grant failed: {e}")
 
 
 @router.post("/users/{user_id}/credits/provision")
