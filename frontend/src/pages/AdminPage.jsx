@@ -725,7 +725,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   async function loadRestrictions(userId) {
     setRestrictionsLoading(true);
     try {
-      const data = await apiRequest(`/admin/users/${userId}/restrictions`, "GET");
+      const data = await apiRequest(`/admin/users/${encodeURIComponent(userId)}/restrictions`, "GET");
       setRestrictions(data || []);
     } catch {
       setRestrictions([]);
@@ -737,7 +737,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   async function loadGrants(userId) {
     setGrantsLoading(true);
     try {
-      const data = await apiRequest(`/admin/users/${userId}/grants`, "GET");
+      const data = await apiRequest(`/admin/users/${encodeURIComponent(userId)}/grants`, "GET");
       setGrants(data || []);
     } catch {
       setGrants([]);
@@ -750,7 +750,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     if (!grantModule || addingGrant) return;
     setAddingGrant(true);
     try {
-      const g = await apiRequest(`/admin/users/${user.id}/grants`, "POST", { module_key: grantModule, feature_key: "" });
+      const g = await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/grants`, "POST", { module_key: grantModule, feature_key: "" });
       setGrants((prev) => [...prev, g]);
       setGrantModule("");
       showToast("success", `Access granted to ${grantModule}.`);
@@ -764,7 +764,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   async function handleRemoveGrant(id) {
     setRemovingGrantId(id);
     try {
-      await apiRequest(`/admin/users/${user.id}/grants/${id}`, "DELETE");
+      await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/grants/${id}`, "DELETE");
       setGrants((prev) => prev.filter((g) => g.id !== id));
       showToast("success", "Grant removed.");
     } catch (e) {
@@ -778,7 +778,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     if (grantingFullAccess) return;
     setGrantingFullAccess(true);
     try {
-      const res = await apiRequest(`/admin/users/${user.id}/grants/full-access`, "POST");
+      const res = await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/grants/full-access`, "POST");
       await loadGrants(user.id);
       const added = (res?.added || []).length;
       showToast("success", added > 0 ? `Full access granted (${added} modules unlocked).` : "All modules were already granted.");
@@ -793,7 +793,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     if (revokingFullAccess) return;
     setRevokingFullAccess(true);
     try {
-      await apiRequest(`/admin/users/${user.id}/grants/full-access`, "DELETE");
+      await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/grants/full-access`, "DELETE");
       setGrants([]);
       showToast("success", "All module grants removed.");
     } catch (e) {
@@ -806,7 +806,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   async function loadSubscription(userId) {
     setSubscriptionLoading(true);
     try {
-      const data = await apiRequest(`/admin/users/${userId}/subscription`, "GET");
+      const data = await apiRequest(`/admin/users/${encodeURIComponent(userId)}/subscription`, "GET");
       setSubscription(data);
     } catch {
       setSubscription(false);
@@ -819,7 +819,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     if (!user || trialLoading) return;
     setTrialLoading(true);
     try {
-      const res = await apiRequest(`/admin/users/${user.id}/renew-trial`, "POST");
+      const res = await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/renew-trial`, "POST");
       setSubscription((s) => ({ ...s, status: "trial", current_period_end: res.trial_end }));
       showToast("success", `Free trial renewed — expires ${new Date(res.trial_end).toLocaleDateString()}`);
     } catch (e) {
@@ -832,7 +832,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   async function loadCredits(userId) {
     setCreditsLoading(true);
     try {
-      const data = await apiRequest(`/admin/users/${userId}/credits`, "GET");
+      const data = await apiRequest(`/admin/users/${encodeURIComponent(userId)}/credits`, "GET");
       setCredits(data);
     } catch {
       setCredits(null);
@@ -846,7 +846,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     if (!amount || amount <= 0 || grantLoading) return;
     setGrantLoading(true);
     try {
-      await apiRequest(`/admin/users/${user.id}/credits/grant`, "POST", {
+      await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/credits/grant`, "POST", {
         amount,
         reason: grantReason.trim() || "Admin credit grant",
         grant_type: "admin_adjustment",
@@ -866,7 +866,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     if (provisionLoading) return;
     setProvisionLoading(true);
     try {
-      const res = await apiRequest(`/admin/users/${user.id}/credits/provision`, "POST");
+      const res = await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/credits/provision`, "POST");
       showToast("success", `Plan allocation issued for ${res.plan_code || "user"}.`);
       loadCredits(user.id);
     } catch (e) {
@@ -879,7 +879,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   async function loadFullData(userId) {
     setFullDataLoading(true);
     try {
-      const data = await apiRequest(`/admin/users/${userId}/full-data`, "GET");
+      const data = await apiRequest(`/admin/users/${encodeURIComponent(userId)}/full-data`, "GET");
       setFullData(data);
     } catch (e) {
       showToast("error", e.message || "Failed to load user data.");
@@ -892,7 +892,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     if (!user || blockLoading) return;
     setBlockLoading(true);
     try {
-      const updated = await apiRequest(`/admin/users/${user.id}/block`, "PATCH", { reason: blockReasonInput || "Blocked by administrator" });
+      const updated = await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/block`, "PATCH", { reason: blockReasonInput || "Blocked by administrator" });
       onUserUpdated(updated);
       showToast("success", `${user.email} has been blocked.`);
       setShowBlockForm(false);
@@ -908,7 +908,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     if (!user || blockLoading) return;
     setBlockLoading(true);
     try {
-      const updated = await apiRequest(`/admin/users/${user.id}/unblock`, "PATCH");
+      const updated = await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/unblock`, "PATCH");
       onUserUpdated(updated);
       showToast("success", `${user.email} has been unblocked.`);
     } catch (e) {
@@ -922,7 +922,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     if (!addModule || addingRestriction) return;
     setAddingRestriction(true);
     try {
-      const r = await apiRequest(`/admin/users/${user.id}/restrictions`, "POST", {
+      const r = await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/restrictions`, "POST", {
         module_key: addModule,
         feature_key: addFeature || null,
       });
@@ -940,7 +940,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   async function handleRemoveRestriction(id) {
     setRemovingId(id);
     try {
-      await apiRequest(`/admin/users/${user.id}/restrictions/${id}`, "DELETE");
+      await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/restrictions/${id}`, "DELETE");
       setRestrictions((prev) => prev.filter((r) => r.id !== id));
       showToast("success", "Restriction removed.");
     } catch (e) {
@@ -2165,7 +2165,7 @@ export default function AdminPage() {
       label: "Delete user",
       successMsg: `User "${userEmail}" deleted.`,
       afterAction: () => setUserDetail(null),
-      action: () => apiRequest(`/admin/users/${userId}`, "DELETE"),
+      action: () => apiRequest(`/admin/users/${encodeURIComponent(userId)}`, "DELETE"),
     });
   }
 
