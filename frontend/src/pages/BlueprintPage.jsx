@@ -655,8 +655,10 @@ export default function BlueprintPage() {
       const name = workspaceProfile?.company_name || ctx.business_name || "";
       if (name) setCompanyName(name);
     }
-    if (!dirtyFields.industry && !industry)
-      setIndustry(workspaceProfile?.primary_industry || ctx.primary_industry || ctx.business_type || "");
+    if (!dirtyFields.industry && !industry) {
+      const ctxSector = ctx.sector_category === "Other" ? (ctx.sector_other || "") : (ctx.sector_category || ctx.sector || "");
+      setIndustry(workspaceProfile?.primary_industry || ctx.primary_industry || ctxSector || ctx.business_type || "");
+    }
     if (!dirtyFields.targetMarket && !targetMarket)
       setTargetMarket(workspaceProfile?.target_customer_type || prob.customer_segment || "");
     if (!dirtyFields.problem && !problem && prob.problem_type) setProblem(prob.problem_type);
@@ -788,8 +790,10 @@ export default function BlueprintPage() {
         // Master data fields: workspace profile always wins; idea validation only fills genuine gaps
         if (!dirtyFields.companyName && !companyName)
           setCompanyName(workspaceProfile.company_name || profile.business_name || "");
-        if (!dirtyFields.industry && !industry)
-          setIndustry(workspaceProfile.primary_industry || profile.primary_industry || profile.business_type || ivCtx.primary_industry || ivCtx.business_type || "");
+        if (!dirtyFields.industry && !industry) {
+          const ivSector = ivCtx.sector_category === "Other" ? (ivCtx.sector_other || "") : (ivCtx.sector_category || ivCtx.sector || "");
+          setIndustry(workspaceProfile.primary_industry || profile.primary_industry || ivSector || profile.business_type || ivCtx.primary_industry || ivCtx.business_type || "");
+        }
         if (!dirtyFields.targetMarket && !targetMarket)
           setTargetMarket(workspaceProfile.target_customer_type || ivProb.customer_segment || "");
         if (!dirtyFields.valueProp && !valueProp) {
@@ -2551,12 +2555,6 @@ export default function BlueprintPage() {
             {error}
           </div>
         ) : null}
-        <IllustrationCard
-          title="Blueprint overview"
-          subtitle="Polished document structure with clean sections."
-        >
-          <BlueprintIllustration />
-        </IllustrationCard>
         <SectionCard title="Documents" subtitle="Click a document to generate it.">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {DOCUMENTS.map((d) => {

@@ -1416,11 +1416,11 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             {c.email ? ` • ${c.email}` : ""}{c.phone_number ? ` • ${c.phone_number}` : ""}
                           </div>
                         </div>
-                        <div className="flex gap-2">
-                          <Button variant="secondary" onClick={() => { const industryVal = c.industry || ""; setEditingCustomerId(c.id); setCustomerForm({ name: c.name, address: c.address || "", email: c.email || "", phone_number: c.phone_number || "", payment_terms: String(c.payment_terms || "14"), industry: industryVal }); setCustomerIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal)); }}>Edit</Button>
-                          <Button variant="ghost" onClick={() => archiveEntity("customers", c.id)}>Archive</Button>
-                          <Button variant="ghost" onClick={() => deleteEntity("customers", c.id)}>Delete</Button>
-                        </div>
+                        <ActionMenu items={[
+                          { label: "Edit", onClick: () => { const industryVal = c.industry || ""; setEditingCustomerId(c.id); setCustomerForm({ name: c.name, address: c.address || "", email: c.email || "", phone_number: c.phone_number || "", payment_terms: String(c.payment_terms || "14"), industry: industryVal }); setCustomerIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal)); } },
+                          { label: "Archive", onClick: () => archiveEntity("customers", c.id) },
+                          { label: "Delete", onClick: () => deleteEntity("customers", c.id), tone: "danger" },
+                        ]} />
                       </div>
                     )) : (
                       <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No active customers yet.</div>
@@ -1654,11 +1654,11 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             {v.email ? ` • ${v.email}` : ""}{v.phone_number ? ` • ${v.phone_number}` : ""}
                           </div>
                         </div>
-                        <div className="flex gap-2">
-                          <Button variant="secondary" onClick={() => { const industryVal = v.industry || ""; setEditingVendorId(v.id); setVendorForm({ name: v.name, address: v.address || "", email: v.email || "", phone_number: v.phone_number || "", payment_terms: String(v.payment_terms || "14"), industry: industryVal, product_type: v.product_type || "product", product_name: v.product_name || "", price: String(v.price ?? "") }); setVendorIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal)); }}>Edit</Button>
-                          <Button variant="ghost" onClick={() => archiveEntity("vendors", v.id)}>Archive</Button>
-                          <Button variant="ghost" onClick={() => deleteEntity("vendors", v.id)}>Delete</Button>
-                        </div>
+                        <ActionMenu items={[
+                          { label: "Edit", onClick: () => { const industryVal = v.industry || ""; setEditingVendorId(v.id); setVendorForm({ name: v.name, address: v.address || "", email: v.email || "", phone_number: v.phone_number || "", payment_terms: String(v.payment_terms || "14"), industry: industryVal, product_type: v.product_type || "product", product_name: v.product_name || "", price: String(v.price ?? "") }); setVendorIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal)); } },
+                          { label: "Archive", onClick: () => archiveEntity("vendors", v.id) },
+                          { label: "Delete", onClick: () => deleteEntity("vendors", v.id), tone: "danger" },
+                        ]} />
                       </div>
                     )) : (
                       <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">No active vendors yet.</div>

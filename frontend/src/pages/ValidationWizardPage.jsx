@@ -3959,7 +3959,22 @@ export default function ValidationWizardPage() {
                             </div>
                             <div>
                               <FieldLabel>Sector</FieldLabel>
-                              <Input value={getV4(1,"idea_sector")} onChange={(e) => setV4Field(1,"idea_sector",e.target.value)} placeholder="e.g. FinTech, HealthTech, Legal, Retail..." />
+                              {(() => {
+                                const sectorVal = getV4(1,"idea_sector") || "";
+                                const isCustom = sectorVal !== "" && !SECTOR_OPTIONS.includes(sectorVal);
+                                const dropdownVal = isCustom ? "Other" : sectorVal;
+                                return (
+                                  <>
+                                    <select className="ea-input w-full" value={dropdownVal} onChange={(e) => setV4Field(1,"idea_sector", e.target.value === "Other" ? "__other__" : e.target.value)}>
+                                      <option value="">Select sector...</option>
+                                      {SECTOR_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                    {(isCustom || sectorVal === "__other__") && (
+                                      <Input className="mt-2" value={sectorVal === "__other__" ? "" : sectorVal} onChange={(e) => setV4Field(1,"idea_sector",e.target.value)} placeholder="Type your sector..." autoFocus />
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </div>
                             <div>
                               <FieldLabel>Business stage</FieldLabel>
