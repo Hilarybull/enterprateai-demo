@@ -733,6 +733,20 @@ export default function ValidationWizardPage() {
   const PRIMARY_INDUSTRY_OPTIONS = useMemo(() => ["IT", "Marketing", "Consulting", "Accounting", "Legal", "HR", "Design", "Sales", "Operations", "Customer Support", "Healthcare", "Education", "Construction", "Other"], []);
   const INDUSTRY_OPTIONS = useMemo(() => ["Technology", "Healthcare", "Finance & Banking", "Education", "Retail & E-commerce", "Manufacturing", "Real Estate", "Food & Beverage", "Media & Entertainment", "Transportation & Logistics", "Agriculture", "Energy & Utilities", "Construction", "Professional Services", "Legal & Compliance", "Non-Profit", "Government & Public Sector", "Other"], []);
   const SECTOR_OPTIONS = useMemo(() => ["Public Sector", "Private Sector", "Fintech", "EdTech", "HealthTech", "PropTech", "AgriTech", "CleanTech", "LegalTech", "InsurTech", "MarTech", "SaaS", "E-commerce", "Consulting & Advisory", "Media & Publishing", "Logistics & Supply Chain", "Creative & Design", "Other"], []);
+  const COUNTRY_CURRENCY_MAP = {
+    "United Kingdom": "GBP", "Ireland": "EUR", "Germany": "EUR", "France": "EUR", "Spain": "EUR",
+    "Italy": "EUR", "Netherlands": "EUR", "Sweden": "SEK", "Norway": "NOK", "Denmark": "DKK",
+    "Finland": "EUR", "Switzerland": "CHF", "Belgium": "EUR", "Austria": "EUR", "Portugal": "EUR",
+    "Poland": "PLN", "Greece": "EUR", "Luxembourg": "EUR", "Iceland": "ISK", "Malta": "EUR", "Cyprus": "EUR",
+    "United States": "USD", "Canada": "CAD", "Brazil": "BRL", "Mexico": "MXN", "Argentina": "ARS",
+    "Australia": "AUD", "New Zealand": "NZD", "Japan": "JPY", "China": "CNY", "India": "INR",
+    "South Korea": "KRW", "Singapore": "SGD", "Hong Kong": "HKD",
+    "Nigeria": "NGN", "Ghana": "GHS", "Kenya": "KES", "South Africa": "ZAR",
+    "Egypt": "EGP", "Morocco": "MAD",
+    "UAE": "AED", "Saudi Arabia": "SAR", "Qatar": "QAR", "Israel": "ILS", "Turkey": "TRY",
+    "Kuwait": "KWD", "Bahrain": "BHD", "Oman": "OMR",
+  };
+
   const COUNTRY_OPTIONS = useMemo(() => [
     // Europe
     "United Kingdom", "Ireland", "Germany", "France", "Spain", "Italy", "Netherlands", "Sweden", "Norway", "Denmark", "Finland", "Switzerland", "Belgium", "Austria", "Portugal", "Poland", "Greece", "Czech Republic", "Hungary", "Romania", "Ukraine", "Slovakia", "Croatia", "Serbia", "Bulgaria", "Lithuania", "Latvia", "Estonia", "Slovenia", "Luxembourg", "Iceland", "Malta", "Cyprus",
@@ -3938,7 +3952,7 @@ export default function ValidationWizardPage() {
                             </div>
                             <div>
                               <FieldLabel>Operating country</FieldLabel>
-                              <select className="ea-input w-full" value={getV4(1,"operating_country")} onChange={(e) => { setV4Field(1,"operating_country",e.target.value); setV4Field(1,"launch_geography",""); setV4Field(1,"future_geography",""); }}>
+                              <select className="ea-input w-full" value={getV4(1,"operating_country")} onChange={(e) => { const c = e.target.value; setV4Field(1,"operating_country",c); setV4Field(1,"launch_geography",""); setV4Field(1,"future_geography",""); if (COUNTRY_CURRENCY_MAP[c]) setV4Field(1,"currency",COUNTRY_CURRENCY_MAP[c]); }}>
                                 <option value="">Select country...</option>
                                 {COUNTRY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
                               </select>
@@ -4745,7 +4759,7 @@ export default function ValidationWizardPage() {
                           </div>
                           <div>
                             <FieldLabel info="The country where your business is based or primarily operates.">Country</FieldLabel>
-                            <select className="ea-input" value={form.context.country} onChange={(e) => update("context.country", e.target.value)}>
+                            <select className="ea-input" value={form.context.country} onChange={(e) => { update("context.country", e.target.value); if (COUNTRY_CURRENCY_MAP[e.target.value]) update("context.currency", COUNTRY_CURRENCY_MAP[e.target.value]); }}>
                               <option value="">Select country...</option>
                               {COUNTRY_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                             </select>
@@ -5016,7 +5030,7 @@ export default function ValidationWizardPage() {
                           </div>
                           <div>
                             <FieldLabel info="The country where your business is based or primarily operates.">Country</FieldLabel>
-                            <select className="ea-input" value={form.context.country} onChange={(e) => update("context.country", e.target.value)}>
+                            <select className="ea-input" value={form.context.country} onChange={(e) => { update("context.country", e.target.value); if (COUNTRY_CURRENCY_MAP[e.target.value]) update("context.currency", COUNTRY_CURRENCY_MAP[e.target.value]); }}>
                               <option value="">Select country...</option>
                               {COUNTRY_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                             </select>
