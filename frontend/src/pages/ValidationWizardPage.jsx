@@ -491,8 +491,8 @@ export default function ValidationWizardPage() {
 
   // ---- V4 Universal Wizard state ----
   const _v4Draft = loadV4Draft();
-  const [v4Journey, setV4Journey] = useState(_v4Draft?.journey ?? null); // "basic" | "comprehensive"
-  const [v4Step, setV4Step] = useState(_v4Draft?.step ?? 0); // 0 = journey select, 1-12 = wizard steps
+  const [v4Journey, setV4Journey] = useState(null); // always start at selection screen
+  const [v4Step, setV4Step] = useState(0); // always start at step 0
   const [v4Form, setV4Form] = useState(_v4Draft?.form ?? {});
   const [v4Error, setV4Error] = useState(null);
   const v4ErrorRef = useRef(null);
@@ -3702,6 +3702,23 @@ export default function ValidationWizardPage() {
                 /* Journey selection */
                 <>
                 <div className="space-y-4">
+                  {_v4Draft?.step > 0 && _v4Draft?.journey && (
+                    <div className="flex items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <svg className="h-4 w-4 shrink-0 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+                        <span className="text-sm font-medium text-brand-800">
+                          You have a <span className="font-bold capitalize">{_v4Draft.journey}</span> draft in progress — Step {_v4Draft.step}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 transition"
+                        onClick={() => { setV4Journey(_v4Draft.journey); setV4Step(_v4Draft.step); }}
+                      >
+                        Resume
+                      </button>
+                    </div>
+                  )}
                   <div className="rounded-2xl border border-slate-200 bg-white p-6">
                     <h2 className="text-xl font-bold text-slate-900">How deeply would you like to validate your idea?</h2>
                     <p className="mt-1 text-sm text-slate-500">Choose a journey. You can upgrade from Basic to Comprehensive at any time without re-entering data.</p>
@@ -3970,7 +3987,19 @@ export default function ValidationWizardPage() {
                                       {SECTOR_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                                     </select>
                                     {(isCustom || sectorVal === "__other__") && (
-                                      <Input className="mt-2" value={sectorVal === "__other__" ? "" : sectorVal} onChange={(e) => setV4Field(1,"idea_sector",e.target.value)} placeholder="Type your sector..." autoFocus />
+                                      <div className="mt-2 flex items-center gap-2 rounded-xl border border-brand-300 bg-brand-50/40 px-3 py-2.5 ring-1 ring-brand-200 focus-within:border-brand-400 focus-within:ring-brand-300 transition-all">
+                                        <svg className="h-3.5 w-3.5 shrink-0 text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                        </svg>
+                                        <input
+                                          autoFocus
+                                          className="flex-1 bg-transparent text-sm text-slate-800 placeholder:text-slate-400 outline-none"
+                                          value={sectorVal === "__other__" ? "" : sectorVal}
+                                          onChange={(e) => setV4Field(1,"idea_sector",e.target.value)}
+                                          placeholder="e.g. AgriFintech, Sports Nutrition, Urban Mobility…"
+                                        />
+                                      </div>
                                     )}
                                   </>
                                 );
