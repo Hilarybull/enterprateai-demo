@@ -4446,7 +4446,7 @@ export default function ValidationWizardPage() {
                             <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(12,"regulatory_requirements_known",false)} onChange={(e) => setV4Field(12,"regulatory_requirements_known",e.target.checked)} className="accent-brand-600" />I have identified the regulatory requirements</label>
                             <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(12,"regulatory_mitigation_planned",false)} onChange={(e) => setV4Field(12,"regulatory_mitigation_planned",e.target.checked)} className="accent-brand-600" />I have a plan to address regulatory requirements</label>
                           </div>
-                          <p className="text-xs text-slate-400 border border-slate-200 rounded-lg px-3 py-2">Potential regulatory considerations identified. Professional legal verification required before proceeding.</p>
+                          <p className="text-xs text-slate-400 border border-slate-200 rounded-lg px-3 py-2">Most regulatory requirements are straightforward to navigate with the right guidance. Add any notes about your regulatory landscape and our AI will help map a clear path forward.</p>
                         </div>
                       )}
                     </div>
