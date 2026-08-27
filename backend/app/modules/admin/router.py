@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import uuid4
@@ -135,15 +136,17 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
 
 @router.get("/stats")
 async def get_system_stats(user=Depends(require_admin)) -> dict:
-    workspaces = await sb_select("workspaces", columns="id,name,user_id,created_at,data")
-    users = await _select_users_with_block()
-    members = await sb_select("workspace_members", columns="id,workspace_id,user_id,permission_type,created_at")
-    invitations = await sb_select("workspace_invitations", columns="id,workspace_id,email,status,created_at")
-    upgrade_clicks = await sb_select("upgrade_clicks", columns="id")
+    (workspaces, users, members, invitations, upgrade_clicks, ai_usage_events) = await asyncio.gather(
+        sb_select("workspaces", columns="id,name,user_id,created_at,data"),
+        _select_users_with_block(),
+        sb_select("workspace_members", columns="id,workspace_id,user_id,permission_type,created_at"),
+        sb_select("workspace_invitations", columns="id,workspace_id,email,status,created_at"),
+        sb_select("upgrade_clicks", columns="id"),
+        _select_ai_usage_events(),
+    )
 
     user_email_map = {u["id"]: u["email"] for u in users}
     workspace_name_map = {ws["id"]: (ws.get("name") or "Unnamed") for ws in workspaces}
-    ai_usage_events = await _select_ai_usage_events()
     ai_usage = _rollup_ai_usage(ai_usage_events, user_email_map)
 
     sim_count = 0

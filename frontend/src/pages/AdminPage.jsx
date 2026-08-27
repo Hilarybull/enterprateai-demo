@@ -1728,7 +1728,7 @@ export default function AdminPage() {
     else setRefreshing(true);
     setError(null);
     try {
-      const data = await apiRequest("/admin/stats", "GET");
+      const data = await apiRequest("/admin/stats", "GET", undefined, { timeoutMs: 90000 });
       setStats(data);
     } catch (e) {
       setError(e.message || "Failed to load admin stats.");
