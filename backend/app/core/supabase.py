@@ -31,6 +31,7 @@ _RETRIABLE = frozenset({
     "RemoteProtocolError", "ConnectionError", "ConnectError",
     "ConnectionClosed", "RemoteDisconnected", "ProtocolError",
     "WriteError", "ReadError",  # httpx/httpcore SSL EOF on stale HTTP/2 connections
+    "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",  # TLS handshake / slow response
 })
 
 
@@ -45,7 +46,7 @@ def _is_retriable(exc: BaseException) -> bool:
     return False
 
 
-def _run_with_retry(fn, *, max_attempts: int = 3, base_delay: float = 0.4):
+def _run_with_retry(fn, *, max_attempts: int = 3, base_delay: float = 1.0):
     """Execute fn() retrying up to max_attempts times on transient connection errors."""
     last_exc: Exception | None = None
     for attempt in range(max_attempts):
