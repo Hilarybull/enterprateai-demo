@@ -642,6 +642,10 @@ export default function BlueprintPage() {
 
   useEffect(() => {
     if (!acceptedIdeaValidation) return;
+    // Wait for workspace profile to load from server before seeding fields.
+    // ideaValidation is persisted in localStorage and arrives before the fetch
+    // completes — without this guard, cached idea data wins over workspace profile.
+    if (!workspaceProfile) return;
     const ctx = acceptedIdeaValidation.context || {};
     const offer = acceptedIdeaValidation.offer || {};
     const prob = acceptedIdeaValidation.problem || {};
