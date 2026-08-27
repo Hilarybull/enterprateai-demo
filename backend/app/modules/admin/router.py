@@ -135,7 +135,7 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
 
 @router.get("/stats")
 async def get_system_stats(user=Depends(require_admin)) -> dict:
-    workspaces = await sb_select("workspaces", columns="id,name,user_id,created_at")
+    workspaces = await sb_select("workspaces", columns="id,name,user_id,created_at,data")
     users = await _select_users_with_block()
     members = await sb_select("workspace_members", columns="id,workspace_id,user_id,permission_type,created_at")
     invitations = await sb_select("workspace_invitations", columns="id,workspace_id,email,status,created_at")
@@ -150,8 +150,7 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
     blueprint_count = 0
     validation_count = 0
     for ws in workspaces:
-        ws_data = await sb_select("workspaces", filters=[("id", "eq", ws["id"])], columns="data", single=True)
-        data = (ws_data or {}).get("data") or {}
+        data = ws.get("data") or {}
         if isinstance(data, dict):
             sims = data.get("simulations") or []
             if isinstance(sims, list):
