@@ -18,7 +18,6 @@ export default function CookieBanner() {
   }
 
   function reject() {
-    try { localStorage.setItem(COOKIE_KEY, "rejected"); } catch {}
     setVisible(false);
   }
 
