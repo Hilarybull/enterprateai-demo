@@ -16,7 +16,12 @@ def get_mongo_client() -> AsyncIOMotorClient:
     global _client
     if _client is None:
         settings = get_settings()
-        _client = AsyncIOMotorClient(settings.mongo_uri, serverSelectionTimeoutMS=5000)
+        _client = AsyncIOMotorClient(
+            settings.mongo_uri,
+            serverSelectionTimeoutMS=5000,
+            tls=True,
+            tlsAllowInvalidCertificates=True,
+        )
     return _client
 
 

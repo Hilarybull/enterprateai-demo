@@ -52,7 +52,7 @@ OUTPUT REQUIREMENTS (STRICT)
 MARKET ANALYSIS SECTION
 If CHART DATA includes TAM/SAM/SOM figures:
 - State each tier clearly in prose with the figure and its source citation.
-- Example: "The total addressable market (TAM) for {industry} is estimated at X billion (Source: Report Name, URL)."
+- Example: "The total addressable market (TAM) for {{industry}} is estimated at X billion (Source: Report Name, URL)."
 - If a tier is missing from CHART DATA, do not invent it; note that the figure requires further research.
 
 RISK ANALYSIS SECTION

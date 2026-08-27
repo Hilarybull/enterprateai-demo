@@ -1694,7 +1694,9 @@ async def generate_blueprint(
             if payload.selected_services:
                 workspace_context["selected_services"] = ", ".join(filter(None, payload.selected_services))
             
-            if payload.include_validation_snapshot or payload.type in ("cashflow_analysis", "financial_projection"):
+            # Only run the full validation engine for financial doc types — not business_plan
+            # (business_plan uses the workspace-financials fallback below instead)
+            if payload.type in ("cashflow_analysis", "financial_projection"):
                 validation = await evaluate_validation(user_id=user_id, workspace_id=payload.workspace_id, inputs=None, idea_validation=None)
         except Exception as e:
             validation = None
@@ -1916,7 +1918,7 @@ async def generate_blueprint(
             "registration_status": registration_status,
             "registration_number": registration_number,
             "legal_structure": _safe_text(workspace_profile.get("business_type") if isinstance(workspace_profile, dict) else ""),
-            "primary_industry": _safe_text(workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else industry),
+            "primary_industry": _safe_text(industry or (workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else "")),
             "secondary_industries": ", ".join(workspace_profile.get("secondary_industries") or []) if isinstance(workspace_profile, dict) else "",
             "about_company": _safe_text(workspace_profile.get("about_company") if isinstance(workspace_profile, dict) else ""),
             "tagline": _safe_text(workspace_profile.get("tagline") if isinstance(workspace_profile, dict) else ""),
@@ -2119,7 +2121,7 @@ async def generate_blueprint(
             "proposal_title": proposal_title,
             "contact_details": contact_details,
             "objective": objective,
-            "industry": _safe_text(workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else industry),
+            "industry": _safe_text(industry or (workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else "")),
             "location": _safe_text(
                 workspace_context.get("location")
                 or (business_profile.get("location") if isinstance(business_profile, dict) else "")

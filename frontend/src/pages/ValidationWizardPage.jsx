@@ -154,7 +154,22 @@ function FormSection({ title, children, defaultOpen = false }) {
 
 const UPPER_ABBREVIATIONS = new Set(["llp", "sme", "smes", "b2b", "b2c", "b2g", "it", "hr", "uk", "usa"]);
 const VALIDATION_DEFAULTS_KEY = "ea_validation_stage_defaults";
+const V4_DRAFT_KEY = "ea_v4_draft";
 const FREQUENCY_OPTIONS = ["daily", "weekly", "monthly", "yearly", "custom"];
+
+function loadV4Draft() {
+  try {
+    const raw = window.localStorage.getItem(V4_DRAFT_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+function saveV4Draft(form, step, journey) {
+  try { window.localStorage.setItem(V4_DRAFT_KEY, JSON.stringify({ form, step, journey })); } catch {}
+}
+function clearV4Draft() {
+  try { window.localStorage.removeItem(V4_DRAFT_KEY); } catch {}
+}
 
 function loadValidationStageDefaults() {
   if (typeof window === "undefined") return {};
@@ -475,10 +490,12 @@ export default function ValidationWizardPage() {
   const initialStageDefaults = useMemo(() => loadValidationStageDefaults(), []);
 
   // ---- V4 Universal Wizard state ----
-  const [v4Journey, setV4Journey] = useState(null); // "basic" | "comprehensive"
-  const [v4Step, setV4Step] = useState(0); // 0 = journey select, 1-12 = wizard steps
-  const [v4Form, setV4Form] = useState({});
+  const _v4Draft = loadV4Draft();
+  const [v4Journey, setV4Journey] = useState(_v4Draft?.journey ?? null); // "basic" | "comprehensive"
+  const [v4Step, setV4Step] = useState(_v4Draft?.step ?? 0); // 0 = journey select, 1-12 = wizard steps
+  const [v4Form, setV4Form] = useState(_v4Draft?.form ?? {});
   const [v4Error, setV4Error] = useState(null);
+  const v4ErrorRef = useRef(null);
   const [v4Saving, setV4Saving] = useState(false);
   const [v4Suggesting, setV4Suggesting] = useState(null); // "${step}_${field}" when loading
 
@@ -715,6 +732,7 @@ export default function ValidationWizardPage() {
         } catch { /* silent */ }
       }
 
+      clearV4Draft();
       setSavedNotice("Validation complete. Redirecting to report...");
       window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
       setTimeout(() => navigate("/results"), 800);
@@ -1293,6 +1311,19 @@ export default function ValidationWizardPage() {
     if (v4Step === 3 && String(s3.primary_segment || "").trim()) { setV4Error(null); return; }
     if (v4Step === 5 && String(s5.solution_description || "").trim()) { setV4Error(null); return; }
   }, [v4Error, v4Form, v4Step, v4Journey]);
+
+  useEffect(() => {
+    if (v4Error && v4ErrorRef.current) {
+      v4ErrorRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [v4Error]);
+
+  // Persist in-progress v4 draft so navigation away doesn't wipe the form
+  useEffect(() => {
+    if (v4Journey && v4Step > 0) {
+      saveV4Draft(v4Form, v4Step, v4Journey);
+    }
+  }, [v4Form, v4Step, v4Journey]);
 
   useEffect(() => {
     if (!isCreateWorkspace) return;
@@ -3057,7 +3088,7 @@ export default function ValidationWizardPage() {
               {mode === "fill" ? (
                 <button
                   type="button"
-                  onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }}
+                  onClick={() => { clearV4Draft(); setV4Form({}); setMode("v4"); setV4Step(0); setV4Journey(null); }}
                   className="group flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-bold text-slate-600 shadow-sm ring-1 ring-slate-200 transition-all hover:bg-slate-50 hover:text-brand-600"
                 >
                   <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -3653,7 +3684,7 @@ export default function ValidationWizardPage() {
             <div className="space-y-6">
               <ValidationLoadingOverlay isVisible={isValidating} />
 
-              {v4Error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{v4Error}</div>}
+              {v4Error && <div ref={v4ErrorRef} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{v4Error}</div>}
               {savedNotice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{savedNotice}</div>}
 
               {/* V4 wizard body */}
@@ -4323,7 +4354,7 @@ export default function ValidationWizardPage() {
                       {/* ---- STEP 8: COSTS & UNIT ECONOMICS (Comprehensive) ---- */}
                       {v4Step === 8 && (
                         <div className="space-y-5">
-                          <p className="text-xs text-slate-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">All cost inputs are indicative — confirm with suppliers before making investment decisions.</p>
+                          <p className="text-xs text-slate-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">All cost inputs are indicative. Confirm with suppliers before making investment decisions.</p>
                           <div className="space-y-2">
                             <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(8,"variable_cost_known",false)} onChange={(e) => setV4Field(8,"variable_cost_known",e.target.checked)} className="accent-brand-600" />I know the variable / delivery cost per unit</label>
                             {getV4(8,"variable_cost_known",false) && (
@@ -4365,7 +4396,7 @@ export default function ValidationWizardPage() {
                       {/* ---- STEP 10: TRACTION & EVIDENCE ---- */}
                       {v4Step === 10 && (
                         <div className="space-y-5">
-                          <p className="text-sm text-slate-600">Select all types of evidence you currently have. Be honest — this directly affects your Evidence Confidence Score.</p>
+                          <p className="text-sm text-slate-600">Select all types of evidence you currently have. Be honest, this directly affects your Evidence Confidence Score.</p>
                           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                             {V4_EVIDENCE_TYPES.map(({ id, label }) => {
                               const selected = (getV4(10,"evidence_types",[]) || []).includes(id);
@@ -4415,7 +4446,7 @@ export default function ValidationWizardPage() {
                             <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(12,"regulatory_requirements_known",false)} onChange={(e) => setV4Field(12,"regulatory_requirements_known",e.target.checked)} className="accent-brand-600" />I have identified the regulatory requirements</label>
                             <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={getV4(12,"regulatory_mitigation_planned",false)} onChange={(e) => setV4Field(12,"regulatory_mitigation_planned",e.target.checked)} className="accent-brand-600" />I have a plan to address regulatory requirements</label>
                           </div>
-                          <p className="text-xs text-slate-400 border border-slate-200 rounded-lg px-3 py-2">Potential regulatory considerations identified — professional legal verification required before proceeding.</p>
+                          <p className="text-xs text-slate-400 border border-slate-200 rounded-lg px-3 py-2">Potential regulatory considerations identified. Professional legal verification required before proceeding.</p>
                         </div>
                       )}
                     </div>
@@ -4481,7 +4512,7 @@ export default function ValidationWizardPage() {
                   {canEvaluateIdea && (
                     <button
                       type="button"
-                      onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }}
+                      onClick={() => { clearV4Draft(); setV4Form({}); setMode("v4"); setV4Step(0); setV4Journey(null); }}
                       className="group relative w-full flex items-center gap-5 overflow-hidden rounded-3xl border-2 border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50 p-6 text-left transition-all duration-300 hover:border-violet-400 hover:shadow-xl"
                     >
                       <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-violet-600 text-white shadow-lg transition-transform duration-300 group-hover:scale-110">
@@ -4595,7 +4626,7 @@ export default function ValidationWizardPage() {
                 {!isCreateWorkspace && (
                   <button
                     type="button"
-                    onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }}
+                    onClick={() => { clearV4Draft(); setV4Form({}); setMode("v4"); setV4Step(0); setV4Journey(null); }}
                     className="group flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-brand-600 transition-colors"
                     disabled={isLoading}
                   >
@@ -5055,7 +5086,7 @@ export default function ValidationWizardPage() {
                     <div className="space-y-3">
                       <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
                         <div className="text-sm font-semibold text-slate-600">Please start a new validation.</div>
-                        <button onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }} className="mt-2 text-xs font-bold text-brand-600 hover:underline">Start new validation</button>
+                        <button onClick={() => { clearV4Draft(); setV4Form({}); setMode("v4"); setV4Step(0); setV4Journey(null); }} className="mt-2 text-xs font-bold text-brand-600 hover:underline">Start new validation</button>
                       </div>
                     </div>
                   ) : null}
@@ -5866,7 +5897,7 @@ export default function ValidationWizardPage() {
                       <div className="flex w-full items-center justify-between gap-4">
                         <button
                           type="button"
-                          onClick={() => { setMode("v4"); setV4Step(0); setV4Journey(null); }}
+                          onClick={() => { clearV4Draft(); setV4Form({}); setMode("v4"); setV4Step(0); setV4Journey(null); }}
                           className="text-sm font-bold text-slate-400 hover:text-slate-600 transition-colors"
                           disabled={isLoading}
                         >

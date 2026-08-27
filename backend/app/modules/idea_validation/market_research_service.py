@@ -41,16 +41,26 @@ _FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
 
 
 async def _pick_llm_caller(user_id: str):
-    """Return _call_claude for paid plans, _call_openai for free/trial."""
+    """Return _call_claude for paid/privileged plans, _call_openai for free/trial."""
     try:
         from app.core.supabase import sb_select
         sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
         plan_key = (sub or {}).get("plan_key") or ""
         status = (sub or {}).get("status") or ""
         is_free = plan_key in _FREE_PLAN_KEYS or status in {"trial", "expired"}
-        return _call_openai if is_free else _call_claude
+        if is_free:
+            # Check for a platform grant (Privileged users get Claude regardless of plan)
+            try:
+                grants = await sb_select("user_platform_grants", filters=[("user_id", "eq", user_id)])
+                if grants:
+                    return _call_claude
+            except Exception:
+                pass
+            return _call_openai
+        return _call_claude
     except Exception:
-        return _call_openai
+        # Default to Claude on Supabase failure — paid users should not silently downgrade
+        return _call_claude
 
 SERP_BASE = "https://serpapi.com/search"
 SERPER_BASE = "https://google.serper.dev/search"

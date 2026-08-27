@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 from typing import Optional
 from app.modules.idea_validation.schemas import (
@@ -109,8 +112,20 @@ async def evaluate_v4_endpoint(
         if payload.get("validation_mode") == "comprehensive"
         else "idea_validation"
     )
-    async with credit_guard(user["id"], feature_code):
-        return await evaluate_v4_idea(user_id=user["id"], payload=payload)
+    logger.info("evaluate-v4 start user=%s mode=%s", user["id"], payload.get("validation_mode"))
+    try:
+        async with credit_guard(user["id"], feature_code):
+            result = await evaluate_v4_idea(user_id=user["id"], payload=payload)
+        logger.info("evaluate-v4 complete user=%s", user["id"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("evaluate-v4 UNHANDLED ERROR user=%s: %s", user["id"], exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Validation failed: {type(exc).__name__}: {exc}",
+        ) from exc
 
 
 @router.patch("/me", response_model=WorkspaceResponse)

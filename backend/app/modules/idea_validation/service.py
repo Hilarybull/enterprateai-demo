@@ -308,9 +308,12 @@ async def evaluate(
     Now follows the deterministic research-backed flow for idea validation.
     """
     # 1. Plan-based gating: enforce lifetime limits and route SerpAPI
+    from app.modules.credits.service import _has_platform_grant
     plan_key, plan_status = await get_user_plan_info(user_id)
-    is_free_plan = plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}
-    use_serp = plan_uses_serp(plan_key, plan_status)
+    _on_free_plan = plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}
+    _has_grant = _on_free_plan and await _has_platform_grant(user_id, "full_access")
+    is_free_plan = _on_free_plan and not _has_grant
+    use_serp = plan_uses_serp(plan_key, plan_status) or _has_grant
 
     if is_free_plan:
         # Count lifetime validations for this user
@@ -991,10 +994,13 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
     """
     from app.modules.idea_validation.engine_v4 import v4_payload_to_input, evaluate_v4
 
-    # 1. Plan gating
+    # 1. Plan gating — platform grants (Privileged) count as paid regardless of plan key
+    from app.modules.credits.service import _has_platform_grant
     plan_key, plan_status = await get_user_plan_info(user_id)
-    is_free = plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}
-    use_serp = plan_uses_serp(plan_key, plan_status)
+    _on_free_plan = plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}
+    has_grant = _on_free_plan and await _has_platform_grant(user_id, "full_access")
+    is_free = _on_free_plan and not has_grant
+    use_serp = plan_uses_serp(plan_key, plan_status) or has_grant
 
     if is_free:
         existing = await sb_select("idea_validation_results", filters=[("user_id", "eq", user_id)])
@@ -1032,7 +1038,10 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
     # 5b. Compute deterministic metrics BEFORE narration so the AI can cite exact figures
     comp_metrics: dict | None = None
     if payload.get("validation_mode") == "comprehensive" and not is_free:
-        comp_metrics = _compute_comprehensive_metrics(payload, v4_inp)
+        try:
+            comp_metrics = _compute_comprehensive_metrics(payload, v4_inp)
+        except Exception as _cm_err:
+            logger.error("comprehensive metrics computation failed: %s", _cm_err)
 
     narration_fields = {
         **fields,
@@ -1133,11 +1142,9 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
         )
         final_result["result_id"] = result_id
     except Exception as exc:
-        logger.exception("V4 result persist failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Validation completed but could not be saved. Please try again.",
-        ) from exc
+        # Persist failure must not block the user from seeing their result.
+        # Log the issue for ops but return the completed validation anyway.
+        logger.error("V4 result persist failed (non-fatal): %s", exc)
 
     return final_result
 

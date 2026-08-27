@@ -304,10 +304,18 @@ async def get_user_plan_info(user_id: str) -> tuple[str, str]:
 
 
 async def pick_llm_for_user(user_id: str) -> LLMClient:
-    """Free/trial → OpenAI (gpt-4.1-mini). Starter → Claude. Pro+ → Claude."""
+    """Free/trial → OpenAI. Paid or platform-granted → Claude."""
     plan_key, status = await get_user_plan_info(user_id)
     is_free = plan_key in _FREE_PLAN_KEYS or status in {"trial", "expired"}
-    return OpenAIResponsesClient(user_id=user_id) if is_free else AnthropicMessagesClient(user_id=user_id)
+    if is_free:
+        try:
+            from app.modules.credits.service import _has_platform_grant
+            if await _has_platform_grant(user_id, "full_access"):
+                return AnthropicMessagesClient(user_id=user_id)
+        except Exception:
+            pass
+        return OpenAIResponsesClient(user_id=user_id)
+    return AnthropicMessagesClient(user_id=user_id)
 
 
 def plan_uses_serp(plan_key: str, status: str) -> bool:

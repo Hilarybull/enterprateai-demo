@@ -4,7 +4,7 @@ import time
 from typing import Any, Iterable
 
 import anyio
-from supabase import Client, create_client
+from supabase import Client, ClientOptions, create_client
 
 from app.core.config import get_settings
 
@@ -12,7 +12,11 @@ def _make_client() -> Client:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
         raise RuntimeError("Supabase URL / service role key not configured")
-    return create_client(settings.supabase_url, settings.supabase_service_role_key)
+    return create_client(
+        settings.supabase_url,
+        settings.supabase_service_role_key,
+        options=ClientOptions(postgrest_client_timeout=20),
+    )
 
 
 def get_supabase_client(reset: bool = False) -> Client:

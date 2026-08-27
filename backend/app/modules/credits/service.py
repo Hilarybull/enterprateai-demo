@@ -516,7 +516,14 @@ async def credit_guard(user_id: str, feature_code: str, generation_id: str | Non
         yield gen_id
         _success = True
     finally:
-        if _success:
-            await commit_credits(gen_id, user_id, feature_code, no_hold=no_hold)
-        else:
-            await release_credits(gen_id, user_id, feature_code, no_hold=no_hold)
+        try:
+            if _success:
+                await commit_credits(gen_id, user_id, feature_code, no_hold=no_hold)
+            else:
+                await release_credits(gen_id, user_id, feature_code, no_hold=no_hold)
+        except Exception as _cleanup_err:
+            import logging as _log
+            _log.getLogger(__name__).error(
+                "credit_guard cleanup failed (gen=%s user=%s feature=%s success=%s): %s",
+                gen_id, user_id, feature_code, _success, _cleanup_err,
+            )

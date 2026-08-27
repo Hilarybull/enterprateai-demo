@@ -51,6 +51,7 @@ import BlogPage from "./pages/BlogPage";
 import BlogArticlePage from "./pages/BlogArticlePage";
 import ResearchPage from "./pages/ResearchPage";
 import BookDemoPage from "./pages/BookDemoPage";
+import CookieBanner from "./components/CookieBanner";
 
 function Protected({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -136,6 +137,7 @@ export default function App() {
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
     <DemoTour />
+    <CookieBanner />
     </DemoTourProvider>
   );
 }

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 
 from app.core.config import get_settings
@@ -122,8 +125,20 @@ async def blueprint_generate(
                 )
 
     feature_code = _blueprint_feature_code(payload.type, payload.sections)
-    async with credit_guard(user_id, feature_code, payload.generation_id):
-        return await generate_blueprint(payload, user_id=user_id)
+    logger.info("blueprint-generate start user=%s type=%s", user_id, payload.type)
+    try:
+        async with credit_guard(user_id, feature_code, payload.generation_id):
+            result = await generate_blueprint(payload, user_id=user_id)
+        logger.info("blueprint-generate complete user=%s type=%s", user_id, payload.type)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("blueprint-generate UNHANDLED ERROR user=%s type=%s: %s", user_id, payload.type, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Generation failed: {type(exc).__name__}: {exc}",
+        ) from exc
 
 
 @router.get("/documents", response_model=list[BlueprintDocumentListItem])
