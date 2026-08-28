@@ -93,6 +93,14 @@ class LivePlanImportExtractRequest(BaseModel):
     raw_content: str | None = None   # pasted/uploaded text content
 
 
+class LivePlanConfirmAdoptRequest(BaseModel):
+    idempotency_key: str | None = None
+    extracted: dict[str, Any]
+    markdown: str | None = None
+    source_title: str | None = None
+    document_id: str | None = None
+
+
 class LivePlanResponse(BaseModel):
     business_id: str
     plan: dict[str, Any]

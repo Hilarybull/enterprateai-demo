@@ -1,6 +1,16 @@
 # EnterprateAI (MVP)
 
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+npm run dev
+
+
+cd backend
+cd frontend
+
+
+Clear
+
+l s  d k
 
 Production-ready MVP for a business decision SaaS platform with:
 - Idea validation (deterministic financial metrics + scoring)

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import re
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Iterable
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from app.core.supabase import sb_insert, sb_select, sb_update, sb_upsert
 
@@ -94,6 +97,22 @@ def _extract_first_number(markdown: str | None, keywords: Iterable[str]) -> floa
         if match:
             try:
                 return float(match.group(1).replace(",", ""))
+            except ValueError:
+                continue
+    return None
+
+
+def _extract_percentage_near(markdown: str | None, keywords: Iterable[str]) -> float | None:
+    """Extract a percentage value (e.g. 72.8 from '72.8%') on a line matching any keyword."""
+    text = str(markdown or "").lower()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in lines:
+        if not any(keyword in line for keyword in keywords):
+            continue
+        pct_match = re.search(r"([-+]?\d[\d,]*(?:\.\d+)?)\s*%", line)
+        if pct_match:
+            try:
+                return float(pct_match.group(1).replace(",", ""))
             except ValueError:
                 continue
     return None
@@ -1171,113 +1190,121 @@ async def build_performance(*, user_id: str, business_id: str) -> dict[str, Any]
     return {"plan": plan, "current_version": current, "summary": summary, "kpis": kpis, "observations": observations, "variances": variances, "alerts": bundle["alerts"]}
 
 
-async def import_extract_plan(
+async def _extract_structured_data(
     *,
     user_id: str,
-    business_id: str,
-    document_id: str | None = None,
-    raw_content: str | None = None,
+    markdown: str,
+    doc_meta: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    Adopt a business plan (from a blueprint document or raw text), use AI to extract
-    structured fields, seed the live plan, and update the workspace profile.
-    Returns a summary of what was populated.
-    """
+    """Run AI extraction on markdown; return extracted dict (no DB writes)."""
     from app.shared.llm.openai_client import pick_llm_for_user
 
-    # 1 — resolve markdown source
-    markdown: str = ""
-    doc_title: str = "Business Plan"
-    doc_meta: dict[str, Any] = {}
-
-    if document_id:
-        try:
-            from app.modules.blueprint.repository import get_document
-            doc = await get_document(user_id=user_id, document_id=document_id)
-            if doc:
-                markdown = str(doc.get("document_markdown") or "")
-                doc_title = str(doc.get("title") or doc.get("type") or "Business Plan")
-                doc_meta = {
-                    "id": doc.get("id"),
-                    "title": doc_title,
-                    "company_name": doc.get("company_name"),
-                    "industry": doc.get("industry"),
-                }
-        except Exception:
-            pass
-
-    if not markdown and raw_content:
-        markdown = raw_content.strip()
-
-    if not markdown:
-        raise ValueError("No content to extract from. Provide a document_id or raw_content.")
-
-    # 2 — AI extraction
     extracted: dict[str, Any] = {}
     try:
         llm = await pick_llm_for_user(user_id)
-        extraction_prompt = f"""Extract structured business information from the following business plan document.
-Return ONLY valid JSON with these fields (use null for anything not found):
+        extraction_prompt = f"""You are extracting structured data from a business plan document. Return ONLY a single valid JSON object — no markdown fences, no explanation, no extra text.
+
+Fill in every field you can find. Never leave a field as null if the information is present anywhere in the document.
+
+JSON structure to return:
 {{
-  "business_name": "...",
-  "industry": "...",
-  "target_market": "...",
-  "products_services": ["...", "..."],
-  "pricing_model": "...",
-  "monthly_revenue_target": <number or null>,
-  "gross_margin_pct": <number 0-100 or null>,
-  "cash_runway_months": <number or null>,
-  "active_customers_target": <number or null>,
-  "key_assumptions": ["...", "..."],
-  "main_risks": ["...", "..."],
-  "unique_value_proposition": "..."
+  "business_name": "the company or trading name",
+  "industry": "the sector or industry (e.g. SaaS, Retail, Consulting, Subscription services)",
+  "target_market": "who the customers are — be specific (e.g. freelancers and remote workers in Belgium)",
+  "products_services": [
+    {{"name": "exact product or service name", "description": "what it does in one sentence", "price": "price if stated, e.g. £49/month, or null"}}
+  ],
+  "pricing_model": "how customers are charged (e.g. flat monthly subscription, per-seat SaaS, one-off fee)",
+  "monthly_revenue_target": <the revenue/sales figure as a plain number — NOT costs>,
+  "monthly_costs": <total monthly costs/expenses as a plain number>,
+  "gross_margin_pct": <contribution or gross margin as a PERCENTAGE between 0 and 100, e.g. 72.8 — NEVER a pound or dollar amount>,
+  "cash_runway_months": <number of months runway, or null>,
+  "active_customers_target": <target number of customers, or null>,
+  "unique_value_proposition": "one clear sentence on what makes this business different",
+  "key_assumptions": ["assumption 1", "assumption 2"],
+  "main_risks": ["risk 1", "risk 2"]
 }}
 
-Business plan:
-{markdown[:6000]}"""
+CRITICAL RULES:
+- gross_margin_pct is always a percentage (0–100). If the document says "contribution margin 72.8%", use 72.8. Never use a currency figure here.
+- monthly_revenue_target = revenue/sales only. monthly_costs = costs/expenses only. They are separate fields.
+- products_services: list every product or service mentioned. Do not return an empty array if any product is described.
+- If the business name appears in a heading like "Business Plan for Rateg", extract "Rateg" as the business_name.
+
+Business plan document:
+{markdown[:8000]}"""
 
         response = await llm.chat_completions_create(
             messages=[{"role": "user", "content": extraction_prompt}],
             model=None,
             temperature=0.1,
-            max_tokens=800,
+            max_tokens=2000,
         )
         raw = (response.choices[0].message.content or "").strip()
-        # strip markdown fences if present
         if raw.startswith("```"):
             raw = "\n".join(raw.split("\n")[1:])
             raw = raw.rsplit("```", 1)[0].strip()
         extracted = json.loads(raw)
     except Exception:
-        # fall back to regex extraction
+        logger.exception("AI extraction failed for business %s — falling back to regex", doc_meta.get("id", "unknown"))
         extracted = {
             "business_name": doc_meta.get("company_name") or _extract_business_name(markdown),
             "industry": doc_meta.get("industry"),
             "monthly_revenue_target": _extract_first_number(markdown, ("revenue", "turnover", "sales")),
-            "gross_margin_pct": _extract_first_number(markdown, ("gross margin", "margin")),
+            "monthly_costs": _extract_first_number(markdown, ("cost", "costs", "expense", "expenses", "overhead")),
+            "gross_margin_pct": (
+                _extract_percentage_near(markdown, ("contribution margin", "gross margin", "margin %"))
+                or _extract_first_number(markdown, ("contribution margin", "gross margin"))
+            ),
             "cash_runway_months": _extract_first_number(markdown, ("runway",)),
             "active_customers_target": _extract_first_number(markdown, ("customers", "clients")),
         }
 
-    # 3 — merge doc_meta into extracted
     if doc_meta.get("company_name") and not extracted.get("business_name"):
         extracted["business_name"] = doc_meta["company_name"]
     if doc_meta.get("industry") and not extracted.get("industry"):
         extracted["industry"] = doc_meta["industry"]
 
-    # 4 — create or update live plan with source document
+    # Sanity-check: gross_margin_pct must be 0-100. If the AI returned a currency
+    # amount by mistake, try to compute margin from revenue and costs instead.
+    gm = extracted.get("gross_margin_pct")
+    if gm is not None and (gm < 0 or gm > 100):
+        rev = extracted.get("monthly_revenue_target")
+        costs = extracted.get("monthly_costs")
+        if rev and costs and rev > 0:
+            computed = round((rev - costs) / rev * 100, 2)
+            if 0 <= computed <= 100:
+                extracted["gross_margin_pct"] = computed
+            else:
+                extracted["gross_margin_pct"] = None
+        else:
+            # Try regex percentage extraction as a last resort
+            extracted["gross_margin_pct"] = _extract_percentage_near(
+                markdown, ("contribution margin", "gross margin", "margin")
+            )
+
+    return extracted
+
+
+async def _write_extracted_to_plan(
+    *,
+    user_id: str,
+    business_id: str,
+    extracted: dict[str, Any],
+    markdown: str | None,
+    doc_title: str,
+    document_id: str | None,
+) -> dict[str, Any]:
+    """Write pre-extracted data to DB (steps 4-6). Called on confirm."""
     plan = await ensure_live_plan(
         user_id=user_id,
         business_id=business_id,
         source_document_id=document_id,
     )
-
-    # 5 — patch live plan's assumption rows with richer extracted data
     plan_id = plan["id"]
     now = _now_iso()
     current = await _get_current_version(plan)
     version_id = current["id"] if current else None
-
     fields_populated: list[str] = []
 
     async def _upsert_assumption(metric_code: str, name: str, value: Any, domain: str, confidence: float = 0.85) -> None:
@@ -1315,6 +1342,7 @@ Business plan:
     await _upsert_assumption("pricing_model", "Pricing model", extracted.get("pricing_model"), "COMMERCIAL")
     await _upsert_assumption("unique_value_proposition", "Value proposition", extracted.get("unique_value_proposition"), "STRATEGIC")
     await _upsert_assumption("monthly_revenue_target", "Monthly revenue target", extracted.get("monthly_revenue_target"), "FINANCIAL")
+    await _upsert_assumption("monthly_costs", "Monthly costs", extracted.get("monthly_costs"), "FINANCIAL")
     await _upsert_assumption("gross_margin_pct", "Gross margin %", extracted.get("gross_margin_pct"), "FINANCIAL")
     await _upsert_assumption("cash_runway_months", "Cash runway (months)", extracted.get("cash_runway_months"), "FINANCIAL")
     await _upsert_assumption("active_customers_target", "Active customers target", extracted.get("active_customers_target"), "CUSTOMER")
@@ -1323,7 +1351,6 @@ Business plan:
     if isinstance(products, list) and products:
         await _upsert_assumption("products_services", "Products / services", products, "COMMERCIAL")
 
-    # 6 — activate plan
     await _safe_update(
         "live_business_plans",
         payload={"status": "ACTIVE", "adopted_at": now, "updated_at": now, "narrative_markdown": markdown or None},
@@ -1338,6 +1365,89 @@ Business plan:
     }
 
 
+async def import_extract_plan(
+    *,
+    user_id: str,
+    business_id: str,
+    document_id: str | None = None,
+    raw_content: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """
+    Extract structured fields from a business plan (blueprint doc or raw text).
+    If dry_run=True, returns a preview without writing to DB.
+    If dry_run=False (default), writes to DB immediately.
+    """
+    # 1 — resolve markdown source
+    markdown: str = ""
+    doc_title: str = "Business Plan"
+    doc_meta: dict[str, Any] = {}
+
+    if document_id:
+        try:
+            from app.modules.blueprint.repository import get_document
+            doc = await get_document(user_id=user_id, document_id=document_id)
+            if doc:
+                markdown = str(doc.get("document_markdown") or "")
+                doc_title = str(doc.get("title") or doc.get("type") or "Business Plan")
+                doc_meta = {
+                    "id": doc.get("id"),
+                    "title": doc_title,
+                    "company_name": doc.get("company_name"),
+                    "industry": doc.get("industry"),
+                }
+        except Exception:
+            pass
+
+    if not markdown and raw_content:
+        markdown = raw_content.strip()
+
+    if not markdown:
+        raise ValueError("No content to extract from. Provide a document_id or raw_content.")
+
+    # 2 — AI extraction
+    extracted = await _extract_structured_data(user_id=user_id, markdown=markdown, doc_meta=doc_meta)
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "extracted": extracted,
+            "fields_populated": [k for k, v in extracted.items() if v is not None and v != [] and str(v).strip()],
+            "source_title": doc_title,
+            "markdown": markdown,
+        }
+
+    # 3 — write to DB
+    return await _write_extracted_to_plan(
+        user_id=user_id,
+        business_id=business_id,
+        extracted=extracted,
+        markdown=markdown,
+        doc_title=doc_title,
+        document_id=document_id,
+    )
+
+
+async def confirm_adopt_plan(
+    *,
+    user_id: str,
+    business_id: str,
+    extracted: dict[str, Any],
+    markdown: str | None = None,
+    doc_title: str | None = None,
+    document_id: str | None = None,
+) -> dict[str, Any]:
+    """Write pre-extracted (from dry_run preview) data to DB after user confirmation."""
+    return await _write_extracted_to_plan(
+        user_id=user_id,
+        business_id=business_id,
+        extracted=extracted,
+        markdown=markdown,
+        doc_title=doc_title or "Business Plan",
+        document_id=document_id,
+    )
+
+
 def _extract_business_name(markdown: str) -> str | None:
     for line in markdown.splitlines():
         line = line.strip()
@@ -1345,4 +1455,22 @@ def _extract_business_name(markdown: str) -> str | None:
             name = line.lstrip("#").strip()
             if name:
                 return name
+    # Plain text patterns common in PDF-extracted plans
+    plain_prefixes = (
+        "business plan for ",
+        "plan for ",
+        "company name: ",
+        "company: ",
+        "business name: ",
+        "prepared for: ",
+        "prepared for ",
+    )
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        lower = stripped.lower()
+        for prefix in plain_prefixes:
+            if lower.startswith(prefix):
+                name = stripped[len(prefix):].strip().rstrip(".,")
+                if name and len(name) < 100:
+                    return name
     return None

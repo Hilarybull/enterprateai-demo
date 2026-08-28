@@ -64,7 +64,10 @@ export default function BusinessPlanPage() {
   const [blueprints, setBlueprints] = useState([]);
   const [blueprintsLoading, setBlueprintsLoading] = useState(false);
   const [adopting, setAdopting] = useState(false);
-  const [adoptResult, setAdoptResult] = useState(null);
+  const [confirming, setConfirming] = useState(false);
+  const [adoptResult, setAdoptResult] = useState(null);   // post-confirm success state
+  const [previewData, setPreviewData] = useState(null);   // dry-run preview (confirm pending)
+  const [showNarrative, setShowNarrative] = useState(false);
   const [uploadText, setUploadText] = useState("");
   const [uploadFile, setUploadFile] = useState(null);
   const [adoptTab, setAdoptTab] = useState("generated"); // "generated" | "upload"
@@ -207,24 +210,15 @@ export default function BusinessPlanPage() {
     if (!businessId) return;
     setAdopting(true);
     setError("");
-    setAdoptResult(null);
+    setPreviewData(null);
     try {
-      const res = await apiRequest(`/businesses/${businessId}/live-plan/import-extract`, "POST", {
-        idempotency_key: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+      const res = await apiRequest(`/businesses/${businessId}/live-plan/import-extract?dry_run=true`, "POST", {
         document_id: documentId || undefined,
         raw_content: rawContent || undefined,
       });
-      setAdoptResult(res);
-      setShowAdoptPanel(false);
-      const planData = res?.plan?.plan ? { ...res.plan.plan, ...res.plan, narrative_markdown: res.plan.source_document_markdown || res.plan.narrative } : res?.plan;
-      if (planData) {
-        setPlan(planData);
-        setPlanMissing(false);
-        setShowLivePlanWorkspace(true);
-      }
+      setPreviewData(res);
     } catch (err) {
-      const msg = String(err?.message || "");
-      setError(msg.replace(/^HTTP \d+:\s*/, "") || "Adoption failed. Please try again.");
+      setError(String(err?.message || "").replace(/^HTTP \d+:\s*/, "") || "Extraction failed. Please try again.");
     } finally {
       setAdopting(false);
     }
@@ -234,13 +228,13 @@ export default function BusinessPlanPage() {
     if (!businessId || !file) return;
     setAdopting(true);
     setError("");
-    setAdoptResult(null);
+    setPreviewData(null);
     try {
       const formData = new FormData();
       formData.append("file", file);
       const baseUrl = getApiBaseUrl();
       const token = localStorage.getItem("ea_token");
-      const resp = await fetch(`${baseUrl}/businesses/${businessId}/live-plan/import-file`, {
+      const resp = await fetch(`${baseUrl}/businesses/${businessId}/live-plan/import-file?dry_run=true`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
@@ -250,18 +244,36 @@ export default function BusinessPlanPage() {
         throw new Error(errData?.detail || `HTTP ${resp.status}`);
       }
       const res = await resp.json();
-      setAdoptResult(res);
-      setShowAdoptPanel(false);
-      const planData = res?.plan?.plan ? { ...res.plan.plan, ...res.plan } : res?.plan;
+      setPreviewData(res);
+    } catch (err) {
+      setError(String(err?.message || "File extraction failed."));
+    } finally {
+      setAdopting(false);
+    }
+  }
+
+  async function confirmAdopt() {
+    if (!businessId || !previewData) return;
+    setConfirming(true);
+    setError("");
+    try {
+      const res = await apiRequest(`/businesses/${businessId}/live-plan/confirm-adopt`, "POST", {
+        idempotency_key: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+        extracted: previewData.extracted,
+        markdown: previewData.markdown || undefined,
+        source_title: previewData.source_title || undefined,
+      });
+      const planData = res?.plan?.plan ? { ...res.plan.plan, ...res.plan, narrative_markdown: res.plan.source_document_markdown || res.plan.narrative } : res?.plan;
       if (planData) {
         setPlan(planData);
         setPlanMissing(false);
-        setShowLivePlanWorkspace(true);
       }
+      setPreviewData(null);
+      setAdoptResult(res);
     } catch (err) {
-      setError(String(err?.message || "File adoption failed."));
+      setError(String(err?.message || "").replace(/^HTTP \d+:\s*/, "") || "Adoption failed. Please try again.");
     } finally {
-      setAdopting(false);
+      setConfirming(false);
     }
   }
 
@@ -297,9 +309,9 @@ export default function BusinessPlanPage() {
 
         <SectionCard
           title="Choose a plan"
-          subtitle="Generate the standard business plan from your blueprint inputs."
+          subtitle={import.meta.env.VITE_HIDE_LIVE_PLAN ? "Generate the standard business plan from your blueprint inputs." : "Generate the standard business plan first, or open the live business plan for ongoing tracking."}
         >
-          <div className="grid grid-cols-1 gap-3">
+          <div className={`grid grid-cols-1 gap-3 ${import.meta.env.VITE_HIDE_LIVE_PLAN ? "" : "lg:grid-cols-2"}`}>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <div className="text-sm font-semibold text-slate-900">Generate business plan</div>
               <div className="mt-1 text-xs leading-6 text-slate-600">
@@ -315,7 +327,7 @@ export default function BusinessPlanPage() {
               </div>
             </div>
 
-            {/* Live business plan card — temporarily hidden
+            {!import.meta.env.VITE_HIDE_LIVE_PLAN && (
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4">
               <div className="text-sm font-semibold text-slate-900">Live business plan</div>
               <div className="mt-1 text-xs leading-6 text-slate-600">
@@ -331,7 +343,7 @@ export default function BusinessPlanPage() {
                 </button>
               </div>
             </div>
-            */}
+            )}
           </div>
         </SectionCard>
 
@@ -356,7 +368,7 @@ export default function BusinessPlanPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setShowLivePlanWorkspace(false)}
+                onClick={() => { setShowLivePlanWorkspace(false); setPreviewData(null); setAdoptResult(null); setShowNarrative(false); }}
                 className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
                 Close
@@ -378,21 +390,152 @@ export default function BusinessPlanPage() {
             </div>
           ) : (
             <div className="space-y-4">
+              {/* Post-confirm success banner */}
               {adoptResult && (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                  <div className="mb-0.5 text-xs font-semibold text-emerald-700">Modules updated from: {adoptResult.source_title || "your plan"}</div>
-                  <div className="text-xs text-emerald-600">Populated: {(adoptResult.fields_populated || []).join(", ") || "plan seeded successfully"}</div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
+                    <div className="text-xs text-emerald-700 font-medium">
+                      Plan adopted — {(adoptResult.fields_populated || []).length} field{(adoptResult.fields_populated || []).length !== 1 ? "s" : ""} populated.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAdoptResult(null)}
+                    className="text-[11px] text-slate-400 hover:text-slate-600"
+                  >
+                    Dismiss
+                  </button>
                 </div>
               )}
-              {plan && !adoptResult && (
+
+              {/* Dry-run preview — awaiting user confirmation */}
+              {previewData && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-amber-900">Review before adopting</div>
+                      <div className="text-xs text-amber-700 mt-0.5">From: <span className="font-medium">{previewData.source_title || "your plan"}</span></div>
+                    </div>
+                    <button type="button" onClick={() => setPreviewData(null)} className="text-[11px] text-slate-400 hover:text-slate-600 shrink-0">Cancel</button>
+                  </div>
+
+                  {/* Business identity */}
+                  {(previewData.extracted?.business_name || previewData.extracted?.industry || previewData.extracted?.target_market) && (
+                    <div className="rounded-xl border border-amber-100 bg-white p-3 space-y-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 mb-2">Business</div>
+                      <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                        {[["Business name", previewData.extracted?.business_name], ["Industry", previewData.extracted?.industry], ["Target market", previewData.extracted?.target_market], ["Pricing model", previewData.extracted?.pricing_model]].filter(([, v]) => v).map(([label, val]) => (
+                          <div key={label} className="text-xs"><span className="font-medium text-slate-600">{label}:</span> <span className="text-slate-700">{String(val)}</span></div>
+                        ))}
+                      </div>
+                      {previewData.extracted?.unique_value_proposition && (
+                        <div className="mt-1 text-xs text-slate-600 italic">&ldquo;{previewData.extracted.unique_value_proposition}&rdquo;</div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Financials */}
+                  {(previewData.extracted?.monthly_revenue_target || previewData.extracted?.monthly_costs || previewData.extracted?.gross_margin_pct) && (
+                    <div className="rounded-xl border border-amber-100 bg-white p-3">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 mb-2">Financials</div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {previewData.extracted?.monthly_revenue_target != null && (
+                          <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-2 py-2 text-center">
+                            <div className="text-[10px] text-emerald-600 font-semibold">Revenue / mo</div>
+                            <div className="text-xs font-bold text-emerald-800 mt-0.5">£{Number(previewData.extracted.monthly_revenue_target).toLocaleString()}</div>
+                          </div>
+                        )}
+                        {previewData.extracted?.monthly_costs != null && (
+                          <div className="rounded-lg bg-rose-50 border border-rose-100 px-2 py-2 text-center">
+                            <div className="text-[10px] text-rose-600 font-semibold">Costs / mo</div>
+                            <div className="text-xs font-bold text-rose-800 mt-0.5">£{Number(previewData.extracted.monthly_costs).toLocaleString()}</div>
+                          </div>
+                        )}
+                        {previewData.extracted?.gross_margin_pct != null && (
+                          <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-2 py-2 text-center">
+                            <div className="text-[10px] text-indigo-600 font-semibold">Margin</div>
+                            <div className="text-xs font-bold text-indigo-800 mt-0.5">{previewData.extracted.gross_margin_pct}%</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Products / services */}
+                  {Array.isArray(previewData.extracted?.products_services) && previewData.extracted.products_services.length > 0 && (
+                    <div className="rounded-xl border border-amber-100 bg-white p-3">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 mb-2">Products &amp; Services → Catalogue</div>
+                      <div className="space-y-1.5">
+                        {previewData.extracted.products_services.map((p, i) => {
+                          const name = typeof p === "string" ? p : p?.name || p;
+                          const desc = typeof p === "object" ? p?.description : null;
+                          const price = typeof p === "object" ? p?.price : null;
+                          return (
+                            <div key={i} className="flex items-start justify-between gap-2 text-xs">
+                              <div>
+                                <span className="font-medium text-slate-800">{String(name)}</span>
+                                {desc && <span className="ml-1 text-slate-500">&mdash; {String(desc)}</span>}
+                              </div>
+                              {price && <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">{String(price)}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Modules that will be updated */}
+                  <div className="text-[11px] text-amber-700">
+                    Will populate: Blueprint profile · Financials · Catalogue · Live plan assumptions
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={confirmAdopt}
+                    disabled={confirming}
+                    className="w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60"
+                  >
+                    {confirming ? "Adopting…" : "Confirm & Adopt"}
+                  </button>
+                </div>
+              )}
+
+              {plan && !previewData && !adoptResult && narrativeHtml && (
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                  <div className="px-5 py-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">{planTitle}</div>
+                      <div className="text-xs text-slate-400 mt-0.5">{plan?.industry || plan?.target_market || "Adopted plan"}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowNarrative(v => !v)}
+                        className="text-[11px] font-medium text-brand-600 hover:text-brand-700"
+                      >
+                        {showNarrative ? "Hide" : "View plan"}
+                      </button>
+                      <Pill tone="emerald">Active</Pill>
+                    </div>
+                  </div>
+                  {showNarrative && (
+                    <div
+                      className="border-t border-slate-100 px-5 py-4 max-h-[420px] overflow-y-auto text-[13px] leading-relaxed text-slate-700 [&_h1]:text-base [&_h1]:font-bold [&_h1]:mt-4 [&_h1]:mb-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:mt-2 [&_h3]:mb-0.5 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:mb-2 [&_li]:mb-0.5 [&_strong]:font-semibold"
+                      dangerouslySetInnerHTML={{ __html: narrativeHtml }}
+                    />
+                  )}
+                </div>
+              )}
+              {plan && !previewData && !adoptResult && !narrativeHtml && (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 flex items-center gap-3">
                   <div className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
                   <div className="text-xs text-slate-600">A plan is already active for this workspace. Adopt below to update your modules with a new plan.</div>
                 </div>
               )}
-              <div className="rounded-2xl border border-indigo-200 bg-indigo-50/30 p-5">
-                <div className="mb-1 text-sm font-semibold text-slate-900">Adopt a Business Plan</div>
-                <p className="text-xs text-slate-500 mb-4">Select a generated plan to scan, extract and populate your modules — or upload your own.</p>
+              {!previewData && (<div className="rounded-2xl border border-indigo-200 bg-indigo-50/30 p-5">
+                <div className="mb-1 text-sm font-semibold text-slate-900">{plan ? "Update plan" : "Adopt a Business Plan"}</div>
+                <p className="text-xs text-slate-500 mb-4">{plan ? "Re-scan a plan to update your modules with new data." : "Select a generated plan to scan, extract and populate your modules — or upload your own."}</p>
 
                 {/* Tabs */}
                 <div className="mb-4 flex gap-1 rounded-xl border border-slate-200 bg-white p-1 w-fit">
@@ -471,7 +614,7 @@ export default function BusinessPlanPage() {
                   </div>
                 )}
 
-              </div>
+              </div>)}
             </div>
           )}
             </SectionCard>

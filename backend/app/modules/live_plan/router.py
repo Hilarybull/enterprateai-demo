@@ -13,6 +13,7 @@ from app.shared.auth.deps import get_current_user
 from app.modules.live_plan.schemas import (
     LivePlanAdoptRequest,
     LivePlanImportExtractRequest,
+    LivePlanConfirmAdoptRequest,
     LivePlanAlertResponse,
     LivePlanCompareResponse,
     LivePlanCreateRequest,
@@ -28,6 +29,7 @@ from app.modules.live_plan.schemas import (
 from app.modules.live_plan.service import (
     activate_live_plan,
     import_extract_plan,
+    confirm_adopt_plan,
     acknowledge_alert,
     adopt_scenario,
     build_performance,
@@ -93,10 +95,20 @@ async def adopt_live_plan_endpoint(
 async def import_extract_live_plan(
     business_id: str,
     payload: LivePlanImportExtractRequest | None = None,
+    dry_run: bool = Query(False, description="If true, extract and preview without writing to DB"),
     user=Depends(get_current_user),
 ) -> dict:
     """Adopt a blueprint document or raw text — AI extracts fields and seeds the live plan."""
     payload = payload or LivePlanImportExtractRequest()
+    if dry_run:
+        result = await import_extract_plan(
+            user_id=user["id"],
+            business_id=business_id,
+            document_id=payload.document_id,
+            raw_content=payload.raw_content,
+            dry_run=True,
+        )
+        return {"business_id": business_id, **result}
     async with credit_guard(user["id"], "live_plan_import_extract", payload.idempotency_key):
         result = await import_extract_plan(
             user_id=user["id"],
@@ -107,10 +119,30 @@ async def import_extract_live_plan(
     return {"business_id": business_id, **result}
 
 
+@router.post("/confirm-adopt")
+async def confirm_adopt_live_plan(
+    business_id: str,
+    payload: LivePlanConfirmAdoptRequest,
+    user=Depends(get_current_user),
+) -> dict:
+    """Write pre-extracted data to DB after the user reviews and confirms the preview."""
+    async with credit_guard(user["id"], "live_plan_import_extract", payload.idempotency_key):
+        result = await confirm_adopt_plan(
+            user_id=user["id"],
+            business_id=business_id,
+            extracted=payload.extracted,
+            markdown=payload.markdown,
+            doc_title=payload.source_title,
+            document_id=payload.document_id,
+        )
+    return {"business_id": business_id, **result}
+
+
 @router.post("/import-file")
 async def import_file_live_plan(
     business_id: str,
     file: UploadFile = File(...),
+    dry_run: bool = Query(False, description="If true, extract and preview without writing to DB"),
     user=Depends(get_current_user),
 ) -> dict:
     """Upload a PDF, Word doc, image, or text file and extract a live plan from it."""
@@ -177,6 +209,14 @@ async def import_file_live_plan(
     if not raw_content or not raw_content.strip():
         raise HTTPException(status_code=422, detail="No text could be extracted from the uploaded file.")
 
+    if dry_run:
+        result = await import_extract_plan(
+            user_id=user["id"],
+            business_id=business_id,
+            raw_content=raw_content,
+            dry_run=True,
+        )
+        return {"business_id": business_id, **result}
     async with credit_guard(user["id"], "live_plan_import_extract", None):
         result = await import_extract_plan(
             user_id=user["id"],
