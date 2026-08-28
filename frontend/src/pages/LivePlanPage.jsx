@@ -309,9 +309,9 @@ export default function BusinessPlanPage() {
 
         <SectionCard
           title="Choose a plan"
-          subtitle="Generate the standard business plan from your blueprint inputs."
+          subtitle={import.meta.env.VITE_HIDE_LIVE_PLAN ? "Generate the standard business plan from your blueprint inputs." : "Generate the standard business plan first, or open the live business plan for ongoing tracking."}
         >
-          <div className="grid grid-cols-1 gap-3">
+          <div className={`grid grid-cols-1 gap-3 ${import.meta.env.VITE_HIDE_LIVE_PLAN ? "" : "lg:grid-cols-2"}`}>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <div className="text-sm font-semibold text-slate-900">Generate business plan</div>
               <div className="mt-1 text-xs leading-6 text-slate-600">
@@ -327,7 +327,7 @@ export default function BusinessPlanPage() {
               </div>
             </div>
 
-            {false && (
+            {!import.meta.env.VITE_HIDE_LIVE_PLAN && (
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4">
               <div className="text-sm font-semibold text-slate-900">Live business plan</div>
               <div className="mt-1 text-xs leading-6 text-slate-600">
