@@ -21,6 +21,7 @@ from app.modules.idea_validation.service import (
     evaluate_v4_idea,
     get_user_workspace,
     get_workspace,
+    list_user_workspaces,
     market_fit,
     update_workspace,
     upsert_user_workspace,
@@ -77,6 +78,14 @@ async def get_my_workspace(
     if not ws:
         return Response(status_code=204)
     return WorkspaceResponse.from_doc(ws)
+
+
+@router.get("/list", response_model=list[WorkspaceResponse])
+async def list_my_workspaces(
+    user=Depends(get_current_user),
+) -> list[WorkspaceResponse]:
+    workspaces = await list_user_workspaces(user_id=user["id"])
+    return [WorkspaceResponse.from_doc(ws) for ws in workspaces]
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)

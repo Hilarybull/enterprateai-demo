@@ -292,6 +292,7 @@ export default function Layout() {
   const notifRef = useRef(null);
   const helpRef = useRef(null);
   const feedbackRef = useRef(null);
+  const workspaceSwitcherRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const dismissedNotifIds = useRef(new Set(JSON.parse(localStorage.getItem("ea_notif_dismissed") || "[]")));
@@ -313,6 +314,9 @@ export default function Layout() {
   const [workspaceProfileOpen, setWorkspaceProfileOpen] = useState(false);
   const [workspaceGateOpen, setWorkspaceGateOpen] = useState(false);
   const [workspaceGateReturn, setWorkspaceGateReturn] = useState("/dashboard");
+  const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
+  const [allWorkspaces, setAllWorkspaces] = useState([]);
+  const [switchingId, setSwitchingId] = useState(null);
   const creditBalance = useAuthStore((s) => s.creditBalance);
   const creditInfo = useAuthStore((s) => s.creditInfo);
   const setCreditInfo = useAuthStore((s) => s.setCreditInfo);
@@ -356,6 +360,17 @@ export default function Layout() {
   useEffect(() => {
     if (email && hasSeenOnboarding(email)) setOnboardingOpen(false);
   }, [email]);
+
+  useEffect(() => {
+    if (!workspaceSwitcherOpen) return;
+    function handleClick(e) {
+      if (workspaceSwitcherRef.current && !workspaceSwitcherRef.current.contains(e.target)) {
+        setWorkspaceSwitcherOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [workspaceSwitcherOpen]);
 
   const userName = useAuthStore((s) => s.name);
   const userPicture = useAuthStore((s) => s.picture);
@@ -781,24 +796,71 @@ export default function Layout() {
             </div>
           ) : null}
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            if (workspaceId) {
-              navigate("/account");
-              return;
-            }
-            setWorkspaceGateReturn(location.pathname || "/dashboard");
-            setWorkspaceGateOpen(true);
-          }}
-          className={
-            "mt-2 w-full text-left text-base font-semibold text-slate-900 dark:text-slate-100 " +
-            (workspaceId ? "cursor-pointer hover:text-brand-600 dark:hover:text-brand-400 transition-colors" : "cursor-default")
-          }
-          title={workspaceId ? "View workspace profile" : undefined}
-        >
-          {workspaceDisplayName}
-        </button>
+        <div className="relative mt-2" ref={workspaceSwitcherRef}>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!workspaceId) {
+                setWorkspaceGateReturn(location.pathname || "/dashboard");
+                setWorkspaceGateOpen(true);
+                return;
+              }
+              if (workspaceSwitcherOpen) { setWorkspaceSwitcherOpen(false); return; }
+              try {
+                const list = await apiRequest("/validation/list", "GET");
+                setAllWorkspaces(list || []);
+              } catch { setAllWorkspaces([]); }
+              setWorkspaceSwitcherOpen(true);
+            }}
+            className="flex w-full items-center justify-between gap-1 text-left text-base font-semibold text-slate-900 dark:text-slate-100 hover:text-brand-600 dark:hover:text-brand-400 transition-colors"
+          >
+            <span className="truncate">{workspaceDisplayName}</span>
+            {workspaceId && (
+              <svg className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9l6 6 6-6"/></svg>
+            )}
+          </button>
+          {workspaceSwitcherOpen && (
+            <div className="absolute bottom-full left-0 z-50 mb-1 w-full rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900 overflow-hidden">
+              {allWorkspaces.length === 0 && (
+                <div className="px-3 py-2 text-[12px] text-slate-400">No workspaces found</div>
+              )}
+              {allWorkspaces.map((ws) => {
+                const name = ws.data?.workspace_profile?.company_name || ws.name || ws.id;
+                const isActive = ws.id === workspaceId;
+                return (
+                  <button
+                    key={ws.id}
+                    type="button"
+                    disabled={switchingId != null}
+                    onClick={async () => {
+                      if (isActive) { setWorkspaceSwitcherOpen(false); return; }
+                      setSwitchingId(ws.id);
+                      try {
+                        setWorkspaceId(ws.id);
+                        setWorkspaceName(ws.name || null);
+                        setWorkspaceLogo(ws.data?.workspace_profile?.logo_data_url || null);
+                        setWorkspaceCompanyName(ws.data?.workspace_profile?.company_name || null);
+                        setDecisionStatus(ws.data?.decision_status || null);
+                        setServiceDecisionStatus(ws.data?.service_decision_status || null);
+                        setCurrency(ws.data?.currency || "GBP");
+                        clearMemberMode();
+                        window.dispatchEvent(new Event("ea:workspace:refresh"));
+                      } finally {
+                        setSwitchingId(null);
+                        setWorkspaceSwitcherOpen(false);
+                      }
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] transition hover:bg-slate-50 dark:hover:bg-slate-800 ${isActive ? "bg-brand-50 dark:bg-brand-900/20" : ""}`}
+                  >
+                    <span className={`flex-1 truncate font-medium ${isActive ? "text-brand-700 dark:text-brand-400" : "text-slate-700 dark:text-slate-300"}`}>{name}</span>
+                    {isActive && <svg className="h-3.5 w-3.5 shrink-0 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>}
+                    {switchingId === ws.id && <svg className="h-3.5 w-3.5 shrink-0 animate-spin text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
         {isMemberMode ? (
           <>
             <div className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2 py-1 text-[11px] font-semibold text-brand-700 dark:bg-slate-800 dark:text-brand-400">

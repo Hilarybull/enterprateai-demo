@@ -104,6 +104,16 @@ async def get_user_workspace(*, user_id: str) -> WorkspaceDocument | None:
     return WorkspaceDocument(**doc)
 
 
+async def list_user_workspaces(*, user_id: str) -> list[WorkspaceDocument]:
+    docs = await sb_select(
+        "workspaces",
+        filters=[("user_id", "eq", user_id)],
+        order="updated_at",
+        desc=True,
+    )
+    return [WorkspaceDocument(**d) for d in (docs or [])]
+
+
 async def _get_accessible_workspace(*, user_id: str, workspace_id: str) -> tuple[WorkspaceDocument, bool]:
     doc = await sb_select(
         "workspaces",
