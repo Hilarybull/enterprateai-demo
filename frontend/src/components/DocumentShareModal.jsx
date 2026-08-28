@@ -177,7 +177,7 @@ export default function DocumentShareModal({
       onClick={(e) => { if (e.target === backdropRef.current) onClose(); }}
     >
       <div
-        className="relative flex w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
+        className="relative flex w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl max-h-[90svh] sm:max-h-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-center pt-3 pb-1 sm:hidden">
@@ -200,7 +200,7 @@ export default function DocumentShareModal({
           </button>
         </div>
 
-        <div className="space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
+        <div className="flex-1 min-h-0 space-y-4 overflow-y-auto px-4 py-4 pb-8 sm:px-5 sm:pb-5">
           <div>
             <label className="mb-1.5 block text-[12px] font-semibold text-slate-700">
               Who can use this link?
