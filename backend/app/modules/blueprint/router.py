@@ -542,7 +542,8 @@ async def suggest_blueprint_field(
     )
 
     try:
-        res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt, feature="blueprint.suggest_field")
+        async with credit_guard(user["id"], "suggest_field"):
+            res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt, feature="blueprint.suggest_field")
         import re as _re
         text = _re.sub(r"\*{1,3}|_{1,3}|^[-–—]\s*", "", (res.text or ""), flags=_re.MULTILINE).strip()
         return {"value": text}

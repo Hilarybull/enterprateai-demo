@@ -733,15 +733,27 @@ async def _call_claude(prompt: str, *, user_id: str = "", feature: str = "idea_v
         start = text.find("{")
         if start != -1:
             depth = 0
+            end_idx = None
             for i, ch in enumerate(text[start:], start):
                 if ch == "{":
                     depth += 1
                 elif ch == "}":
                     depth -= 1
                     if depth == 0:
-                        text = text[start : i + 1]
+                        end_idx = i + 1
                         break
-        result = json.loads(text)
+            if end_idx is not None:
+                text = text[start:end_idx]
+            else:
+                # Response truncated — close open braces so json.loads can parse partial output
+                text = text[start:] + ("}" * depth)
+        try:
+            result = json.loads(text)
+        except json.JSONDecodeError:
+            # Last resort: strip trailing incomplete key/value and close
+            import re as _re
+            text = _re.sub(r',\s*"[^"]*"?\s*:?\s*[^}]*$', "", text) + ("}" * max(depth, 1))
+            result = json.loads(text)
         logger.info("Claude synthesis successful.")
         return result
     except Exception as exc:
@@ -789,7 +801,33 @@ async def _call_openai(prompt: str, *, user_id: str = "", feature: str = "idea_v
             request_id=data.get("id") if isinstance(data, dict) else None,
         )
         text = data["choices"][0]["message"]["content"].strip()
-        result = json.loads(text)
+        # Strip markdown fences
+        if text.startswith("```"):
+            lines = text.splitlines()
+            text = "\n".join(lines[1:-1]).strip()
+        # Extract first complete JSON object by counting braces
+        start = text.find("{")
+        if start != -1:
+            depth = 0
+            end_idx = None
+            for i, ch in enumerate(text[start:], start):
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end_idx = i + 1
+                        break
+            if end_idx is not None:
+                text = text[start:end_idx]
+            else:
+                text = text[start:] + ("}" * depth)
+        try:
+            result = json.loads(text)
+        except json.JSONDecodeError:
+            import re as _re
+            text = _re.sub(r',\s*"[^"]*"?\s*:?\s*[^}]*$', "", text) + ("}" * max(depth, 1))
+            result = json.loads(text)
         logger.info("OpenAI synthesis successful.")
         return result
     except Exception as exc:

@@ -1072,7 +1072,7 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
     }
     # Basic validation uses fewer tokens per LLM call to stay well within time limits.
     # 3500 per call ensures JSON completes cleanly (2500 was truncating mid-JSON).
-    narration_max_tokens = 5000 if payload.get("validation_mode") == "comprehensive" else 3500
+    narration_max_tokens = 6000 if payload.get("validation_mode") == "comprehensive" else 4500
     try:
         narrative_report = await run_ai_narration(
             narration_fields,
