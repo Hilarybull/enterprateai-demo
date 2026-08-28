@@ -14,7 +14,7 @@ import { formatCurrency, formatNumber } from "../lib/format";
 import InfoTip from "../components/InfoTip";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
-import { hasFeatureAccess, isPlatformFeatureRestricted } from "../lib/permissions";
+import { hasFeatureAccess, isPlatformFeatureRestricted, isPlatformModuleGranted } from "../lib/permissions";
 import { planAllowsScenario } from "../lib/plans";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
@@ -106,13 +106,14 @@ export default function SimulationPage() {
   const memberPermissionType = useWorkspaceStore((s) => s.memberPermissionType);
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
+  const platformGrants = useAuthStore((s) => s.platformGrants);
   const subscription = useAuthStore((s) => s.subscription);
   const planKey = subscription?.plan_key ?? "free_trial";
   const planStatus = subscription?.status ?? "trial";
 
-  // Simulation requires an active paid plan or grandfathered status.
-  // Trial and expired users see the upgrade gate.
-  const simulationEnabled = planStatus === "grandfathered" || planStatus === "active";
+  // Admin-granted simulation access bypasses the subscription gate entirely.
+  const hasSimulationGrant = isPlatformModuleGranted("simulation", platformGrants);
+  const simulationEnabled = planStatus === "grandfathered" || planStatus === "active" || hasSimulationGrant;
 
   function canSimFeature(featureKey) {
     if (isPlatformFeatureRestricted("simulation", featureKey, platformRestrictions)) return false;
@@ -938,7 +939,7 @@ export default function SimulationPage() {
                 <div className="space-y-3">
                   {recommendations.length ? (
                     recommendations.map((rec, i) => {
-                      const recAllowed = planAllowsScenario(planKey, rec.scenario_template_id, planStatus);
+                      const recAllowed = planAllowsScenario(planKey, rec.scenario_template_id, planStatus) || hasSimulationGrant;
                       return (
                         <div key={rec.scenario_template_id || i} className="rounded-xl border border-slate-200 bg-white p-3">
                           <div className="text-sm font-semibold text-slate-900">{rec.title}</div>
@@ -1028,7 +1029,7 @@ export default function SimulationPage() {
                     {templates
                       .filter((t) => t.mode !== "adaptive")
                       .map((t) => {
-                        const allowed = planAllowsScenario(planKey, t.scenario_template_id, planStatus);
+                        const allowed = planAllowsScenario(planKey, t.scenario_template_id, planStatus) || hasSimulationGrant;
                         return (
                           <option key={t.scenario_template_id} value={t.scenario_template_id} disabled={!allowed}>
                             {t.title}{!allowed ? " — upgrade required" : ""}
@@ -1106,7 +1107,7 @@ export default function SimulationPage() {
               </div>
 
               <div>
-                {manualTemplateId !== "do_nothing_projection" && !planAllowsScenario(planKey, manualTemplateId, planStatus) ? (
+                {manualTemplateId !== "do_nothing_projection" && !planAllowsScenario(planKey, manualTemplateId, planStatus) || hasSimulationGrant ? (
                   <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
                     This scenario is not available on your current plan.{" "}
                     <button type="button" className="font-semibold underline" onClick={handleUpgradeClick}>
@@ -1116,7 +1117,7 @@ export default function SimulationPage() {
                 ) : null}
                 <div className="flex justify-end">
                   <Button
-                    disabled={actionLoading || !canRun || !planAllowsScenario(planKey, manualTemplateId, planStatus)}
+                    disabled={actionLoading || !canRun || !planAllowsScenario(planKey, manualTemplateId, planStatus) || hasSimulationGrant}
                     onClick={() => {
                       if (manualTemplateId === "do_nothing_projection") {
                         runDoNothing(parseNumber(manualTimelineMonths, 6), true);
