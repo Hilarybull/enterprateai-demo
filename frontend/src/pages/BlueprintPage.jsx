@@ -2652,6 +2652,7 @@ export default function BlueprintPage() {
           </SectionCard>
         ) : null}
 
+        {/* Live Business Plan section — temporarily hidden
         {!import.meta.env.VITE_HIDE_LIVE_PLAN && (
           <SectionCard
             title="Live Business Plan"
@@ -2675,6 +2676,7 @@ export default function BlueprintPage() {
             </div>
           </SectionCard>
         )}
+        */}
       </div>
 
       {isModalOpen && selectedMeta ? (
