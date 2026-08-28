@@ -569,7 +569,12 @@ export default function Layout() {
       }
 
       try {
-        const ws = await apiRequest("/validation/me", "GET");
+        // If user already has a workspace selected, reload that specific one.
+        // Only fall back to /me (most-recently-updated) when nothing is pinned.
+        const pinnedId = useWorkspaceStore.getState().workspaceId;
+        const ws = pinnedId
+          ? await apiRequest(`/validation/${pinnedId}`, "GET")
+          : await apiRequest("/validation/me", "GET");
         if (cancelled || !ws) return;
 
         // User has their own workspace — owner mode
