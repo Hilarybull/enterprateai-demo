@@ -2652,7 +2652,7 @@ export default function BlueprintPage() {
           </SectionCard>
         ) : null}
 
-        {false && (
+        {!import.meta.env.VITE_HIDE_LIVE_PLAN && (
           <SectionCard
             title="Live Business Plan"
             subtitle="Create a rolling plan for tracking KPIs, assumptions, and scenario updates."
