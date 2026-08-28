@@ -4,58 +4,107 @@ import { Link } from "react-router-dom";
 const COOKIE_KEY = "ea_cookie_consent";
 
 export default function CookieBanner() {
-  const [visible, setVisible] = useState(false);
+  const [state, setState] = useState(null);
+  const [analytics, setAnalytics] = useState(true);
 
   useEffect(() => {
     try {
-      if (!localStorage.getItem(COOKIE_KEY)) setVisible(true);
-    } catch {}
+      const val = localStorage.getItem(COOKIE_KEY);
+      setState(val ? "saved" : "pending");
+    } catch {
+      setState("pending");
+    }
   }, []);
 
-  function accept() {
-    try { localStorage.setItem(COOKIE_KEY, "accepted"); } catch {}
-    setVisible(false);
+  function savePreferences() {
+    try { localStorage.setItem(COOKIE_KEY, JSON.stringify({ operational: true, analytics })); } catch {}
+    setState("saved");
   }
 
-  function reject() {
-    setVisible(false);
+  function acceptAll() {
+    try { localStorage.setItem(COOKIE_KEY, JSON.stringify({ operational: true, analytics: true })); } catch {}
+    setState("saved");
   }
 
-  if (!visible) return null;
+  function withdraw() {
+    try { localStorage.removeItem(COOKIE_KEY); } catch {}
+    setState("pending");
+  }
 
-  return (
-    <div
-      style={{ zIndex: 9990 }}
-      className="pointer-events-auto fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white px-4 py-4 shadow-xl dark:border-slate-700 dark:bg-slate-900 sm:bottom-4 sm:left-4 sm:right-auto sm:max-w-sm sm:rounded-2xl sm:border sm:shadow-2xl"
-    >
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/40 dark:text-brand-400">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/>
-            <path d="M8.56 2.75c4.37 6.03 6.02 9.42 8.03 17.72m2.54-15.38c-3.72 4.35-8.94 5.66-16.88 5.85m19.5 1.9c-3.5-.93-6.63-.82-8.94 0-2.58.92-5.01 2.86-7.44 6.32"/>
-          </svg>
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-[13px] font-semibold text-slate-900 dark:text-slate-100">Cookies &amp; Privacy</p>
-          <p className="mt-0.5 text-[11.5px] leading-relaxed text-slate-500 dark:text-slate-400">
-            We use essential cookies to keep the platform running and optional ones to improve your experience. See our{" "}
-            <Link to="/legal/privacy" className="text-brand-600 underline hover:text-brand-700 dark:text-brand-400">Privacy Policy</Link>.
-          </p>
+  if (state === null) return null;
+
+  if (state === "saved") {
+    return (
+      <div style={{ zIndex: 9990 }} className="pointer-events-auto fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white px-6 py-3 shadow-md dark:border-slate-700 dark:bg-slate-900">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 text-[13px] text-slate-600 dark:text-slate-400">
+          <span>We use cookies on this site to enhance your user experience.</span>
+          <button onClick={withdraw} className="font-medium text-brand-600 underline underline-offset-2 hover:text-brand-700 dark:text-brand-400">
+            Withdraw consent
+          </button>
         </div>
       </div>
-      <div className="mt-3 flex gap-2">
-        <button
-          onClick={reject}
-          className="flex-1 rounded-xl border border-slate-200 py-2 text-[12px] font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
-        >
-          Reject optional
-        </button>
-        <button
-          onClick={accept}
-          className="flex-[1.4] rounded-xl bg-brand-600 py-2 text-[12px] font-semibold text-white transition hover:bg-brand-700"
-        >
-          Accept all
-        </button>
+    );
+  }
+
+  return (
+    <div style={{ zIndex: 9990 }} className="pointer-events-auto fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+      <div className="mx-auto max-w-7xl px-6 py-5">
+
+        <p className="text-[13px] leading-relaxed text-slate-700 dark:text-slate-300">
+          We use cookies on this site to enhance your user experience. You can opt out of these using the settings below.{" "}
+          <Link to="/legal/privacy" className="font-medium text-brand-600 underline underline-offset-2 hover:text-brand-700 dark:text-brand-400">
+            Privacy Policy
+          </Link>.
+        </p>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:max-w-2xl">
+          <div className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked
+              disabled
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-not-allowed accent-brand-600 opacity-40"
+            />
+            <div>
+              <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">Operational</p>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
+                These cookies cannot be opted out of as they are essential for the operation of this website.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex cursor-pointer items-start gap-3" onClick={() => setAnalytics(a => !a)}>
+            <input
+              type="checkbox"
+              checked={analytics}
+              onChange={(e) => setAnalytics(e.target.checked)}
+              onClick={(e) => e.stopPropagation()}
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-brand-600"
+            />
+            <div>
+              <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">Analytics and Marketing</p>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
+                These are cookies used by us to better understand how you are interacting with our website.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-4">
+          <button
+            onClick={savePreferences}
+            className="text-[13px] font-medium text-brand-600 underline underline-offset-2 hover:text-brand-700 dark:text-brand-400"
+          >
+            Save preferences
+          </button>
+          <button
+            onClick={acceptAll}
+            className="rounded-lg bg-brand-600 px-5 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-brand-700"
+          >
+            Accept all cookies
+          </button>
+        </div>
+
       </div>
     </div>
   );
