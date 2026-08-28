@@ -598,11 +598,11 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
   }, [workspaceId, products, customers, vendors]);
 
   async function persist(next) {
-    await apiRequest("/validation/me", "PATCH", { data: { catalogue: next } });
+    await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { catalogue: next } });
     refreshWorkspaceData();
   }
   async function persistCatalogueIntegrations(next) {
-    await apiRequest("/validation/me", "PATCH", { data: { integrations: { catalogue: next } } });
+    await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { integrations: { catalogue: next } } });
   }
 
   function resetProductForm() {
@@ -678,7 +678,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
           // Read current profile to avoid overwriting other profile fields
           const ws = await apiRequest("/validation/me", "GET");
           const currentProfile = ws?.data?.workspace_profile || {};
-          await apiRequest("/validation/me", "PATCH", {
+          await apiRequest(`/validation/${workspaceId}`, "PATCH", {
             data: { workspace_profile: { ...currentProfile, services: updatedServices } }
           });
         }

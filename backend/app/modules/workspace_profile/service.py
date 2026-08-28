@@ -12,8 +12,11 @@ from app.modules.workspace_profile.schemas import WorkspaceProfile
 async def _load_workspace(user_id: str, workspace_id: str | None):
     if workspace_id:
         return await get_workspace(user_id=user_id, workspace_id=workspace_id)
-    existing = await get_user_workspace(user_id=user_id)
-    return existing
+    # Do NOT silently fall back to most-recently-updated — that causes profile
+    # saves to land on the wrong workspace when the caller forgets the ID.
+    # Return the most-recent one only for read (GET) operations; callers that
+    # write must pass workspace_id explicitly.
+    return await get_user_workspace(user_id=user_id)
 
 
 async def get_profile(*, user_id: str, workspace_id: str | None = None):

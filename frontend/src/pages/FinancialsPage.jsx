@@ -4340,7 +4340,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                       <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
                         <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(subtotal)}</span></div>
                         {vatRate > 0 && <div className="flex justify-between"><span>VAT ({vatRate}%)</span><span>{formatMoney(vatAmount)}</span></div>}
-                        <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand total</span><span>{formatMoney(grandTotal, previewInvoice.currency || currency)}</span></div>
+                        <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand total</span><span>{formatMoney(grandTotal, currency)}</span></div>
                       </div>
                       <div>
                         <div className="ea-label">Notes</div>
@@ -4428,7 +4428,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                               <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Paid</span>
                             </div>
                             <div className="mt-0.5 text-xs text-slate-500">
-                              {inv.invoice_id ? `#${inv.invoice_id}` : ""}{inv.invoice_id && dateStr ? " · " : ""}{dateStr ? new Date(dateStr).toLocaleDateString() : ""}{" · "}{formatMoney(grandTotal, previewInvoice.currency || currency)}
+                              {inv.invoice_id ? `#${inv.invoice_id}` : ""}{inv.invoice_id && dateStr ? " · " : ""}{dateStr ? new Date(dateStr).toLocaleDateString() : ""}{" · "}{formatMoney(grandTotal, inv.currency || currency)}
                             </div>
                           </div>
                           <ActionMenu

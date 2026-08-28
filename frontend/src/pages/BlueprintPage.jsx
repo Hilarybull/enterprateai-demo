@@ -904,7 +904,7 @@ export default function BlueprintPage() {
     setDocumentLogo(nextLogo || "");
     setWorkspaceLogoStored(nextLogo || null);
     try {
-      const ws = await apiRequest("/validation/me", "PATCH", { data: { workspace_profile: nextProfile } });
+      const ws = await apiRequest(`/validation/${workspaceIdStored}`, "PATCH", { data: { workspace_profile: nextProfile } });
       if (ws?.id) setWorkspaceIdStored(ws.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save workspace logo.");
@@ -936,7 +936,7 @@ export default function BlueprintPage() {
     const hasAny = Object.keys(businessProfile).length > 0 || Boolean(workspaceProfilePatch);
     if (!hasAny) return;
     try {
-      const ws = await apiRequest("/validation/me", "PATCH", {
+      const ws = await apiRequest(`/validation/${workspaceIdStored}`, "PATCH", {
         data: {
           ...(Object.keys(businessProfile).length ? { business_profile: businessProfile } : {}),
           ...(workspaceProfilePatch ? { workspace_profile: workspaceProfilePatch } : {})
@@ -2148,7 +2148,7 @@ export default function BlueprintPage() {
           ws?.data?.blueprint_section_drafts && typeof ws.data.blueprint_section_drafts === "object"
             ? ws.data.blueprint_section_drafts
             : {};
-        await apiRequest("/validation/me", "PATCH", {
+        await apiRequest(`/validation/${workspaceIdStored}`, "PATCH", {
           data: {
             blueprint_section_drafts: {
               ...existingDrafts,
@@ -2466,7 +2466,7 @@ export default function BlueprintPage() {
               ? { ...ws.data.blueprint_section_drafts }
               : {};
           delete existingDrafts[typeHint];
-          await apiRequest("/validation/me", "PATCH", { data: { blueprint_section_drafts: existingDrafts } });
+          await apiRequest(`/validation/${workspaceIdStored}`, "PATCH", { data: { blueprint_section_drafts: existingDrafts } });
         } catch {
           // ignore draft cleanup failures
         }
@@ -2565,6 +2565,10 @@ export default function BlueprintPage() {
                   type="button"
                   onClick={() => {
                     if (!canAccess) return;
+                    if (d.id === "business_plan" && !import.meta.env.VITE_HIDE_LIVE_PLAN) {
+                      navigate(livePlanHref);
+                      return;
+                    }
                     openDoc(d.id);
                   }}
                   disabled={!canAccess}
@@ -2647,6 +2651,30 @@ export default function BlueprintPage() {
             </div>
           </SectionCard>
         ) : null}
+
+        {!import.meta.env.VITE_HIDE_LIVE_PLAN && (
+          <SectionCard
+            title="Live Business Plan"
+            subtitle="Create a rolling plan for tracking KPIs, assumptions, and scenario updates."
+          >
+            <div className="flex flex-col gap-4 rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/40 p-4 md:flex-row md:items-center md:justify-between">
+              <div className="max-w-2xl">
+                <div className="text-sm font-semibold text-slate-900">Track your plan over time</div>
+                <div className="mt-1 text-xs leading-6 text-slate-600">
+                  Use the live business plan to monitor assumptions, KPIs, variances, and scenario updates alongside your existing blueprint plan.
+                </div>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <Link
+                  to={livePlanHref}
+                  className="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700"
+                >
+                  Open live plan
+                </Link>
+              </div>
+            </div>
+          </SectionCard>
+        )}
       </div>
 
       {isModalOpen && selectedMeta ? (

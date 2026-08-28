@@ -3046,7 +3046,7 @@ export default function ValidationWizardPage() {
       // Persist insights to workspace so they survive page refreshes
       try {
         const dataKey = researchSource === "service" ? "service_market_research" : "market_research";
-        await apiRequest("/validation/me", "PATCH", { data: { [dataKey]: result } });
+        await apiRequest(`/validation/${activeWorkspaceId}`, "PATCH", { data: { [dataKey]: result } });
       } catch {
         // non-critical — insights are already in state
       }

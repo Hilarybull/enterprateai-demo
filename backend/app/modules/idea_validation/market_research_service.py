@@ -687,7 +687,7 @@ STRICT CONSTRAINTS:
 """
 
 
-async def _call_claude(prompt: str, *, user_id: str = "", feature: str = "idea_validation.market_research") -> dict:
+async def _call_claude(prompt: str, *, user_id: str = "", feature: str = "idea_validation.market_research", max_tokens: int = 4096) -> dict:
     settings = get_settings()
     if not settings.claude_api_key:
         logger.warning("Claude API key missing in settings.")
@@ -699,7 +699,7 @@ async def _call_claude(prompt: str, *, user_id: str = "", feature: str = "idea_v
     }
     body = {
         "model": settings.claude_model or "claude-3-5-sonnet-20241022",
-        "max_tokens": 8192,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
     logger.info("Calling Claude with model: %s", body["model"])
@@ -749,7 +749,7 @@ async def _call_claude(prompt: str, *, user_id: str = "", feature: str = "idea_v
     return {}
 
 
-async def _call_openai(prompt: str, *, user_id: str = "", feature: str = "idea_validation.market_research") -> dict:
+async def _call_openai(prompt: str, *, user_id: str = "", feature: str = "idea_validation.market_research", max_tokens: int = 4096) -> dict:
     settings = get_settings()
     if not settings.openai_api_key:
         logger.warning("OpenAI API key missing in settings.")
@@ -760,6 +760,7 @@ async def _call_openai(prompt: str, *, user_id: str = "", feature: str = "idea_v
     }
     body = {
         "model": settings.openai_model or "gpt-4o",
+        "max_tokens": max_tokens,
         "messages": [
             {"role": "system", "content": "You are a senior market research analyst. You provide deterministic, research-backed insights in JSON format only."},
             {"role": "user", "content": prompt}
@@ -1090,28 +1091,31 @@ Return ONLY valid JSON (no markdown, no preamble):
 }}"""
 
 
-async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]], shopping: list[dict[str, Any]] = None, *, user_id: str = "", sources: dict[str, Any] | None = None) -> dict[str, Any]:
+async def run_ai_narration(fields: dict[str, Any], evidence: dict[str, list[str]], shopping: list[dict[str, Any]] = None, *, user_id: str = "", sources: dict[str, Any] | None = None, max_tokens: int = 3000, call_llm=None) -> dict[str, Any]:
     """
     Step 2: Run narrative prompt + market-data prompt concurrently, merge results.
+    max_tokens controls output length per call (default 3000; pass 5000 for comprehensive).
+    Pass call_llm to reuse an already-resolved LLM caller and avoid a Supabase round-trip.
     """
     narrative_prompt = _build_synthesis_prompt(fields, evidence)
     market_prompt = _build_market_data_prompt(fields, evidence)
 
-    call_llm = await _pick_llm_caller(user_id)
+    if call_llm is None:
+        call_llm = await _pick_llm_caller(user_id)
 
     narrative_report: dict[str, Any] = {}
     market_data: dict[str, Any] = {}
 
     async def call_narrative():
         try:
-            return await call_llm(narrative_prompt, user_id=user_id, feature="idea_validation.narration")
+            return await call_llm(narrative_prompt, user_id=user_id, feature="idea_validation.narration", max_tokens=max_tokens)
         except Exception as e:
             logger.error("AI narrative failed: %s", e)
         return {}
 
     async def call_market_data():
         try:
-            return await call_llm(market_prompt, user_id=user_id, feature="idea_validation.market_data")
+            return await call_llm(market_prompt, user_id=user_id, feature="idea_validation.market_data", max_tokens=max_tokens)
         except Exception as e:
             logger.error("AI market-data failed: %s", e)
         return {}

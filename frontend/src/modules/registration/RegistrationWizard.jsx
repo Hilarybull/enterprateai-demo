@@ -151,10 +151,10 @@ export default function RegistrationWizard() {
       registeredAddress.trim() ||
       altName1.trim() ||
       altName2.trim();
-    if (!hasAny) return;
+    if (!hasAny || !workspaceId) return;
     const timer = setTimeout(async () => {
       try {
-        const ws = await apiRequest("/validation/me", "PATCH", {
+        const ws = await apiRequest(`/validation/${workspaceId}`, "PATCH", {
           name: companyName.trim() || undefined,
           data: {
             business_profile: {

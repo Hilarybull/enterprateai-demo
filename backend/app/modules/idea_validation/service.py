@@ -667,7 +667,7 @@ def _build_v4_recommendations(narrative_report: dict, v4_result: dict) -> list[s
     return [e.get("name", "") for e in (v4_result.get("experiments") or [])[:3] if e.get("name")]
 
 
-async def _ai_enrich_v4_input(inp, user_id: str) -> None:
+async def _ai_enrich_v4_input(inp, user_id: str, call_llm=None) -> None:
     """
     Fill in blank VPS-scoring fields with AI inference so Basic-mode results
     reflect the idea rather than showing 0% for every unfilled step.
@@ -729,8 +729,9 @@ Return ONLY a valid JSON object with these exact keys — no explanation, no mar
 {{{joined}}}"""
 
     try:
-        call_llm = await _pick_llm_caller(user_id)
-        raw = await call_llm(prompt, user_id=user_id, feature="idea_validation.v4_enrichment")
+        if call_llm is None:
+            call_llm = await _pick_llm_caller(user_id)
+        raw = await call_llm(prompt, user_id=user_id, feature="idea_validation.v4_enrichment", max_tokens=512)
         if not raw:
             return
         text = raw if isinstance(raw, str) else (raw.get("executive_summary") or raw.get("raw") or json.dumps(raw))
@@ -769,7 +770,7 @@ Return ONLY a valid JSON object with these exact keys — no explanation, no mar
         logger.warning("V4 AI enrichment failed (non-fatal): %s", exc)
 
 
-async def _ai_generate_experiments(v4_inp, vps_dims: list[dict], user_id: str) -> list[dict]:
+async def _ai_generate_experiments(v4_inp, vps_dims: list[dict], user_id: str, call_llm=None) -> list[dict]:
     """Generate adaptive validation experiments via LLM, tailored to the specific idea and weak dimensions."""
     from app.modules.idea_validation.engine_v4 import generate_experiments
 
@@ -831,8 +832,9 @@ Rules:
 - Do not add markdown, explanation, or any text outside the JSON array"""
 
     try:
-        call_llm = await _pick_llm_caller(user_id)
-        raw = await call_llm(prompt, user_id=user_id, feature="idea_validation.v4_enrichment")
+        if call_llm is None:
+            call_llm = await _pick_llm_caller(user_id)
+        raw = await call_llm(prompt, user_id=user_id, feature="idea_validation.v4_enrichment", max_tokens=2048)
         text = raw if isinstance(raw, str) else (raw.get("executive_summary") or raw.get("raw") or json.dumps(raw))
         text = text.strip()
         # Strip markdown code fences if present
@@ -1020,25 +1022,32 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
                 detail="You have used your free lifetime validation. Upgrade to run more validations.",
             )
 
+    # Resolve LLM caller ONCE — each call to _pick_llm_caller hits Supabase twice
+    call_llm = await _pick_llm_caller(user_id)
+
     # 2. Deterministic scoring — enrich blank fields with AI before scoring
     v4_inp = v4_payload_to_input(payload)
-    await _ai_enrich_v4_input(v4_inp, user_id)
+    await _ai_enrich_v4_input(v4_inp, user_id, call_llm=call_llm)
     v4_result = evaluate_v4(v4_inp)
 
-    # 2b. AI-generated experiments tailored to this idea and its weak dimensions
-    vps_dims = v4_result["scores"].get("vps_dimensions", [])
-    ai_experiments = await _ai_generate_experiments(v4_inp, vps_dims, user_id)
-
-    # 3. Flatten V4 fields for search query building
+    # 3. Flatten V4 fields for search query building (fast, must run before research)
     fields = flatten_fields_from_v4_payload(payload)
+    vps_dims = v4_result["scores"].get("vps_dimensions", [])
 
-    # 4. Live web research
-    logger.info("V4: starting web research for %r (serp=%s)", fields.get("business_name"), use_serp)
-    try:
-        research_res = await run_research_data(fields, use_serp=use_serp)
-    except Exception as exc:
-        logger.error("V4 research retrieval failed: %s", exc)
-        research_res = {"evidence": {}, "sources": {}, "shopping": [], "search_queries": {}}
+    # 2b + 4. Run experiments generation and web research in parallel
+    logger.info("V4: starting experiments + web research in parallel (serp=%s)", use_serp)
+
+    async def _run_research():
+        try:
+            return await run_research_data(fields, use_serp=use_serp)
+        except Exception as exc:
+            logger.error("V4 research retrieval failed: %s", exc)
+            return {"evidence": {}, "sources": {}, "shopping": [], "search_queries": {}}
+
+    ai_experiments, research_res = await asyncio.gather(
+        _ai_generate_experiments(v4_inp, vps_dims, user_id, call_llm=call_llm),
+        _run_research(),
+    )
 
     # 5. AI narration — pass V4 scores in the format the synthesis prompt understands
     vps = v4_result["scores"]["potential_score"]
@@ -1061,6 +1070,9 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
         },
         **({"computed_metrics": comp_metrics} if comp_metrics else {}),
     }
+    # Basic validation uses fewer tokens per LLM call to stay well within time limits.
+    # 3500 per call ensures JSON completes cleanly (2500 was truncating mid-JSON).
+    narration_max_tokens = 5000 if payload.get("validation_mode") == "comprehensive" else 3500
     try:
         narrative_report = await run_ai_narration(
             narration_fields,
@@ -1068,6 +1080,8 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
             research_res.get("shopping", []),
             user_id=user_id,
             sources=research_res.get("sources", {}),
+            max_tokens=narration_max_tokens,
+            call_llm=call_llm,
         )
         logger.info("V4 narration complete.")
     except Exception as exc:
