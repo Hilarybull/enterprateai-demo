@@ -3707,7 +3707,7 @@ export default function ValidationWizardPage() {
                       <div className="flex items-center gap-2.5">
                         <svg className="h-4 w-4 shrink-0 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
                         <span className="text-sm font-medium text-brand-800">
-                          You have a <span className="font-bold capitalize">{_v4Draft.journey}</span> draft in progress — Step {_v4Draft.step}
+                          You have a <span className="font-bold capitalize">{_v4Draft.journey}</span> draft in progress · Step {_v4Draft.step}
                         </span>
                       </div>
                       <button
