@@ -35,7 +35,7 @@ export default function CookieBanner() {
 
   if (state === "saved") {
     return (
-      <div style={{ zIndex: 35 }} className="pointer-events-auto hidden sm:block fixed bottom-0 left-0 right-0 px-6 py-3 opacity-0 hover:opacity-100 transition-opacity duration-300 bg-white border-t border-slate-200 shadow-md dark:bg-slate-900 dark:border-slate-700">
+      <div style={{ zIndex: 35 }} className="pointer-events-auto fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white px-6 py-3 shadow-md dark:border-slate-700 dark:bg-slate-900">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 text-[13px] text-slate-600 dark:text-slate-400">
           <span>We use cookies on this site to enhance your user experience</span>
           <button onClick={withdraw} className="font-medium text-brand-600 underline underline-offset-2 hover:text-brand-700 dark:text-brand-400">
