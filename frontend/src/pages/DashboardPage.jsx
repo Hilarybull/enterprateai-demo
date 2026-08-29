@@ -147,17 +147,17 @@ export default function DashboardPage() {
 
   const financialHealthSection = (
     <section className="space-y-4">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {financialHealthCards.map((card) => (
           <div
             key={card.label}
             className={
-              "min-h-[126px] rounded-2xl border p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex flex-col " +
+              "min-h-[100px] rounded-2xl border p-3 sm:p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex flex-col min-w-0 " +
               (card.highlight ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white")
             }
           >
-            <div className="text-[0.95rem] font-medium text-slate-500">{card.label}</div>
-            <div className="mt-2 text-[1.8rem] font-semibold tracking-tight text-slate-950">
+            <div className="text-[0.78rem] sm:text-[0.85rem] font-medium text-slate-500 leading-snug">{card.label}</div>
+            <div className="mt-1.5 text-[1.2rem] sm:text-[1.5rem] xl:text-[1.8rem] font-semibold tracking-tight text-slate-950 break-words min-w-0">
               {card.value}
             </div>
           </div>

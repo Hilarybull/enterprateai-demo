@@ -1227,6 +1227,34 @@ export default function AccountPage() {
               </div>
             </Card>
 
+            {/* ── Privacy & Cookies ── */}
+            <Card>
+              <div className="border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+                <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Privacy &amp; Cookies</h2>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Manage your cookie consent preferences.</p>
+              </div>
+              <div className="px-5 py-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">Cookie consent</p>
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      You have accepted cookies on this site. You can withdraw your consent at any time. You will be asked again on your next visit.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try { localStorage.removeItem("ea_cookie_consent"); } catch {}
+                      window.location.reload();
+                    }}
+                    className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  >
+                    Withdraw consent
+                  </button>
+                </div>
+              </div>
+            </Card>
+
           </div>
         )}
 

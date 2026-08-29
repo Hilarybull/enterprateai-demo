@@ -1336,20 +1336,20 @@ async def _write_extracted_to_plan(
             })
         fields_populated.append(name)
 
-    await _upsert_assumption("business_name", "Business name", extracted.get("business_name"), "STRATEGIC", 1.0)
-    await _upsert_assumption("industry", "Primary industry", extracted.get("industry"), "MARKET")
-    await _upsert_assumption("target_market", "Target market", extracted.get("target_market"), "MARKET")
-    await _upsert_assumption("pricing_model", "Pricing model", extracted.get("pricing_model"), "COMMERCIAL")
-    await _upsert_assumption("unique_value_proposition", "Value proposition", extracted.get("unique_value_proposition"), "STRATEGIC")
-    await _upsert_assumption("monthly_revenue_target", "Monthly revenue target", extracted.get("monthly_revenue_target"), "FINANCIAL")
-    await _upsert_assumption("monthly_costs", "Monthly costs", extracted.get("monthly_costs"), "FINANCIAL")
-    await _upsert_assumption("gross_margin_pct", "Gross margin %", extracted.get("gross_margin_pct"), "FINANCIAL")
-    await _upsert_assumption("cash_runway_months", "Cash runway (months)", extracted.get("cash_runway_months"), "FINANCIAL")
-    await _upsert_assumption("active_customers_target", "Active customers target", extracted.get("active_customers_target"), "CUSTOMER")
-
     products = extracted.get("products_services") or []
-    if isinstance(products, list) and products:
-        await _upsert_assumption("products_services", "Products / services", products, "COMMERCIAL")
+    await asyncio.gather(
+        _upsert_assumption("business_name", "Business name", extracted.get("business_name"), "STRATEGIC", 1.0),
+        _upsert_assumption("industry", "Primary industry", extracted.get("industry"), "MARKET"),
+        _upsert_assumption("target_market", "Target market", extracted.get("target_market"), "MARKET"),
+        _upsert_assumption("pricing_model", "Pricing model", extracted.get("pricing_model"), "COMMERCIAL"),
+        _upsert_assumption("unique_value_proposition", "Value proposition", extracted.get("unique_value_proposition"), "STRATEGIC"),
+        _upsert_assumption("monthly_revenue_target", "Monthly revenue target", extracted.get("monthly_revenue_target"), "FINANCIAL"),
+        _upsert_assumption("monthly_costs", "Monthly costs", extracted.get("monthly_costs"), "FINANCIAL"),
+        _upsert_assumption("gross_margin_pct", "Gross margin %", extracted.get("gross_margin_pct"), "FINANCIAL"),
+        _upsert_assumption("cash_runway_months", "Cash runway (months)", extracted.get("cash_runway_months"), "FINANCIAL"),
+        _upsert_assumption("active_customers_target", "Active customers target", extracted.get("active_customers_target"), "CUSTOMER"),
+        *([_upsert_assumption("products_services", "Products / services", products, "COMMERCIAL")] if isinstance(products, list) and products else []),
+    )
 
     await _safe_update(
         "live_business_plans",

@@ -1107,7 +1107,7 @@ export default function SimulationPage() {
               </div>
 
               <div>
-                {manualTemplateId !== "do_nothing_projection" && !planAllowsScenario(planKey, manualTemplateId, planStatus) || hasSimulationGrant ? (
+                {manualTemplateId !== "do_nothing_projection" && !(planAllowsScenario(planKey, manualTemplateId, planStatus) || hasSimulationGrant) ? (
                   <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
                     This scenario is not available on your current plan.{" "}
                     <button type="button" className="font-semibold underline" onClick={handleUpgradeClick}>
@@ -1117,7 +1117,7 @@ export default function SimulationPage() {
                 ) : null}
                 <div className="flex justify-end">
                   <Button
-                    disabled={actionLoading || !canRun || !planAllowsScenario(planKey, manualTemplateId, planStatus) || hasSimulationGrant}
+                    disabled={actionLoading || !canRun || !(planAllowsScenario(planKey, manualTemplateId, planStatus) || hasSimulationGrant)}
                     onClick={() => {
                       if (manualTemplateId === "do_nothing_projection") {
                         runDoNothing(parseNumber(manualTimelineMonths, 6), true);
@@ -1302,7 +1302,7 @@ export default function SimulationPage() {
                   const hasRowData = row.revenue != null || row.cost_of_sales != null;
                   const useCarryForward = isFuture && !currentMonthHasData && !hasRowData;
                   const gpForCum = useCarryForward ? lastActualGP : grossProfit;
-                  const cashForCum = useCarryForward ? lastActualCashFlow : (rev - cos - exp);
+                  const cashForCum = useCarryForward ? lastActualCashFlow : (rev - rec - cos - exp);
                   cumGross = Number((cumGross + gpForCum).toFixed(2));
                   cumCash = Number((cumCash + cashForCum).toFixed(2));
                   const totalCosts = Number((cos + exp).toFixed(2));

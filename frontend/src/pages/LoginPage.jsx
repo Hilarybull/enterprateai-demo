@@ -247,7 +247,7 @@ export default function LoginPage() {
         </section>
 
         <section className="flex items-center justify-center lg:justify-end">
-          <div className="flex h-full w-full max-w-[740px] flex-col overflow-hidden rounded-[2rem] border border-[#dbe3f2] bg-white/95 p-4 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur sm:p-5 lg:h-[calc(100dvh-4rem)] lg:p-5 xl:p-7 max-[900px]:p-4">
+          <div className="flex h-full w-full max-w-[740px] flex-col overflow-hidden rounded-[2rem] border border-[#dbe3f2] bg-white/95 p-4 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur sm:p-5 lg:h-[calc(100dvh-4rem)] lg:p-5 xl:p-7 max-[900px]:p-4 max-h-[calc(100svh-1.5rem)] lg:max-h-none">
             <div className="text-center">
               <h2 className="text-[1.9rem] font-black tracking-tight text-[#0b1026] sm:text-[2.1rem] max-[900px]:text-[1.6rem]">Welcome to EnterprateAI</h2>
               <p className="mt-1.5 text-[0.86rem] text-slate-500 sm:text-[0.92rem] max-[900px]:text-[0.8rem]">Create your workspace and get guided business intelligence.</p>
