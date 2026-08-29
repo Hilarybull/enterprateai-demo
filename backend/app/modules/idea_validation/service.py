@@ -325,19 +325,6 @@ async def evaluate(
     is_free_plan = _on_free_plan and not _has_grant
     use_serp = plan_uses_serp(plan_key, plan_status) or _has_grant
 
-    if is_free_plan:
-        # Count lifetime validations for this user
-        existing_validations = await sb_select(
-            "idea_validation_results",
-            filters=[("user_id", "eq", user_id)],
-        )
-        count = len(existing_validations) if existing_validations else 0
-        if count >= _LIFETIME_VALIDATION_LIMIT:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You have used your free lifetime validation. Upgrade to run more validations.",
-            )
-
     # Always prefer the user's current input payloads when provided.
     iv_payload = None
     if idea_validation:
@@ -1013,14 +1000,6 @@ async def evaluate_v4_idea(*, user_id: str, payload: dict) -> dict:
     has_grant = _on_free_plan and await _has_platform_grant(user_id, "full_access")
     is_free = _on_free_plan and not has_grant
     use_serp = plan_uses_serp(plan_key, plan_status) or has_grant
-
-    if is_free:
-        existing = await sb_select("idea_validation_results", filters=[("user_id", "eq", user_id)])
-        if len(existing or []) >= _LIFETIME_VALIDATION_LIMIT:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You have used your free lifetime validation. Upgrade to run more validations.",
-            )
 
     # Resolve LLM caller ONCE — each call to _pick_llm_caller hits Supabase twice
     call_llm = await _pick_llm_caller(user_id)
