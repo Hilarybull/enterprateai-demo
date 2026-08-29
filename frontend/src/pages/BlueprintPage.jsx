@@ -2565,7 +2565,7 @@ export default function BlueprintPage() {
                   type="button"
                   onClick={() => {
                     if (!canAccess) return;
-                    if (d.id === "business_plan" && !import.meta.env.VITE_HIDE_LIVE_PLAN) {
+                    if (d.id === "business_plan" && import.meta.env.VITE_ENABLE_LIVE_PLAN) {
                       navigate(livePlanHref);
                       return;
                     }
