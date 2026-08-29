@@ -131,9 +131,9 @@ export default function DashboardPage() {
       value: formatCurrency(snapshotKpis.cashBalance, currency),
     },
     {
-      label: "Expenses + cost of sales",
+      label: "Expenses & CoS",
       value: formatCurrency(snapshotKpis.totalCosts, currency),
-      highlight: true,
+      highlight: snapshotKpis.totalCosts === 0 && snapshotKpis.totalRevenue > 0,
     },
     {
       label: "Receivables",
