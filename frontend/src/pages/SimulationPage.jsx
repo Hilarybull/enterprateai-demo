@@ -1954,7 +1954,7 @@ function ScenarioOutput({
     const _isFuture = !_isCur && !_isPast;
     const _useCarry = _isFuture && !_curMonthHasData;
     const _gpForCum = _useCarry ? _lastActualGP : _gp;
-    const _cashForCum = _useCarry ? _lastActualCashFlow : (_rev - _cos - _exp);
+    const _cashForCum = _useCarry ? _lastActualCashFlow : (_rev - _rec - _cos - _exp);
     _cumGross = Number((_cumGross + _gpForCum).toFixed(2));
     _cumCash = Number((_cumCash + _cashForCum).toFixed(2));
     const _totalCosts = Number((_cos + _exp).toFixed(2));
