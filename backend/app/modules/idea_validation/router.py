@@ -34,6 +34,9 @@ from app.modules.idea_validation.market_research_service import (
 )
 from app.shared.auth.deps import get_current_user
 from app.modules.credits.service import credit_guard
+from app.shared.llm.openai_client import get_user_plan_info
+
+_FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
 
 router = APIRouter(prefix="/validation", tags=["idea_validation"])
 
@@ -123,8 +126,16 @@ async def evaluate_v4_endpoint(
     )
     logger.info("evaluate-v4 start user=%s mode=%s", user["id"], payload.get("validation_mode"))
     try:
-        async with credit_guard(user["id"], feature_code):
+        # Free/explorer users are rate-limited by a lifetime validation count in the service
+        # layer, not by credits. Skip credit_guard for them on basic validation so a depleted
+        # credit balance doesn't silently block their one free run.
+        plan_key, plan_status = await get_user_plan_info(user["id"])
+        _is_free_user = (plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}) and payload.get("validation_mode") != "comprehensive"
+        if _is_free_user:
             result = await evaluate_v4_idea(user_id=user["id"], payload=payload)
+        else:
+            async with credit_guard(user["id"], feature_code):
+                result = await evaluate_v4_idea(user_id=user["id"], payload=payload)
         logger.info("evaluate-v4 complete user=%s", user["id"])
         return result
     except HTTPException:
