@@ -190,16 +190,16 @@ export default function LoginPage() {
       <div className="pointer-events-none absolute bottom-0 right-0 hidden h-72 w-72 rounded-full bg-rose-200/24 blur-3xl lg:block" />
 
       <div className="relative mx-auto grid min-h-[100dvh] w-full max-w-none gap-5 px-3 py-3 sm:px-4 sm:py-4 lg:grid-cols-[minmax(0,1.14fr)_minmax(0,0.86fr)] lg:items-stretch lg:gap-5 lg:px-5 lg:py-4 xl:px-8 2xl:px-12 max-[900px]:gap-4 max-[900px]:py-2.5">
-        <section className="relative hidden flex-col justify-between overflow-hidden rounded-[2rem] border border-white/70 bg-white/40 p-7 shadow-[0_24px_80px_rgba(77,106,255,0.10)] backdrop-blur sm:p-9 lg:flex max-[900px]:p-6">
-          <div className="pointer-events-none absolute -left-24 top-40 h-80 w-80 rounded-full border border-brand-100/80 bg-brand-100/40" />
-          <div className="pointer-events-none absolute -bottom-24 right-4 h-64 w-64 rounded-full bg-rose-100/55" />
+        <section className="relative flex flex-col justify-between overflow-hidden rounded-[2rem] border border-white/70 bg-white/40 p-5 shadow-[0_24px_80px_rgba(77,106,255,0.10)] backdrop-blur sm:p-7 lg:p-9">
+          <div className="pointer-events-none absolute -left-24 top-40 hidden h-80 w-80 rounded-full border border-brand-100/80 bg-brand-100/40 lg:block" />
+          <div className="pointer-events-none absolute -bottom-24 right-4 hidden h-64 w-64 rounded-full bg-rose-100/55 lg:block" />
 
           <div className="relative">
             <div className="inline-flex items-center gap-2">
-              <img src={logoUrl} alt="EnterprateAI" className="h-11 w-auto object-contain" />
+              <img src={logoUrl} alt="EnterprateAI" className="h-8 w-auto object-contain lg:h-11" />
             </div>
 
-            <h1 className="mt-7 max-w-xl text-[3.35rem] font-black leading-[0.92] tracking-[-0.05em] text-[#0b1026] xl:text-[4.05rem] 2xl:text-[4.45rem] max-[900px]:mt-5 max-[900px]:text-[3.1rem]">
+            <h1 className="mt-4 max-w-xl text-[2rem] font-black leading-[0.95] tracking-[-0.04em] text-[#0b1026] sm:text-[2.6rem] lg:mt-7 lg:text-[3.35rem] lg:leading-[0.92] lg:tracking-[-0.05em] xl:text-[4.05rem] 2xl:text-[4.45rem]">
               Build a More
               <br />
               Resilient Business
@@ -207,31 +207,31 @@ export default function LoginPage() {
               with <span className="text-rose-500">Intelligence.</span>
             </h1>
 
-            <p className="mt-4 max-w-xl text-[0.92rem] leading-6 text-slate-600 xl:text-[1.02rem] max-[900px]:mt-3 max-[900px]:text-[0.88rem] max-[900px]:leading-5">
+            <p className="mt-3 max-w-xl text-[0.82rem] leading-5 text-slate-600 sm:text-[0.88rem] lg:mt-4 lg:text-[0.92rem] lg:leading-6 xl:text-[1.02rem]">
               Validate your idea, build your business plan, understand your risks, and simulate decisions before you act, all from one business workspace.
             </p>
 
-            <p className="mt-4 text-[1rem] font-semibold text-[#0f172a] xl:text-[1.06rem] max-[900px]:mt-3 max-[900px]:text-[0.92rem]">
+            <p className="mt-3 text-[0.82rem] font-semibold text-[#0f172a] sm:text-[0.9rem] lg:mt-4 lg:text-[1rem] xl:text-[1.06rem]">
               Get your first business insight in less than 20 minutes.
             </p>
 
-            <div className="mt-5 space-y-4 xl:space-y-5 max-[900px]:mt-4 max-[900px]:space-y-3.5">
+            <div className="mt-4 space-y-3 lg:mt-5 lg:space-y-4 xl:space-y-5">
               {FEATURE_STEPS.map((step) => (
-                <div key={step.n} className="flex gap-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#1f3fd3] text-sm font-bold text-white shadow-lg shadow-[#1f3fd3]/18 xl:h-11 xl:w-11 xl:text-base max-[900px]:h-9 max-[900px]:w-9 max-[900px]:text-[0.75rem]">
+                <div key={step.n} className="flex gap-3 lg:gap-4">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f3fd3] text-[0.7rem] font-bold text-white shadow-lg shadow-[#1f3fd3]/18 lg:h-10 lg:w-10 lg:text-sm xl:h-11 xl:w-11 xl:text-base">
                     {step.n}
                   </div>
                   <div>
-                    <div className="text-sm font-bold text-[#111827] xl:text-[0.98rem] max-[900px]:text-[0.82rem]">{step.title}</div>
-                    <div className="mt-1 max-w-lg text-[0.82rem] leading-5 text-slate-600 xl:text-sm xl:leading-6 max-[900px]:text-[0.78rem]">{step.body}</div>
+                    <div className="text-[0.78rem] font-bold text-[#111827] sm:text-[0.82rem] lg:text-sm xl:text-[0.98rem]">{step.title}</div>
+                    <div className="mt-0.5 max-w-lg text-[0.74rem] leading-4 text-slate-600 sm:text-[0.78rem] sm:leading-5 lg:text-[0.82rem] xl:text-sm xl:leading-6">{step.body}</div>
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[0.82rem] font-medium text-slate-700 xl:mt-7 xl:gap-x-5 xl:gap-y-2.5 xl:text-[0.85rem] max-[900px]:mt-4 max-[900px]:gap-x-3.5 max-[900px]:text-[0.76rem]">
+            <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[0.75rem] font-medium text-slate-700 sm:text-[0.8rem] lg:mt-5 lg:gap-x-4 lg:gap-y-2 lg:text-[0.82rem] xl:mt-7 xl:gap-x-5 xl:text-[0.85rem]">
               {TRUST_POINTS.map((point) => (
-                <div key={point} className="flex items-center gap-2">
+                <div key={point} className="flex items-center gap-1.5 lg:gap-2">
                   <CheckIcon />
                   <span>{point}</span>
                 </div>
@@ -239,7 +239,7 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div className="relative mt-5 max-w-none text-[0.98rem] font-semibold leading-tight text-[#0f172a] xl:mt-7 xl:text-[1.45rem] max-[950px]:mt-4 max-[950px]:text-[0.92rem]">
+          <div className="relative mt-4 hidden text-[0.98rem] font-semibold leading-tight text-[#0f172a] lg:mt-5 lg:block xl:mt-7 xl:text-[1.45rem]">
             <span className="whitespace-nowrap">Small Businesses Need Intelligence.</span>
             <br />
             <span className="text-brand-700">EnterprateAI</span> Delivers It.
