@@ -1023,7 +1023,6 @@ export default function FinancialsPage() {
       <div class="right">
         <div class="muted">Invoice ID</div>
         <div>${invoiceDisplayId}</div>
-        ${renderShareStatus(invoice?.status)}
     </div>
   </div>
   <div class="card">
@@ -1106,7 +1105,6 @@ export default function FinancialsPage() {
       <div class="right">
         <div class="muted">Quotation ID</div>
         <div>${quoteDisplayId}</div>
-        ${renderShareStatus(quote?.status)}
     </div>
   </div>
   <div class="card">
