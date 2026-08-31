@@ -103,10 +103,16 @@ export default function DashboardPage() {
     };
 
     const paidRevenue = paidInvs.reduce((s, i) => s + actualReceived(i), 0);
-    const paidCoS = paidInvs.reduce((s, i) => s + Number(i.cost_of_sales || 0), 0);
+    const paidCoS = paidInvs.reduce((s, i) => {
+      const total = Number(i.total_amount || i.subtotal_amount || 0);
+      const received = actualReceived(i);
+      const cos = Number(i.cost_of_sales || 0);
+      const ratio = total > 0 ? received / total : 1;
+      return s + cos * ratio;
+    }, 0);
     const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
     // Cash = actual received (respects partial amounts) minus paid expenses
-    const cashBalance = paidRevenue - paidExpTotal;
+    const cashBalance = paidRevenue - paidExpTotal - paidCoS;
     // Remaining balance on partially-paid invoices goes to receivables
     const partialRemaining = paidInvs
       .filter(i => actualReceived(i) < Number(i.total_amount || 0))
@@ -114,8 +120,9 @@ export default function DashboardPage() {
     const deliveredTotal = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
     // Receivables = delivered (fully unpaid) + remaining on partial payments
     const receivables = deliveredTotal + partialRemaining;
-    // Revenue = cash actually received + delivered (accrual)
-    const totalRevenue = paidRevenue + deliveredTotal;
+    // Revenue = full accrual: full invoice amounts for paid + delivered
+    const paidFullTotal = paidInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+    const totalRevenue = paidFullTotal + deliveredTotal;
     const totalCosts = allExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0) + paidCoS;
 
     return { totalRevenue, cashBalance, receivables, totalCosts };

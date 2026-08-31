@@ -279,7 +279,16 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   }, 0);
   const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
 
+  function receivedAmt(inv) {
+    if (inv.payments && inv.payments.length > 0) {
+      return inv.payments.reduce((s, p) => s + toNumber(p.amount), 0);
+    }
+    if (inv.payment_type === "partial" && inv.paid_amount != null) return toNumber(inv.paid_amount);
+    return toNumber(inv.total_amount || inv.subtotal_amount || 0);
+  }
+
   // Build a full month-by-month breakdown: { "YYYY-MM": total }
+  // field can be a string key, a function(item) => number, or omitted for total_amount
   function buildMonthlyBreakdown(items, field) {
     const byMonth = {};
     for (const item of items) {
@@ -288,7 +297,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       const d = new Date(raw);
       if (!Number.isFinite(d.getTime())) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const val = field ? toNumber(item[field]) : toNumber(item.total_amount || item.subtotal_amount);
+      const val = typeof field === "function" ? field(item) : field ? toNumber(item[field]) : toNumber(item.total_amount || item.subtotal_amount);
       byMonth[key] = Number(((byMonth[key] || 0) + val).toFixed(2));
     }
     return byMonth;
@@ -623,8 +632,24 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       pending_payables_schedule: pendingPayablesSchedule,
       opening_accrual_balance: openingAccrualBalance,
       revenue_by_month: buildMonthlyBreakdown(earnedInvoices),
-      cost_of_sales_by_month: buildMonthlyBreakdown(earnedInvoices, "cost_of_sales"),
-      receivables_by_month: buildMonthlyBreakdown(deliveredInvoices),
+      cost_of_sales_by_month: buildMonthlyBreakdown(paidInvoices, (inv) => {
+        const total = toNumber(inv.total_amount || inv.subtotal_amount || 0);
+        const received = receivedAmt(inv);
+        const cos = toNumber(inv.cost_of_sales || 0);
+        const ratio = total > 0 ? received / total : 1;
+        return cos * ratio;
+      }),
+      receivables_by_month: buildMonthlyBreakdown(
+        [
+          ...deliveredInvoices,
+          ...paidInvoices.filter((inv) => receivedAmt(inv) < toNumber(inv.total_amount || inv.subtotal_amount || 0)),
+        ],
+        (inv) => {
+          const status = String(inv.status || "").toLowerCase();
+          if (status === "delivered") return toNumber(inv.total_amount || inv.subtotal_amount);
+          return Math.max(0, toNumber(inv.total_amount || inv.subtotal_amount || 0) - receivedAmt(inv));
+        }
+      ),
       expenses_by_month: buildMonthlyBreakdown(paidExpenses, "price"),
     },
   };

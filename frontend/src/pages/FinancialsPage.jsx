@@ -529,10 +529,17 @@ export default function FinancialsPage() {
         : Number(i.total_amount || i.subtotal_amount || 0);
     }
 
-    // Cash = sum of amounts actually received minus paid-out expenses
+    // Cash = sum of amounts actually received minus paid-out expenses and proportional CoS
     const paidRevenue = revenueInvs.reduce((s, i) => s + receivedAmt(i), 0);
     const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
-    const cashBalance = paidRevenue - paidExpTotal;
+    const paidCoS = revenueInvs.reduce((s, i) => {
+      const total = Number(i.total_amount || i.subtotal_amount || 0);
+      const received = receivedAmt(i);
+      const cos = Number(i.cost_of_sales || 0);
+      const ratio = total > 0 ? received / total : 1;
+      return s + cos * ratio;
+    }, 0);
+    const cashBalance = paidRevenue - paidExpTotal - paidCoS;
 
     // Receivables = delivered invoices (full amount) + remaining balance on partially-paid invoices
     const partialInvs = revenueInvs.filter((i) => receivedAmt(i) < Number(i.total_amount || 0));
@@ -541,8 +548,8 @@ export default function FinancialsPage() {
 
     const pendingPay = unpaidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
 
-    // Revenue (accrual) = amounts earned (paid invoices use received amount; delivered use full amount)
-    const totalRevenue = revenueInvs.reduce((s, i) => s + receivedAmt(i), 0)
+    // Revenue (full accrual) = full invoice amounts for paid + delivered
+    const totalRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0)
       + deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
 
     // MRR = current calendar month's received revenue only; zero if nothing received this month
@@ -558,7 +565,7 @@ export default function FinancialsPage() {
     }
     const monthlyRev = currentMonthRev(revenueInvs);
     const arr = Number((monthlyRev * 12).toFixed(2));
-    return { totalRevenue, pendingRec, pendingPay, monthlyRev, overdueInvCount, cashBalance, arr };
+    return { totalRevenue, pendingRec, pendingPay, monthlyRev, overdueInvCount, cashBalance, arr, paidCoS };
   }, [activeInvoices, activeExpenses]);
 
   const financialReportRows = useMemo(() => {
@@ -2352,11 +2359,13 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
       <div className="mt-6 space-y-4"> {/* overview */}
 
         {/* KPI tiles */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7 xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-9 xl:grid-cols-9">
           {[
             { label: "Annual Recurring Revenue", value: formatMoney(overviewKpis.arr), sub: "annualised from current revenue", tone: "slate", type: "invoices-paid", wide: true, items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
+            { label: "Revenue", value: formatMoney(overviewKpis.totalRevenue), sub: "paid + delivered (accrual)", tone: "emerald", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
             { label: "Monthly run rate", value: formatMoney(overviewKpis.monthlyRev), sub: "from paid invoices", tone: "emerald", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
             { label: "Cash", value: formatMoney(overviewKpis.cashBalance), sub: "paid in − paid out", tone: overviewKpis.cashBalance >= 0 ? "emerald" : "rose", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
+            { label: "Cost of Sales", value: formatMoney(overviewKpis.paidCoS), sub: "from paid invoices", tone: overviewKpis.paidCoS > 0 ? "amber" : "slate", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
             { label: "Receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered").length} delivered · ${activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial").length} partial`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate", type: "invoices-unpaid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" || (String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial")) },
             { label: "Pending payables", value: formatMoney(overviewKpis.pendingPay), sub: `${expensePendingCount} unpaid expense${expensePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingPay > 0 ? "rose" : "slate", type: "expenses-unpaid", items: activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid") },
             { label: "Overdue invoices", value: overviewKpis.overdueInvCount, sub: overviewKpis.overdueInvCount > 0 ? "require immediate action" : "all within terms", tone: overviewKpis.overdueInvCount > 0 ? "rose" : "emerald", type: "invoices-overdue", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" && i.due_date && new Date(i.due_date) < new Date()) },
