@@ -5191,7 +5191,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   subtotal_amount: previewInvoice.subtotal_amount,
                 }]).map((item, index) => {
                   const qty = Number(item.quantity || 0);
-                  const unitFull = Number(item.unit_price || 0) + Number(item.unit_cost_of_sales || 0);
+                  const unitFull = Number(item.unit_price || 0);
                   const subtotalFull = unitFull * qty;
                   return (
                     <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
@@ -5206,7 +5206,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 
               {(() => {
                 const items = Array.isArray(previewInvoice.items) && previewInvoice.items.length ? previewInvoice.items : [{ unit_price: previewInvoice.unit_price, unit_cost_of_sales: previewInvoice.unit_cost_of_sales, quantity: previewInvoice.quantity }];
-                const preVatTotal = items.reduce((s, it) => s + (Number(it.unit_price || 0) + Number(it.unit_cost_of_sales || 0)) * Number(it.quantity || 0), 0);
+                const preVatTotal = items.reduce((s, it) => s + Number(it.unit_price || 0) * Number(it.quantity || 0), 0);
                 const vatAmt = Number(previewInvoice.vat_amount || 0);
                 const grandTotal = getDocumentGrandTotal(previewInvoice);
                 return (
@@ -5319,7 +5319,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   subtotal_amount: previewQuote.subtotal_amount,
                 }]).map((item, index) => {
                   const qty = Number(item.quantity || 0);
-                  const unitFull = Number(item.unit_price || 0) + Number(item.unit_cost_of_sales || 0);
+                  const unitFull = Number(item.unit_price || 0);
                   const subtotalFull = unitFull * qty;
                   return (
                     <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
@@ -5334,7 +5334,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
 
               {(() => {
                 const qItems = Array.isArray(previewQuote.items) && previewQuote.items.length ? previewQuote.items : [{ unit_price: previewQuote.unit_price, unit_cost_of_sales: previewQuote.unit_cost_of_sales, quantity: previewQuote.quantity }];
-                const qPreVatTotal = qItems.reduce((s, it) => s + (Number(it.unit_price || 0) + Number(it.unit_cost_of_sales || 0)) * Number(it.quantity || 0), 0);
+                const qPreVatTotal = qItems.reduce((s, it) => s + Number(it.unit_price || 0) * Number(it.quantity || 0), 0);
                 const qVatAmt = Number(previewQuote.vat_amount || 0);
                 const qGrandTotal = getDocumentGrandTotal(previewQuote);
                 return (
