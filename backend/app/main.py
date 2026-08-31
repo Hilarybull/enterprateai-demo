@@ -24,6 +24,7 @@ except Exception as e:
 from app.core.config import get_settings
 from app.core.database import connect_to_mongo, close_mongo_connection
 from app.modules.blueprint.router import router as blueprint_router
+from app.modules.blueprint.share_preview_router import share_preview_router
 from app.modules.business_assistant.router import router as business_assistant_router
 from app.modules.business_registration.router import router as registration_router
 from app.modules.idea_validation.router import router as validation_router
@@ -103,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(validation_router)
     app.include_router(workspace_profile_router)
     app.include_router(registration_router)
+    app.include_router(share_preview_router)
     app.include_router(blueprint_router)
     app.include_router(business_assistant_router)
     app.include_router(simulation_router)

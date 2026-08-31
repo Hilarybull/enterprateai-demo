@@ -162,6 +162,8 @@ export default function FinancialsPage() {
   const [quotes, setQuotes] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [contracts, setContracts] = useState([]);
+  // { "USD": 0.79, "EUR": 0.85, ... } — rates FROM that currency TO workspace currency
+  const [fxRates, setFxRates] = useState({});
   const [rfqRequests, setRfqRequests] = useState([]);
   const [rfqApproveModal, setRfqApproveModal] = useState(null); // { rfq, items: [{product_name,quantity,unit_price,unit_cost_of_sales}], validityDays }
   const [rfqTab, setRfqTab] = useState("pending");
@@ -474,6 +476,40 @@ export default function FinancialsPage() {
     }
   }, [workspaceId, invoices, quotes, expenses, contracts]);
 
+  // Fetch exchange rates for any non-workspace currencies found in financial records
+  useEffect(() => {
+    if (!currency) return;
+    const wsIso = (currency.match(/\(([A-Z]{3})\)\s*$/) || currency.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || currency.toUpperCase();
+    const allRecords = [...invoices, ...quotes, ...expenses];
+    const foreignCurrencies = new Set(
+      allRecords
+        .map((r) => {
+          const c = String(r.currency || r.source_currency || "").trim();
+          const iso = (c.match(/\(([A-Z]{3})\)\s*$/) || c.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || c.toUpperCase();
+          return iso;
+        })
+        .filter((iso) => iso && iso !== wsIso && iso.length === 3)
+    );
+    if (!foreignCurrencies.size) return;
+    let alive = true;
+    Promise.all(
+      [...foreignCurrencies].map(async (from) => {
+        try {
+          const data = await apiRequest(`/integrations/currency-rate?from_currency=${from}&to_currency=${wsIso}`, "GET");
+          return { from, rate: data?.rate ?? null };
+        } catch {
+          return { from, rate: null };
+        }
+      })
+    ).then((results) => {
+      if (!alive) return;
+      const next = {};
+      results.forEach(({ from, rate }) => { if (rate != null) next[from] = rate; });
+      setFxRates((prev) => ({ ...prev, ...next }));
+    });
+    return () => { alive = false; };
+  }, [invoices, quotes, expenses, currency]); // eslint-disable-line
+
   async function persist(next) {
     if (!workspaceId) return;
     try {
@@ -512,6 +548,17 @@ export default function FinancialsPage() {
   const contractSignedCount = useMemo(() => activeContracts.filter((c) => String(c.status || "").toLowerCase() === "signed").length, [activeContracts]);
 
   const overviewKpis = useMemo(() => {
+    // Convert an amount in `cur` to workspace base currency using fetched fxRates
+    function toWs(amount, cur) {
+      const num = Number(amount || 0);
+      const fromIso = _resolveIso(cur);
+      if (!fromIso) return num;
+      const wsIso = _wsIso();
+      if (fromIso === wsIso) return num;
+      const rate = fxRates[fromIso];
+      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+    }
+
     const revenueInvs = activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid");
     const deliveredInvs = activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered");
     const unpaidExps = activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid");
@@ -519,7 +566,7 @@ export default function FinancialsPage() {
     const today = new Date();
     const overdueInvCount = deliveredInvs.filter((i) => i.due_date && new Date(i.due_date) < today).length;
 
-    // Helper: amount actually received for an invoice (supports payments array + legacy paid_amount)
+    // Helper: raw amount received for an invoice (in invoice's own currency)
     function receivedAmt(i) {
       if (i.payments && i.payments.length > 0) {
         return i.payments.reduce((s, p) => s + Number(p.amount), 0);
@@ -529,28 +576,28 @@ export default function FinancialsPage() {
         : Number(i.total_amount || i.subtotal_amount || 0);
     }
 
-    // Cash = sum of amounts actually received minus paid-out expenses and proportional CoS
-    const paidRevenue = revenueInvs.reduce((s, i) => s + receivedAmt(i), 0);
-    const paidExpTotal = paidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+    // Cash = sum of amounts actually received minus paid-out expenses and proportional CoS (all in workspace currency)
+    const paidRevenue = revenueInvs.reduce((s, i) => s + toWs(receivedAmt(i), i.currency), 0);
+    const paidExpTotal = paidExps.reduce((s, e) => s + toWs(e.price || e.total_amount || 0, e.currency), 0);
     const paidCoS = revenueInvs.reduce((s, i) => {
       const total = Number(i.total_amount || i.subtotal_amount || 0);
       const received = receivedAmt(i);
       const cos = Number(i.cost_of_sales || 0);
       const ratio = total > 0 ? received / total : 1;
-      return s + cos * ratio;
+      return s + toWs(cos * ratio, i.currency);
     }, 0);
     const cashBalance = paidRevenue - paidExpTotal - paidCoS;
 
     // Receivables = delivered invoices (full amount) + remaining balance on partially-paid invoices
     const partialInvs = revenueInvs.filter((i) => receivedAmt(i) < Number(i.total_amount || 0));
-    const pendingRec = deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0)
-      + partialInvs.reduce((s, i) => s + Math.max(0, Number(i.total_amount || 0) - receivedAmt(i)), 0);
+    const pendingRec = deliveredInvs.reduce((s, i) => s + toWs(i.total_amount || i.subtotal_amount || 0, i.currency), 0)
+      + partialInvs.reduce((s, i) => s + toWs(Math.max(0, Number(i.total_amount || 0) - receivedAmt(i)), i.currency), 0);
 
-    const pendingPay = unpaidExps.reduce((s, e) => s + Number(e.price || e.total_amount || 0), 0);
+    const pendingPay = unpaidExps.reduce((s, e) => s + toWs(e.price || e.total_amount || 0, e.currency), 0);
 
     // Revenue (full accrual) = full invoice amounts for paid + delivered
-    const totalRevenue = revenueInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0)
-      + deliveredInvs.reduce((s, i) => s + Number(i.total_amount || i.subtotal_amount || 0), 0);
+    const totalRevenue = revenueInvs.reduce((s, i) => s + toWs(i.total_amount || i.subtotal_amount || 0, i.currency), 0)
+      + deliveredInvs.reduce((s, i) => s + toWs(i.total_amount || i.subtotal_amount || 0, i.currency), 0);
 
     // MRR = current calendar month's received revenue only; zero if nothing received this month
     function currentMonthRev(items) {
@@ -560,13 +607,13 @@ export default function FinancialsPage() {
         const d = new Date(i.paid_at || i.issued_at || i.created_at || i.updated_at || "");
         if (!Number.isFinite(d.getTime())) return s;
         const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, "0")}`;
-        return key === curKey ? s + receivedAmt(i) : s;
+        return key === curKey ? s + toWs(receivedAmt(i), i.currency) : s;
       }, 0);
     }
     const monthlyRev = currentMonthRev(revenueInvs);
     const arr = Number((monthlyRev * 12).toFixed(2));
     return { totalRevenue, pendingRec, pendingPay, monthlyRev, overdueInvCount, cashBalance, arr, paidCoS };
-  }, [activeInvoices, activeExpenses]);
+  }, [activeInvoices, activeExpenses, fxRates, currency]);
 
   const financialReportRows = useMemo(() => {
     const paidInvs = activeInvoices.filter(i => String(i.status || "").toLowerCase() === "paid");
@@ -756,8 +803,30 @@ export default function FinancialsPage() {
     return getProductCostOfSales(product);
   }
 
-  function formatMoney(value, overrideCurrency) {
-    return formatCurrency(Number(value || 0), overrideCurrency || currency || "GBP");
+  function _wsIso() {
+    const c = String(currency || "GBP");
+    return ((c.match(/\(([A-Z]{3})\)\s*$/) || c.match(/^([A-Z]{3})$/i)) || [])[1]?.toUpperCase() || c.toUpperCase();
+  }
+
+  function _resolveIso(cur) {
+    if (!cur) return null;
+    return ((String(cur).match(/\(([A-Z]{3})\)\s*$/) || String(cur).match(/^([A-Z]{3})$/i)) || [])[1]?.toUpperCase()
+      || String(cur).toUpperCase();
+  }
+
+  // plain=true → show only workspace currency (no original-currency bracket); used in documents/PDFs
+  function formatMoney(value, overrideCurrency, { plain = false } = {}) {
+    const num = Number(value || 0);
+    if (overrideCurrency) {
+      const fromIso = _resolveIso(overrideCurrency);
+      const wsIso = _wsIso();
+      if (fromIso && fromIso !== wsIso && fxRates[fromIso] != null) {
+        const converted = formatCurrency(Math.round(num * fxRates[fromIso] * 100) / 100, wsIso);
+        if (plain) return converted;
+        return `${converted} (${formatCurrency(num, fromIso)})`;
+      }
+    }
+    return formatCurrency(num, overrideCurrency || currency || "GBP");
   }
 
   function sourceBadge(item) {
@@ -977,16 +1046,16 @@ export default function FinancialsPage() {
       <tr>
         <td>${item?.product_name || "Product / Service"}</td>
         <td class="right">${qty}</td>
-        <td class="right">${formatMoney(unitPrice)}</td>
-        <td class="right"><strong>${formatMoney(subtotalFull, previewInvoice.currency || currency)}</strong></td>
+        <td class="right">${formatCurrency(unitPrice, invoice?.currency || currency)}</td>
+        <td class="right"><strong>${formatCurrency(subtotalFull, invoice?.currency || currency)}</strong></td>
       </tr>`;
       }).join("")}
     </tbody>
   </table>
   <div class="card">
-    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatMoney(Number(invoice?.subtotal_amount || 0))}</span></div>
-    ${Number(invoice?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatMoney(Number(invoice?.vat_amount || 0))}</span></div>` : ""}
-    <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatMoney(grandTotal, previewInvoice.currency || currency)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatCurrency(Number(invoice?.subtotal_amount || 0), invoice?.currency || currency)}</span></div>
+    ${Number(invoice?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatCurrency(Number(invoice?.vat_amount || 0), invoice?.currency || currency)}</span></div>` : ""}
+    <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatCurrency(grandTotal, invoice?.currency || currency)}</strong></div>
   </div>
   <div class="muted" style="margin-top:16px;">Thank you for your business.</div>
 </body>
@@ -1060,16 +1129,16 @@ export default function FinancialsPage() {
       <tr>
         <td>${item?.product_name || "Product / Service"}</td>
         <td class="right">${qty}</td>
-        <td class="right">${formatMoney(unitCost)}</td>
-        <td class="right"><strong>${formatMoney(lineTotal)}</strong></td>
+        <td class="right">${formatCurrency(unitCost, quote?.currency || currency)}</td>
+        <td class="right"><strong>${formatCurrency(lineTotal, quote?.currency || currency)}</strong></td>
       </tr>`;
       }).join("")}
     </tbody>
   </table>
   <div class="card">
-    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatMoney(Number(quote?.subtotal_amount || 0))}</span></div>
-    ${Number(quote?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${quote.vat_rate}%)</span><span>${formatMoney(Number(quote?.vat_amount || 0))}</span></div>` : ""}
-    <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatMoney(grandTotal, previewInvoice.currency || currency)}</strong></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatCurrency(Number(quote?.subtotal_amount || 0), quote?.currency || currency)}</span></div>
+    ${Number(quote?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${quote.vat_rate}%)</span><span>${formatCurrency(Number(quote?.vat_amount || 0), quote?.currency || currency)}</span></div>` : ""}
+    <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatCurrency(grandTotal, quote?.currency || currency)}</strong></div>
   </div>
   <div class="muted" style="margin-top:16px;">This quotation is valid for ${quote?.validity_days || 30} days unless otherwise stated.</div>
 </body>
@@ -1102,7 +1171,7 @@ export default function FinancialsPage() {
       `Items: ${itemName}`,
       `Subtotal: ${formatMoney(Number(record?.subtotal_amount || 0))}`,
       ...(Number(record?.vat_rate) > 0 ? [`VAT (${Number(record.vat_rate)}%): ${formatMoney(Number(record?.vat_amount || 0))}`] : []),
-      `Grand total: ${formatMoney(grandTotal, previewInvoice.currency || currency)}`,
+      `Grand total: ${formatCurrency(grandTotal, record?.currency || currency)}`,
       `Status: ${record?.status || "paid"}`,
       ...(record?.paid_at ? [`Payment date: ${new Date(record.paid_at).toLocaleDateString()}`] : []),
     ].join("\n");
@@ -1253,20 +1322,20 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
         return `<tr>
           <td>${item?.product_name || "Product / Service"}</td>
           <td class="right">${qty}</td>
-          <td class="right">${formatMoney(unitFull, previewInvoice.currency || currency)}</td>
-          <td class="right">${formatMoney(unitFull * qty)}</td>
+          <td class="right">${formatCurrency(unitFull, invoice?.currency || currency)}</td>
+          <td class="right">${formatCurrency(unitFull * qty, invoice?.currency || currency)}</td>
         </tr>`;
       }).join("")}
     </tbody>
   </table>
   <div class="totals">
-    <div class="totals-row"><span class="muted">Total</span><span>${formatMoney(preTaxTotal)}</span></div>
-    ${Number(invoice?.vat_rate) > 0 ? `<div class="totals-row"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatMoney(Number(invoice?.vat_amount || 0))}</span></div>` : ""}
+    <div class="totals-row"><span class="muted">Total</span><span>${formatCurrency(preTaxTotal, invoice?.currency || currency)}</span></div>
+    ${Number(invoice?.vat_rate) > 0 ? `<div class="totals-row"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatCurrency(Number(invoice?.vat_amount || 0), invoice?.currency || currency)}</span></div>` : ""}
     ${isPartial ? `
-    <div class="totals-row" style="border-top:1px solid #e2e8f0; margin-top:6px; padding-top:8px;"><span class="muted">Invoice Total</span><span>${formatMoney(grandTotal, previewInvoice.currency || currency)}</span></div>
-    <div class="totals-row grand"><span>Amount Paid</span><span>${formatMoney(amountPaid)}</span></div>
-    <div class="totals-row"><span class="muted">Balance Due</span><span>${formatMoney(balanceDue)}</span></div>
-    ` : `<div class="totals-row grand"><span>Grand Total</span><span>${formatMoney(grandTotal, previewInvoice.currency || currency)}</span></div>`}
+    <div class="totals-row" style="border-top:1px solid #e2e8f0; margin-top:6px; padding-top:8px;"><span class="muted">Invoice Total</span><span>${formatCurrency(grandTotal, invoice?.currency || currency)}</span></div>
+    <div class="totals-row grand"><span>Amount Paid</span><span>${formatCurrency(amountPaid, invoice?.currency || currency)}</span></div>
+    <div class="totals-row"><span class="muted">Balance Due</span><span>${formatCurrency(balanceDue, invoice?.currency || currency)}</span></div>
+    ` : `<div class="totals-row grand"><span>Grand Total</span><span>${formatCurrency(grandTotal, invoice?.currency || currency)}</span></div>`}
   </div>
   <hr class="divider"/>
   <div class="muted" style="font-size:11px; text-align:center;">Thank you for your payment. This is your official receipt.</div>
@@ -1393,7 +1462,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
           email: shareConfig.email || null,
           expires_in_days: shareConfig.expires_in_days || 7,
           document_id: existingDocumentId,
-          type: (isReceipt || isExpenseReceipt) ? "invoice_template" : isInvoice ? "invoice_template" : "sales_quotation",
+          type: (isReceipt || isExpenseReceipt) ? "receipt" : isInvoice ? "invoice_template" : "sales_quotation",
           title: `${titlePrefix} ${isExpenseReceipt ? `EXP-${recId}` : isReceipt ? `RCP-${recId}` : record?.invoice_id || (isInvoice ? `INV-${recId}` : record?.quotation_id || `QUO-${recId}`) || workspaceName || "Document"}`,
           company_name: workspaceName || "EnterprateAI",
           workspace_id: workspaceId || null,
@@ -1644,7 +1713,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
           return;
         }
         if (grandTotal > remaining.total + 0.001) {
-          setInvoiceFormError(`Invoice grand total (${formatMoney(grandTotal, previewInvoice.currency || currency)}) exceeds the remaining contract balance of ${formatMoney(remaining.total)}. Reduce the amount or unlink the contract.`);
+          setInvoiceFormError(`Invoice grand total (${formatCurrency(grandTotal, previewInvoice?.currency || currency)}) exceeds the remaining contract balance of ${formatMoney(remaining.total)}. Reduce the amount or unlink the contract.`);
           return;
         }
       }
@@ -2187,7 +2256,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
   </tbody>
 </table>
 <div class="card">
-  <div style="display:flex;justify-content:space-between;gap:12px;"><span>Grand Total</span><strong>${formatMoney(grandTotal, previewInvoice.currency || currency)}</strong></div>
+  <div style="display:flex;justify-content:space-between;gap:12px;"><span>Grand Total</span><strong>${formatCurrency(grandTotal, quote?.currency || currency)}</strong></div>
 </div>
 <p class="muted" style="margin-top:16px;">This quotation is valid for ${quote.validity_days || 30} days.</p>
 <div class="muted" style="margin-top:24px;font-size:13px;">Please use the buttons below to accept or reject this quotation.</div>
@@ -2432,8 +2501,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     : Number(item.total_amount || item.price || item.subtotal_amount || 0);
                   const partialSub = isPartialInv
                     ? isReceivablesDrill
-                      ? `${formatMoney(item.paid_amount)} paid`
-                      : `${formatMoney(Math.max(0, Number(item.total_amount || 0) - Number(item.paid_amount)))} remaining`
+                      ? `${formatMoney(item.paid_amount, item.currency)} paid`
+                      : `${formatMoney(Math.max(0, Number(item.total_amount || 0) - Number(item.paid_amount)), item.currency)} remaining`
                     : null;
                   return (
                     <div key={item.id} className="flex items-center justify-between gap-4 py-2.5">
@@ -2442,7 +2511,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                         <div className="text-[11px] text-slate-400">{[detail, date, partialSub].filter(Boolean).join(" · ")}</div>
                       </div>
                       <div className="shrink-0 flex flex-col items-end gap-0.5">
-                        <span className="text-sm font-semibold text-slate-800">{formatMoney(amount)}</span>
+                        <span className="text-sm font-semibold text-slate-800">{formatMoney(amount, item.currency)}</span>
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${isPartialInv ? "bg-violet-50 text-violet-700" : item.status === "paid" || item.status === "signed" ? "bg-emerald-50 text-emerald-700" : item.status === "delivered" ? "bg-blue-50 text-blue-700" : item.status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
                           {isPartialInv ? "partial" : item.status || "—"}
                         </span>
@@ -5103,7 +5172,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <div className="rounded-xl border border-slate-200 p-3">
                   <div className="text-xs font-semibold text-slate-600">Invoice summary</div>
                   <div className="mt-2 text-xs text-slate-500">Grand Total</div>
-                  <div className="text-lg font-semibold text-slate-900">{formatMoney(getDocumentGrandTotal(previewInvoice), previewInvoice.currency || currency)}</div>
+                  <div className="text-lg font-semibold text-slate-900">{formatCurrency(getDocumentGrandTotal(previewInvoice), previewInvoice?.currency || currency)}</div>
                 </div>
               </div>
 
@@ -5128,8 +5197,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
                       <div className="col-span-6">{item.product_name || "Product / Service"}</div>
                       <div className="col-span-2 text-right">{qty}</div>
-                      <div className="col-span-2 text-right">{formatMoney(unitFull, previewInvoice.currency || currency)}</div>
-                      <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(subtotalFull, previewInvoice.currency || currency)}</div>
+                      <div className="col-span-2 text-right">{formatCurrency(unitFull, previewInvoice?.currency || currency)}</div>
+                      <div className="col-span-2 text-right font-semibold text-slate-900">{formatCurrency(subtotalFull, previewInvoice?.currency || currency)}</div>
                     </div>
                   );
                 })}
@@ -5144,17 +5213,17 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   <div className="mt-4 border-t border-slate-200 pt-3 flex flex-col items-end gap-1.5 text-sm">
                     <div className="flex justify-end gap-6">
                       <span className="text-slate-500">Total</span>
-                      <span className="text-slate-700">{formatMoney(preVatTotal, previewInvoice.currency || currency)}</span>
+                      <span className="text-slate-700">{formatCurrency(preVatTotal, previewInvoice?.currency || currency)}</span>
                     </div>
                     {Number(previewInvoice.vat_rate) > 0 && (
                     <div className="flex justify-end gap-6">
                       <span className="text-slate-500">VAT ({Number(previewInvoice.vat_rate)}%)</span>
-                      <span className="text-slate-700">{formatMoney(vatAmt, previewInvoice.currency || currency)}</span>
+                      <span className="text-slate-700">{formatCurrency(vatAmt, previewInvoice?.currency || currency)}</span>
                     </div>
                     )}
                     <div className="flex justify-end gap-6 border-t border-slate-200 pt-1.5 mt-0.5">
                       <span className="font-semibold text-slate-900">Grand Total</span>
-                      <span className="font-bold text-slate-900">{formatMoney(grandTotal, previewInvoice.currency || currency)}</span>
+                      <span className="font-bold text-slate-900">{formatCurrency(grandTotal, previewInvoice?.currency || currency)}</span>
                     </div>
                   </div>
                 );
@@ -5256,8 +5325,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     <div key={`${item.product_name || "item"}-${index}`} className="grid grid-cols-12 gap-2 px-3 py-3 text-sm text-slate-700">
                       <div className="col-span-6">{item.product_name || "Product / Service"}</div>
                       <div className="col-span-2 text-right">{qty}</div>
-                      <div className="col-span-2 text-right">{formatMoney(unitFull, previewInvoice.currency || currency)}</div>
-                      <div className="col-span-2 text-right font-semibold text-slate-900">{formatMoney(subtotalFull, previewInvoice.currency || currency)}</div>
+                      <div className="col-span-2 text-right">{formatCurrency(unitFull, previewInvoice?.currency || currency)}</div>
+                      <div className="col-span-2 text-right font-semibold text-slate-900">{formatCurrency(subtotalFull, previewInvoice?.currency || currency)}</div>
                     </div>
                   );
                 })}
@@ -5496,18 +5565,18 @@ function RecordPaymentModal({ invoice, formatMoney, onConfirm, onCancel }) {
           <div className="grid grid-cols-3 divide-x divide-slate-100 rounded-xl border border-slate-100 dark:border-slate-800 dark:divide-slate-800 overflow-hidden">
             <div className="px-3 py-2.5 text-center">
               <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Received</div>
-              <div className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-slate-100">{formatMoney(totalPaid)}</div>
+              <div className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-slate-100">{formatCurrency(totalPaid, invoice.currency)}</div>
             </div>
             <div className={`px-3 py-2.5 text-center ${numAmount > 0 && !overLimit ? "bg-emerald-50 dark:bg-emerald-900/20" : ""}`}>
               <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">This payment</div>
               <div className={`mt-0.5 text-sm font-semibold ${numAmount > 0 && !overLimit ? "text-emerald-700 dark:text-emerald-400" : "text-slate-400 dark:text-slate-500"}`}>
-                {numAmount > 0 ? formatMoney(numAmount) : "—"}
+                {numAmount > 0 ? formatCurrency(numAmount, invoice.currency) : "—"}
               </div>
             </div>
             <div className={`px-3 py-2.5 text-center ${projectedRemaining === 0 && numAmount > 0 ? "bg-emerald-50 dark:bg-emerald-900/20" : ""}`}>
               <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Remaining</div>
               <div className={`mt-0.5 text-sm font-semibold ${projectedRemaining === 0 && numAmount > 0 ? "text-emerald-700 dark:text-emerald-400" : overLimit ? "text-red-600 dark:text-red-400" : "text-slate-900 dark:text-slate-100"}`}>
-                {overLimit ? "Over limit" : formatMoney(numAmount > 0 ? projectedRemaining : remaining)}
+                {overLimit ? "Over limit" : formatCurrency(numAmount > 0 ? projectedRemaining : remaining, invoice.currency)}
               </div>
             </div>
           </div>
@@ -5518,7 +5587,7 @@ function RecordPaymentModal({ invoice, formatMoney, onConfirm, onCancel }) {
               className={`w-full rounded-xl border px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-1 dark:bg-slate-800 dark:text-slate-100 ${overLimit ? "border-red-400 bg-red-50 focus:border-red-400 focus:ring-red-300 dark:border-red-600 dark:bg-red-950/20" : "border-slate-200 bg-white focus:border-brand-400 focus:ring-brand-300 dark:border-slate-700"}`}
             />
             {overLimit && (
-              <p className="mt-1 text-xs text-red-500">Amount exceeds remaining balance of {formatMoney(remaining)}</p>
+              <p className="mt-1 text-xs text-red-500">Amount exceeds remaining balance of {formatCurrency(remaining, invoice.currency)}</p>
             )}
           </div>
           <div>

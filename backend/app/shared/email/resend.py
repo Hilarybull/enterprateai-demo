@@ -8,6 +8,7 @@ from html import escape
 import httpx
 
 from app.core.config import get_settings
+from app.shared.utils.doc_labels import doc_label as _doc_label
 
 logger = logging.getLogger(__name__)
 
@@ -270,28 +271,31 @@ async def send_document_share_email(
     document_title: str,
     company_name: str,
     expires_in_days: int,
+    document_type: str = "document",
 ) -> EmailDeliveryResult:
     app_name = get_settings().app_name
     sender_label = company_name or app_name
-    subject = f"{sender_label} shared a document with you"
+    doc_label = _doc_label(document_type)
+    article = "an" if doc_label[0].lower() in "aeiou" else "a"
+    subject = f"{sender_label} shared {article} {doc_label} with you"
     text_content = (
-        f"{sender_label} shared \"{document_title}\" with you via {app_name}.\n\n"
+        f"{sender_label} shared {doc_label} \"{document_title}\" with you via {app_name}.\n\n"
         f"This secure link expires in {expires_in_days} day{'s' if expires_in_days != 1 else ''}.\n\n"
-        f"Open document:\n{share_url}"
+        f"Open {doc_label}:\n{share_url}"
         + _FOOTER_TEXT
     )
     html_content = (
         "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
         "line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
-        f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;color:#0f172a;\">Document shared with you</h2>"
+        f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;color:#0f172a;\">{escape(doc_label)} shared with you</h2>"
         f"<p style=\"margin:0 0 12px;\"><strong>{escape(sender_label)}</strong> shared "
-        f"<strong>{escape(document_title)}</strong> with you via {escape(app_name)}.</p>"
+        f"{escape(doc_label)} <strong>{escape(document_title)}</strong> with you via {escape(app_name)}.</p>"
         f"<p style=\"margin:0 0 20px;color:#475569;\">This link expires in "
         f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}.</p>"
         f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(share_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
-        "Open document</a></p>"
+        f"Open {escape(doc_label)}</a></p>"
         + _FOOTER_HTML
         + "</div>"
     )

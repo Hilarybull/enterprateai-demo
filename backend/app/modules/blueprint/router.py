@@ -43,8 +43,17 @@ from app.modules.credits.service import _has_platform_grant
 router = APIRouter(prefix="/blueprint", tags=["blueprint"])
 
 
-def _shared_document_url(token: str) -> str:
-    return f"{get_settings().frontend_url.rstrip('/')}/share/{token}"
+def _shared_document_url(token: str, *, viewer_email: str | None = None) -> str:
+    from urllib.parse import urlencode
+    settings = get_settings()
+    # Prefer the backend URL so the /share/{token} preview endpoint can serve
+    # dynamic OG meta tags for WhatsApp/Slack link previews.  Fall back to the
+    # frontend URL if BACKEND_URL is not configured.
+    base = (settings.backend_url or settings.frontend_url).rstrip("/")
+    url = f"{base}/share/{token}"
+    if viewer_email:
+        url += "?" + urlencode({"email": viewer_email})
+    return url
 
 
 def _remaining_expiry_days(expires_at: str | None) -> int:
@@ -205,15 +214,17 @@ async def blueprint_documents_share_create(
         doc = await get_document(user_id=user["id"], document_id=document_id)
         document_title = doc.title if doc else "Shared document"
         company_name = doc.company_name if doc else get_settings().app_name
+        document_type = doc.type if doc else "document"
         sender_email = str(payload.sender_email or user["email"]).strip()
         async with credit_guard(user["id"], "email_share"):
             delivery = await send_document_share_email(
                 to_email=payload.email,
                 sender_email=sender_email,
-                share_url=_shared_document_url(token),
+                share_url=_shared_document_url(token, viewer_email=payload.email),
                 document_title=document_title,
                 company_name=company_name,
                 expires_in_days=payload.expires_in_days,
+                document_type=document_type,
             )
         email_sent = delivery.sent
         email_error = delivery.error
@@ -255,10 +266,11 @@ async def blueprint_financial_documents_share(
             delivery = await send_document_share_email(
                 to_email=payload.email,
                 sender_email=sender_email,
-                share_url=_shared_document_url(token),
+                share_url=_shared_document_url(token, viewer_email=payload.email),
                 document_title=payload.title,
                 company_name=payload.company_name,
                 expires_in_days=payload.expires_in_days,
+                document_type=payload.type,
             )
             email_sent = delivery.sent
             email_error = delivery.error
@@ -306,10 +318,11 @@ async def blueprint_share_send_email(
         delivery = await send_document_share_email(
             to_email=str(payload.email),
             sender_email=str(payload.sender_email or user["email"]).strip(),
-            share_url=_shared_document_url(token),
+            share_url=_shared_document_url(token, viewer_email=str(payload.email)),
             document_title=str(doc.get("title") or "Shared document"),
             company_name=str(doc.get("company_name") or get_settings().app_name),
             expires_in_days=_remaining_expiry_days(share.get("expires_at")),
+            document_type=str(doc.get("type") or "document"),
         )
     return BlueprintShareEmailResponse(sent=delivery.sent, error=delivery.error)
 

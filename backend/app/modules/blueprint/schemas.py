@@ -13,6 +13,7 @@ BlueprintType = Literal[
     "sales_letter",
     "sales_quotation",
     "invoice_template",
+    "receipt",
     "cashflow_analysis",
     "financial_projection",
 ]

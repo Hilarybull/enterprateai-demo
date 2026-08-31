@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import html2pdf from "html2pdf.js";
 import Spinner from "../components/Spinner";
 import Button from "../components/Button";
@@ -205,11 +205,13 @@ function parseHtmlDocument(html) {
 
 export default function SharedBlueprintPage() {
   const { token } = useParams();
+  const [searchParams] = useSearchParams();
   const documentRef = useRef(null);
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState("");
   const [shareEmail, setShareEmail] = useState("");
-  const [submittedEmail, setSubmittedEmail] = useState("");
+  // Pre-populate from URL ?email= param so email shares don't show the gate
+  const [submittedEmail, setSubmittedEmail] = useState(() => searchParams.get("email") || "");
   const [emailRequired, setEmailRequired] = useState(false);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);

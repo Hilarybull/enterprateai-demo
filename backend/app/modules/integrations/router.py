@@ -312,6 +312,19 @@ async def status(user=Depends(get_current_user)) -> dict:
     return result
 
 
+# ── Currency rate lookup (reuses shared 1-hour cache) ─────────────────────────
+
+@router.get("/currency-rate")
+async def currency_rate(
+    from_currency: str,
+    to_currency: str,
+    user=Depends(get_current_user),
+) -> dict:
+    """Return the exchange rate from→to, or null if unavailable."""
+    rate = await get_rate(from_currency.strip().upper(), to_currency.strip().upper())
+    return {"from": from_currency.upper(), "to": to_currency.upper(), "rate": rate}
+
+
 # ── Disconnect ────────────────────────────────────────────────────────────────
 
 @router.delete("/{provider}")
