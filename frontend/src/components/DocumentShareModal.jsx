@@ -33,11 +33,12 @@ export default function DocumentShareModal({
   getMailtoHref,
   defaultEmail = "",
   defaultAccessMode = "link",
+  allowEmailLock = true,
   title = "Share document",
   subtitle = "Choose who can use this link before generating it.",
 }) {
   const backdropRef = useRef(null);
-  const [accessMode, setAccessMode] = useState(defaultAccessMode);
+  const [accessMode, setAccessMode] = useState(allowEmailLock ? defaultAccessMode : "link");
   const [email, setEmail] = useState(defaultEmail);
   const [mailRecipient, setMailRecipient] = useState(defaultEmail);
   const [expiryDays, setExpiryDays] = useState(7);
@@ -201,7 +202,7 @@ export default function DocumentShareModal({
         </div>
 
         <div className="flex-1 min-h-0 space-y-4 overflow-y-auto px-4 py-4 pb-8 sm:px-5 sm:pb-5">
-          <div>
+          <div className={allowEmailLock ? "" : "hidden"}>
             <label className="mb-1.5 block text-[12px] font-semibold text-slate-700">
               Who can use this link?
             </label>

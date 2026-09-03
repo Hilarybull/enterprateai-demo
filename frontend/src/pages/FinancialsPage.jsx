@@ -5444,7 +5444,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
       {shareDialog ? (
         <DocumentShareModal
           title="Share financial document"
-          subtitle="Choose who can use this document link before generating it."
+          subtitle="Generate a link anyone can open. Add a recipient to email it directly."
+          allowEmailLock={false}
           defaultEmail={shareDialog.customer?.email || ""}
           onClose={() => setShareDialog(null)}
           onGenerate={(config) =>

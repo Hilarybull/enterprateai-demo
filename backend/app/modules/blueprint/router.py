@@ -250,10 +250,17 @@ async def blueprint_financial_documents_share(
         provider="financials",
         model="workspace",
     )
+    # Plain financial documents (invoices, quotations, receipts) are never locked to a
+    # recipient's email — the address is only used to deliver the link. Interactive
+    # workflow shares (quotation acceptance, RFQ rejection) keep the email restriction.
+    _doc_type = str(payload.type or "")
+    _lock_to_email = payload.email
+    if _doc_type in {"invoice_template", "sales_quotation", "receipt"}:
+        _lock_to_email = None
     token = await create_share_token(
         user_id=user["id"],
         document_id=document_id,
-        email=payload.email,
+        email=_lock_to_email,
         expires_in_days=payload.expires_in_days,
     )
     if not token:

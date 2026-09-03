@@ -144,14 +144,6 @@ async def get_shared_document_by_token(*, token: str, viewer_email: str | None =
         except Exception:
             pass
 
-    required_email = str(share.get("email") or "").strip().lower()
-    normalized_viewer_email = str(viewer_email or "").strip().lower()
-    if required_email:
-        if not normalized_viewer_email:
-            raise PermissionError("EMAIL_REQUIRED")
-        if normalized_viewer_email != required_email:
-            raise PermissionError("EMAIL_MISMATCH")
-
     doc = await sb_select(
         "blueprint_documents",
         filters=[("id", "eq", share["document_id"]), ("user_id", "eq", share["user_id"])],
@@ -159,6 +151,19 @@ async def get_shared_document_by_token(*, token: str, viewer_email: str | None =
     )
     if not doc:
         return None
+
+    # Plain financial documents (invoices, quotations, receipts) are viewable by anyone
+    # holding the link — the recipient email is only a delivery target, not an access lock.
+    # Interactive workflow shares (quotation acceptance, RFQ rejection) keep the gate.
+    _doc_type = str((doc or {}).get("type") or "")
+    _email_locked = _doc_type not in {"invoice_template", "sales_quotation", "receipt"}
+    required_email = str(share.get("email") or "").strip().lower()
+    normalized_viewer_email = str(viewer_email or "").strip().lower()
+    if _email_locked and required_email:
+        if not normalized_viewer_email:
+            raise PermissionError("EMAIL_REQUIRED")
+        if normalized_viewer_email != required_email:
+            raise PermissionError("EMAIL_MISMATCH")
     if not str(doc.get("document_markdown") or "").strip() and not str(doc.get("document_html") or "").strip():
         return None
 
