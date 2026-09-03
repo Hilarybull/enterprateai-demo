@@ -229,6 +229,8 @@ export default function FinancialsPage() {
     issued_at: new Date().toISOString().slice(0, 10),
     due_date: "",
     vat_rate: "",
+    payment_terms: "",
+    notes: "",
   });
   const [quoteForm, setQuoteForm] = useState({
     quotation_id: "",
@@ -853,6 +855,14 @@ export default function FinancialsPage() {
     return str || "Payment terms";
   }
 
+  function escapeDocHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
   function renderDocBranding(subtitle) {
     const logoSrc = workspaceLogo && String(workspaceLogo).trim() ? workspaceLogo : null;
     return `
@@ -1029,7 +1039,7 @@ export default function FinancialsPage() {
     <div class="muted">Bill to</div>
     <div><strong>${customer?.name || "Customer"}</strong></div>
     ${customer?.address ? `<div class="muted">${customer.address}</div>` : ""}
-    ${customer?.payment_terms ? `<div class="muted" style="margin-top:6px;">Payment terms: ${formatPaymentTerms(customer?.payment_terms)}</div>` : ""}
+    ${(invoice?.payment_terms || customer?.payment_terms) ? `<div class="muted" style="margin-top:6px;">Payment terms: ${escapeDocHtml(formatPaymentTerms(invoice?.payment_terms || customer?.payment_terms))}</div>` : ""}
     ${invoice?.due_date ? `<div class="muted" style="margin-top:6px;">Due date: ${new Date(invoice.due_date).toLocaleDateString()}</div>` : ""}
   </div>
   <table>
@@ -1056,6 +1066,7 @@ export default function FinancialsPage() {
     ${Number(invoice?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatCurrency(Number(invoice?.vat_amount || 0), invoice?.currency || currency)}</span></div>` : ""}
     <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatCurrency(grandTotal, invoice?.currency || currency)}</strong></div>
   </div>
+  ${invoice?.notes ? `<div class="card"><div class="muted" style="margin-bottom:4px; font-weight:600;">Notes</div><div style="white-space:pre-wrap;">${escapeDocHtml(invoice.notes)}</div></div>` : ""}
   <div class="muted" style="margin-top:16px;">Thank you for your business.</div>
 </body>
 </html>`;
@@ -1588,7 +1599,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", currency: currency || "GBP", product_ids: [], items: [], extra_items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", currency: currency || "GBP", product_ids: [], items: [], extra_items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "", payment_terms: "", notes: "" });
     setEditingInvoiceId(null);
     setPreviewInvoiceId(null);
     setInvoiceFormError(null);
@@ -1740,6 +1751,8 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       status: editingInvoiceId ? next.find((i) => i.id === editingInvoiceId)?.status || "pending" : "pending",
       issued_at: invoiceForm.issued_at || null,
       due_date: invoiceForm.due_date || null,
+      payment_terms: String(invoiceForm.payment_terms || "").trim() || null,
+      notes: String(invoiceForm.notes || "").trim() || null,
       contract_id: invoiceForm.contract_id || null,
       updated_at: new Date().toISOString()
     };
@@ -2884,6 +2897,25 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 onChange={(e) => setInvoiceForm((f) => ({ ...f, vat_rate: e.target.value }))}
               />
             </div>
+            <div>
+              <div className="ea-label">Payment terms</div>
+              <Input
+                placeholder="e.g. Net 30, or 50% upfront balance on delivery"
+                value={invoiceForm.payment_terms}
+                onChange={(e) => setInvoiceForm((f) => ({ ...f, payment_terms: e.target.value }))}
+              />
+              <div className="mt-1 text-[11px] text-slate-400">Leave blank to use the customer's default terms. Shown on the invoice only if set here or on the customer.</div>
+            </div>
+            <div>
+              <div className="ea-label">Notes</div>
+              <textarea
+                rows={3}
+                placeholder="Optional notes to show on the invoice (payment instructions, delivery details, etc.)"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-brand-200 focus:ring-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                value={invoiceForm.notes}
+                onChange={(e) => setInvoiceForm((f) => ({ ...f, notes: e.target.value }))}
+              />
+            </div>
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
               <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(invoiceSubtotal, invoiceForm.currency)}</span></div>
               {invoiceVatAmount > 0 && <div className="flex justify-between"><span>VAT ({invoiceVatRate}%)</span><span>{formatMoney(invoiceVatAmount, invoiceForm.currency)}</span></div>}
@@ -3053,6 +3085,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                     issued_at: inv.issued_at || "",
                                     due_date: inv.due_date || "",
                                     vat_rate: inv.vat_rate != null ? String(inv.vat_rate) : "",
+                                    payment_terms: inv.payment_terms || "",
+                                    notes: inv.notes || "",
                                   });
                                 }
                               },
@@ -5164,7 +5198,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   <div className="text-xs font-semibold text-slate-600">Bill to</div>
                   <div className="mt-2 text-sm font-semibold text-slate-900">{previewCustomer?.name || "Customer"}</div>
                   {previewCustomer?.address ? <div className="text-xs text-slate-500">{previewCustomer.address}</div> : null}
-                  <div className="mt-2 text-xs text-slate-500">Payment terms: {formatPaymentTerms(previewCustomer?.payment_terms)}</div>
+                  {(previewInvoice.payment_terms || previewCustomer?.payment_terms) ? <div className="mt-2 text-xs text-slate-500">Payment terms: {formatPaymentTerms(previewInvoice.payment_terms || previewCustomer?.payment_terms)}</div> : null}
                   {previewInvoice.due_date ? <div className="mt-1 text-xs text-slate-500">Due date: {new Date(previewInvoice.due_date).toLocaleDateString()}</div> : null}
                 </div>
                 <div className="rounded-xl border border-slate-200 p-3">
@@ -5226,6 +5260,13 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   </div>
                 );
               })()}
+
+              {previewInvoice.notes ? (
+                <div className="mt-4 rounded-xl border border-slate-200 p-3">
+                  <div className="text-xs font-semibold text-slate-600">Notes</div>
+                  <div className="mt-1 whitespace-pre-wrap text-xs text-slate-600">{previewInvoice.notes}</div>
+                </div>
+              ) : null}
 
               <div className="mt-4 text-xs text-slate-500">
                 Thank you for your business. If you have questions about this invoice, contact us to update details.

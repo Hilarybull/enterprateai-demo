@@ -332,10 +332,14 @@ export default function CataloguePage() {
 
   function coercePaymentTerms(value) {
     const str = String(value || "").trim();
+    if (!str) return "14";
     if (str.toLowerCase() === "immediate") return "Immediate";
-    const num = parseInt(str, 10);
-    if (!Number.isFinite(num) || num <= 0) return "14";
-    return String(num);
+    // Pure-number entries are normalised to a day count; anything else is kept as free text.
+    if (/^\d+$/.test(str)) {
+      const num = parseInt(str, 10);
+      return num > 0 ? String(num) : "14";
+    }
+    return str;
   }
 
   function formatPaymentTerms(value) {
