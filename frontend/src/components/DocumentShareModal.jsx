@@ -41,7 +41,7 @@ export default function DocumentShareModal({
   const [accessMode, setAccessMode] = useState(allowEmailLock ? defaultAccessMode : "link");
   const [email, setEmail] = useState(defaultEmail);
   const [mailRecipient, setMailRecipient] = useState(defaultEmail);
-  const [expiryDays, setExpiryDays] = useState(7);
+  const [expiryDays, setExpiryDays] = useState(allowEmailLock ? 7 : 0);
   const [shareLink, setShareLink] = useState("");
   const [shareToken, setShareToken] = useState("");
   const [emailStatus, setEmailStatus] = useState(null);
@@ -73,13 +73,18 @@ export default function DocumentShareModal({
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim());
   }
 
+  // When the email lock is disabled, the email field is an optional delivery
+  // target ("email a copy to") rather than an access restriction.
+  const emailIsDelivery = !allowEmailLock;
+
   async function handleGenerate() {
-    if (accessMode === "email" && !email.trim()) {
+    const emailRequired = accessMode === "email";
+    if (emailRequired && !email.trim()) {
       setEmailInvalid(true);
       setError("Enter the email address for this share link.");
       return;
     }
-    if (accessMode === "email" && !isValidEmail(email)) {
+    if ((emailRequired || (emailIsDelivery && email.trim())) && !isValidEmail(email)) {
       setEmailInvalid(true);
       setError("Enter a valid email address (e.g. name@company.com).");
       return;
@@ -90,7 +95,7 @@ export default function DocumentShareModal({
     try {
       const result = await onGenerate({
         access_mode: accessMode,
-        email: accessMode === "email" ? email.trim() : null,
+        email: (emailRequired || emailIsDelivery) && email.trim() ? email.trim() : null,
         expires_in_days: expiryDays,
       });
       const normalized = typeof result === "string" ? { url: result } : result;
@@ -241,11 +246,13 @@ export default function DocumentShareModal({
             </div>
           </div>
 
-          {accessMode === "email" && (
+          {(accessMode === "email" || emailIsDelivery) && (
             <div>
               <label className="mb-1.5 block text-[12px] font-semibold text-slate-700">
-                Email address
-                <span className="ml-1 font-normal text-slate-400">(required)</span>
+                {emailIsDelivery ? "Email a copy to" : "Email address"}
+                <span className="ml-1 font-normal text-slate-400">
+                  {emailIsDelivery ? "(optional)" : "(required)"}
+                </span>
               </label>
               <input
                 type="email"
@@ -259,6 +266,11 @@ export default function DocumentShareModal({
                     : "border-slate-200 focus:border-brand-300 focus:ring-brand-100")
                 }
               />
+              {emailIsDelivery ? (
+                <div className="mt-1.5 text-[11px] text-slate-500">
+                  We'll email the link here. Anyone with the link can still open it.
+                </div>
+              ) : null}
             </div>
           )}
 
@@ -271,6 +283,7 @@ export default function DocumentShareModal({
               onChange={(e) => setExpiryDays(Number(e.target.value))}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
             >
+              {!allowEmailLock ? <option value={0}>Never</option> : null}
               <option value={1}>1 day</option>
               <option value={3}>3 days</option>
               <option value={7}>7 days</option>
@@ -293,8 +306,8 @@ export default function DocumentShareModal({
                 </span>
                 <span className="text-[12px] font-semibold text-emerald-700">
                   {emailStatus?.sent
-                    ? `Email sent to ${(accessMode === "email" ? email : mailRecipient).trim()}`
-                    : `Share link ready - ${accessMode === "email" ? "email-only" : "multi-use"} - expires in ${expiryDays} day${expiryDays !== 1 ? "s" : ""}`}
+                    ? `Email sent to ${(email || mailRecipient).trim()}`
+                    : `Share link ready - ${accessMode === "email" ? "email-only" : "multi-use"} - ${expiryDays > 0 ? `expires in ${expiryDays} day${expiryDays !== 1 ? "s" : ""}` : "no expiry"}`}
                 </span>
               </div>
               {emailStatus && !emailStatus.sent ? (
@@ -376,7 +389,11 @@ export default function DocumentShareModal({
               disabled={loading}
               className="w-full rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50 sm:w-auto"
             >
-              {loading ? "Creating..." : accessMode === "email" ? "Create and send" : "Generate share link"}
+              {loading
+                ? "Creating..."
+                : accessMode === "email" || (emailIsDelivery && email.trim())
+                ? "Generate and send"
+                : "Generate share link"}
             </button>
           ) : null}
         </div>

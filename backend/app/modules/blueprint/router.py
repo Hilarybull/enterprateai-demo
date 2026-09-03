@@ -56,15 +56,15 @@ def _shared_document_url(token: str, *, viewer_email: str | None = None) -> str:
     return url
 
 
-def _remaining_expiry_days(expires_at: str | None) -> int:
+def _remaining_expiry_days(expires_at: str | None) -> int | None:
     if not expires_at:
-        return 7
+        return None  # no expiry
     try:
         expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
         delta = expiry - datetime.now(timezone.utc)
         return max(1, int(delta.total_seconds() // 86400) + (1 if delta.total_seconds() % 86400 else 0))
     except Exception:
-        return 7
+        return None
 
 
 def _looks_like_markdown_text(value: str | None) -> bool:

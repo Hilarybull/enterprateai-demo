@@ -20,7 +20,10 @@ def _missing_column(exc: Exception, column: str) -> bool:
 def _normalize_expiry_days(expires_in_days: int | None) -> int:
     if expires_in_days is None:
         return 7
-    return max(1, min(int(expires_in_days), 30))
+    days = int(expires_in_days)
+    if days <= 0:
+        return 0  # 0 == never expires
+    return min(days, 3650)
 
 
 async def create_share_token(
@@ -40,7 +43,12 @@ async def create_share_token(
         return None
 
     normalized_email = email.strip().lower() if email else None
-    expires_at = (datetime.now(timezone.utc) + timedelta(days=_normalize_expiry_days(expires_in_days))).isoformat()
+    _expiry_days = _normalize_expiry_days(expires_in_days)
+    expires_at = (
+        (datetime.now(timezone.utc) + timedelta(days=_expiry_days)).isoformat()
+        if _expiry_days > 0
+        else None
+    )
 
     # Revoke any previous shares for this document.
     await sb_update(

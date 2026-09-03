@@ -270,7 +270,7 @@ async def send_document_share_email(
     share_url: str,
     document_title: str,
     company_name: str,
-    expires_in_days: int,
+    expires_in_days: int | None = None,
     document_type: str = "document",
 ) -> EmailDeliveryResult:
     app_name = get_settings().app_name
@@ -278,9 +278,18 @@ async def send_document_share_email(
     doc_label = _doc_label(document_type)
     article = "an" if doc_label[0].lower() in "aeiou" else "a"
     subject = f"{sender_label} shared {article} {doc_label} with you"
+    _expiry_text = (
+        f"This secure link expires in {expires_in_days} day{'s' if expires_in_days != 1 else ''}.\n\n"
+        if expires_in_days else ""
+    )
+    _expiry_html = (
+        "<p style=\"margin:0 0 20px;color:#475569;\">This link expires in "
+        f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}.</p>"
+        if expires_in_days else ""
+    )
     text_content = (
         f"{sender_label} shared {article} {doc_label} with you via {app_name}.\n\n"
-        f"This secure link expires in {expires_in_days} day{'s' if expires_in_days != 1 else ''}.\n\n"
+        f"{_expiry_text}"
         f"Open {doc_label}:\n{share_url}"
         + _FOOTER_TEXT
     )
@@ -290,8 +299,7 @@ async def send_document_share_email(
         f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;color:#0f172a;\">{escape(doc_label)} shared with you</h2>"
         f"<p style=\"margin:0 0 12px;\"><strong>{escape(sender_label)}</strong> shared "
         f"{article} {escape(doc_label)} with you via {escape(app_name)}.</p>"
-        f"<p style=\"margin:0 0 20px;color:#475569;\">This link expires in "
-        f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}.</p>"
+        f"{_expiry_html}"
         f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(share_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"

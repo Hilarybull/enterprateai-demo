@@ -1469,7 +1469,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
         shareResponse = await apiRequest("/blueprint/financial-documents/share", "POST", {
           access_mode: shareConfig.access_mode || "link",
           email: shareConfig.email || null,
-          expires_in_days: shareConfig.expires_in_days || 7,
+          expires_in_days: shareConfig.expires_in_days ?? 0,
           document_id: existingDocumentId,
           type: (isReceipt || isExpenseReceipt) ? "receipt" : isInvoice ? "invoice_template" : "sales_quotation",
           title: `${titlePrefix} ${isExpenseReceipt ? `EXP-${recId}` : isReceipt ? `RCP-${recId}` : record?.invoice_id || (isInvoice ? `INV-${recId}` : record?.quotation_id || `QUO-${recId}`) || workspaceName || "Document"}`,
@@ -5472,7 +5472,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             const docLabel = isReceipt ? "Receipt" : isExpenseReceipt ? "Expense Receipt" : isInvoice ? "Invoice" : "Quotation";
             const subject = encodeURIComponent(`${docLabel} ${reference}`);
             const body = encodeURIComponent(
-              `Hi${shareDialog.customer?.name ? ` ${shareDialog.customer.name}` : ""},\n\nHere is your shared document link:\n${url}\n\nThis link expires in ${expiryDays} day${expiryDays !== 1 ? "s" : ""}.\n\nThank you.`
+              `Hi${shareDialog.customer?.name ? ` ${shareDialog.customer.name}` : ""},\n\nHere is your shared document link:\n${url}\n${expiryDays > 0 ? `\nThis link expires in ${expiryDays} day${expiryDays !== 1 ? "s" : ""}.\n` : ""}\nThank you.`
             );
             return `mailto:${recipient}?subject=${subject}&body=${body}`;
           }}

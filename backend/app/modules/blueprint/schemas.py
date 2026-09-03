@@ -151,7 +151,8 @@ class BlueprintFinancialShareRequest(BaseModel):
     access_mode: str = "link"
     email: Optional[EmailStr] = None
     sender_email: Optional[EmailStr] = None
-    expires_in_days: int = Field(default=7, ge=1, le=30)
+    # 0 (or omitted) means the link never expires.
+    expires_in_days: int = Field(default=0, ge=0, le=3650)
     document_id: Optional[str] = None
     type: str = Field(min_length=2, max_length=200)
     title: str = Field(min_length=2, max_length=120)
@@ -168,8 +169,8 @@ class BlueprintFinancialShareRequest(BaseModel):
             raise ValueError("access_mode must be either 'link' or 'email'")
         if self.access_mode == "email" and not self.email:
             raise ValueError("Email is required for email-only share links")
-        if self.access_mode == "link":
-            self.email = None
+        # Note: for financial documents the email is kept even in "link" mode - it is
+        # only used to deliver the link, never to restrict who can open it.
         return self
 
 
