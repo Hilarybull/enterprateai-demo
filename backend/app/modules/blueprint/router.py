@@ -321,16 +321,17 @@ async def blueprint_share_send_email(
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    async with credit_guard(user["id"], "email_share"):
-        delivery = await send_document_share_email(
-            to_email=str(payload.email),
-            sender_email=str(payload.sender_email or user["email"]).strip(),
-            share_url=_shared_document_url(token, viewer_email=str(payload.email)),
-            document_title=str(doc.get("title") or "Shared document"),
-            company_name=str(doc.get("company_name") or get_settings().app_name),
-            expires_in_days=_remaining_expiry_days(share.get("expires_at")),
-            document_type=str(doc.get("type") or "document"),
-        )
+    # Sending a share link by email is a plain transactional email and is not
+    # credit-gated (mirrors financial-documents/share, which emails the link for free).
+    delivery = await send_document_share_email(
+        to_email=str(payload.email),
+        sender_email=str(payload.sender_email or user["email"]).strip(),
+        share_url=_shared_document_url(token, viewer_email=str(payload.email)),
+        document_title=str(doc.get("title") or "Shared document"),
+        company_name=str(doc.get("company_name") or get_settings().app_name),
+        expires_in_days=_remaining_expiry_days(share.get("expires_at")),
+        document_type=str(doc.get("type") or "document"),
+    )
     return BlueprintShareEmailResponse(sent=delivery.sent, error=delivery.error)
 
 
