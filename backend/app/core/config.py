@@ -106,6 +106,17 @@ class Settings(BaseSettings):
     demo_notify_email: str | None = Field(default=None, validation_alias=AliasChoices("DEMO_NOTIFY_EMAIL",))
     frontend_url: str = Field(default="http://localhost:5173", validation_alias=AliasChoices("FRONTEND_URL", "CORS_ORIGINS"))
 
+    # Proposal Intelligence remains disabled until its Phase 0 gate is approved.
+    proposal_marketplace_exposure: bool = Field(default=False, validation_alias=AliasChoices("PROPOSAL_MARKETPLACE_EXPOSURE",))
+    proposal_request_publishing: bool = Field(default=False, validation_alias=AliasChoices("PROPOSAL_REQUEST_PUBLISHING",))
+    proposal_upload_submission: bool = Field(default=False, validation_alias=AliasChoices("PROPOSAL_UPLOAD_SUBMISSION",))
+    proposal_generation: bool = Field(default=False, validation_alias=AliasChoices("PROPOSAL_GENERATION",))
+    proposal_evaluation: bool = Field(default=False, validation_alias=AliasChoices("PROPOSAL_EVALUATION",))
+    proposal_intelligence: bool = Field(default=False, validation_alias=AliasChoices("PROPOSAL_INTELLIGENCE",))
+    proposal_award_orchestration: bool = Field(default=False, validation_alias=AliasChoices("PROPOSAL_AWARD_ORCHESTRATION",))
+    proposal_feature_tenants: str = Field(default="", validation_alias=AliasChoices("PROPOSAL_FEATURE_TENANTS",))
+    proposal_feature_cohorts: str = Field(default="", validation_alias=AliasChoices("PROPOSAL_FEATURE_COHORTS",))
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _parse_cors_origins(cls, v):

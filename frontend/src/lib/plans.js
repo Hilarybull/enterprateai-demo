@@ -131,12 +131,12 @@ export function normalisePlanKey(key) {
 // Which top-level modules each plan can access
 export const PLAN_MODULE_ACCESS = {
   // Explorer: all modules included for development/trial optimization
-  explorer: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
+  explorer: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
   // Starter (Insight): 2 scenario simulations included
-  starter_insight: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
-  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "integrations"],
-  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
-  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace"],
+  starter_insight: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
+  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations"],
+  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
+  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
 };
 
 // Minimum plan needed to access a module (for upgrade prompts)

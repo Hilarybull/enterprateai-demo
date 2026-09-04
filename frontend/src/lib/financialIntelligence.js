@@ -55,7 +55,7 @@ function addToSchedule(schedule, dateLike, amount) {
 }
 
 function effectiveDueDate(item, fallbackTermsDays) {
-  return item?.due_date || addDays(item?.issued_at || item?.created_at || item?.updated_at, fallbackTermsDays).toISOString();
+  return item?.due_date || addDays(item?.issued_at || item?.created_at || item?.updated_at, parsePaymentTerms(fallbackTermsDays, 30)).toISOString();
 }
 
 function normaliseStatus(value, fallback = "pending") {

@@ -302,11 +302,66 @@ function writeBlueprintCache(ownerKey, docs) {
   }
 }
 
+function BpKpiCard({ icon, label, value, color = "blue" }) {
+  const bg = { blue: "bg-blue-50 text-blue-600", green: "bg-emerald-50 text-emerald-600", orange: "bg-amber-50 text-amber-600", indigo: "bg-indigo-50 text-indigo-600", teal: "bg-teal-50 text-teal-600", rose: "bg-rose-50 text-rose-600" }[color] || "bg-blue-50 text-blue-600";
+  const vc = { blue: "text-slate-900", green: "text-emerald-600", orange: "text-amber-600", indigo: "text-indigo-600", teal: "text-teal-600", rose: "text-rose-600" }[color] || "text-slate-900";
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${bg}`}>{icon}</div>
+      <div>
+        <div className="text-xs font-medium text-slate-500">{label}</div>
+        <div className={`mt-0.5 text-xl font-bold ${vc}`}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function BpJourneyTracker({ steps, activeIdx }) {
+  return (
+    <div className="flex items-center overflow-x-auto">
+      {steps.map((s, i) => (
+        <div key={s} className="flex min-w-0 flex-1 items-center">
+          <div className="flex min-w-0 flex-1 flex-col items-center gap-1 px-1">
+            <div className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold ${i < activeIdx ? "bg-emerald-500 text-white" : i === activeIdx ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-500"}`}>
+              {i < activeIdx ? "✓" : i + 1}
+            </div>
+            <div className={`text-[10px] font-semibold text-center leading-tight ${i < activeIdx ? "text-emerald-600" : i === activeIdx ? "text-indigo-600" : "text-slate-400"}`}>{s}</div>
+          </div>
+          {i < steps.length - 1 && <div className={`h-px w-5 shrink-0 ${i < activeIdx ? "bg-emerald-400" : "bg-slate-200"}`} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BpDocRow({ d, onOpen, onDelete }) {
+  const dateStr = (() => { try { return new Date(d.updated_at).toLocaleDateString(); } catch { return ""; } })();
+  return (
+    <div className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-50">
+      <button type="button" onClick={() => onOpen(d)} className="min-w-0 flex-1 text-left">
+        <div className="truncate text-sm font-semibold text-slate-900">{String(d.title || "").replace(" — ", ": ")}</div>
+        <div className="mt-0.5 truncate text-xs text-slate-600">{d.company_name || "—"}</div>
+      </button>
+      <div className="shrink-0 text-[11px] font-semibold text-slate-500">{dateStr}</div>
+      {!String(d.id || "").startsWith("local:") && (
+        <button type="button" onClick={() => onDelete(d.id, d.type)}
+          className="ml-2 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
+          title="Delete">
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M6 6l1 14h10l1-14" /><path d="M10 11v6M14 11v6" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function BlueprintPage() {
   const { triggerDemoGate } = useDemoTour() || {};
   const navigate = useNavigate();
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
   const workspaceLogoStored = useWorkspaceStore((s) => s.workspaceLogo);
+  const wsCurrency = useWorkspaceStore((s) => s.currency);
   const setWorkspaceIdStored = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceNameStored = useWorkspaceStore((s) => s.setWorkspaceName);
   const setWorkspaceLogoStored = useWorkspaceStore((s) => s.setWorkspaceLogo);
@@ -324,8 +379,57 @@ export default function BlueprintPage() {
   const authEmail = useAuthStore((s) => s.email);
   const subscription = useAuthStore((s) => s.subscription);
   const livePlanHref = "/business-plan";
+  const [hasLivePlan, setHasLivePlan] = useState(false);
+  const [livePlanData, setLivePlanData] = useState(null);
+  const [livePlanSnapshot, setLivePlanSnapshot] = useState(null); // financial actuals for Plan Intelligence
+  const [bpFxRates, setBpFxRates] = useState({});
+  const [showPlanChoice, setShowPlanChoice] = useState(false);
+  const [planRowMenu, setPlanRowMenu] = useState(null); // id of row with open 3-dot menu
 
   useEffect(() => { refreshGrants(); }, []);
+
+  useEffect(() => {
+    if (!workspaceIdStored) return;
+    apiRequest(`/businesses/${workspaceIdStored}/live-plan`, "GET")
+      .then((res) => {
+        if (res?.plan) {
+          setHasLivePlan(true);
+          setLivePlanData(res.plan);
+          // Fetch financial actuals quietly for Plan Intelligence KPIs
+          apiRequest(`/validation/${workspaceIdStored}`, "GET")
+            .then((ws) => {
+              const data = ws?.data || {};
+              const snap = {
+                invoices: data?.financials?.invoices || [],
+                expenses: data?.financials?.expenses || [],
+                catalogue: data?.catalogue || { products: [], customers: [] },
+              };
+              setLivePlanSnapshot(snap);
+              // Fetch FX rates for foreign-currency records
+              const wsIso = (String(wsCurrency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || String(wsCurrency || "GBP")).toUpperCase().slice(0, 3);
+              const allRecs = [...snap.invoices, ...snap.expenses];
+              const foreign = [...new Set(allRecs.map(r => {
+                const c = String(r.currency || "").trim();
+                return (c.match(/\(([A-Z]{3})\)/)?.[1] || c.match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
+              }).filter(iso => iso && iso !== wsIso && iso.length === 3))];
+              if (foreign.length) {
+                Promise.all(foreign.map(async from => {
+                  try {
+                    const d = await apiRequest(`/integrations/currency-rate?from_currency=${from}&to_currency=${wsIso}`, "GET");
+                    return { from, rate: d?.rate ?? null };
+                  } catch { return { from, rate: null }; }
+                })).then(results => {
+                  const rates = {};
+                  results.forEach(({ from, rate }) => { if (rate != null) rates[from] = rate; });
+                  setBpFxRates(rates);
+                });
+              }
+            })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }, [workspaceIdStored]);
 
   const isFreeOrTrial = !subscription ||
     ["free_trial", "explorer", "expired"].includes(subscription?.plan_key) ||
@@ -428,6 +532,7 @@ export default function BlueprintPage() {
   const [followupChoice, setFollowupChoice] = useState("Quick reminder and recap of the main benefit, inviting a short call");
   const [followupCustom, setFollowupCustom] = useState("");
 
+  const [bpTab, setBpTab] = useState("overview");
   const [isLoading, setIsLoading] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
   const [didYouKnowIndex, setDidYouKnowIndex] = useState(0);
@@ -2542,117 +2647,1068 @@ export default function BlueprintPage() {
     };
   }
 
+  // ---- Blueprint tab config ----
+  const BP_TABS = [
+    { id: "overview", label: "Overview" },
+    { id: "business-plans", label: "Business Plans" },
+    { id: "proposals", label: "Proposals" },
+    { id: "sales-docs", label: "Sales Documents" },
+    { id: "saved", label: "Saved Documents" },
+  ];
+
+  const livePlanTitle = useMemo(() => {
+    if (!livePlanData) return "Live Business Plan";
+    const srcId = livePlanData?.source_document_id || livePlanData?.plan?.source_document_id;
+    if (srcId) {
+      const matched = visibleSavedDocs.find(d => d.id === srcId && d.type === "business_plan");
+      if (matched?.title) return String(matched.title).replace(" — ", ": ");
+    }
+    const rawA = Array.isArray(livePlanData?.assumptions) ? livePlanData.assumptions
+      : Array.isArray(livePlanData?.plan?.assumptions) ? livePlanData.plan.assumptions : [];
+    function getA(key) {
+      const a = rawA.find(x => x.metric_code === key);
+      if (!a) return "";
+      try { return JSON.parse(a.assumption_value_json) || ""; } catch { return a.assumption_value_json || ""; }
+    }
+    return livePlanData.title || livePlanData.name
+      || getA("plan_name") || getA("company_name") || getA("workspace_name")
+      || getA("product_name") || getA("business_name") || "Live Business Plan";
+  }, [livePlanData, visibleSavedDocs]);
+
+  const bpSavedByType = useMemo(() => ({
+    business_plan: visibleSavedDocs.filter((d) => d.type === "business_plan"),
+    client_proposal: visibleSavedDocs.filter((d) => d.type === "client_proposal"),
+    sales_letter: visibleSavedDocs.filter((d) => d.type === "sales_letter"),
+  }), [visibleSavedDocs]);
+
+
+  const BpDocIcon = (
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+    </svg>
+  );
+
+  const createCards = [
+    {
+      id: "business_plan",
+      icon: <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>,
+      title: "Business Plan",
+      desc: "A structured, investor-ready business plan from your inputs.",
+      color: "indigo",
+    },
+    {
+      id: "client_proposal",
+      icon: <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 3.62 1h3a2 2 0 0 1 2 1.72 12.8 12.8 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 8.91a16 16 0 0 0 6 6l.77-.77a2 2 0 0 1 2.11-.45 12.8 12.8 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+      title: "Sales Proposal",
+      desc: "Professional proposals tailored to your prospects.",
+      color: "teal",
+    },
+    {
+      id: "sales_letter",
+      icon: <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+      title: "Sales Letter",
+      desc: "Persuasive sales letters that convert prospects.",
+      color: "blue",
+    },
+    {
+      id: "rfq",
+      icon: <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>,
+      title: "Request Document",
+      desc: "RFP, RFQ or tender documents for procurement.",
+      color: "orange",
+    },
+  ];
+  const colorMap = {
+    indigo: { bg: "bg-indigo-50", text: "text-indigo-600", ring: "ring-indigo-200", btn: "bg-indigo-600 hover:bg-indigo-700" },
+    teal: { bg: "bg-teal-50", text: "text-teal-600", ring: "ring-teal-200", btn: "bg-teal-600 hover:bg-teal-700" },
+    blue: { bg: "bg-blue-50", text: "text-blue-600", ring: "ring-blue-200", btn: "bg-blue-600 hover:bg-blue-700" },
+    orange: { bg: "bg-amber-50", text: "text-amber-600", ring: "ring-amber-200", btn: "bg-amber-600 hover:bg-amber-700" },
+  };
+
   return (
     <div>
       <PageHeader
         title="Business Blueprints"
-        description="Generate business documents from your inputs."
+        description="Create strategic business documents with AI-assisted intelligence."
+        actions={
+          bpTab === "overview" ? (
+            <button type="button" onClick={() => setBpTab("overview")}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+              + Create Document
+            </button>
+          ) : bpTab === "business-plans" ? (
+            <div className="flex gap-2">
+              <button type="button" onClick={() => canBlueprintDoc("business_plan") ? openDoc("business_plan") : null}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+                + Create Business Plan
+              </button>
+              <button type="button" onClick={() => navigate("/business-plan?open=1&tab=upload")}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                Import Plan
+              </button>
+            </div>
+          ) : bpTab === "proposals" ? (
+            <button type="button" onClick={() => canBlueprintDoc("client_proposal") ? openDoc("client_proposal") : null}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+              + Create Proposal
+            </button>
+          ) : bpTab === "sales-docs" ? (
+            <button type="button" onClick={() => canBlueprintDoc("sales_letter") ? openDoc("sales_letter") : null}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+              + Create Sales Letter
+            </button>
+          ) : (
+            <button type="button" onClick={() => setBpTab("overview")}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+              + Create Document
+            </button>
+          )
+        }
       />
 
-      <div className="mt-6 space-y-4">
+      {/* Tab bar — blue underline */}
+      <div className="mt-2 border-b border-slate-200">
+        <div className="flex gap-0 overflow-x-auto">
+          {BP_TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setBpTab(t.id)}
+              className={`whitespace-nowrap px-5 py-3 text-sm font-semibold transition border-b-2 -mb-px ${bpTab === t.id ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-4">
         {error && !isModalOpen ? (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {error}
-          </div>
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
         ) : null}
-        <SectionCard title="Documents" subtitle="Click a document to generate it.">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {DOCUMENTS.map((d) => {
-              const canAccess = canBlueprintDoc(d.id);
-              return (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => {
-                    if (!canAccess) return;
-                    if (d.id === "business_plan" && import.meta.env.VITE_ENABLE_LIVE_PLAN) {
-                      navigate(livePlanHref);
-                      return;
-                    }
-                    openDoc(d.id);
-                  }}
-                  disabled={!canAccess}
-                  className={`ea-card relative p-4 text-left border-slate-200 ${canAccess ? "ea-card-hover" : "cursor-not-allowed opacity-60 bg-slate-50"}`}
-                >
-                  <div className="absolute right-3 top-3 flex items-center gap-1.5">
-                    {!canAccess ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                        Paid only
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
-                        {pct(completionFor(d.id))}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-sm font-semibold text-slate-900">{d.title}</div>
-                  <div className="mt-1 text-xs text-slate-600">{d.desc}</div>
-                  {!canAccess && (
-                    <Link
-                      to="/pricing"
-                      onClick={(e) => e.stopPropagation()}
-                      className="mt-2 inline-block text-[11px] font-semibold text-indigo-600 hover:underline"
-                    >
-                      Upgrade to access →
-                    </Link>
-                  )}
-                  {canAccess && d.needsWorkspace ? (
-                    <div className="mt-2 text-[11px] font-semibold text-slate-500">Uses Idea Validation metrics</div>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        </SectionCard>
 
-
-        {visibleSavedDocs.length ? (
-          <SectionCard title="Saved Documents" subtitle="Open and edit your generated documents anytime.">
-            <div className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-              {visibleSavedDocs.slice(0, 10).map((d) => (
-                <div
-                  key={d.id}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-50"
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (String(d.id || "").startsWith("local:")) {
-                        openDoc(d.type);
-                        return;
-                      }
-                      openSavedDocument(d);
-                    }}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <div className="truncate text-sm font-semibold text-slate-900">{String(d.title || "").replace(" — ", ": ")}</div>
-                    <div className="mt-0.5 truncate text-xs text-slate-600">{d.company_name}</div>
-                  </button>
-                  <div className="shrink-0 text-[11px] font-semibold text-slate-500">{fmtDate(d.updated_at)}</div>
-                  {!String(d.id || "").startsWith("local:") ? (
+        {/* OVERVIEW TAB */}
+        {bpTab === "overview" && (
+          <div className="space-y-5">
+            <div>
+              <div className="mb-3 text-sm font-semibold text-slate-900">Create a Blueprint</div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {createCards.map((card) => {
+                  const canAccess = canBlueprintDoc(card.id);
+                  const c = colorMap[card.color] || colorMap.blue;
+                  return (
                     <button
+                      key={card.id}
                       type="button"
-                      onClick={() => deleteDocument(d.id, d.type)}
-                      className="ml-2 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
-                      title="Delete"
-                      aria-label="Delete document"
+                      onClick={() => {
+                        if (!canAccess) return;
+                        if (card.id === "business_plan") {
+                          if (bpSavedByType.business_plan.length > 0) { openSavedDocument(bpSavedByType.business_plan[0]); }
+                          else { setShowPlanChoice(true); }
+                          return;
+                        }
+                        if (card.id === "rfq") return;
+                        openDoc(card.id);
+                      }}
+                      disabled={!canAccess && card.id !== "rfq"}
+                      className={`relative flex flex-col rounded-2xl border border-slate-200 bg-white p-5 text-left transition ${canAccess || card.id === "rfq" ? "hover:shadow-sm hover:border-slate-300" : "cursor-not-allowed opacity-60"}`}
                     >
-                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M3 6h18" />
-                        <path d="M8 6V4h8v2" />
-                        <path d="M6 6l1 14h10l1-14" />
-                        <path d="M10 11v6M14 11v6" />
-                      </svg>
+                      <div className="flex items-start gap-4">
+                        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${c.bg} ${c.text}`}>{card.icon}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-bold text-slate-900">{card.title}</div>
+                          <div className="mt-0.5 text-xs text-slate-500 leading-relaxed">{card.desc}</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-xs font-medium text-indigo-500">
+                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.09 3.26L16.5 6.5l-2.91 2.13.91 3.27L12 10l-3.5 1.9.91-3.27L6.5 6.5l3.41-1.24L12 2z"/></svg>
+                          AI-assisted
+                        </div>
+                        {!canAccess && card.id !== "rfq" ? (
+                          <span className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700">
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                            Upgrade
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                            {card.id === "business_plan" ? "Create Plan" : card.id === "client_proposal" ? "Create Proposal" : card.id === "sales_letter" ? "Create Letter" : "Create Request"}
+                          </span>
+                        )}
+                      </div>
                     </button>
-                  ) : null}
-                </div>
-              ))}
+                  );
+                })}
+              </div>
             </div>
-          </SectionCard>
-        ) : null}
+
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-sm font-semibold text-slate-900">Recent Blueprints</div>
+                <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="9" y2="18"/></svg>
+                  Filter
+                </button>
+              </div>
+              {visibleSavedDocs.length === 0 ? (
+                <div className="flex h-28 items-center justify-center rounded-2xl border border-slate-200 bg-white text-sm text-slate-400">No documents yet. Create your first blueprint above.</div>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-white">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50 rounded-t-2xl">
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Document</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Type</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Status</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Updated</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {visibleSavedDocs.slice(0, 8).map((d) => {
+                        const typeLabel = { business_plan: "Business Plan", client_proposal: "Sales Proposal", sales_letter: "Sales Letter" }[d.type] || "Document";
+                        const s = (d.status || "draft").toLowerCase();
+                        const dotCls = s === "adopted" || s === "sent" ? "bg-emerald-500" : s === "ready" || s === "generated" ? "bg-blue-500" : "bg-amber-400";
+                        const txtCls = s === "adopted" || s === "sent" ? "text-emerald-700" : s === "ready" || s === "generated" ? "text-blue-700" : "text-amber-700";
+                        const statusLabel = s.charAt(0).toUpperCase() + s.slice(1);
+                        return (
+                          <tr key={d.id} className="hover:bg-slate-50">
+                            <td className="px-4 py-3">
+                              <button type="button" onClick={() => { String(d.id||"").startsWith("local:") ? openDoc(d.type) : openSavedDocument(d); }}
+                                className="truncate text-sm font-semibold text-slate-900 text-left hover:text-indigo-600 max-w-[200px] block">
+                                {String(d.title || "Untitled").replace(" — ", ": ")}
+                              </button>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{typeLabel}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${txtCls}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} />
+                                {statusLabel}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{fmtDate(d.updated_at).split(",")[0]}</td>
+                            <td className="px-4 py-3">
+                              <div className="relative inline-block">
+                                <button type="button"
+                                  onClick={() => setPlanRowMenu(planRowMenu === d.id ? null : d.id)}
+                                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+                                  <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="4" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="10" cy="16" r="1.5"/></svg>
+                                </button>
+                                {planRowMenu === d.id && (
+                                  <div className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+                                    onMouseLeave={() => setPlanRowMenu(null)}>
+                                    <button type="button" onClick={() => { setPlanRowMenu(null); String(d.id||"").startsWith("local:") ? openDoc(d.type) : openSavedDocument(d); }}
+                                      className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                                      {String(d.id||"").startsWith("local:") ? "Continue" : "Open"}
+                                    </button>
+                                    {d.type === "business_plan" && !String(d.id||"").startsWith("local:") && (
+                                      <button type="button" onClick={() => { setPlanRowMenu(null); window.location.href = `/business-plan?source_document_id=${d.id}`; }}
+                                        className="flex w-full items-center px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50">Adopt as live plan</button>
+                                    )}
+                                    {!String(d.id||"").startsWith("local:") && (
+                                      <>
+                                        <div className="my-1 border-t border-slate-100" />
+                                        <button type="button" onClick={() => { setPlanRowMenu(null); deleteDocument(d.id, d.type); }}
+                                          className="flex w-full items-center px-3 py-2 text-sm text-rose-600 hover:bg-rose-50">Delete</button>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* BUSINESS PLANS TAB */}
+        {bpTab === "business-plans" && (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>} label="Business Plans" value={bpSavedByType.business_plan.length} color="blue" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/></svg>} label="Drafts" value={bpSavedByType.business_plan.filter(d => !d.status || d.status === "draft").length} color="orange" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>} label="Adopted" value={hasLivePlan ? 1 : 0} color="green" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} label="Needs Review" value={bpSavedByType.business_plan.filter(d => d.status === "review" || d.status === "outdated").length} color="rose" />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="space-y-4">
+                {/* Active Business Plan card */}
+                <div className={`rounded-2xl border p-5 ${hasLivePlan ? "border-emerald-200 bg-emerald-50/40" : "border-slate-200 bg-white"}`}>
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Active Business Plan</div>
+                  {hasLivePlan ? (
+                    <>
+                      <div className="mt-2 flex items-center gap-2">
+                        <div className="text-base font-bold text-slate-900">{livePlanTitle}</div>
+                        <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">Adopted</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">Current operating plan</div>
+                      <div className="mt-3 text-xs text-slate-600">KPIs connected to Live Business Plan</div>
+                      <div className="mt-4 flex gap-2">
+                        <Link to="/business-plan" className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">Open Plan</Link>
+                        <Link to="/business-plan" className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">View Live KPIs</Link>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="mt-2 text-base font-bold text-slate-900">No plan adopted yet</div>
+                      <div className="mt-0.5 text-xs text-slate-500">Create and adopt a plan to start tracking performance.</div>
+                      <div className="mt-4">
+                        <button type="button" onClick={() => {
+                          if (!canBlueprintDoc("business_plan")) return;
+                          if (bpSavedByType.business_plan.length > 0) openSavedDocument(bpSavedByType.business_plan[0]);
+                          else setShowPlanChoice(true);
+                        }}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+                          {bpSavedByType.business_plan.length > 0 ? "Open Plan" : "Create Business Plan"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Business Plan Journey */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <div className="mb-4 text-sm font-semibold text-slate-800">Business Plan Journey</div>
+                  <BpJourneyTracker
+                    steps={["Create or Import", "Review", "Adopt", "Live KPIs"]}
+                    activeIdx={hasLivePlan ? 4 : bpSavedByType.business_plan.length > 0 ? 2 : 0}
+                  />
+                </div>
+              </div>
+
+              {/* Plan Intelligence */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 flex flex-col">
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24A2.5 2.5 0 0 0 14.5 2z"/></svg>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-900">Plan Intelligence</div>
+                  </div>
+                  {hasLivePlan && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />Live</span>}
+                </div>
+                {hasLivePlan && livePlanData ? (() => {
+                  // Build assumptions map (same approach as Dashboard)
+                  const rawA = Array.isArray(livePlanData?.assumptions) ? livePlanData.assumptions
+                    : Array.isArray(livePlanData?.plan?.assumptions) ? livePlanData.plan.assumptions : [];
+                  const aMap = {};
+                  for (const a of rawA) {
+                    try { aMap[a.metric_code] = JSON.parse(a.assumption_value_json); }
+                    catch { aMap[a.metric_code] = a.assumption_value_json; }
+                  }
+                  // Compute current-month actuals from financial snapshot to align with monthly targets
+                  const snap = livePlanSnapshot;
+                  let actualRev = null, actualCost = null, actualCustomers = null;
+                  if (snap) {
+                    const now2 = new Date(); const curY = now2.getFullYear(); const curM = now2.getMonth();
+                    const isThisMo = (d) => { if (!d) return false; const dt = new Date(d); return dt.getFullYear() === curY && dt.getMonth() === curM; };
+                    const wsIso3 = (String(wsCurrency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || String(wsCurrency || "GBP")).toUpperCase().slice(0, 3);
+                    const toWs3 = (amount, cur) => {
+                      const num = Number(amount || 0);
+                      const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
+                      if (!iso || iso === wsIso3) return num;
+                      const rate = bpFxRates[iso];
+                      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+                    };
+                    const rawAmt3 = r => Number(r?.total_amount || r?.subtotal_amount || 0);
+                    const paidDate3 = (inv) => {
+                      if (inv.payments?.length > 0) return inv.payments[inv.payments.length - 1].paid_at;
+                      return inv.paid_at || inv.issue_date || inv.issued_at || inv.created_at;
+                    };
+                    const deliveredDate3 = (inv) => inv.delivered_at || inv.issue_date || inv.issued_at || inv.created_at;
+                    const expDate3 = (e) => e.date || e.expense_date || e.issue_date || e.created_at;
+                    const paidInvs = (snap.invoices || []).filter(i => String(i.status || "").toLowerCase() === "paid" && isThisMo(paidDate3(i)));
+                    const deliveredInvs = (snap.invoices || []).filter(i => String(i.status || "").toLowerCase() === "delivered" && isThisMo(deliveredDate3(i)));
+                    const allExps = (snap.expenses || []).filter(e => isThisMo(expDate3(e)));
+                    const getReceived = (inv) => {
+                      if (inv.payments?.length > 0) return inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+                      if (inv.payment_type === "partial" && inv.paid_amount != null) return Number(inv.paid_amount);
+                      return rawAmt3(inv);
+                    };
+                    const paidCoS = paidInvs.reduce((s, i) => {
+                      const total = rawAmt3(i); const rcvd = getReceived(i);
+                      return s + toWs3(Number(i.cost_of_sales || 0) * (total > 0 ? rcvd / total : 1), i.currency);
+                    }, 0);
+                    actualRev = paidInvs.reduce((s, i) => s + toWs3(rawAmt3(i), i.currency), 0)
+                              + deliveredInvs.reduce((s, i) => s + toWs3(rawAmt3(i), i.currency), 0);
+                    actualCost = allExps.reduce((s, e) => s + toWs3(Number(e.price || e.total_amount || 0), e.currency), 0) + paidCoS;
+                    actualCustomers = (snap.catalogue?.customers || []).length;
+                  }
+                  const planRev = Number(aMap.monthly_revenue_target) || 0;
+                  const planCost = Number(aMap.monthly_costs) || 0;
+                  const planMargin = Number(aMap.gross_margin_pct) || 0;
+                  const actualMargin = actualRev != null && actualRev > 0 ? ((actualRev - (actualCost || 0)) / actualRev) * 100 : null;
+                  const fmtCur = v => v != null ? `£${Number(v).toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
+                  const fmtPct = v => v != null ? `${Number(v).toFixed(1)}%` : null;
+                  const customerTarget = Number(aMap.active_customers_target) || 0;
+                  const revGap = planRev > 0 && actualRev != null ? planRev - actualRev : null;
+                  const kpiRows = [
+                    {
+                      label: "Revenue / mo",
+                      target: planRev > 0 ? fmtCur(planRev) : null,
+                      actual: actualRev != null ? fmtCur(actualRev) : null,
+                      status: planRev > 0 && actualRev != null ? (actualRev / planRev >= 0.9 ? "on" : "behind") : null,
+                      badge: planRev > 0 && actualRev != null ? `${Math.round((actualRev / planRev) * 100)}%` : null,
+                      tip: planRev > 0 && actualRev != null
+                        ? (actualRev / planRev >= 0.9 ? "On track. Maintain deal velocity." : `Close the ${fmtCur(Math.max(0, revGap))} gap with new invoices or deals.`)
+                        : "Record invoices to track revenue.",
+                    },
+                    {
+                      label: "Cost budget / mo",
+                      target: planCost > 0 ? fmtCur(planCost) : null,
+                      actual: actualCost != null ? fmtCur(actualCost) : null,
+                      status: planCost > 0 && actualCost != null ? (actualCost <= planCost ? "on" : "behind") : null,
+                      badge: planCost > 0 && actualCost != null ? (actualCost <= planCost ? "Under budget" : "Over budget") : null,
+                      tip: planCost > 0 && actualCost != null
+                        ? (actualCost <= planCost ? "Under budget. Consider reinvesting savings." : `Spending ${fmtCur(actualCost - planCost)} over plan. Review expenses.`)
+                        : "Log expenses to track spend.",
+                    },
+                    {
+                      label: "Gross margin",
+                      target: planMargin > 0 ? fmtPct(planMargin) : null,
+                      actual: actualMargin != null ? fmtPct(actualMargin) : null,
+                      status: actualMargin != null && planMargin > 0 ? (actualMargin >= planMargin - 2 ? "on" : "behind") : null,
+                      badge: actualMargin != null && planMargin > 0 ? `${actualMargin >= planMargin ? "+" : ""}${(actualMargin - planMargin).toFixed(1)}pp` : null,
+                      tip: actualMargin != null && planMargin > 0
+                        ? (actualMargin >= planMargin ? "Margin exceeds target. Strong pricing power." : "Margin below target. Reduce CoS or raise prices.")
+                        : "Margin shows once revenue is recorded.",
+                    },
+                    {
+                      label: "Customers",
+                      target: customerTarget > 0 ? String(customerTarget) : null,
+                      actual: actualCustomers != null ? String(actualCustomers) : null,
+                      status: customerTarget > 0 && actualCustomers != null ? (actualCustomers / customerTarget >= 0.8 ? "on" : "behind") : null,
+                      badge: customerTarget > 0 && actualCustomers != null ? `${Math.round((actualCustomers / customerTarget) * 100)}%` : null,
+                      tip: customerTarget > 0 && actualCustomers != null
+                        ? (actualCustomers / customerTarget >= 0.8 ? "Customer base on track." : `Add ${customerTarget - actualCustomers} more customers to reach your target.`)
+                        : "Add customers in Catalogue to track.",
+                    },
+                  ].filter(r => r.target != null);
+                  return (
+                    <div className="flex-1">
+                      {kpiRows.length > 0 ? (
+                        <div className="grid grid-cols-2 gap-2">
+                          {kpiRows.map(r => {
+                            const isOn = r.status === "on";
+                            const hasBehind = r.status === "behind";
+                            const borderCls = r.actual != null
+                              ? (isOn ? "border-emerald-100" : "border-rose-100")
+                              : "border-slate-100";
+                            const bgCls = r.actual != null
+                              ? (isOn ? "bg-emerald-50/40" : "bg-rose-50/40")
+                              : "bg-slate-50";
+                            return (
+                              <div key={r.label} className={`rounded-xl border ${borderCls} ${bgCls} px-3 py-2.5`}>
+                                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">{r.label}</div>
+                                <div className="text-sm font-bold text-slate-900 leading-none">{r.target}</div>
+                                {r.actual != null && (
+                                  <div className="mt-1.5 flex items-center justify-between gap-1">
+                                    <span className="text-[10px] text-slate-500">Actual <span className={`font-semibold ${isOn ? "text-emerald-700" : "text-rose-600"}`}>{r.actual}</span></span>
+                                    {r.badge && (
+                                      <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${isOn ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-600"}`}>{r.badge}</span>
+                                    )}
+                                  </div>
+                                )}
+                                {r.tip && (
+                                  <div className="mt-1.5 text-[10px] leading-snug text-slate-400">{r.tip}</div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5 text-xs text-slate-500">
+                          Live plan connected. KPIs appear once data is recorded.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })() : (
+                  <p className="flex-1 text-xs text-slate-600 leading-relaxed">
+                    {bpSavedByType.business_plan.length > 0
+                      ? "You have a generated plan. Adopt it as a live plan to start tracking KPIs and performance."
+                      : "Create your first business plan to establish a strategic foundation for your business."}
+                  </p>
+                )}
+                <button type="button" onClick={() => {
+                  if (hasLivePlan) { navigate("/business-plan?open=1"); return; }
+                  if (!canBlueprintDoc("business_plan")) return;
+                  if (bpSavedByType.business_plan.length > 0) openSavedDocument(bpSavedByType.business_plan[0]);
+                  else setShowPlanChoice(true);
+                }}
+                  className="mt-4 w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                  {hasLivePlan ? "Open Plan" : "Review Performance"}
+                </button>
+              </div>
+            </div>
+
+            {(bpSavedByType.business_plan.length > 0 || hasLivePlan) && (
+              <div>
+                <div className="mb-2 text-sm font-semibold text-slate-900">Plan Versions</div>
+                <div className="overflow-visible rounded-2xl border border-slate-200 bg-white">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50">
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Plan</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Status</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Updated</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {hasLivePlan && livePlanData && (
+                        <tr className="hover:bg-slate-50">
+                          <td className="px-4 py-3">
+                            <button type="button" onClick={() => navigate("/business-plan")}
+                              className="text-sm font-semibold text-slate-900 hover:text-indigo-600 text-left">
+                              {livePlanTitle}
+                            </button>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              Adopted
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-slate-500">{livePlanData.updated_at ? fmtDate(livePlanData.updated_at).split(",")[0] : "—"}</td>
+                          <td className="px-4 py-3">
+                            <div className="relative inline-block">
+                              <button type="button"
+                                onClick={() => setPlanRowMenu(planRowMenu === "__live__" ? null : "__live__")}
+                                className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+                                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="4" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="10" cy="16" r="1.5"/></svg>
+                              </button>
+                              {planRowMenu === "__live__" && (
+                                <div className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+                                  onMouseLeave={() => setPlanRowMenu(null)}>
+                                  <button type="button" onClick={() => { setPlanRowMenu(null); navigate("/business-plan"); }}
+                                    className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Open</button>
+                                  <button type="button" onClick={() => { setPlanRowMenu(null); navigate("/business-plan?tab=kpis"); }}
+                                    className="flex w-full items-center px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50">View Live KPIs</button>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      {bpSavedByType.business_plan.map((d) => {
+                        const s = (d.status || "draft").toLowerCase();
+                        const dotCls = s === "adopted" ? "bg-emerald-500" : s === "ready" ? "bg-blue-500" : "bg-amber-400";
+                        const txtCls = s === "adopted" ? "text-emerald-700" : s === "ready" ? "text-blue-700" : "text-amber-700";
+                        return (
+                          <tr key={d.id} className="hover:bg-slate-50">
+                            <td className="px-4 py-3">
+                              <button type="button" onClick={() => openSavedDocument(d)}
+                                className="text-sm font-semibold text-slate-900 hover:text-indigo-600 text-left">
+                                {String(d.title || "Untitled Plan").replace(" — ", ": ")}
+                              </button>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${txtCls}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} />
+                                {s.charAt(0).toUpperCase() + s.slice(1)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-500">{fmtDate(d.updated_at).split(",")[0]}</td>
+                            <td className="px-4 py-3">
+                              <div className="relative inline-block">
+                                <button type="button"
+                                  onClick={() => setPlanRowMenu(planRowMenu === d.id ? null : d.id)}
+                                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+                                  <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="4" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="10" cy="16" r="1.5"/></svg>
+                                </button>
+                                {planRowMenu === d.id && (
+                                  <div className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+                                    onMouseLeave={() => setPlanRowMenu(null)}>
+                                    <button type="button" onClick={() => { setPlanRowMenu(null); openSavedDocument(d); }}
+                                      className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Open</button>
+                                    <button type="button" onClick={() => { setPlanRowMenu(null); window.location.href = `/business-plan?source_document_id=${d.id}`; }}
+                                      className="flex w-full items-center px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50">Adopt as live plan</button>
+                                    <div className="my-1 border-t border-slate-100" />
+                                    <button type="button" onClick={() => { setPlanRowMenu(null); deleteDocument(d.id, d.type); }}
+                                      className="flex w-full items-center px-3 py-2 text-sm text-rose-600 hover:bg-rose-50">Delete</button>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* PROPOSALS TAB */}
+        {bpTab === "proposals" && (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} label="Proposals" value={bpSavedByType.client_proposal.length} color="teal" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/></svg>} label="Drafts" value={bpSavedByType.client_proposal.filter(d => !d.status || d.status === "draft").length} color="orange" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>} label="Ready for Approval" value={bpSavedByType.client_proposal.filter(d => d.status === "ready" || d.status === "generated").length} color="blue" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>} label="Sent to Operations" value={bpSavedByType.client_proposal.filter(d => d.status === "sent").length} color="green" />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="space-y-4">
+                {/* Active Draft Proposal */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Active Draft</div>
+                  {bpSavedByType.client_proposal.length > 0 ? (
+                    <>
+                      <div className="mt-2 flex items-center gap-2">
+                        <div className="text-base font-bold text-slate-900 truncate">{bpSavedByType.client_proposal[0].title || "Untitled Proposal"}</div>
+                        <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">Draft</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">Generate a persuasive proposal from your Offering</div>
+                      <div className="mt-3 flex items-center gap-2">
+                        <div className="flex-1 rounded-full bg-slate-100 h-1.5">
+                          <div className="rounded-full bg-teal-500 h-1.5" style={{ width: `${pct(completionFor("client_proposal"))}` }} />
+                        </div>
+                        <span className="text-xs font-medium text-slate-500">{pct(completionFor("client_proposal"))}</span>
+                      </div>
+                      <div className="mt-4 flex gap-2">
+                        <button type="button" onClick={() => openSavedDocument(bpSavedByType.client_proposal[0])}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">Continue Editing</button>
+                        <button type="button" onClick={() => openSavedDocument(bpSavedByType.client_proposal[0])}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Preview</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="mt-2 text-base font-bold text-slate-900">No proposals yet</div>
+                      <div className="mt-0.5 text-xs text-slate-500">Generate a persuasive proposal for your prospects.</div>
+                      <div className="mt-4">
+                        <button type="button" onClick={() => canBlueprintDoc("client_proposal") ? openDoc("client_proposal") : null}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+                          Create Proposal
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Proposal Preparation Journey */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <div className="mb-4 text-sm font-semibold text-slate-800">Proposal Preparation Journey</div>
+                  <BpJourneyTracker
+                    steps={["Select Opportunity", "Link Offering", "Generate & Edit", "Approve & Send"]}
+                    activeIdx={bpSavedByType.client_proposal.length > 0 ? 2 : 0}
+                  />
+                </div>
+              </div>
+
+              {/* Proposal Intelligence */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 flex flex-col">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-50 text-teal-600">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24A2.5 2.5 0 0 0 14.5 2z"/></svg>
+                  </div>
+                  <div className="text-sm font-semibold text-slate-900">Proposal Intelligence</div>
+                </div>
+                <p className="mt-3 flex-1 text-xs text-slate-600 leading-relaxed">
+                  {bpSavedByType.client_proposal.length > 0
+                    ? "Tailor each proposal to your specific client and use case. Personalized proposals have significantly higher conversion rates."
+                    : "Create targeted proposals for each client to improve your win rate. Link your Offering for AI-powered content."}
+                </p>
+                <button type="button" onClick={() => canBlueprintDoc("client_proposal") ? openDoc("client_proposal") : null}
+                  className="mt-5 w-full rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-700">
+                  Create Proposal
+                </button>
+              </div>
+            </div>
+
+            {bpSavedByType.client_proposal.length > 0 && (
+              <div>
+                <div className="mb-2 text-sm font-semibold text-slate-900">Proposal Documents</div>
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50">
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Proposal</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Status</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Updated</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {bpSavedByType.client_proposal.map((d) => {
+                        const s = (d.status || "draft").toLowerCase();
+                        const dotCls = s === "sent" ? "bg-emerald-500" : s === "ready" ? "bg-blue-500" : "bg-amber-400";
+                        const txtCls = s === "sent" ? "text-emerald-700" : s === "ready" ? "text-blue-700" : "text-amber-700";
+                        return (
+                          <tr key={d.id} className="hover:bg-slate-50">
+                            <td className="px-4 py-3">
+                              <button type="button" onClick={() => openSavedDocument(d)}
+                                className="text-sm font-semibold text-slate-900 hover:text-indigo-600 text-left">
+                                {String(d.title || "Untitled Proposal").replace(" — ", ": ")}
+                              </button>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${txtCls}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} />
+                                {s.charAt(0).toUpperCase() + s.slice(1)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-500">{fmtDate(d.updated_at).split(",")[0]}</td>
+                            <td className="px-4 py-3">
+                              <div className="relative inline-block">
+                                <button type="button"
+                                  onClick={() => setPlanRowMenu(planRowMenu === d.id ? null : d.id)}
+                                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 text-base leading-none">
+                                  ⋮
+                                </button>
+                                {planRowMenu === d.id && (
+                                  <div className="absolute right-0 z-20 mt-1 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                                    <button type="button" onClick={() => { setPlanRowMenu(null); openSavedDocument(d); }}
+                                      className="block w-full px-4 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50">Open</button>
+                                    <div className="border-t border-slate-100" />
+                                    <button type="button" onClick={() => { setPlanRowMenu(null); deleteDocument(d.id, d.type); }}
+                                      className="block w-full px-4 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50">Delete</button>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SALES DOCUMENTS TAB */}
+        {bpTab === "sales-docs" && (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>} label="Sales Letters" value={bpSavedByType.sales_letter.length} color="blue" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} label="Drafts" value={bpSavedByType.sales_letter.filter(d => !d.status || d.status === "draft").length} color="orange" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>} label="Ready" value={bpSavedByType.sales_letter.filter(d => d.status === "ready" || d.status === "generated").length} color="teal" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>} label="Exported" value={bpSavedByType.sales_letter.filter(d => d.status === "exported" || d.status === "sent").length} color="indigo" />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="space-y-4">
+                {/* Active Draft */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Active Draft</div>
+                  {bpSavedByType.sales_letter.length > 0 ? (
+                    <>
+                      <div className="mt-2 flex items-center gap-2">
+                        <div className="text-base font-bold text-slate-900 truncate">{bpSavedByType.sales_letter[0].title || "Untitled Sales Letter"}</div>
+                        <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">Draft</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">Create persuasive outreach from your Offering and value proposition</div>
+                      <div className="mt-3 flex items-center gap-2">
+                        <div className="flex-1 rounded-full bg-slate-100 h-1.5">
+                          <div className="rounded-full bg-blue-500 h-1.5" style={{ width: `${pct(completionFor("sales_letter"))}` }} />
+                        </div>
+                        <span className="text-xs font-medium text-slate-500">{pct(completionFor("sales_letter"))}</span>
+                      </div>
+                      <div className="mt-4 flex gap-2">
+                        <button type="button" onClick={() => openSavedDocument(bpSavedByType.sales_letter[0])}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">Continue Editing</button>
+                        <button type="button" onClick={() => openSavedDocument(bpSavedByType.sales_letter[0])}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Preview</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="mt-2 text-base font-bold text-slate-900">No sales letters yet</div>
+                      <div className="mt-0.5 text-xs text-slate-500">Create persuasive outreach from your Offering and value proposition.</div>
+                      <div className="mt-4">
+                        <button type="button" onClick={() => canBlueprintDoc("sales_letter") ? openDoc("sales_letter") : null}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+                          Create Sales Letter
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Sales Letter Journey */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <div className="mb-4 text-sm font-semibold text-slate-800">Sales Letter Journey</div>
+                  <BpJourneyTracker
+                    steps={["Select Offering", "Define Audience", "Generate & Edit", "Approve & Export"]}
+                    activeIdx={bpSavedByType.sales_letter.length > 0 ? 2 : 0}
+                  />
+                </div>
+              </div>
+
+              {/* Sales Content Intelligence */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 flex flex-col">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24A2.5 2.5 0 0 0 14.5 2z"/></svg>
+                  </div>
+                  <div className="text-sm font-semibold text-slate-900">Sales Content Intelligence</div>
+                </div>
+                <p className="mt-3 flex-1 text-xs text-slate-600 leading-relaxed">
+                  {bpSavedByType.sales_letter.length > 0
+                    ? "Use different letter variants for different customer segments for higher response rates."
+                    : "Create compelling sales letters that speak directly to your audience's pain points."}
+                </p>
+                <button type="button" onClick={() => canBlueprintDoc("sales_letter") ? openDoc("sales_letter") : null}
+                  className="mt-5 w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                  + Improve Content
+                </button>
+              </div>
+            </div>
+
+            {bpSavedByType.sales_letter.length > 0 && (
+              <div>
+                <div className="mb-2 text-sm font-semibold text-slate-900">Sales Letters</div>
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50">
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Document</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Status</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Updated</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {bpSavedByType.sales_letter.map((d) => {
+                        const s = (d.status || "draft").toLowerCase();
+                        const dotCls = s === "exported" || s === "sent" ? "bg-emerald-500" : s === "ready" ? "bg-blue-500" : "bg-amber-400";
+                        const txtCls = s === "exported" || s === "sent" ? "text-emerald-700" : s === "ready" ? "text-blue-700" : "text-amber-700";
+                        return (
+                          <tr key={d.id} className="hover:bg-slate-50">
+                            <td className="px-4 py-3">
+                              <button type="button" onClick={() => openSavedDocument(d)}
+                                className="text-sm font-semibold text-slate-900 hover:text-indigo-600 text-left">
+                                {String(d.title || "Untitled Sales Letter").replace(" — ", ": ")}
+                              </button>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${txtCls}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} />
+                                {s.charAt(0).toUpperCase() + s.slice(1)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-500">{fmtDate(d.updated_at).split(",")[0]}</td>
+                            <td className="px-4 py-3">
+                              <div className="relative inline-block">
+                                <button type="button"
+                                  onClick={() => setPlanRowMenu(planRowMenu === d.id ? null : d.id)}
+                                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 text-base leading-none">
+                                  ⋮
+                                </button>
+                                {planRowMenu === d.id && (
+                                  <div className="absolute right-0 z-20 mt-1 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                                    <button type="button" onClick={() => { setPlanRowMenu(null); openSavedDocument(d); }}
+                                      className="block w-full px-4 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50">Open</button>
+                                    <div className="border-t border-slate-100" />
+                                    <button type="button" onClick={() => { setPlanRowMenu(null); deleteDocument(d.id, d.type); }}
+                                      className="block w-full px-4 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50">Delete</button>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SAVED DOCUMENTS TAB */}
+        {bpTab === "saved" && (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>} label="All Documents" value={visibleSavedDocs.length} color="blue" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/></svg>} label="Drafts" value={visibleSavedDocs.filter(d => !d.status || d.status === "draft").length} color="orange" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>} label="Ready" value={visibleSavedDocs.filter(d => d.status === "ready" || d.status === "generated").length} color="teal" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>} label="Approved" value={visibleSavedDocs.filter(d => d.status === "adopted" || d.status === "sent" || d.status === "approved").length} color="indigo" />
+              <BpKpiCard icon={<svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>} label="Archived" value={visibleSavedDocs.filter(d => d.status === "archived").length} color="blue" />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <div className="lg:col-span-2 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-slate-900">Document Library</div>
+                  <div className="flex gap-2">
+                    <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="9" y2="18"/></svg>
+                      Filter
+                    </button>
+                    <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      Sort: Recently updated
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 overflow-x-auto">
+                  {["All", "Business Plans", "Proposals", "Sales Documents", "Request Documents"].map(f => (
+                    <button key={f} type="button" className={`whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-medium transition ${f === "All" ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{f}</button>
+                  ))}
+                </div>
+
+                {visibleSavedDocs.length === 0 ? (
+                  <div className="flex h-32 items-center justify-center rounded-2xl border border-slate-200 bg-white text-sm text-slate-400">No documents yet. Create your first blueprint above.</div>
+                ) : (
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-100 bg-slate-50">
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Document</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Type</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Status</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Updated</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {visibleSavedDocs.map((d) => {
+                          const typeLabel = { business_plan: "Business Plan", client_proposal: "Sales Proposal", sales_letter: "Sales Letter" }[d.type] || "Document";
+                          const s = (d.status || "draft").toLowerCase();
+                          const dotCls = s === "adopted" || s === "sent" || s === "approved" ? "bg-emerald-500" : s === "ready" || s === "generated" ? "bg-blue-500" : s === "archived" ? "bg-slate-400" : "bg-amber-400";
+                          const txtCls = s === "adopted" || s === "sent" || s === "approved" ? "text-emerald-700" : s === "ready" || s === "generated" ? "text-blue-700" : s === "archived" ? "text-slate-500" : "text-amber-700";
+                          return (
+                            <tr key={d.id} className="hover:bg-slate-50">
+                              <td className="px-4 py-3">
+                                <button type="button" onClick={() => { String(d.id||"").startsWith("local:") ? openDoc(d.type) : openSavedDocument(d); }}
+                                  className="truncate text-sm font-semibold text-slate-900 hover:text-indigo-600 text-left block max-w-[180px]">
+                                  {String(d.title || "Untitled").replace(" — ", ": ")}
+                                </button>
+                              </td>
+                              <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{typeLabel}</td>
+                              <td className="px-4 py-3">
+                                <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${txtCls}`}>
+                                  <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} />
+                                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{fmtDate(d.updated_at).split(",")[0]}</td>
+                              <td className="px-4 py-3">
+                                <div className="relative inline-block">
+                                  <button type="button"
+                                    onClick={() => setPlanRowMenu(planRowMenu === d.id ? null : d.id)}
+                                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 text-base leading-none">
+                                    ⋮
+                                  </button>
+                                  {planRowMenu === d.id && (
+                                    <div className="absolute right-0 z-20 mt-1 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                                      <button type="button" onClick={() => { setPlanRowMenu(null); String(d.id||"").startsWith("local:") ? openDoc(d.type) : openSavedDocument(d); }}
+                                        className="block w-full px-4 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50">Open</button>
+                                      {!String(d.id||"").startsWith("local:") && (<>
+                                        <div className="border-t border-slate-100" />
+                                        <button type="button" onClick={() => { setPlanRowMenu(null); deleteDocument(d.id, d.type); }}
+                                          className="block w-full px-4 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50">Delete</button>
+                                      </>)}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                {/* Document Intelligence */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 flex flex-col">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24A2.5 2.5 0 0 0 14.5 2z"/></svg>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-900">Document Intelligence</div>
+                  </div>
+                  <p className="mt-3 text-xs text-slate-600 leading-relaxed">
+                    {visibleSavedDocs.filter(d => d.status === "review" || (!d.status || d.status === "draft")).length > 0
+                      ? `${visibleSavedDocs.filter(d => !d.status || d.status === "draft").length} document${visibleSavedDocs.filter(d => !d.status || d.status === "draft").length === 1 ? "" : "s"} require review. Keep your documents current.`
+                      : "All documents are up to date. Keep creating to build your library."}
+                  </p>
+                  <button type="button" onClick={() => setBpTab("overview")}
+                    className="mt-4 w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                    Review Documents
+                  </button>
+                </div>
+
+                {/* Recent Activity */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <div className="mb-3 text-sm font-semibold text-slate-800">Recent Activity</div>
+                  {visibleSavedDocs.length === 0 ? (
+                    <div className="text-xs text-slate-400">No activity yet.</div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {visibleSavedDocs.slice(0, 5).map((d) => (
+                        <div key={d.id} className="flex items-start gap-2.5 text-xs">
+                          <div className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-medium text-slate-700">{String(d.title || "").replace(" — ", ": ")}</div>
+                            <div className="text-slate-400">{fmtDate(d.updated_at).split(",")[0]}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
+
+      {showPlanChoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowPlanChoice(false)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-1 text-base font-semibold text-slate-900">Choose a plan</div>
+            <div className="mb-4 text-xs text-slate-500">Generate the standard business plan or open the live business plan for ongoing tracking.</div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="text-sm font-semibold text-slate-900">Generate business plan</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">Create a structured business plan from your blueprint inputs.</div>
+                <div className="mt-4">
+                  <button type="button" onClick={() => { setShowPlanChoice(false); openDoc("business_plan"); }}
+                    className="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700">
+                    Generate
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4">
+                <div className="text-sm font-semibold text-slate-900">Live business plan</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">Track assumptions, KPIs, and performance over time.</div>
+                <div className="mt-4">
+                  <Link to="/business-plan" className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+                    Open live plan
+                  </Link>
+                </div>
+              </div>
+            </div>
+            <button type="button" onClick={() => setShowPlanChoice(false)}
+              className="mt-4 text-xs text-slate-400 hover:text-slate-600">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {isModalOpen && selectedMeta ? (
         <div

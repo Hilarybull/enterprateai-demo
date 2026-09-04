@@ -9,7 +9,8 @@ export function getApiBaseUrl() {
 
 export async function apiRequest(path, method, body, options) {
   const token = localStorage.getItem("ea_token");
-  const headers = { "Content-Type": "application/json" };
+  const isFormData = body instanceof FormData;
+  const headers = isFormData ? {} : { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
 
   let res;
@@ -20,7 +21,7 @@ export async function apiRequest(path, method, body, options) {
     res = await fetch(`${API_URL}${path}`, {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined,
+      body: isFormData ? body : body ? JSON.stringify(body) : undefined,
       signal: controller.signal
     });
   } catch (e) {

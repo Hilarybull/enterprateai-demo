@@ -47,7 +47,7 @@ _FOOTER_TEXT = (
 
 async def send_email_via_resend(
     *,
-    to_email: str,
+    to_email: str | list[str],
     subject: str,
     text_content: str,
     html_content: str,
@@ -61,11 +61,12 @@ async def send_email_via_resend(
     settings = get_settings(refresh=True)
     from_email = settings.resend_from_email
     display_name = sender_name or settings.app_name
+    to_list = [to_email] if isinstance(to_email, str) else to_email
 
     payload = {
         "from": f"{display_name} <{from_email}>",
         "reply_to": reply_to_email or from_email,
-        "to": [to_email],
+        "to": to_list,
         "subject": subject,
         "text": text_content,
         "html": html_content,
@@ -260,6 +261,89 @@ async def send_email_verification_email(
         subject=subject,
         text_content=text_content,
         html_content=html_content,
+    )
+
+
+async def send_proposal_request_invite_email(
+    *,
+    to_email: str,
+    sender_name: str,
+    sender_email: str,
+    request_title: str,
+    invite_url: str,
+    requirements: list | None = None,
+    request_description: str | None = None,
+) -> EmailDeliveryResult:
+    app_name = get_settings().app_name
+    subject = f"{sender_name} invited you to submit a proposal — {request_title}"
+
+    # Build requirements text block
+    req_list = requirements or []
+    req_text = ""
+    if req_list:
+        req_text = "\n\nRequirements:\n" + "\n".join(
+            f"  {'[Required]' if (isinstance(r, dict) and r.get('mandatory')) else '[Optional]'} "
+            f"{r.get('text', r) if isinstance(r, dict) else r}"
+            for r in req_list
+        )
+
+    text_content = (
+        f"{sender_name} has invited you to submit a proposal for:\n\n"
+        f"  {request_title}\n"
+        + (f"\n{request_description}\n" if request_description else "")
+        + req_text
+        + f"\n\nClick the link below to view the request and apply:\n{invite_url}"
+        + _FOOTER_TEXT
+    )
+
+    # Build requirements HTML block
+    req_html = ""
+    if req_list:
+        items_html = "".join(
+            f"<li style=\"margin:0 0 6px;display:flex;align-items:flex-start;gap:8px;\">"
+            f"<span style=\"margin-top:1px;color:{'#4f46e5' if (isinstance(r, dict) and r.get('mandatory')) else '#94a3b8'};font-weight:700;font-size:11px;min-width:56px;\">"
+            f"{'REQUIRED' if (isinstance(r, dict) and r.get('mandatory')) else 'Optional'}</span>"
+            f"<span>{escape(r.get('text', str(r)) if isinstance(r, dict) else str(r))}</span>"
+            f"</li>"
+            for r in req_list
+        )
+        req_html = (
+            f"<p style=\"margin:16px 0 6px;font-size:13px;font-weight:600;color:#475569;\">What you'll need to provide:</p>"
+            f"<ul style=\"margin:0 0 16px;padding:12px 16px;background:#f8fafc;border-radius:8px;"
+            f"border:1px solid #e2e8f0;list-style:none;\">{items_html}</ul>"
+        )
+
+    desc_html = (
+        f"<p style=\"margin:0 0 12px;font-size:13px;color:#475569;\">{escape(request_description)}</p>"
+        if request_description else ""
+    )
+
+    html_content = (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+        "line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+        f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;color:#0f172a;\">Proposal invitation</h2>"
+        f"<p style=\"margin:0 0 12px;\"><strong>{escape(sender_name)}</strong> has invited you to submit "
+        f"a proposal for the following request:</p>"
+        f"<div style=\"margin:16px 0;padding:16px;border-left:3px solid #6366f1;background:#f8f7ff;"
+        f"border-radius:0 8px 8px 0;\">"
+        f"<p style=\"margin:0 0 6px;font-weight:600;color:#0f172a;font-size:15px;\">{escape(request_title)}</p>"
+        + desc_html
+        + f"</div>"
+        + req_html
+        + f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(invite_url)}\" "
+        "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#4f46e5;"
+        "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
+        "View request &amp; apply</a></p>"
+        + _FOOTER_HTML
+        + "</div>"
+    )
+    return await send_email_via_resend(
+        to_email=to_email,
+        subject=subject,
+        text_content=text_content,
+        html_content=html_content,
+        sender_name=sender_name,
+        reply_to_email=sender_email,
     )
 
 

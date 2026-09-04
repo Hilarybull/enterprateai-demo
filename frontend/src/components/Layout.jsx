@@ -23,8 +23,8 @@ const NAV = [
   { to: "/simulation", label: "Simulation", subtitle: "Run what-if scenarios", icon: "beaker", moduleKey: "simulation", public: true },
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
-  { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
-  { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
+  { to: "/catalogue", label: "Catalogue", subtitle: "Products, customers & vendors", icon: "box", moduleKey: "catalogue" },
+  { to: "/operations", label: "Business Operations", subtitle: "Sales, procurement & contracts", icon: "chart", moduleKey: "operations" },
   { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: "integrations" },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
   { to: "/referrals", label: "Referrals", subtitle: "Earn 5% per referral", icon: "share", moduleKey: null, public: true },
@@ -206,6 +206,25 @@ function Icon({ name, className = "h-4 w-4" }) {
         <path d="M6 13a6 6 0 0 0 12 0v-2H6v2Z" />
       </svg>
     );
+  if (name === "chart")
+    return (
+      <svg {...base}>
+        <rect x="2" y="10" width="4" height="11" rx="1" />
+        <rect x="9" y="6" width="4" height="15" rx="1" />
+        <rect x="16" y="2" width="4" height="19" rx="1" />
+        <path d="M2 21h20" />
+      </svg>
+    );
+  if (name === "proposals")
+    return (
+      <svg {...base}>
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14,2 14,8 20,8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+        <polyline points="10,9 9,9 8,9" />
+      </svg>
+    );
 
   return null;
 }
@@ -218,7 +237,8 @@ function SidebarLink({ item, onClick, forceInactive, locked, tourActive }) {
           <Icon name={item.icon} className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-semibold text-slate-500 dark:text-slate-500">{item.label}</div>
+          <div className="text-[13px] font-semibold text-slate-500 dark:text-slate-500 leading-snug">{item.label}</div>
+          {item.subtitle && <div className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight mt-0.5">{item.subtitle}</div>}
         </div>
         <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">Soon</span>
       </div>
@@ -236,7 +256,8 @@ function SidebarLink({ item, onClick, forceInactive, locked, tourActive }) {
           <Icon name={item.icon} className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-semibold text-slate-500 dark:text-slate-500">{item.label}</div>
+          <div className="whitespace-nowrap text-[13px] font-semibold text-slate-500 dark:text-slate-500 leading-snug">{item.label}</div>
+          {item.subtitle && <div className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight mt-0.5">{item.subtitle}</div>}
         </div>
         <div className="shrink-0 rounded-full bg-brand-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-brand-600 dark:bg-brand-900/20 dark:text-brand-400">
           Upgrade
@@ -268,7 +289,8 @@ function SidebarLink({ item, onClick, forceInactive, locked, tourActive }) {
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-semibold">{item.label}</div>
+        <div className="text-[13px] font-semibold leading-snug">{item.label}</div>
+        {item.subtitle && <div className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight mt-0.5">{item.subtitle}</div>}
       </div>
     </NavLink>
   );
@@ -348,6 +370,7 @@ export default function Layout() {
   const setValidation = useWorkspaceStore((s) => s.setValidation);
   const setMemberMode = useWorkspaceStore((s) => s.setMemberMode);
   const clearMemberMode = useWorkspaceStore((s) => s.clearMemberMode);
+  const refreshWorkspaceData = useWorkspaceStore((s) => s.refreshWorkspaceData);
 
   const enableHealthCheck = String(import.meta.env.ENABLE_HEALTH_CHECK ?? "false").toLowerCase() === "true";
   const acceptedAny = decisionStatus === "accepted" || serviceDecisionStatus === "accepted";
@@ -596,9 +619,18 @@ export default function Layout() {
               .filter((i) => !i.archived && i.due_date && String(i.status || "").toLowerCase() !== "paid" && new Date(i.due_date) < today)
               .map((i) => ({ ...i, _notifType: "overdue" }))
           : [];
+        // Fetch proposal inbox for new submission notifications
+        let newProposals = [];
+        try {
+          const inboxData = await apiRequest("/proposals/inbox", "GET");
+          const inboxItems = Array.isArray(inboxData?.items) ? inboxData.items : Array.isArray(inboxData) ? inboxData : [];
+          newProposals = inboxItems
+            .filter((p) => p.status === "SUBMITTED" && !p.viewed_at)
+            .map((p) => ({ ...p, _notifType: "proposal" }));
+        } catch { /* non-fatal */ }
         const dismissed = dismissedNotifIds.current;
         setNotifications(
-          [...overdueInvoices, ...pendingRfqs].filter(
+          [...overdueInvoices, ...pendingRfqs, ...newProposals].filter(
             (n) => !dismissed.has(`${n._notifType}-${n.id}`)
           )
         );
@@ -622,6 +654,7 @@ export default function Layout() {
           ws?.data?.business_profile?.currency ||
           ws?.data?.business_context?.currency;
         if (currency) setCurrency(currency);
+        refreshWorkspaceData(); // signal data-dependent pages (e.g. Dashboard) to re-fetch
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e || "");
         if (msg.startsWith("HTTP 404:")) {
@@ -671,7 +704,7 @@ export default function Layout() {
       cancelled = true;
       window.removeEventListener("ea:workspace:refresh", loadWorkspace);
     };
-  }, [token, email, setCurrency, setDecisionStatus, setDraftIdeaValidation, setDraftServiceIdea, setIdeaValidation, setInputs, setServiceDecisionStatus, setValidation, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, setWorkspaceOwnerEmail, setWorkspaceLoadedAt, setMemberMode, clearMemberMode]);
+  }, [token, email, setCurrency, setDecisionStatus, setDraftIdeaValidation, setDraftServiceIdea, setIdeaValidation, setInputs, setServiceDecisionStatus, setValidation, setWorkspaceId, setWorkspaceLogo, setWorkspaceName, setWorkspaceOwnerEmail, setWorkspaceLoadedAt, setMemberMode, clearMemberMode, refreshWorkspaceData]);
 
   const filteredNav = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
@@ -702,7 +735,7 @@ export default function Layout() {
     if (path.startsWith("/blueprint")) return "blueprint";
     if (path.startsWith("/simulation")) return "simulation";
     if (path.startsWith("/catalogue")) return "catalogue";
-    if (path.startsWith("/financials")) return "financials";
+    if (path.startsWith("/business-operations")) return "financials";
     if (path.startsWith("/registration")) return "registration";
     if (path.startsWith("/integrations")) return "integrations";
     if (path.startsWith("/reports")) return "reports";
@@ -724,7 +757,7 @@ export default function Layout() {
     new URLSearchParams(location.search).get("from") === "module";
 
   const Sidebar = (
-    <aside className="flex h-full min-h-0 w-[260px] flex-col overflow-hidden border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[280px] lg:px-5">
+    <aside className="flex h-full min-h-0 w-[300px] flex-col overflow-y-auto border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[320px] lg:px-5">
       <div className="mx-1 flex items-start justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -1247,8 +1280,10 @@ export default function Layout() {
                       {notifications.length ? (
                         notifications.map((notif) => {
                           const destination = notif._notifType === "overdue"
-                            ? `/financials?tab=invoices`
-                            : `/financials?tab=quotations`;
+                            ? `/business-operations?tab=Sales&sub=Invoices`
+                            : notif._notifType === "rfq"
+                            ? `/business-operations?tab=Sales&sub=Quotations`
+                            : `/business-operations?tab=Procurement&sub=Inbox`;
                           return (
                             <button
                               key={`${notif._notifType}-${notif.id}`}
@@ -1278,7 +1313,7 @@ export default function Layout() {
                                     </span>
                                   )}
                                 </>
-                              ) : (
+                              ) : notif._notifType === "rfq" ? (
                                 <>
                                   <div className="flex w-full items-center justify-between gap-2">
                                     <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{notif.customer_name}</span>
@@ -1289,6 +1324,15 @@ export default function Layout() {
                                     <span className="text-[10px] text-slate-400">{notif.items.map((i) => i.name).join(", ")}</span>
                                   )}
                                   <span className="text-[10px] text-slate-400">{notif.created_at ? new Date(notif.created_at).toLocaleDateString() : ""}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="flex w-full items-center justify-between gap-2">
+                                    <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{notif.proposer_name || notif.company_name || "Business"}</span>
+                                    <span className="shrink-0 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">Proposal</span>
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400">{notif.request_title || notif.title || "General Proposal"}</span>
+                                  <span className="text-[10px] text-slate-400">{notif.submitted_at ? new Date(notif.submitted_at).toLocaleDateString() : ""}</span>
                                 </>
                               )}
                             </button>

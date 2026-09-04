@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import json
 import logging
+import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 
 from app.core.config import get_settings
-from app.core.supabase import sb_select, sb_upsert, sb_update
+from app.shared.email.resend import send_email_via_resend
+from html import escape
+from app.core.supabase import get_supabase_client, sb_select, sb_upsert, sb_update
 from app.modules.credits.service import normalise_plan_key
 from app.shared.auth.deps import get_current_user
 from app.shared.auth.security import create_access_token, decode_token
@@ -711,3 +716,135 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
         "provider": provider,
         "direction": "import",
     }
+
+
+class ShareInvoiceRequest(BaseModel):
+    to_email: str | list[str]
+    share_url: str
+    ref: str
+    party: str
+    amount_fmt: str
+    workspace_name: str
+    document_type: str = "invoice"
+
+
+@router.post("/share-invoice")
+async def share_invoice_email(
+    body: ShareInvoiceRequest,
+    user: dict = Depends(get_current_user),
+):
+    type_label = body.document_type.capitalize()
+    article = "an" if type_label[0].lower() in "aeiou" else "a"
+    subject = f"{escape(body.workspace_name)} shared {article} {type_label} with you"
+
+    html_content = (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+        "line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+        f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;color:#0f172a;\">{type_label} shared with you</h2>"
+        f"<p style=\"margin:0 0 12px;\"><strong>{escape(body.workspace_name)}</strong> shared "
+        f"{article} {type_label} with you via EnterprateAI.</p>"
+        f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(body.share_url)}\" "
+        "style=\"display:inline-block;padding:14px 32px;border-radius:8px;background:#4f46e5;"
+        "color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;\">"
+        f"Open {type_label}</a></p>"
+        "<div style=\"margin-top:32px;padding-top:16px;border-top:1px solid #e2e8f0;"
+        "font-size:11px;color:#94a3b8;line-height:1.5;\">"
+        "You received this email because a document was shared with you via EnterprateAI.<br/>"
+        "If you were not expecting this, you can safely ignore this email."
+        "</div></div>"
+    )
+    text_content = (
+        f"{body.workspace_name} shared {article} {type_label} with you.\n\n"
+        f"Open {type_label}:\n{body.share_url}"
+    )
+
+    result = await send_email_via_resend(
+        to_email=body.to_email,
+        subject=subject,
+        text_content=text_content,
+        html_content=html_content,
+        sender_name=body.workspace_name,
+    )
+    if not result.sent:
+        raise HTTPException(status_code=500, detail=result.error or "Failed to send email")
+    return {"sent": True}
+
+
+_INVOICE_SHARES_BUCKET = "invoice-shares"
+
+
+def _ensure_invoice_shares_bucket() -> None:
+    try:
+        client = get_supabase_client()
+        buckets = client.storage.list_buckets()
+        names = [b.name for b in (buckets or [])]
+        if _INVOICE_SHARES_BUCKET not in names:
+            client.storage.create_bucket(_INVOICE_SHARES_BUCKET, options={"public": False})
+    except Exception:
+        pass
+
+
+class CreateInvoiceLinkRequest(BaseModel):
+    data: dict[str, Any]
+
+
+@router.post("/invoice-link")
+async def create_invoice_link(
+    body: CreateInvoiceLinkRequest,
+    user: dict = Depends(get_current_user),
+):
+    token = secrets.token_urlsafe(8)
+
+    def _upload():
+        _ensure_invoice_shares_bucket()
+        client = get_supabase_client()
+        payload = json.dumps(body.data).encode()
+        client.storage.from_(_INVOICE_SHARES_BUCKET).upload(
+            f"{token}.json",
+            payload,
+            file_options={"content-type": "application/json", "upsert": "true"},
+        )
+        return token
+
+    result = await anyio.to_thread.run_sync(_upload)
+    return {"token": result}
+
+
+@router.get("/invoice-data/{token}")
+async def get_invoice_data(token: str):
+    def _download():
+        client = get_supabase_client()
+        raw = client.storage.from_(_INVOICE_SHARES_BUCKET).download(f"{token}.json")
+        return json.loads(raw)
+
+    try:
+        data = await anyio.to_thread.run_sync(_download)
+        return data
+    except Exception:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+
+class InvoicePdfRequest(BaseModel):
+    html: str
+    filename: str = "invoice"
+
+
+def _html_to_pdf_xhtml2pdf(html: str) -> bytes:
+    from io import BytesIO
+    from xhtml2pdf import pisa
+    buf = BytesIO()
+    pisa.CreatePDF(html, dest=buf)
+    return buf.getvalue()
+
+
+@router.post("/invoice-pdf")
+async def export_invoice_pdf(body: InvoicePdfRequest, user: dict = Depends(get_current_user)):
+    safe = "".join(ch for ch in body.filename.lower().replace(" ", "-") if ch.isalnum() or ch in "-_") or "invoice"
+    pdf_bytes = await anyio.to_thread.run_sync(lambda: _html_to_pdf_xhtml2pdf(body.html))
+    if not pdf_bytes:
+        raise HTTPException(status_code=500, detail="PDF generation failed")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.pdf"'},
+    )

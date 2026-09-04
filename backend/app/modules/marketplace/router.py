@@ -26,6 +26,7 @@ from app.modules.marketplace.service import (
     get_profile_views,
     get_ratings,
     list_marketplace,
+    list_public_proposal_requests,
     list_rfqs,
     publish_workspace,
     record_profile_view,
@@ -45,18 +46,30 @@ async def browse_marketplace(
     business_type: str | None = Query(default=None),
     operating_stage: str | None = Query(default=None),
     country: str | None = Query(default=None),
+    categories: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=24, ge=1, le=100),
 ):
+    cats = [c.strip() for c in categories.split(",") if c.strip()] if categories else None
     return await list_marketplace(
         search=search,
         industry=industry,
         business_type=business_type,
         operating_stage=operating_stage,
         country=country,
+        categories=cats,
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/proposal-requests")
+async def browse_proposal_requests(
+    search: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+):
+    return await list_public_proposal_requests(search=search, page=page, page_size=page_size)
 
 
 @router.get("/listings/{workspace_id}", response_model=MarketplaceListingItem)
@@ -125,14 +138,28 @@ async def remove_rating(
 # ─── RFQ endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/rfq/{workspace_id}", response_model=RFQOut)
-async def submit_rfq_endpoint(workspace_id: str, payload: RFQSubmitRequest):
+async def submit_rfq_endpoint(
+    workspace_id: str,
+    payload: RFQSubmitRequest,
+    user=Depends(get_optional_user),
+):
     """Public: any visitor can submit a request for quotation to a listed business."""
+    sender_user_id = None
+    sender_workspace_id = None
+    if user:
+        from app.modules.idea_validation.service import get_user_workspace
+        sender_ws = await get_user_workspace(user_id=user["id"])
+        if sender_ws:
+            sender_workspace_id = str(sender_ws.get("id", "") if isinstance(sender_ws, dict) else sender_ws.id)
+            sender_user_id = user["id"]
     return await submit_rfq(
         workspace_id=workspace_id,
         customer_name=payload.customer_name,
         customer_email=payload.customer_email,
         items=[i.model_dump() for i in payload.items],
         message=payload.message,
+        sender_user_id=sender_user_id,
+        sender_workspace_id=sender_workspace_id,
     )
 
 

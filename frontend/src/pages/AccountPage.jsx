@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
+import { useProposalStore } from "../store/proposal";
 import { apiRequest } from "../api/client";
 
 function initialsFromName(name, email) {
@@ -707,6 +708,8 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
         </div>
       </FormSection>
 
+      <ProposalSettingsCard />
+
       <div className="space-y-3 pt-1">
         <Alert type={msg?.type} message={msg?.text} />
         <div className="flex items-center justify-between">
@@ -719,6 +722,74 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
         </div>
       </div>
     </form>
+  );
+}
+
+function ProposalSettingsCard() {
+  const { preferences, preferencesLoading, fetchPreferences, savePreferences } = useProposalStore();
+  const [open, setOpen] = useState(null); // null = loading, true/false = loaded
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(() => {
+    fetchPreferences();
+  }, [fetchPreferences]);
+
+  useEffect(() => {
+    if (preferences !== null) {
+      setOpen(!!preferences?.enabled);
+    }
+  }, [preferences]);
+
+  async function handleToggle() {
+    const newVal = !open;
+    setOpen(newVal);
+    setMsg(null);
+    setSaving(true);
+    const res = await savePreferences({ ...(preferences || {}), enabled: newVal });
+    setSaving(false);
+    if (res.ok) setMsg({ type: "success", text: newVal ? "Now open for proposals." : "Closed to proposals." });
+    else { setOpen(!newVal); setMsg({ type: "error", text: res.error || "Failed to save." }); }
+  }
+
+  return (
+    <Card className="mt-5">
+      <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Proposal settings</h3>
+        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Control whether other businesses can submit proposals to your workspace.</p>
+      </div>
+      <div className="px-6 py-5">
+        {preferencesLoading && open === null ? (
+          <div className="h-8 flex items-center">
+            <svg className="h-4 w-4 animate-spin text-brand-500" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-slate-800 dark:text-slate-200">Open for proposals</p>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                  {open ? "Businesses on the marketplace can submit proposals to you." : "Your workspace is not accepting proposals from the marketplace."}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleToggle}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-60 ${open ? "bg-emerald-500" : "bg-slate-200 dark:bg-slate-700"}`}
+                role="switch"
+                aria-checked={open}
+              >
+                <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${open ? "translate-x-5" : "translate-x-0"}`} />
+              </button>
+            </div>
+            {msg && (
+              <Alert type={msg.type} message={msg.text} />
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -807,6 +878,7 @@ function WorkspaceTab({ workspaceId }) {
   }
 
   return (
+    <>
     <Card className="overflow-hidden">
       {/* Company banner */}
       <div className="bg-slate-50 px-6 py-5 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-800">
@@ -947,6 +1019,8 @@ function WorkspaceTab({ workspaceId }) {
         </div>
       </div>
     </Card>
+    <ProposalSettingsCard />
+    </>
   );
 }
 
@@ -1260,7 +1334,9 @@ export default function AccountPage() {
 
         {/* ── Workspace tab ── */}
         {tab === "workspace" && (
-          <WorkspaceTab workspaceId={workspaceId} />
+          <>
+            <WorkspaceTab workspaceId={workspaceId} />
+          </>
         )}
 
       </div>

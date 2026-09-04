@@ -25,7 +25,7 @@ import BlueprintPage from "./pages/BlueprintPage";
 import BusinessPlanPage from "./pages/LivePlanPage";
 import RegistrationPage from "./pages/RegistrationPage";
 import CataloguePage from "./pages/CataloguePage";
-import FinancialsPage from "./pages/FinancialsPage";
+import InvoicePublicPage from "./pages/InvoicePublicPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import SharedBlueprintPage from "./pages/SharedBlueprintPage";
 import TeamPage from "./pages/TeamPage";
@@ -45,6 +45,7 @@ import TermsOfServicePage from "./pages/TermsOfServicePage";
 import DisclaimerPage from "./pages/DisclaimerPage";
 import CreditsPage from "./pages/CreditsPage";
 import RequireWorkspace from "./components/RequireWorkspace";
+import BusinessOperationsPage from "./pages/BusinessOperationsPage";
 import ReferralPage from "./pages/ReferralPage";
 import ReferralClickPage from "./pages/ReferralClickPage";
 import BlogPage from "./pages/BlogPage";
@@ -100,6 +101,7 @@ export default function App() {
       <Route path="/blog/:slug" element={<BlogArticlePage />} />
       <Route path="/research" element={<ResearchPage />} />
       <Route path="/share/:token" element={<SharedBlueprintPage />} />
+      <Route path="/invoice" element={<InvoicePublicPage />} />
       <Route path="/join/:token" element={<JoinPage />} />
       <Route
         path="/"
@@ -118,11 +120,11 @@ export default function App() {
         <Route path="live-plan" element={<Navigate to="/business-plan" replace />} />
         <Route path="registration" element={<RequireWorkspace><RegistrationPage /></RequireWorkspace>} />
         <Route path="catalogue" element={<RequireWorkspace><CataloguePage /></RequireWorkspace>} />
-        <Route path="financials" element={<RequireWorkspace><FinancialsPage /></RequireWorkspace>} />
         <Route path="team" element={<TeamPage />} />
         <Route path="account" element={<AccountPage />} />
         <Route path="credits" element={<CreditsPage />} />
         <Route path="referrals" element={<ReferralPage />} />
+        <Route path="operations" element={<RequireWorkspace><BusinessOperationsPage /></RequireWorkspace>} />
         <Route path="integrations" element={<IntegrationsPage />} />
       </Route>
       <Route

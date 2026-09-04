@@ -65,6 +65,10 @@ def _build_listing_item(ws: dict) -> dict | None:
         "updated_at": updated_at,
         "avg_rating": None,
         "rating_count": 0,
+        "open_for_proposals": bool(
+            marketplace.get("open_for_proposals")
+            or (data.get("proposal_preferences") or {}).get("enabled", False)
+        ),
     }
 
 
@@ -173,6 +177,7 @@ async def list_marketplace(
     business_type: str | None = None,
     operating_stage: str | None = None,
     country: str | None = None,
+    categories: list[str] | None = None,
     page: int = 1,
     page_size: int = 24,
 ) -> dict:
@@ -181,7 +186,7 @@ async def list_marketplace(
         filters=[("data", "cs", {"marketplace": {"is_active": True}})],
         order="updated_at",
         desc=True,
-        limit=500,
+        limit=200,
     )
     items = []
     for ws in (all_workspaces or []):
@@ -208,6 +213,13 @@ async def list_marketplace(
             ]).lower()
             if q not in searchable:
                 continue
+        if categories:
+            item_cats = {item.get("primary_industry", "")} | {
+                s.get("service_category", "") for s in item.get("services", [])
+            }
+            item_cats.discard("")
+            if not item_cats.intersection(set(categories)):
+                continue
         items.append(item)
 
     await _attach_ratings(items)
@@ -215,6 +227,57 @@ async def list_marketplace(
     total = len(items)
     start = (page - 1) * page_size
     return {"items": items[start: start + page_size], "total": total}
+
+
+async def list_public_proposal_requests(*, search: str | None = None, page: int = 1, page_size: int = 50) -> dict:
+    """Return all PUBLISHED proposal requests across all workspaces."""
+    all_workspaces = await sb_select("workspaces", filters=[], order="updated_at", desc=True, limit=500)
+    results = []
+    for ws in (all_workspaces or []):
+        data = ws.get("data") or {}
+        profile = (data.get("workspace_profile") or {})
+        company_name = profile.get("company_name", "")
+        ws_id = str(ws.get("id", ""))
+        for req in (data.get("proposal_requests") or []):
+            if (req.get("status") or "").upper() != "PUBLISHED":
+                continue
+            # Skip invite-only and private requests — they must not appear on the public marketplace
+            modes = req.get("accepted_modes") or ["general"]
+            if "invite_only" in modes:
+                continue
+            if (req.get("visibility") or "marketplace") == "private":
+                continue
+            if search:
+                q = search.strip().lower()
+                searchable = " ".join([
+                    req.get("title", ""), req.get("description", ""),
+                    req.get("category", ""), company_name,
+                ]).lower()
+                if q not in searchable:
+                    continue
+            results.append({
+                "id": req.get("id", ""),
+                "title": req.get("title", ""),
+                "description": req.get("description", ""),
+                "category": req.get("category"),
+                "budget_range": req.get("budget_range"),
+                "deadline": req.get("deadline"),
+                "submission_cap": req.get("submission_cap"),
+                "requirements": req.get("requirements") or [],
+                "accepted_modes": req.get("accepted_modes") or ["general"],
+                "accepted_categories": req.get("accepted_categories"),
+                "specific_criteria": req.get("specific_criteria"),
+                "visibility": req.get("visibility") or "marketplace",
+                "published_at": req.get("published_at") or req.get("created_at"),
+                "workspace_id": ws_id,
+                "company_name": company_name,
+                "company_logo": profile.get("logo_data_url"),
+                "company_industry": profile.get("primary_industry", ""),
+                "company_country": profile.get("country", ""),
+            })
+    total = len(results)
+    start = (page - 1) * page_size
+    return {"items": results[start: start + page_size], "total": total}
 
 
 async def get_listing(*, workspace_id: str) -> dict:
@@ -328,6 +391,8 @@ async def submit_rfq(
     customer_email: str,
     items: list[dict],
     message: str | None,
+    sender_user_id: str | None = None,
+    sender_workspace_id: str | None = None,
 ) -> dict:
     ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
     if not ws:
@@ -336,6 +401,8 @@ async def submit_rfq(
     marketplace = data.get("marketplace") or {}
     if not marketplace.get("is_active"):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not listed in marketplace")
+
+    recipient_company = (data.get("workspace_profile") or {}).get("company_name") or "Business"
 
     financials = data.get("financials") or {}
     rfq_requests = list(financials.get("rfq_requests") or [])
@@ -355,6 +422,29 @@ async def submit_rfq(
     rfq_requests.append(rfq)
     merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
     await sb_update("workspaces", filters=[("id", "eq", workspace_id)], payload={"data": merged, "updated_at": now})
+
+    # Record the outbound RFQ in the sender's workspace for tracking
+    if sender_user_id and sender_workspace_id and sender_workspace_id != workspace_id:
+        try:
+            sender_ws = await sb_select("workspaces", filters=[("id", "eq", sender_workspace_id), ("user_id", "eq", sender_user_id)], single=True)
+            if sender_ws:
+                s_data = sender_ws.get("data") or {}
+                s_fin = s_data.get("financials") or {}
+                sent_rfqs = list(s_fin.get("sent_rfqs") or [])
+                sent_rfqs.insert(0, {
+                    "id": rfq_id,
+                    "recipient_workspace_id": workspace_id,
+                    "recipient_company_name": recipient_company,
+                    "items": items,
+                    "message": message,
+                    "status": "pending",
+                    "created_at": now,
+                })
+                s_merged = {**s_data, "financials": {**s_fin, "sent_rfqs": sent_rfqs}}
+                await sb_update("workspaces", filters=[("id", "eq", sender_workspace_id)], payload={"data": s_merged, "updated_at": now})
+        except Exception:
+            pass  # outbound tracking failure must not break the submission
+
     return rfq
 
 

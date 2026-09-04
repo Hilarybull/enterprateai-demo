@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
+import { useProposalStore } from "../store/proposal";
 import Spinner from "../components/Spinner";
 import logoUrl from "../enterprate-logo.png";
 import { useDemoTour } from "../context/DemoTourContext";
@@ -458,14 +460,22 @@ function ProductCard({ product, onOpen, onRequestQuote, onCompanyClick, isOwn })
 
 // ─── business card ────────────────────────────────────────────────────────────
 
-function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
+function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick, onApply }) {
   const grad = avatarGradient(listing.company_name);
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
+  const openForProposals = !!listing.open_for_proposals;
   return (
     <article onClick={() => onClick(listing)}
       className="ea-card ea-card-hover group flex cursor-pointer flex-col overflow-hidden">
       <div className={`h-1.5 w-full bg-gradient-to-r ${grad} opacity-80`} />
       <div className="flex flex-1 flex-col p-5">
+        {/* Open for Proposals badge */}
+        {openForProposals && (
+          <div className="mb-3 flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 dark:border-emerald-800 dark:bg-emerald-900/20">
+            <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+            <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Open for Proposals</span>
+          </div>
+        )}
         <div className="flex items-start gap-3">
           <div className="shrink-0">
             {hasLogo ? (
@@ -534,6 +544,18 @@ function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
               <span className="text-[11px] font-semibold text-brand-600 group-hover:text-brand-700 dark:text-brand-400">View Profile →</span>
             )}
           </div>
+          {openForProposals && !isOwn && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onApply && onApply(listing); }}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-[12px] font-bold text-white hover:bg-emerald-700 transition">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
+                <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+              Apply / Submit Proposal
+            </button>
+          )}
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0 text-[11px] text-slate-500 dark:text-slate-400">
               {listing.phone_number ? (
@@ -1200,17 +1222,773 @@ const INDUSTRIES = ["consulting","technology","finance","healthcare","education"
 const BIZ_TYPES = ["sole_trader","partnership","limited_company","llp","non_profit","startup"];
 const SERVICE_CATEGORIES = ["software","design","consulting","marketing","finance","legal","logistics","health","education"];
 
-// ─── main page ────────────────────────────────────────────────────────────────
+// ─── Apply modal (PI-107, PI-108) ─────────────────────────────────────────────
+
+const REQ_FORMAT_ICONS = {
+  text:         <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>,
+  document:     <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>,
+  image:        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/></svg>,
+  figures:      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+  presentation: <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>,
+  link:         <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>,
+};
+
+const REQ_FORMAT_META = {
+  text:         { label: "Text",         icon: REQ_FORMAT_ICONS.text },
+  document:     { label: "Document",     icon: REQ_FORMAT_ICONS.document },
+  image:        { label: "Image",        icon: REQ_FORMAT_ICONS.image },
+  figures:      { label: "Figures",      icon: REQ_FORMAT_ICONS.figures },
+  presentation: { label: "Presentation", icon: REQ_FORMAT_ICONS.presentation },
+  link:         { label: "Link / URL",   icon: REQ_FORMAT_ICONS.link },
+};
+
+function ApplyModal({ listing, request, onClose }) {
+  const grad = avatarGradient(listing.company_name);
+  const { submitProposal } = useProposalStore();
+  const planKey = useAuthStore((s) => s.subscription?.plan_key ?? "explorer");
+  const isPaid = ["starter_insight", "growth", "scale", "enterprise"].includes(planKey);
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+
+  // Category eligibility check
+  const [myProfile, setMyProfile] = useState(null);
+  const [catChecked, setCatChecked] = useState(false);
+  useEffect(() => {
+    const cats = request?.accepted_categories || [];
+    if (!cats.length || !workspaceId) { setCatChecked(true); return; }
+    apiRequest(`/validation/${workspaceId}`, "GET", undefined, { timeoutMs: 8000 })
+      .then((data) => { setMyProfile(data?.data?.workspace_profile || null); setCatChecked(true); })
+      .catch(() => setCatChecked(true));
+  }, [request, workspaceId]);
+
+  const acceptedCats = request?.accepted_categories || [];
+  const myIndustry = myProfile?.primary_industry || "";
+  const myServiceCats = (myProfile?.services || []).map((s) => s.service_category).filter(Boolean);
+  const myCats = [myIndustry, ...myServiceCats].filter(Boolean);
+  const categoryBlocked = acceptedCats.length > 0 && catChecked && myProfile && !myCats.some((c) => acceptedCats.includes(c));
+
+  // step: "choose" | "form"
+  const [step, setStep] = useState("choose");
+  const [mode, setMode] = useState("ai"); // "ai" | "manual"
+  const defaultTitle = request?.title
+    ? `Response to: ${request.title}`
+    : `Proposal for ${listing.company_name}`;
+  const [title, setTitle] = useState(defaultTitle);
+  const [summary, setSummary] = useState("");
+  const [file, setFile] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(false);
+
+  // Per-requirement responses (keyed by requirement index)
+  const allReqs = request?.requirements || [];
+  const [reqResponses, setReqResponses] = useState(() => Object.fromEntries(allReqs.map((_, i) => [i, ""])));
+  const [reqFiles, setReqFiles] = useState({}); // for document/image/presentation uploads keyed by index
+
+  const REQ_FORMAT_META = {
+    text:         { label: "Text",         icon: "✏️" },
+    document:     { label: "Document",     icon: "📄" },
+    image:        { label: "Image",        icon: "🖼️" },
+    figures:      { label: "Figures",      icon: "📊" },
+    presentation: { label: "Presentation", icon: "🎞️" },
+    link:         { label: "Link / URL",   icon: "🔗" },
+  };
+
+  const allMandatoryAnswered = allReqs.every((r, i) => {
+    const mandatory = typeof r === "object" && r?.mandatory;
+    if (!mandatory) return true;
+    const fmt = (typeof r === "object" && r?.format) || "text";
+    if (fmt === "document" || fmt === "image" || fmt === "presentation") {
+      return !!reqFiles[i];
+    }
+    return (reqResponses[i] || "").trim().length > 0;
+  });
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  async function handleGenerateAI() {
+    setAiLoading(true); setError(null);
+    try {
+      const res = await apiRequest("/proposals/generate-cover-letter", "POST", {
+        recipient_workspace_id: listing.workspace_id,
+        request_title: request?.title || null,
+        request_description: request?.description || null,
+      });
+      setSummary(res.cover_letter || res.text || "");
+    } catch {
+      setError("AI generation failed. You can write the cover letter manually.");
+    } finally { setAiLoading(false); }
+  }
+
+  function readFileAsBase64(f) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ data_url: reader.result, filename: f.name, mime: f.type, size: f.size });
+      reader.onerror = reject;
+      reader.readAsDataURL(f);
+    });
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!title.trim()) { setError("Please enter a proposal title."); return; }
+    if (!allMandatoryAnswered) { setError("Please provide a response for all required items before submitting."); return; }
+    setSubmitting(true); setError(null);
+
+    // Convert per-requirement file uploads to base64
+    const requirementResponses = allReqs.length > 0
+      ? await Promise.all(allReqs.map(async (r, i) => {
+          const fmt = (typeof r === "object" && r?.format) || "text";
+          const isFile = fmt === "document" || fmt === "image" || fmt === "presentation";
+          const fileData = isFile && reqFiles[i] ? await readFileAsBase64(reqFiles[i]).catch(() => null) : null;
+          return {
+            text: typeof r === "string" ? r : r?.text || "",
+            mandatory: typeof r === "object" && !!r?.mandatory,
+            format: fmt,
+            response: (reqResponses[i] || "").trim(),
+            ...(fileData ? { attachment: fileData } : {}),
+          };
+        }))
+      : undefined;
+
+    // General attachment (manual upload mode)
+    const attachments = [];
+    if (file) {
+      const fd = await readFileAsBase64(file).catch(() => null);
+      if (fd) attachments.push(fd);
+    }
+
+    const res = await submitProposal({
+      recipient_workspace_id: listing.workspace_id,
+      request_id: request?.id || null,
+      title: title.trim(),
+      summary: summary.trim() || null,
+      requirement_responses: requirementResponses,
+      attachments,
+    });
+    setSubmitting(false);
+    if (res.ok) setDone(true);
+    else setError(res.error || "Submission failed. Please try again.");
+  }
+
+  const requirements = request?.requirements || [];
+  const reqMode = Array.isArray(request?.accepted_modes) ? request.accepted_modes[0] : (request?.accepted_modes || null);
+  const isSpecific = reqMode === "specific";
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="ea-dialog relative z-10 w-full max-w-lg overflow-hidden rounded-t-3xl sm:rounded-2xl" style={{ maxHeight: "95vh" }}>
+        <div className={`h-1.5 w-full bg-gradient-to-r ${grad}`} />
+
+        {/* ── Success ── */}
+        {done ? (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Proposal Submitted!</h2>
+            <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">
+              Sent to <span className="font-semibold text-slate-700 dark:text-slate-300">{listing.company_name}</span>.
+            </p>
+            <button onClick={onClose} className="mt-6 rounded-xl bg-emerald-600 px-6 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition">
+              Done
+            </button>
+          </div>
+
+        /* ── Category blocked ── */
+        ) : categoryBlocked ? (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Category doesn't match</h2>
+            <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
+              This request is looking for businesses in:
+            </p>
+            <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+              {acceptedCats.map((c) => (
+                <span key={c} className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">{fmt(c)}</span>
+              ))}
+            </div>
+            <p className="mt-3 text-[12px] text-slate-400 dark:text-slate-500">
+              Your profile is categorised as <strong className="text-slate-600 dark:text-slate-300">{fmt(myIndustry) || "unknown"}</strong>.
+              Update your workspace profile to match the required categories if you believe you're eligible.
+            </p>
+            <button onClick={onClose} className="mt-6 rounded-xl border border-slate-200 bg-white px-6 py-2.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+              Close
+            </button>
+          </div>
+
+        /* ── Choose method ── */
+        ) : step === "choose" ? (
+          <>
+            <div className="relative px-6 pt-5 pb-2">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">Open for Proposals</span>
+              </div>
+              <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Submit a Proposal to {listing.company_name}</h2>
+              <p className="mt-1 text-[12px] text-slate-500 dark:text-slate-400">Choose how you'd like to prepare your proposal.</p>
+              <button onClick={onClose} className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+
+            {/* Requirements summary — shown before choosing method */}
+            {allReqs.length > 0 && (
+              <div className="mx-6 mb-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/50">
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">What you'll need to provide</p>
+                <ul className="space-y-1.5">
+                  {allReqs.map((r, i) => {
+                    const text = typeof r === "string" ? r : r?.text || "";
+                    const mandatory = typeof r === "object" && !!r?.mandatory;
+                    const fmt_key = (typeof r === "object" && r?.format) || "text";
+                    const meta = REQ_FORMAT_META[fmt_key] || REQ_FORMAT_META.text;
+                    return (
+                      <li key={i} className="flex items-start gap-2 text-[11px] text-slate-600 dark:text-slate-400">
+                        <span className={`mt-0.5 shrink-0 rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide ${mandatory ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-400" : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400"}`}>
+                          {mandatory ? "Required" : "Optional"}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="text-brand-500">{meta.icon}</span>
+                          {text}
+                          <span className="text-slate-400">({meta.label})</span>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+
+            <div className="px-6 py-4 space-y-3">
+              <button type="button" onClick={() => { setMode("ai"); setStep("form"); }}
+                className="w-full flex items-start gap-4 rounded-2xl border border-brand-200 bg-brand-50 p-4 text-left transition hover:border-brand-400 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-900/20 dark:hover:border-brand-600 dark:hover:bg-brand-900/40">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white">
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-[14px] font-bold text-brand-800 dark:text-brand-200">Use EnterprateAI</div>
+                  <div className="mt-0.5 text-[12px] text-brand-700 dark:text-brand-400">Fill out a smart proposal form. AI can generate your cover letter.</div>
+                  {!isPaid && (
+                    <div className="mt-2 inline-flex items-center gap-1 rounded-lg bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                      AI generation requires Starter Insight or higher
+                    </div>
+                  )}
+                </div>
+              </button>
+              <button type="button" onClick={() => { setMode("manual"); setStep("form"); }}
+                className="w-full flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-brand-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-transparent dark:hover:border-brand-600 dark:hover:bg-slate-800/50">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17,8 12,3 7,8" /><line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-[14px] font-bold text-slate-800 dark:text-slate-100">Upload / Write Manually</div>
+                  <div className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">Attach a PDF or Word doc and write your own cover letter.</div>
+                </div>
+              </button>
+            </div>
+            <div className="border-t border-slate-100 px-6 py-4 text-[11px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
+              Your proposal will be reviewed by {listing.company_name}. AI may analyse submissions but humans make all decisions.
+            </div>
+          </>
+
+        /* ── Form ── */
+        ) : (
+          <div className="ea-scroll overflow-y-auto" style={{ maxHeight: "calc(95vh - 6px)" }}>
+            <div className="relative px-6 pt-5 pb-2 flex items-start justify-between">
+              <div>
+                <button type="button" onClick={() => setStep("choose")} className="mb-1 inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-slate-600 transition">
+                  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6" /></svg>
+                  Back
+                </button>
+                <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Submit Proposal to {listing.company_name}</h2>
+              </div>
+              <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+
+
+            {/* Requirements — format-aware per-item response fields */}
+            {allReqs.length > 0 && (
+              <div className="mx-6 mb-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                    Requirements from {listing.company_name}
+                  </div>
+                  <span className={`text-[10px] font-semibold ${allMandatoryAnswered ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>
+                    {allReqs.filter((r, i) => {
+                      if (!(typeof r === "object" && r?.mandatory)) return false;
+                      const fmt = r?.format || "text";
+                      return (fmt === "document" || fmt === "image" || fmt === "presentation") ? !!reqFiles[i] : (reqResponses[i] || "").trim();
+                    }).length}/{allReqs.filter(r => typeof r === "object" && r?.mandatory).length} required answered
+                  </span>
+                </div>
+                {allReqs.map((r, i) => {
+                  const text = typeof r === "string" ? r : r?.text || "";
+                  const mandatory = typeof r === "object" && r?.mandatory;
+                  const fmt = (typeof r === "object" && r?.format) || "text";
+                  const fmtMeta = REQ_FORMAT_META[fmt] || REQ_FORMAT_META.text;
+                  const isFile = fmt === "document" || fmt === "image" || fmt === "presentation";
+                  const answered = isFile ? !!reqFiles[i] : (reqResponses[i] || "").trim().length > 0;
+                  const acceptMap = { document: ".pdf,.doc,.docx", image: "image/*", presentation: ".pdf,.ppt,.pptx,.key" };
+                  return (
+                    <div key={i} className={`rounded-xl border p-3 transition
+                      ${mandatory
+                        ? answered
+                          ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-900/10"
+                          : "border-red-200 bg-red-50/60 dark:border-red-800 dark:bg-red-900/10"
+                        : "border-amber-100 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-900/10"}`}>
+                      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                        {mandatory
+                          ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-600 dark:bg-red-900/30 dark:text-red-400">Required</span>
+                          : <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">Optional</span>}
+                        <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[9px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                          {fmtMeta.icon} {fmtMeta.label}
+                        </span>
+                        {answered && <svg className="h-3 w-3 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" /></svg>}
+                      </div>
+                      <p className="mb-2 text-[12px] font-medium text-slate-700 dark:text-slate-300">{text}</p>
+                      {fmt === "text" && (
+                        <textarea value={reqResponses[i] || ""} onChange={(e) => setReqResponses(prev => ({ ...prev, [i]: e.target.value }))}
+                          rows={2} placeholder={mandatory ? "Your written response is required…" : "Your response (optional)…"}
+                          className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                      )}
+                      {fmt === "figures" && (
+                        <textarea value={reqResponses[i] || ""} onChange={(e) => setReqResponses(prev => ({ ...prev, [i]: e.target.value }))}
+                          rows={3} placeholder="e.g. Revenue: £120,000 | Margin: 32% | Team: 8"
+                          className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px] font-mono text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                      )}
+                      {fmt === "link" && (
+                        <input type="url" value={reqResponses[i] || ""} onChange={(e) => setReqResponses(prev => ({ ...prev, [i]: e.target.value }))}
+                          placeholder="https://"
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                      )}
+                      {isFile && (
+                        <label className={`flex cursor-pointer items-center gap-3 rounded-lg border-2 border-dashed px-3 py-2.5 transition
+                          ${reqFiles[i] ? "border-emerald-400 bg-emerald-50 dark:border-emerald-600 dark:bg-emerald-900/10" : "border-slate-200 bg-slate-50 hover:border-brand-300 dark:border-slate-700 dark:bg-slate-800/40"}`}>
+                          <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                          </svg>
+                          <span className="text-[11px] text-slate-600 dark:text-slate-400">
+                            {reqFiles[i] ? reqFiles[i].name : `Upload ${fmtMeta.label}${mandatory ? " (required)" : " (optional)"}`}
+                          </span>
+                          <input type="file" accept={acceptMap[fmt] || "*"} className="sr-only"
+                            onChange={(e) => setReqFiles(prev => ({ ...prev, [i]: e.target.files?.[0] || null }))} />
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
+                {!allMandatoryAnswered && (
+                  <p className="text-[10px] text-red-500">Complete all required items above before submitting.</p>
+                )}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="px-6 pb-6 pt-2 space-y-4">
+              <div>
+                <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">
+                  Proposal Title <span className="text-red-500">*</span>
+                </label>
+                <input value={title} onChange={(e) => setTitle(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" />
+              </div>
+
+              <div>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-400">Cover Letter / Summary</label>
+                  {mode === "ai" && isPaid ? (
+                    <button type="button" onClick={handleGenerateAI} disabled={aiLoading}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-brand-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                      {aiLoading ? <Spinner size={10} /> : (
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                      )}
+                      {aiLoading ? "Generating…" : "Generate with AI"}
+                    </button>
+                  ) : mode === "ai" && !isPaid ? (
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400" title="Upgrade to Starter Insight to use AI generation">
+                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+                      AI · Paid only
+                    </span>
+                  ) : null}
+                </div>
+                <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={5}
+                  placeholder={isSpecific
+                    ? "Explain specifically how you meet the requirements of this request, your approach, timeline, and relevant experience..."
+                    : "Introduce yourself, explain why you're a great fit, and highlight key offerings..."}
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">Attach Document <span className="font-normal text-slate-400">(PDF or Word, optional)</span></label>
+                <label className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed px-4 py-3 transition ${file ? "border-brand-400 bg-brand-50 dark:border-brand-600 dark:bg-brand-900/20" : "border-slate-200 bg-slate-50 hover:border-brand-300 dark:border-slate-700 dark:bg-slate-800/40"}`}>
+                  <svg className="h-5 w-5 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17,8 12,3 7,8" /><line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  <span className="text-[12px] text-slate-600 dark:text-slate-400">
+                    {file ? file.name : "Click to upload a PDF or Word document"}
+                  </span>
+                  <input type="file" accept=".pdf,.doc,.docx" className="sr-only"
+                    onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                </label>
+                {file && (
+                  <button type="button" onClick={() => setFile(null)} className="mt-1 text-[11px] text-slate-400 hover:text-red-500 transition">Remove file</button>
+                )}
+              </div>
+
+              {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">{error}</div>
+              )}
+
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={onClose}
+                  className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+                  Cancel
+                </button>
+                <button type="submit" disabled={submitting || !allMandatoryAnswered}
+                  title={!allMandatoryAnswered ? "Respond to all required items above before submitting" : undefined}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                  {submitting && <Spinner size={14} />}
+                  {submitting ? "Submitting…" : "Submit Proposal"}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── Proposal Request Detail Modal ───────────────────────────────────────────
+
+function ProposalRequestDetailModal({ req, isOwn, onApply, onClose }) {
+  const deadlinePassed = req.deadline && new Date(req.deadline) < new Date();
+  const reqs = req.requirements || [];
+  const acceptedModeLabel = Array.isArray(req.accepted_modes)
+    ? req.accepted_modes.map((m) => fmt(m)).join(", ")
+    : req.accepted_modes ? fmt(req.accepted_modes) : null;
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="ea-dialog ea-scroll relative z-10 w-full max-w-lg overflow-y-auto rounded-t-3xl sm:rounded-2xl" style={{ maxHeight: "92vh" }}>
+
+        {/* Header */}
+        <div className="sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 px-5 pt-5 pb-4">
+          <div className="flex items-start gap-3">
+            {req.company_logo ? (
+              <img src={req.company_logo} alt={req.company_name} className="h-10 w-10 shrink-0 rounded-xl border border-slate-200 bg-white object-contain p-1 dark:border-slate-700 dark:bg-slate-800" />
+            ) : (
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 text-sm font-bold text-white">
+                {(req.company_name || "?").slice(0, 2).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold text-brand-600 dark:text-brand-400">{req.company_name}</p>
+              <h2 className="mt-0.5 text-[16px] font-bold leading-snug text-slate-900 dark:text-slate-100">{req.title}</h2>
+            </div>
+            <button onClick={onClose} className="shrink-0 flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-4 space-y-4">
+
+          {/* Category + mode badges */}
+          <div className="flex flex-wrap gap-2">
+            {req.category && (
+              <span className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${categoryColor(req.category)}`}>{fmt(req.category)}</span>
+            )}
+            {acceptedModeLabel && (
+              <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-400">{acceptedModeLabel}</span>
+            )}
+            {(req.accepted_categories || []).map((c) => (
+              <span key={c} className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">{fmt(c)}</span>
+            ))}
+          </div>
+
+          {/* Description */}
+          {req.description && (
+            <p className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-400">{req.description}</p>
+          )}
+
+          {/* Meta row */}
+          <div className="flex flex-wrap gap-4 text-[12px] text-slate-500 dark:text-slate-400">
+            {req.budget_range && (
+              <span className="inline-flex items-center gap-1.5">
+                <svg className="h-3.5 w-3.5 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                Budget: <strong className="text-slate-700 dark:text-slate-300">{req.budget_range}</strong>
+              </span>
+            )}
+            {req.deadline && (
+              <span className={`inline-flex items-center gap-1.5 ${deadlinePassed ? "text-red-500 dark:text-red-400" : ""}`}>
+                <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                {deadlinePassed ? "Deadline passed" : `Due ${new Date(req.deadline).toLocaleDateString()}`}
+              </span>
+            )}
+            {req.submission_cap != null && (
+              <span className="inline-flex items-center gap-1.5">
+                <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Max {req.submission_cap} proposals
+              </span>
+            )}
+          </div>
+
+          {/* Specific criteria */}
+          {req.specific_criteria && (req.specific_criteria.business_types?.length > 0 || req.specific_criteria.operating_stages?.length > 0 || req.specific_criteria.industry || req.specific_criteria.country) && (
+            <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-4 dark:border-violet-800 dark:bg-violet-900/10 space-y-3">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-violet-600 dark:text-violet-400">Who can apply</p>
+              <div className="flex flex-wrap gap-x-6 gap-y-2 text-[12px] text-slate-600 dark:text-slate-400">
+                {req.specific_criteria.business_types?.length > 0 && (
+                  <div>
+                    <span className="font-semibold text-slate-500 dark:text-slate-400">Business type: </span>
+                    <span>{req.specific_criteria.business_types.map(t => t.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())).join(", ")}</span>
+                  </div>
+                )}
+                {req.specific_criteria.operating_stages?.length > 0 && (
+                  <div>
+                    <span className="font-semibold text-slate-500 dark:text-slate-400">Stage: </span>
+                    <span>{req.specific_criteria.operating_stages.map(s => s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())).join(", ")}</span>
+                  </div>
+                )}
+                {req.specific_criteria.industry && (
+                  <div>
+                    <span className="font-semibold text-slate-500 dark:text-slate-400">Industry: </span>
+                    <span>{req.specific_criteria.industry}</span>
+                  </div>
+                )}
+                {req.specific_criteria.country && (
+                  <div>
+                    <span className="font-semibold text-slate-500 dark:text-slate-400">Country: </span>
+                    <span>{req.specific_criteria.country}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Requirements */}
+          {reqs.length > 0 && (
+            <div>
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">What you'll need to provide</p>
+              <ul className="space-y-2">
+                {reqs.map((r, i) => {
+                  const text = typeof r === "string" ? r : r?.text || "";
+                  const mandatory = typeof r === "object" && !!r?.mandatory;
+                  const fmt_key = (typeof r === "object" && r?.format) || "text";
+                  const meta = REQ_FORMAT_META[fmt_key] || REQ_FORMAT_META.text;
+                  return (
+                    <li key={i} className={`flex items-start gap-3 rounded-xl border p-3 ${mandatory ? "border-indigo-100 bg-indigo-50/60 dark:border-indigo-900/50 dark:bg-indigo-900/20" : "border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/30"}`}>
+                      <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${mandatory ? "bg-indigo-200 text-indigo-700 dark:bg-indigo-800 dark:text-indigo-300" : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400"}`}>
+                        {mandatory ? "Required" : "Optional"}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 mb-0.5">
+                          <span className="text-brand-500">{meta.icon}</span>
+                          <span>{meta.label}</span>
+                        </div>
+                        <p className="text-[13px] text-slate-700 dark:text-slate-300">{text}</p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Footer CTA */}
+        <div className="sticky bottom-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 py-4">
+          {isOwn ? (
+            <div className="w-full flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 py-3 text-[12px] font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500">
+              This is your request
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={deadlinePassed}
+              onClick={() => { onClose(); onApply(); }}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-[13px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/>
+                <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
+              </svg>
+              {deadlinePassed ? "Deadline Passed" : "Submit Proposal"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── Proposal Request Card ───────────────────────────────────────────────────
+
+function ProposalRequestCard({ req, isLoggedIn, isOwn, onApply, onCompanyClick, onViewDetail }) {
+  const deadlinePassed = req.deadline && new Date(req.deadline) < new Date();
+  return (
+    <article className="group flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-brand-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-600">
+      <div className="flex items-start gap-3">
+        <button type="button" onClick={onCompanyClick} className="shrink-0 hover:opacity-80 transition-opacity">
+          {req.company_logo ? (
+            <img src={req.company_logo} alt={req.company_name} className="h-10 w-10 rounded-xl border border-slate-200 bg-white object-contain p-1 dark:border-slate-700 dark:bg-slate-800" />
+          ) : (
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 text-sm font-bold text-white">
+              {(req.company_name || "?").slice(0, 2).toUpperCase()}
+            </div>
+          )}
+        </button>
+        <button type="button" onClick={onViewDetail} className="min-w-0 flex-1 text-left hover:opacity-90 transition-opacity">
+          <p className="truncate text-[11px] font-semibold text-brand-600 dark:text-brand-400">{req.company_name}</p>
+          <h3 className="mt-0.5 text-[14px] font-bold leading-snug text-slate-900 dark:text-slate-100">{req.title}</h3>
+        </button>
+      </div>
+
+      {/* Clickable body area */}
+      <button type="button" onClick={onViewDetail} className="mt-3 text-left w-full">
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {req.category && (
+            <span className={`inline-flex w-fit rounded-lg px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${categoryColor(req.category)}`}>
+              {fmt(req.category)}
+            </span>
+          )}
+          {(req.accepted_modes || [])[0] === "specific" && (
+            <span className="inline-flex w-fit rounded-lg px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+              Specific
+            </span>
+          )}
+        </div>
+
+        {req.description && (
+          <p className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-slate-600 dark:text-slate-400">{req.description}</p>
+        )}
+
+        {req.specific_criteria && (req.specific_criteria.business_types?.length > 0 || req.specific_criteria.operating_stages?.length > 0 || req.specific_criteria.industry || req.specific_criteria.country) && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {req.specific_criteria.industry && (
+              <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-700 dark:border-violet-800 dark:bg-violet-900/20 dark:text-violet-300">{req.specific_criteria.industry}</span>
+            )}
+            {req.specific_criteria.country && (
+              <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-700 dark:border-violet-800 dark:bg-violet-900/20 dark:text-violet-300">{req.specific_criteria.country}</span>
+            )}
+            {(req.specific_criteria.operating_stages || []).map(s => (
+              <span key={s} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-700 dark:border-violet-800 dark:bg-violet-900/20 dark:text-violet-300">{s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-slate-500 dark:text-slate-400">
+          {req.budget_range && (
+            <span className="inline-flex items-center gap-1">
+              <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
+              </svg>
+              {req.budget_range}
+            </span>
+          )}
+          {req.deadline && (
+            <span className={`inline-flex items-center gap-1 ${deadlinePassed ? "text-red-500 dark:text-red-400" : ""}`}>
+              <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+              {deadlinePassed ? "Closed" : `Due ${new Date(req.deadline).toLocaleDateString()}`}
+            </span>
+          )}
+          {req.submission_cap != null && (
+            <span className="inline-flex items-center gap-1">
+              <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              Max {req.submission_cap} proposals
+            </span>
+          )}
+        </div>
+
+        {(req.requirements || []).length > 0 && (
+          <ul className="mt-3 space-y-1">
+            {req.requirements.slice(0, 3).map((r, i) => (
+              <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-600 dark:text-slate-400">
+                <svg className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" /></svg>
+                {typeof r === "string" ? r : r?.text || JSON.stringify(r)}
+              </li>
+            ))}
+            {req.requirements.length > 3 && (
+              <li className="text-[11px] text-brand-600 dark:text-brand-400 font-medium">View {req.requirements.length - 3} more requirements →</li>
+            )}
+          </ul>
+        )}
+      </button>
+
+      <div className="mt-auto pt-4">
+        {isOwn ? (
+          <div className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-[12px] font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500">
+            Your request
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onViewDetail}
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              View
+            </button>
+            <button
+              type="button"
+              disabled={deadlinePassed}
+              onClick={onApply}
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-[12px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
+                <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+              {deadlinePassed ? "Closed" : "Apply"}
+            </button>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+// ─── main page ─────────────────────────────────────────���──────────────────────
 
 export default function MarketplacePage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { triggerDemoGate } = useDemoTour() || {};
   const token = useAuthStore((s) => s.token);
   const userEmail = useAuthStore((s) => s.email);
   const isLoggedIn = Boolean(token);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
-  const [activeTab, setActiveTab] = useState("products"); // "products" | "profiles"
+  const [activeTab, setActiveTab] = useState(() => searchParams.get("request") ? "requests" : "products"); // "products" | "profiles"
   const [listings, setListings] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -1235,6 +2013,14 @@ export default function MarketplacePage() {
   const [gateAction, setGateAction] = useState(null);
   const [rfqTarget, setRfqTarget] = useState(null);
   const [serviceDetail, setServiceDetail] = useState(null); // { service, listing }
+  const [applyTarget, setApplyTarget] = useState(null); // listing to apply to
+  const [reqDetail, setReqDetail] = useState(null); // proposal request detail popup
+
+  const [propRequests, setPropRequests] = useState([]);
+  const [propReqTotal, setPropReqTotal] = useState(0);
+  const [propReqLoading, setPropReqLoading] = useState(false);
+  const [propReqSearch, setPropReqSearch] = useState("");
+  const [debouncedPropReqSearch, setDebouncedPropReqSearch] = useState("");
 
   const PAGE_SIZE = 24;
 
@@ -1242,6 +2028,38 @@ export default function MarketplacePage() {
     const t = setTimeout(() => { setDebouncedSearch(search); setPage(1); }, 350);
     return () => clearTimeout(t);
   }, [search]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedPropReqSearch(propReqSearch), 350);
+    return () => clearTimeout(t);
+  }, [propReqSearch]);
+
+  useEffect(() => {
+    if (activeTab !== "requests") return;
+    let alive = true;
+    setPropReqLoading(true);
+    const params = new URLSearchParams({ page: "1", page_size: "50" });
+    if (debouncedPropReqSearch) params.set("search", debouncedPropReqSearch);
+    apiRequest(`/marketplace/proposal-requests?${params}`, "GET")
+      .then((res) => {
+        if (!alive) return;
+        const items = res.items || [];
+        setPropRequests(items);
+        setPropReqTotal(res.total || 0);
+        // Auto-open apply modal when arriving via invite link (?request=<id>)
+        const targetId = searchParams.get("request");
+        if (targetId) {
+          const target = items.find((r) => r.id === targetId);
+          if (target) {
+            setApplyTarget({ workspace_id: target.workspace_id, company_name: target.company_name, logo_data_url: target.company_logo, _request: target });
+            setSearchParams({}, { replace: true }); // clean URL
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (alive) setPropReqLoading(false); });
+    return () => { alive = false; };
+  }, [activeTab, debouncedPropReqSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -1435,16 +2253,38 @@ export default function MarketplacePage() {
             <svg className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
             </svg>
-            <input type="text" placeholder={activeTab === "products" ? "Search products or services…" : "Search by name, service, or location…"}
-              value={search} onChange={(e) => setSearch(e.target.value)}
+            <input type="text"
+              placeholder={activeTab === "products" ? "Search products or services…" : activeTab === "requests" ? "Search proposal requests…" : "Search by name, service, or location…"}
+              value={activeTab === "requests" ? propReqSearch : search}
+              onChange={(e) => activeTab === "requests" ? setPropReqSearch(e.target.value) : setSearch(e.target.value)}
               className="w-full rounded-2xl border-0 bg-white py-3.5 pl-11 pr-4 text-sm text-slate-800 shadow-xl outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-white/50 dark:bg-slate-900 dark:text-slate-100" />
           </div>
         </div>
 
-        {/* Tour-only hidden tab anchor */}
+        {/* Tour-only hidden tab anchors */}
         <button data-tour="marketplace-products-tab" className="hidden" aria-hidden="true" tabIndex={-1} />
         <button data-tour="marketplace-profiles-tab" className="hidden" aria-hidden="true" tabIndex={-1} />
-        <div className="mt-6" />
+
+        {/* Tab bar */}
+        <div className="mt-6 flex items-end justify-center gap-1">
+          {[
+            { id: "products", label: "Products & Services" },
+            { id: "requests", label: "Proposal Requests" },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`rounded-t-xl px-5 py-2.5 text-[13px] font-semibold transition ${
+                activeTab === tab.id
+                  ? "bg-slate-50 text-brand-700 shadow dark:bg-slate-900 dark:text-brand-300"
+                  : "text-white/70 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Main content */}
@@ -1535,6 +2375,11 @@ export default function MarketplacePage() {
               {total} business{total !== 1 ? "es" : ""}
             </span>
           )}
+          {activeTab === "requests" && !propReqLoading && (
+            <span className="ml-auto text-[12px] text-slate-400 dark:text-slate-500">
+              {propReqTotal} request{propReqTotal !== 1 ? "s" : ""}
+            </span>
+          )}
         </div>
 
         {/* Filter panel */}
@@ -1577,6 +2422,46 @@ export default function MarketplacePage() {
         {/* Content */}
         {error ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">{error}</div>
+        ) : activeTab === "requests" ? (
+          /* ── Proposal Requests tab ── */
+          propReqLoading ? (
+            <div className="flex flex-col items-center justify-center py-24 gap-4">
+              <Spinner size={24} />
+              <p className="text-sm text-slate-500 dark:text-slate-400">Loading proposal requests…</p>
+            </div>
+          ) : propRequests.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800">
+                <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
+                  <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
+                </svg>
+              </div>
+              <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">
+                {debouncedPropReqSearch ? "No requests match your search" : "No proposal requests yet"}
+              </h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                {debouncedPropReqSearch ? "Try a different search term." : "Businesses post requests when they're looking for proposals. Check back soon."}
+              </p>
+              {debouncedPropReqSearch && (
+                <button onClick={() => setPropReqSearch("")} className="mt-4 text-[13px] font-semibold text-brand-600 hover:underline dark:text-brand-400">Clear search</button>
+              )}
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {propRequests.map((req) => (
+                <ProposalRequestCard
+                  key={req.id}
+                  req={req}
+                  isLoggedIn={isLoggedIn}
+                  isOwn={isLoggedIn && req.workspace_id === workspaceId}
+                  onApply={() => isLoggedIn ? setApplyTarget({ workspace_id: req.workspace_id, company_name: req.company_name, logo_data_url: req.company_logo, _request: req }) : setGateAction("apply")}
+                  onCompanyClick={() => apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {})}
+                  onViewDetail={() => setReqDetail(req)}
+                />
+              ))}
+            </div>
+          )
         ) : loading ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4">
             <Spinner size={24} />
@@ -1646,7 +2531,8 @@ export default function MarketplacePage() {
                   const isOwn = isLoggedIn && myStatus?.is_published && l.workspace_id === (myStatus?.workspace_id || workspaceId);
                   return (
                     <BusinessCard key={l.workspace_id} listing={l} onClick={setSelected} isOwn={isOwn}
-                      viewCount={isOwn ? profileViews?.total : null} onViewsClick={() => setShowViews(true)} />
+                      viewCount={isOwn ? profileViews?.total : null} onViewsClick={() => setShowViews(true)}
+                      onApply={(listing) => isLoggedIn ? setApplyTarget(listing) : setGateAction("apply")} />
                   );
                 })}
               </div>
@@ -1707,7 +2593,20 @@ export default function MarketplacePage() {
           onRequestQuote={(listing) => setRfqTarget({ listing, productName: null })} />
       )}
       {rfqTarget && <RFQModal listing={rfqTarget.listing} prefilledProduct={rfqTarget.productName} onClose={() => setRfqTarget(null)} />}
+      {applyTarget && <ApplyModal listing={applyTarget} request={applyTarget._request || null} onClose={() => setApplyTarget(null)} />}
       {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}
+      {reqDetail && (
+        <ProposalRequestDetailModal
+          req={reqDetail}
+          isOwn={isLoggedIn && reqDetail.workspace_id === workspaceId}
+          onClose={() => setReqDetail(null)}
+          onApply={() => {
+            setReqDetail(null);
+            if (isLoggedIn) setApplyTarget({ workspace_id: reqDetail.workspace_id, company_name: reqDetail.company_name, logo_data_url: reqDetail.company_logo, _request: reqDetail });
+            else setGateAction("apply");
+          }}
+        />
+      )}
 
       {/* Profile views modal */}
       {showViews && (
