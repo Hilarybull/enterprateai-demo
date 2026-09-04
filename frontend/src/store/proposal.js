@@ -183,11 +183,13 @@ export const useProposalStore = create((set, get) => ({
   },
 
   deleteRequest: async (id) => {
+    const prev = get().requests;
+    set((s) => ({ requests: s.requests.filter((r) => r.id !== id) }));
     try {
       await apiRequest(`/proposals/requests/${id}`, "DELETE");
-      set((s) => ({ requests: s.requests.filter((r) => r.id !== id) }));
       return { ok: true };
     } catch (e) {
+      set({ requests: prev });
       return { ok: false, error: e instanceof Error ? e.message : "Failed to delete request." };
     }
   },
