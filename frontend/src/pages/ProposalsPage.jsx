@@ -840,12 +840,13 @@ function RequestModal({ onClose, onSaved, editItem }) {
             </div>
           </div>
 
-          {error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
-              {error}
-            </div>
-          )}
         </div>
+
+        {error && (
+          <div className="border-t border-red-100 bg-red-50 px-6 py-2.5 text-[12px] text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+            {error}
+          </div>
+        )}
 
         <div className="flex items-center justify-end gap-3 border-t border-slate-100 px-6 py-4 dark:border-slate-800">
           <button onClick={onClose} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-transparent dark:text-slate-400 transition">
@@ -1229,6 +1230,9 @@ export function RequestsTab({ createTrigger }) {
     const req = confirmDelete;
     setConfirmDelete(null);
     const res = await deleteRequest(req.id);
+    if (res.ok) {
+      if (detailItem?.id === req.id) setDetailItem(null);
+    }
     setToast(res.ok ? { msg: "Request deleted", type: "success" } : { msg: res.error, type: "error" });
   }
 

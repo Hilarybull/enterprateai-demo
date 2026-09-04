@@ -1321,7 +1321,7 @@ export default function Layout() {
                                   </div>
                                   <span className="text-[11px] text-slate-500 dark:text-slate-400">{notif.customer_email}</span>
                                   {notif.items?.length > 0 && (
-                                    <span className="text-[10px] text-slate-400">{notif.items.map((i) => i.name).join(", ")}</span>
+                                    <span className="w-full truncate text-[10px] text-slate-400">{notif.items.map((i) => i.name).join(", ")}</span>
                                   )}
                                   <span className="text-[10px] text-slate-400">{notif.created_at ? new Date(notif.created_at).toLocaleDateString() : ""}</span>
                                 </>

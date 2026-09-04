@@ -451,9 +451,8 @@ export default function LandingPage() {
           <h1 className="mt-5 text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl lg:text-5xl">
             Run your small business with more clarity, less cost, and better decisions.
           </h1>
-          <p className="mt-3 text-sm font-semibold text-white sm:text-base">Your Business Operating System</p>
           <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-white/90 sm:text-base">
-            Input your business data once. Use it everywhere. Plan, operate, sell, simulate decisions, and grow with intelligence.
+            Input your business data once. Use it everywhere. Simulate decisions, and grow with intelligence.
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <button type="button" onClick={() => goToApp()} className="w-full rounded-xl border border-white/40 bg-white/10 px-8 py-3.5 text-sm font-bold text-white transition hover:bg-white/20 active:scale-95 sm:w-auto">

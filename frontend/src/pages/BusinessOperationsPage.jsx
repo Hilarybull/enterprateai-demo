@@ -225,12 +225,7 @@ function TableSection({ title, cols, rows, searchPlaceholder, emptyText = "No da
                 </div>
               )}
             </div>
-          ) : (
-            <button type="button" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-400 cursor-default">
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="4" y1="8" x2="20" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg>
-              Filter
-            </button>
-          )}
+          ) : null}
         </div>
       </div>
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
@@ -1062,9 +1057,14 @@ ${form.notes ? `<!-- NOTES -->
             </div>
           ) : type === "invoice" ? (<>
             <Field label="Customer">
-              {customerNames.length > 0
-                ? <SelectInput value={form.customer_name} onChange={set("customer_name")} options={customerNames} />
-                : <TextInput value={form.customer_name} onChange={set("customer_name")} placeholder="Customer name" />}
+              <>
+                <input list="customer-names-list" value={form.customer_name || ""} onChange={e => set("customer_name")(e.target.value)}
+                  placeholder="Customer name"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                <datalist id="customer-names-list">
+                  {customerNames.map(n => <option key={n} value={n} />)}
+                </datalist>
+              </>
             </Field>
             <Field label="Invoice No. / Reference">
               <TextInput value={form.reference} onChange={set("reference")} placeholder="INV-001" />
@@ -1285,9 +1285,14 @@ ${form.notes ? `<!-- NOTES -->
             </div>
           ) : type === "quote" ? (<>
             <Field label="Customer">
-              {customerNames.length > 0
-                ? <SelectInput value={form.customer_name} onChange={set("customer_name")} options={customerNames} />
-                : <TextInput value={form.customer_name} onChange={set("customer_name")} placeholder="Customer name" />}
+              <>
+                <input list="customer-names-list" value={form.customer_name || ""} onChange={e => set("customer_name")(e.target.value)}
+                  placeholder="Customer name"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                <datalist id="customer-names-list">
+                  {customerNames.map(n => <option key={n} value={n} />)}
+                </datalist>
+              </>
             </Field>
             <Field label="Reference">
               <TextInput value={form.reference} onChange={set("reference")} placeholder="QUO-001" />
