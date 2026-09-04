@@ -38,6 +38,17 @@ from app.shared.llm.openai_client import AutoLLMClient, LLMClient, NoopLLMClient
 def _safe_text(s: str | None) -> str:
     return (s or "").strip()
 
+def _humanize_slug(s: str | None) -> str:
+    """Convert snake_case or kebab-case slugs to Title Case for display."""
+    text = _safe_text(s)
+    if not text:
+        return text
+    # Only transform if it looks like a raw slug (all lowercase, contains _ or -)
+    # Leave already-formatted strings (with spaces, mixed case) untouched
+    if " " not in text and (text == text.lower() or "_" in text or "-" in text):
+        return text.replace("_", " ").replace("-", " ").title()
+    return text
+
 def _strip_digits(s: str | None) -> str:
     # Kept for backward compatibility in case older code paths call it.
     # We now allow numeric values that are explicitly provided by the system/user.
@@ -1918,7 +1929,7 @@ async def generate_blueprint(
             "registration_status": registration_status,
             "registration_number": registration_number,
             "legal_structure": _safe_text(workspace_profile.get("business_type") if isinstance(workspace_profile, dict) else ""),
-            "primary_industry": _safe_text(industry or (workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else "")),
+            "primary_industry": _humanize_slug(industry or (workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else "")),
             "secondary_industries": ", ".join(workspace_profile.get("secondary_industries") or []) if isinstance(workspace_profile, dict) else "",
             "about_company": _safe_text(workspace_profile.get("about_company") if isinstance(workspace_profile, dict) else ""),
             "tagline": _safe_text(workspace_profile.get("tagline") if isinstance(workspace_profile, dict) else ""),
@@ -2009,7 +2020,7 @@ async def generate_blueprint(
 
         cover_lines: list[str] = []
         if _safe_text(raw_inputs.get("primary_industry")):
-            cover_lines.append(f"**Industry:** {_safe_text(raw_inputs.get('primary_industry'))}")
+            cover_lines.append(f"**Industry:** {_humanize_slug(raw_inputs.get('primary_industry'))}")
         if _safe_text(raw_inputs.get("location")):
             cover_lines.append(f"**Location:** {_safe_text(raw_inputs.get('location'))}")
         if _safe_text(raw_inputs.get("registration_number")):
