@@ -3,6 +3,50 @@ const API_URL =
   import.meta.env.REACT_APP_BACKEND_URL ??
   "http://localhost:8000";
 
+// ── Workspace data cache (stale-while-revalidate) ────────────────────────────
+// Keyed by request path. Holds { data, fetchedAt, inflight }.
+// TTL: 60s — stale data is served immediately and a background refresh fires.
+// Call invalidateWorkspaceCache() after any PATCH to force fresh data next load.
+const _wsCache = new Map();
+const _WS_TTL = 60_000;
+
+export function invalidateWorkspaceCache() {
+  _wsCache.clear();
+}
+
+// Like apiRequest but caches GET responses for paths starting with /validation
+export async function apiRequestCached(path, method = "GET", body, options) {
+  if (method !== "GET" || !path.startsWith("/validation")) {
+    return apiRequest(path, method, body, options);
+  }
+  const now = Date.now();
+  const entry = _wsCache.get(path);
+
+  function doFetch() {
+    const p = apiRequest(path, "GET", undefined, options)
+      .then(data => {
+        _wsCache.set(path, { data, fetchedAt: Date.now(), inflight: null });
+        return data;
+      })
+      .catch(e => {
+        const cur = _wsCache.get(path);
+        if (cur) _wsCache.set(path, { ...cur, inflight: null });
+        else _wsCache.delete(path);
+        throw e;
+      });
+    _wsCache.set(path, { ...(entry || { data: undefined, fetchedAt: 0 }), inflight: p });
+    return p;
+  }
+
+  if (entry && entry.data !== undefined) {
+    // Serve stale immediately, revalidate in background if expired
+    if (now - entry.fetchedAt > _WS_TTL && !entry.inflight) doFetch();
+    return entry.data;
+  }
+  if (entry && entry.inflight) return entry.inflight; // deduplicate concurrent requests
+  return doFetch();
+}
+
 export function getApiBaseUrl() {
   return API_URL;
 }

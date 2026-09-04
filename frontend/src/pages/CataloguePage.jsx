@@ -12,7 +12,7 @@ import ReportTable, { StatusBadge } from "../components/ReportTable";
 import { formatCurrency } from "../lib/format";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import { CatalogueIllustration, IllustrationCard } from "../components/Illustrations";
-import { apiRequest } from "../api/client";
+import { apiRequest, apiRequestCached, invalidateWorkspaceCache } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { hasFeatureAccess } from "../lib/permissions";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -521,7 +521,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       setLoading(true);
       setError(null);
       try {
-        const ws = await apiRequest("/validation/me", "GET");
+        const ws = await apiRequestCached("/validation/me");
         if (!alive || !ws) return;
         setWorkspaceId(ws.id || workspaceId);
         setWorkspaceName(ws.name || null);
@@ -599,6 +599,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
 
   async function persist(next) {
     await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { catalogue: next } });
+    invalidateWorkspaceCache();
     refreshWorkspaceData();
   }
   async function persistCatalogueIntegrations(next) {

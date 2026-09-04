@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useAuthStore } from "../store/auth";
-import { apiRequest, getApiBaseUrl } from "../api/client";
+import { apiRequest, apiRequestCached, getApiBaseUrl, invalidateWorkspaceCache } from "../api/client";
 import logoUrl from "../enterprate-logo.png";
 import { useWorkspaceStore } from "../store/workspace";
 import BusinessAssistant from "./BusinessAssistant";
@@ -596,8 +596,8 @@ export default function Layout() {
         // Only fall back to /me (most-recently-updated) when nothing is pinned.
         const pinnedId = useWorkspaceStore.getState().workspaceId;
         const ws = pinnedId
-          ? await apiRequest(`/validation/${pinnedId}`, "GET")
-          : await apiRequest("/validation/me", "GET");
+          ? await apiRequestCached(`/validation/${pinnedId}`)
+          : await apiRequestCached("/validation/me");
         if (cancelled || !ws) return;
 
         // User has their own workspace — owner mode
@@ -882,6 +882,7 @@ export default function Layout() {
                         setServiceDecisionStatus(ws.data?.service_decision_status || null);
                         setCurrency(ws.data?.currency || "GBP");
                         clearMemberMode();
+                        invalidateWorkspaceCache();
                         window.dispatchEvent(new Event("ea:workspace:refresh"));
                       } finally {
                         setSwitchingId(null);

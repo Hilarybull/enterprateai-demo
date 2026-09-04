@@ -4,7 +4,7 @@ import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useWorkspaceStore } from "../store/workspace";
-import { apiRequest } from "../api/client";
+import { apiRequest, apiRequestCached, invalidateWorkspaceCache } from "../api/client";
 import PageHeader from "../components/PageHeader";
 import Spinner from "../components/Spinner";
 import { InboxTab, ActivityTab, RequestsTab } from "./ProposalsPage";
@@ -1679,7 +1679,7 @@ export default function BusinessOperationsPage() {
   useEffect(() => {
     if (!workspaceId) { setLoading(false); return; }
     let alive = true;
-    apiRequest(`/validation/${workspaceId}`, "GET")
+    apiRequestCached(`/validation/${workspaceId}`)
       .then(ws => {
         if (!alive) return;
         const fin = ws?.data?.financials || {};
@@ -1867,6 +1867,7 @@ export default function BusinessOperationsPage() {
   async function persist(next) {
     if (!workspaceId) return;
     await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: next } });
+    invalidateWorkspaceCache();
     window.dispatchEvent(new CustomEvent("ea:workspace:refresh"));
   }
 
