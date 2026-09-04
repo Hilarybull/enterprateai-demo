@@ -21,6 +21,12 @@ export const useWorkspaceStore = create(
       currency: "GBP",
       workspaceDataRefreshTrigger: 0,
 
+      // Session-only workspace document data — set by Layout after fetch, never persisted.
+      // Cleared on every page reload and after any save, so data is always fresh.
+      wsDoc: null,
+      setWsDoc: (doc) => set({ wsDoc: doc }),
+      clearWsDoc: () => set({ wsDoc: null }),
+
       // Member mode — set when the user is accessing someone else's workspace via invite
       isMemberMode: false,
       membershipId: null,

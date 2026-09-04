@@ -353,6 +353,8 @@ export default function Layout() {
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const memberWorkspaceName = useWorkspaceStore((s) => s.memberWorkspaceName);
 
+  const setWsDoc = useWorkspaceStore((s) => s.setWsDoc);
+  const clearWsDoc = useWorkspaceStore((s) => s.clearWsDoc);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
   const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
@@ -602,6 +604,7 @@ export default function Layout() {
 
         // User has their own workspace — owner mode
         clearMemberMode();
+        setWsDoc(ws); // share with BizOps / Catalogue (session-only, never persisted)
         setWorkspaceId(ws.id || null);
         setWorkspaceName(ws.name || null);
         setWorkspaceLogo(ws?.data?.workspace_profile?.logo_data_url || null);

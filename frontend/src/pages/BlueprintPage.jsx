@@ -384,6 +384,7 @@ export default function BlueprintPage() {
   const [livePlanSnapshot, setLivePlanSnapshot] = useState(null); // financial actuals for Plan Intelligence
   const [bpFxRates, setBpFxRates] = useState({});
   const [showPlanChoice, setShowPlanChoice] = useState(false);
+  const [showRfqGuide, setShowRfqGuide] = useState(false);
   const [planRowMenu, setPlanRowMenu] = useState(null); // id of row with open 3-dot menu
 
   useEffect(() => { refreshGrants(); }, []);
@@ -2807,7 +2808,7 @@ export default function BlueprintPage() {
                           else { setShowPlanChoice(true); }
                           return;
                         }
-                        if (card.id === "rfq") return;
+                        if (card.id === "rfq") { setShowRfqGuide(true); return; }
                         openDoc(card.id);
                       }}
                       disabled={!canAccess && card.id !== "rfq"}
@@ -3706,6 +3707,34 @@ export default function BlueprintPage() {
               className="mt-4 text-xs text-slate-400 hover:text-slate-600">
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {showRfqGuide && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
+            <div className="bg-amber-50 px-6 pt-6 pb-4 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100">
+                <svg className="h-6 w-6 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
+              </div>
+              <h3 className="text-[15px] font-bold text-slate-800">Request Documents live in Procurement</h3>
+              <p className="mt-1.5 text-[12px] text-slate-500 leading-relaxed">
+                RFPs, RFQs, and tender requests are created and tracked in <span className="font-semibold text-amber-700">Business Operations → Procurement → Sent RFQs</span>. That flow lets you send requests to vendors and track their responses.
+              </p>
+            </div>
+            <div className="px-6 py-4 space-y-2.5">
+              <button
+                onClick={() => { setShowRfqGuide(false); navigate("/business-operations?tab=Procurement&sub=Sent RFQs"); }}
+                className="w-full rounded-xl bg-amber-500 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-amber-600 transition">
+                Go to Procurement
+              </button>
+              <button
+                onClick={() => setShowRfqGuide(false)}
+                className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-medium text-slate-600 hover:bg-slate-50 transition">
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

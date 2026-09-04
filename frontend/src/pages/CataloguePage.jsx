@@ -28,6 +28,7 @@ export default function CataloguePage() {
   const memberPermissions = useWorkspaceStore((s) => s.memberPermissions);
   const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
   const refreshWorkspaceData = useWorkspaceStore((s) => s.refreshWorkspaceData);
+  const wsDoc = useWorkspaceStore((s) => s.wsDoc);
   const navigate = useNavigate();
 
   function canCatalogueFeature(featureKey) {
@@ -515,7 +516,41 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     return <WorkspacePrompt />;
   }
 
+  function _applyWsDoc(ws) {
+    if (!ws) return;
+    setWorkspaceId(ws.id || workspaceId);
+    setWorkspaceName(ws.name || null);
+    setReportFinancials({
+      invoices: ws?.data?.financials?.invoices || [],
+      expenses: ws?.data?.financials?.expenses || [],
+    });
+    const cat = ws?.data?.catalogue || {};
+    const integ = ws?.data?.integrations || {};
+    setProducts(Array.isArray(cat.products) ? cat.products : []);
+    setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
+    setVendors(Array.isArray(cat.vendors) ? cat.vendors : []);
+    setProfileServices(Array.isArray(ws?.data?.workspace_profile?.services) ? ws.data.workspace_profile.services : []);
+    setCatalogueIntegrations({
+      crm: {
+        hubspot: integ?.catalogue?.crm?.hubspot || "not_connected",
+        salesforce: integ?.catalogue?.crm?.salesforce || "not_connected",
+        zoho_crm: integ?.catalogue?.crm?.zoho_crm || "not_connected"
+      },
+      inventory: {
+        shopify: integ?.catalogue?.inventory?.shopify || "not_connected",
+        woo_commerce: integ?.catalogue?.inventory?.woo_commerce || "not_connected",
+        square: integ?.catalogue?.inventory?.square || "not_connected"
+      }
+    });
+  }
+
   useEffect(() => {
+    // If Layout already fetched workspace data this session, use it immediately.
+    if (wsDoc && wsDoc.id === workspaceId) {
+      _applyWsDoc(wsDoc);
+      setLoading(false);
+      return;
+    }
     let alive = true;
     async function load() {
       setLoading(true);
@@ -523,33 +558,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       try {
         const ws = await apiRequestCached("/validation/me");
         if (!alive || !ws) return;
-        setWorkspaceId(ws.id || workspaceId);
-        setWorkspaceName(ws.name || null);
-        setReportFinancials({
-          invoices: ws?.data?.financials?.invoices || [],
-          expenses: ws?.data?.financials?.expenses || [],
-        });
-        const cat = ws?.data?.catalogue || {};
-        const integ = ws?.data?.integrations || {};
-        const nextProducts = Array.isArray(cat.products) ? cat.products : [];
-        const nextCustomers = Array.isArray(cat.customers) ? cat.customers : [];
-        const nextVendors = Array.isArray(cat.vendors) ? cat.vendors : [];
-        setProducts(nextProducts);
-        setCustomers(nextCustomers);
-        setVendors(nextVendors);
-        setProfileServices(Array.isArray(ws?.data?.workspace_profile?.services) ? ws.data.workspace_profile.services : []);
-        setCatalogueIntegrations({
-          crm: {
-            hubspot: integ?.catalogue?.crm?.hubspot || "not_connected",
-            salesforce: integ?.catalogue?.crm?.salesforce || "not_connected",
-            zoho_crm: integ?.catalogue?.crm?.zoho_crm || "not_connected"
-          },
-          inventory: {
-            shopify: integ?.catalogue?.inventory?.shopify || "not_connected",
-            woo_commerce: integ?.catalogue?.inventory?.woo_commerce || "not_connected",
-            square: integ?.catalogue?.inventory?.square || "not_connected"
-          }
-        });
+        _applyWsDoc(ws);
       } catch (e) {
         if (String(e?.message || "").includes("HTTP 404")) return;
         setError(e instanceof Error ? e.message : "Failed to load catalogue");
@@ -558,10 +567,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       }
     }
     load();
-    return () => {
-      alive = false;
-    };
-  }, [workspaceId, setWorkspaceId, setWorkspaceName, workspaceDataRefreshTrigger]);
+    return () => { alive = false; };
+  }, [workspaceId, setWorkspaceId, setWorkspaceName, workspaceDataRefreshTrigger, wsDoc]); // eslint-disable-line
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -600,6 +607,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
   async function persist(next) {
     await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { catalogue: next } });
     invalidateWorkspaceCache();
+    useWorkspaceStore.getState().clearWsDoc();
     refreshWorkspaceData();
   }
   async function persistCatalogueIntegrations(next) {

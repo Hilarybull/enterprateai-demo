@@ -1582,6 +1582,7 @@ export default function BusinessOperationsPage() {
   const workspaceId = useWorkspaceStore(s => s.workspaceId);
   const wsCurrency = useWorkspaceStore(s => s.currency);
   const workspaceName = useWorkspaceStore(s => s.workspaceName);
+  const wsDoc = useWorkspaceStore(s => s.wsDoc);
   const { requests: proposalRequests, inbox: proposalInbox, fetchRequests: fetchProposalRequests, fetchInbox: fetchProposalInbox } = useProposalStore();
   const navigate = useNavigate();
   const location = useLocation();
@@ -1676,27 +1677,34 @@ export default function BusinessOperationsPage() {
     if (workspaceId) { fetchProposalRequests(); fetchProposalInbox(); }
   }, [workspaceId, fetchProposalRequests, fetchProposalInbox]);
 
+  function _applyWsDoc(ws) {
+    const fin = ws?.data?.financials || {};
+    const cat = ws?.data?.catalogue || ws?.data || {};
+    setInvoices(Array.isArray(fin.invoices) ? fin.invoices : []);
+    setExpenses(Array.isArray(fin.expenses) ? fin.expenses : []);
+    setContracts(Array.isArray(fin.contracts) ? fin.contracts : []);
+    setQuotes(Array.isArray(fin.quotes) ? fin.quotes : Array.isArray(fin.quotations) ? fin.quotations : []);
+    setRfqRequests(Array.isArray(fin.rfq_requests) ? fin.rfq_requests : []);
+    setSentRfqs(Array.isArray(fin.sent_rfqs) ? fin.sent_rfqs : []);
+    setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
+    setCatalogueProducts(Array.isArray(cat.products) ? cat.products : []);
+  }
+
   useEffect(() => {
     if (!workspaceId) { setLoading(false); return; }
+    // If Layout already fetched the workspace doc this session, use it immediately.
+    if (wsDoc && wsDoc.id === workspaceId) {
+      _applyWsDoc(wsDoc);
+      setLoading(false);
+      return;
+    }
     let alive = true;
     apiRequestCached(`/validation/${workspaceId}`)
-      .then(ws => {
-        if (!alive) return;
-        const fin = ws?.data?.financials || {};
-        const cat = ws?.data?.catalogue || ws?.data || {};
-        setInvoices(Array.isArray(fin.invoices) ? fin.invoices : []);
-        setExpenses(Array.isArray(fin.expenses) ? fin.expenses : []);
-        setContracts(Array.isArray(fin.contracts) ? fin.contracts : []);
-        setQuotes(Array.isArray(fin.quotes) ? fin.quotes : Array.isArray(fin.quotations) ? fin.quotations : []);
-        setRfqRequests(Array.isArray(fin.rfq_requests) ? fin.rfq_requests : []);
-        setSentRfqs(Array.isArray(fin.sent_rfqs) ? fin.sent_rfqs : []);
-        setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
-        setCatalogueProducts(Array.isArray(cat.products) ? cat.products : []);
-      })
+      .then(ws => { if (alive) _applyWsDoc(ws); })
       .catch(() => {})
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [workspaceId]);
+  }, [workspaceId, wsDoc]); // eslint-disable-line
 
 
   // Fetch exchange rates for foreign-currency records
@@ -1868,6 +1876,7 @@ export default function BusinessOperationsPage() {
     if (!workspaceId) return;
     await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: next } });
     invalidateWorkspaceCache();
+    useWorkspaceStore.getState().clearWsDoc();
     window.dispatchEvent(new CustomEvent("ea:workspace:refresh"));
   }
 
