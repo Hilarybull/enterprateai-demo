@@ -548,6 +548,9 @@ export default function BlueprintPage() {
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [customClientName, setCustomClientName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [savedDocsLoading, setSavedDocsLoading] = useState(true);
+  const [savedTypeFilter, setSavedTypeFilter] = useState("All");
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [creditModal, setCreditModal] = useState(null);
   function getBlueprintCreditCost(docType, sections) {
@@ -674,6 +677,8 @@ export default function BlueprintPage() {
       const cached = readBlueprintCache(authEmail);
       setSavedDocs(cached);
       return cached;
+    } finally {
+      setSavedDocsLoading(false);
     }
   }
 
@@ -1059,13 +1064,14 @@ export default function BlueprintPage() {
 
   async function openSavedDocument(docItem) {
     setFromValidation(false);
-    setIsLoading(true);
     setError(null);
+    const cachedContent = docItem?.type ? docByType[docItem.type]?.document_markdown : null;
     if (docItem?.type) {
       setSelectedDoc(docItem.type);
       setIsModalOpen(true);
       setShowInputs(false);
     }
+    if (!cachedContent) setIsLoading(true);
     try {
       const docId = docItem?.id || docItem;
       const doc = await apiRequest(`/blueprint/documents/${docId}`, "GET");
@@ -1177,6 +1183,14 @@ export default function BlueprintPage() {
     setSelectedDoc(docId);
     setError(null);
     setShowInputs(!Boolean(docByType[docId]?.document_markdown));
+    setIsModalOpen(true);
+  }
+
+  function startNewDoc(docId) {
+    setFromValidation(false);
+    setSelectedDoc(docId);
+    setError(null);
+    setShowInputs(true);
     setIsModalOpen(true);
   }
 
@@ -2553,7 +2567,7 @@ export default function BlueprintPage() {
       message: "Delete this document? This cannot be undone.",
       onConfirm: async () => {
         setConfirmDialog(null);
-        setIsSaving(true);
+        setIsDeleting(true);
     setError(null);
     try {
       try {
@@ -2616,11 +2630,10 @@ export default function BlueprintPage() {
       if (selectedDoc && docIdByType[selectedDoc] === docId) {
         closeModal();
       }
-      refreshSavedDocs();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to delete document");
       } finally {
-        setIsSaving(false);
+        setIsDeleting(false);
       }
       },
       onCancel: () => setConfirmDialog(null),
@@ -2733,13 +2746,13 @@ export default function BlueprintPage() {
         description="Create strategic business documents with AI-assisted intelligence."
         actions={
           bpTab === "overview" ? (
-            <button type="button" onClick={() => setBpTab("overview")}
+            <button type="button" onClick={() => document.getElementById("create-blueprint-section")?.scrollIntoView({ behavior: "smooth", block: "start" })}
               className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
               + Create Document
             </button>
           ) : bpTab === "business-plans" ? (
             <div className="flex gap-2">
-              <button type="button" onClick={() => canBlueprintDoc("business_plan") ? openDoc("business_plan") : null}
+              <button type="button" onClick={() => canBlueprintDoc("business_plan") ? setShowPlanChoice(true) : null}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
                 + Create Business Plan
               </button>
@@ -2791,7 +2804,7 @@ export default function BlueprintPage() {
         {/* OVERVIEW TAB */}
         {bpTab === "overview" && (
           <div className="space-y-5">
-            <div>
+            <div id="create-blueprint-section">
               <div className="mb-3 text-sm font-semibold text-slate-900">Create a Blueprint</div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {createCards.map((card) => {
@@ -2803,11 +2816,7 @@ export default function BlueprintPage() {
                       type="button"
                       onClick={() => {
                         if (!canAccess) return;
-                        if (card.id === "business_plan") {
-                          if (bpSavedByType.business_plan.length > 0) { openSavedDocument(bpSavedByType.business_plan[0]); }
-                          else { setShowPlanChoice(true); }
-                          return;
-                        }
+                        if (card.id === "business_plan") { setShowPlanChoice(true); return; }
                         if (card.id === "rfq") { setShowRfqGuide(true); return; }
                         openDoc(card.id);
                       }}
@@ -2846,12 +2855,10 @@ export default function BlueprintPage() {
             <div>
               <div className="mb-3 flex items-center justify-between">
                 <div className="text-sm font-semibold text-slate-900">Recent Blueprints</div>
-                <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="9" y2="18"/></svg>
-                  Filter
-                </button>
               </div>
-              {visibleSavedDocs.length === 0 ? (
+              {savedDocsLoading ? (
+                <div className="flex h-28 items-center justify-center rounded-2xl border border-slate-200 bg-white text-sm text-slate-400">Loading...</div>
+              ) : visibleSavedDocs.length === 0 ? (
                 <div className="flex h-28 items-center justify-center rounded-2xl border border-slate-200 bg-white text-sm text-slate-400">No documents yet. Create your first blueprint above.</div>
               ) : (
                 <div className="rounded-2xl border border-slate-200 bg-white">
@@ -2896,7 +2903,7 @@ export default function BlueprintPage() {
                                   <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="4" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="10" cy="16" r="1.5"/></svg>
                                 </button>
                                 {planRowMenu === d.id && (
-                                  <div className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+                                  <div className="absolute right-0 bottom-8 z-20 mb-1 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
                                     onMouseLeave={() => setPlanRowMenu(null)}>
                                     <button type="button" onClick={() => { setPlanRowMenu(null); String(d.id||"").startsWith("local:") ? openDoc(d.type) : openSavedDocument(d); }}
                                       className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
@@ -2963,11 +2970,10 @@ export default function BlueprintPage() {
                       <div className="mt-4">
                         <button type="button" onClick={() => {
                           if (!canBlueprintDoc("business_plan")) return;
-                          if (bpSavedByType.business_plan.length > 0) openSavedDocument(bpSavedByType.business_plan[0]);
-                          else setShowPlanChoice(true);
+                          setShowPlanChoice(true);
                         }}
                           className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
-                          {bpSavedByType.business_plan.length > 0 ? "Open Plan" : "Create Business Plan"}
+                          Create Business Plan
                         </button>
                       </div>
                     </>
@@ -3187,7 +3193,7 @@ export default function BlueprintPage() {
                                 <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="4" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="10" cy="16" r="1.5"/></svg>
                               </button>
                               {planRowMenu === "__live__" && (
-                                <div className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+                                <div className="absolute right-0 bottom-8 z-20 mb-1 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
                                   onMouseLeave={() => setPlanRowMenu(null)}>
                                   <button type="button" onClick={() => { setPlanRowMenu(null); navigate("/business-plan"); }}
                                     className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Open</button>
@@ -3226,7 +3232,7 @@ export default function BlueprintPage() {
                                   <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="4" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="10" cy="16" r="1.5"/></svg>
                                 </button>
                                 {planRowMenu === d.id && (
-                                  <div className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+                                  <div className="absolute right-0 bottom-8 z-20 mb-1 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
                                     onMouseLeave={() => setPlanRowMenu(null)}>
                                     <button type="button" onClick={() => { setPlanRowMenu(null); openSavedDocument(d); }}
                                       className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Open</button>
@@ -3370,7 +3376,7 @@ export default function BlueprintPage() {
                                   ⋮
                                 </button>
                                 {planRowMenu === d.id && (
-                                  <div className="absolute right-0 z-20 mt-1 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                                  <div className="absolute right-0 bottom-8 z-20 mb-1 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
                                     <button type="button" onClick={() => { setPlanRowMenu(null); openSavedDocument(d); }}
                                       className="block w-full px-4 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50">Open</button>
                                     <div className="border-t border-slate-100" />
@@ -3511,7 +3517,7 @@ export default function BlueprintPage() {
                                   ⋮
                                 </button>
                                 {planRowMenu === d.id && (
-                                  <div className="absolute right-0 z-20 mt-1 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                                  <div className="absolute right-0 bottom-8 z-20 mb-1 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
                                     <button type="button" onClick={() => { setPlanRowMenu(null); openSavedDocument(d); }}
                                       className="block w-full px-4 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50">Open</button>
                                     <div className="border-t border-slate-100" />
@@ -3547,27 +3553,22 @@ export default function BlueprintPage() {
               <div className="lg:col-span-2 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold text-slate-900">Document Library</div>
-                  <div className="flex gap-2">
-                    <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="9" y2="18"/></svg>
-                      Filter
-                    </button>
-                    <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                      Sort: Recently updated
-                    </button>
-                  </div>
                 </div>
 
                 <div className="flex gap-2 overflow-x-auto">
-                  {["All", "Business Plans", "Proposals", "Sales Documents", "Request Documents"].map(f => (
-                    <button key={f} type="button" className={`whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-medium transition ${f === "All" ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{f}</button>
+                  {["All", "Business Plans", "Proposals", "Sales Documents"].map(f => (
+                    <button key={f} type="button"
+                      onClick={() => setSavedTypeFilter(f)}
+                      className={`whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-medium transition ${f === savedTypeFilter ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{f}</button>
                   ))}
                 </div>
 
-                {visibleSavedDocs.length === 0 ? (
-                  <div className="flex h-32 items-center justify-center rounded-2xl border border-slate-200 bg-white text-sm text-slate-400">No documents yet. Create your first blueprint above.</div>
+                {savedDocsLoading ? (
+                  <div className="flex h-32 items-center justify-center rounded-2xl border border-slate-200 bg-white text-sm text-slate-400">Loading...</div>
+                ) : visibleSavedDocs.filter(d => savedTypeFilter === "All" || (savedTypeFilter === "Business Plans" && d.type === "business_plan") || (savedTypeFilter === "Proposals" && d.type === "client_proposal") || (savedTypeFilter === "Sales Documents" && d.type === "sales_letter")).length === 0 ? (
+                  <div className="flex h-32 items-center justify-center rounded-2xl border border-slate-200 bg-white text-sm text-slate-400">{savedTypeFilter === "All" ? "No documents yet. Create your first blueprint above." : `No ${savedTypeFilter.toLowerCase()} yet.`}</div>
                 ) : (
-                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <div className="rounded-2xl border border-slate-200 bg-white" style={{overflow: "visible"}}>
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-slate-100 bg-slate-50">
@@ -3579,7 +3580,7 @@ export default function BlueprintPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {visibleSavedDocs.map((d) => {
+                        {visibleSavedDocs.filter(d => savedTypeFilter === "All" || (savedTypeFilter === "Business Plans" && d.type === "business_plan") || (savedTypeFilter === "Proposals" && d.type === "client_proposal") || (savedTypeFilter === "Sales Documents" && d.type === "sales_letter")).map((d) => {
                           const typeLabel = { business_plan: "Business Plan", client_proposal: "Sales Proposal", sales_letter: "Sales Letter" }[d.type] || "Document";
                           const s = (d.status || "draft").toLowerCase();
                           const dotCls = s === "adopted" || s === "sent" || s === "approved" ? "bg-emerald-500" : s === "ready" || s === "generated" ? "bg-blue-500" : s === "archived" ? "bg-slate-400" : "bg-amber-400";
@@ -3608,7 +3609,7 @@ export default function BlueprintPage() {
                                     ⋮
                                   </button>
                                   {planRowMenu === d.id && (
-                                    <div className="absolute right-0 z-20 mt-1 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                                    <div className="absolute right-0 bottom-8 z-20 mb-1 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
                                       <button type="button" onClick={() => { setPlanRowMenu(null); String(d.id||"").startsWith("local:") ? openDoc(d.type) : openSavedDocument(d); }}
                                         className="block w-full px-4 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50">Open</button>
                                       {!String(d.id||"").startsWith("local:") && (<>
@@ -3680,19 +3681,31 @@ export default function BlueprintPage() {
       {showPlanChoice && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowPlanChoice(false)}>
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-1 text-base font-semibold text-slate-900">Choose a plan</div>
-            <div className="mb-4 text-xs text-slate-500">Generate the standard business plan or open the live business plan for ongoing tracking.</div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="mb-1 text-base font-semibold text-slate-900">Business Plan</div>
+            <div className="mb-4 text-xs text-slate-500">Create a new AI-generated business plan, open an existing draft, or track performance with the live plan.</div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="text-sm font-semibold text-slate-900">Generate business plan</div>
-                <div className="mt-1 text-xs leading-5 text-slate-500">Create a structured business plan from your blueprint inputs.</div>
+                <div className="text-sm font-semibold text-slate-900">New business plan</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">Generate a fresh structured business plan from your inputs.</div>
                 <div className="mt-4">
-                  <button type="button" onClick={() => { setShowPlanChoice(false); openDoc("business_plan"); }}
+                  <button type="button" onClick={() => { setShowPlanChoice(false); startNewDoc("business_plan"); }}
                     className="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700">
-                    Generate
+                    Create new
                   </button>
                 </div>
               </div>
+              {bpSavedByType.business_plan.length > 0 && (
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-semibold text-slate-900">Open existing draft</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">Continue editing your most recently saved business plan.</div>
+                  <div className="mt-4">
+                    <button type="button" onClick={() => { setShowPlanChoice(false); openSavedDocument(bpSavedByType.business_plan[0]); }}
+                      className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                      Open draft
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4">
                 <div className="text-sm font-semibold text-slate-900">Live business plan</div>
                 <div className="mt-1 text-xs leading-5 text-slate-500">Track assumptions, KPIs, and performance over time.</div>
@@ -3772,10 +3785,10 @@ export default function BlueprintPage() {
                 {docIdByType[selectedDoc] ? (
                   <Button
                     variant="secondary"
-                    disabled={isSaving}
+                    disabled={isDeleting}
                     onClick={() => deleteDocument(docIdByType[selectedDoc], selectedDoc)}
                   >
-                    Delete
+                    {isDeleting ? "Deleting..." : "Delete"}
                   </Button>
                 ) : null}
                 <button

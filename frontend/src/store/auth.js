@@ -46,7 +46,7 @@ async function fetchSubscription() {
   try {
     return await apiRequest("/plans/my", "GET");
   } catch {
-    return { plan_key: "explorer", billing_period: "monthly", status: "active" };
+    return null;
   }
 }
 
@@ -122,7 +122,7 @@ export const useAuthStore = create((set, get) => ({
 
   refreshSubscription: async () => {
     const sub = await fetchSubscription();
-    set({ subscription: sub ?? DEFAULT_SUB });
+    if (sub) set({ subscription: sub });
     return sub;
   },
 
