@@ -832,9 +832,11 @@ def _normalize_client_proposal_cover_page(
 
     cleaned = _strip_preamble_before_first_h2(doc)
     cleaned = _strip_cover_section(cleaned)
+    default_title = f"Proposal for {display_client}"
+    cover_title = _safe_text(proposal_title) if _safe_text(proposal_title) and _safe_text(proposal_title) != default_title else default_title
     return _apply_cover_page(
         cleaned,
-        title=f"Proposal for {display_client}",
+        title=cover_title,
         lines=cover_lines,
         logo_data_url=logo_data_url,
     )
@@ -2132,7 +2134,7 @@ async def generate_blueprint(
             "proposal_title": proposal_title,
             "contact_details": contact_details,
             "objective": objective,
-            "industry": _safe_text(industry or (workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else "")),
+            "industry": _humanize_slug(industry or (workspace_profile.get("primary_industry") if isinstance(workspace_profile, dict) else "")),
             "location": _safe_text(
                 workspace_context.get("location")
                 or (business_profile.get("location") if isinstance(business_profile, dict) else "")
