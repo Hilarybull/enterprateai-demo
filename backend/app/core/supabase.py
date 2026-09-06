@@ -162,3 +162,39 @@ async def sb_upsert(
         return res.data
 
     return await anyio.to_thread.run_sync(lambda: _run_with_retry(_run))
+
+
+async def sb_upload_file(
+    bucket: str,
+    path: str,
+    file_bytes: bytes,
+    content_type: str = "application/octet-stream",
+) -> str:
+    """Upload a file to Supabase Storage and return its public URL."""
+    def _run():
+        import httpx
+        settings = get_settings()
+        from supabase import create_client, ClientOptions
+        client = create_client(
+            settings.supabase_url,
+            settings.supabase_service_role_key,
+            options=ClientOptions(postgrest_client_timeout=120),
+        )
+        # Patch the storage _client timeout so large uploads don't time out
+        try:
+            client.storage._client.timeout = httpx.Timeout(120.0)
+        except Exception:
+            pass
+        # Ensure bucket exists (no-op if already created)
+        try:
+            client.storage.create_bucket(bucket, {"public": True})
+        except Exception:
+            pass
+        client.storage.from_(bucket).upload(
+            path,
+            file_bytes,
+            {"content-type": content_type, "upsert": "true"},
+        )
+        return client.storage.from_(bucket).get_public_url(path)
+
+    return await anyio.to_thread.run_sync(lambda: _run_with_retry(_run))

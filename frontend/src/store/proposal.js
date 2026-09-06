@@ -238,6 +238,16 @@ export const useProposalStore = create((set, get) => ({
     }
   },
 
+  deleteFromInbox: async (proposalId) => {
+    try {
+      await apiRequest(`/proposals/inbox/${proposalId}`, "DELETE");
+      set((s) => ({ inbox: s.inbox.filter((p) => p.id !== proposalId) }));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Failed to delete proposal." };
+    }
+  },
+
   linkToRequest: async (proposalId, requestId) => {
     try {
       const data = await apiRequest(`/proposals/inbox/${proposalId}/link`, "PATCH", { request_id: requestId });

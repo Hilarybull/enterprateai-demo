@@ -1242,19 +1242,104 @@ const REQ_FORMAT_META = {
   link:         { label: "Link / URL",   icon: REQ_FORMAT_ICONS.link },
 };
 
+// Module-level PDF cache keyed by content version
+const _pdfBlobCache = new Map();
+
+// Load pdfmake + fonts from CDN once per session
+let _pdfMakeReady = false;
+function _loadPdfMake() {
+  if (_pdfMakeReady || window.pdfMake) { _pdfMakeReady = true; return Promise.resolve(); }
+  const load = (src) => new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src; s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+  return load("https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/pdfmake.min.js")
+    .then(() => load("https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/vfs_fonts.min.js"))
+    .then(() => { _pdfMakeReady = true; });
+}
+
+// Convert simple blueprint HTML → pdfmake content array
+function _htmlToPdfContent(html) {
+  const doc = new DOMParser().parseFromString(html || "", "text/html");
+  const out = [];
+  function inline(el) {
+    if (el.nodeType === 3) return el.textContent || "";
+    const t = el.tagName?.toLowerCase();
+    const kids = Array.from(el.childNodes).map(inline).flat().filter(Boolean);
+    if (t === "strong" || t === "b") return { text: el.textContent, bold: true };
+    if (t === "em" || t === "i") return { text: el.textContent, italics: true };
+    return kids.length === 1 ? kids[0] : kids.length ? kids : "";
+  }
+  function inlineArr(el) {
+    const parts = Array.from(el.childNodes).map(inline).flat().filter(x => x !== "");
+    if (!parts.length) return el.textContent.trim() || null;
+    return parts.length === 1 ? parts[0] : parts;
+  }
+  function block(el) {
+    if (el.nodeType === 3) { const t = el.textContent.trim(); return t ? { text: t, style: "body", margin: [0,0,0,8] } : null; }
+    if (el.nodeType !== 1) return null;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "h1") return { text: inlineArr(el) || "", style: "h1", headlineLevel: 1 };
+    if (tag === "h2") return { text: inlineArr(el) || "", style: "h2", headlineLevel: 2 };
+    if (tag === "h3") return { text: inlineArr(el) || "", style: "h3", headlineLevel: 3 };
+    if (tag === "p") { const c = inlineArr(el); return c ? { text: c, style: "body", margin: [0,0,0,8] } : null; }
+    if (tag === "ul") {
+      const items = Array.from(el.querySelectorAll(":scope > li")).map(li => ({ text: inlineArr(li) || li.textContent.trim(), style: "body" }));
+      return items.length ? { ul: items, margin: [0,0,0,8] } : null;
+    }
+    if (tag === "ol") {
+      const items = Array.from(el.querySelectorAll(":scope > li")).map(li => ({ text: inlineArr(li) || li.textContent.trim(), style: "body" }));
+      return items.length ? { ol: items, margin: [0,0,0,8] } : null;
+    }
+    if (tag === "hr") return { canvas: [{ type: "line", x1: 0, y1: 0, x2: 483, y2: 0, lineWidth: 0.5, lineColor: "#e2e8f0" }], margin: [0,10,0,10] };
+    if (tag === "table") {
+      const rows = Array.from(el.querySelectorAll("tr"));
+      if (!rows.length) return null;
+      const body = rows.map(r => Array.from(r.querySelectorAll("th, td")).map(cell => ({
+        text: cell.textContent.trim(), fontSize: 9, color: "#475569",
+        bold: cell.tagName.toLowerCase() === "th",
+        fillColor: cell.tagName.toLowerCase() === "th" ? "#f1f5f9" : null,
+        margin: [4,3,4,3],
+      })));
+      const cols = body.reduce((m, r) => Math.max(m, r.length), 0);
+      if (!cols) return null;
+      return { table: { body, widths: Array(cols).fill("*"), headerRows: 1 }, layout: { hLineColor: () => "#e2e8f0", vLineColor: () => "#e2e8f0", hLineWidth: () => 0.5, vLineWidth: () => 0.5 }, margin: [0,8,0,12] };
+    }
+    // containers (div, section, etc.)
+    const children = Array.from(el.childNodes).map(block).flat(2).filter(Boolean);
+    return children.length ? children : null;
+  }
+  Array.from(doc.body.childNodes).forEach(el => {
+    const item = block(el);
+    if (!item) return;
+    if (Array.isArray(item)) out.push(...item.flat(3).filter(Boolean));
+    else out.push(item);
+  });
+  return out;
+}
+
 function ApplyModal({ listing, request, onClose }) {
   const grad = avatarGradient(listing.company_name);
   const { submitProposal } = useProposalStore();
   const planKey = useAuthStore((s) => s.subscription?.plan_key ?? "explorer");
-  const isPaid = ["starter_insight", "growth", "scale", "enterprise"].includes(planKey);
+  const platformGrants = useAuthStore((s) => s.platformGrants ?? []);
+  const userEmail = useAuthStore((s) => s.user?.email || s.session?.user?.email || "");
+  const hasBlueprintGrant = platformGrants.some(
+    (g) => !g.feature_key || g.module_key === "blueprint" || g.module_key === "marketplace"
+  );
+  const isPaid = ["starter_insight", "growth", "scale", "enterprise"].includes(planKey) || hasBlueprintGrant;
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+  const navigate = useNavigate();
 
-  // Category eligibility check
+  // Detect return from Blueprint proposal generator
+  const blueprintReturn = listing._blueprint_return || null;
+
+  // Category eligibility + profile fetch (also used for PDF cover metadata)
   const [myProfile, setMyProfile] = useState(null);
   const [catChecked, setCatChecked] = useState(false);
   useEffect(() => {
-    const cats = request?.accepted_categories || [];
-    if (!cats.length || !workspaceId) { setCatChecked(true); return; }
+    if (!workspaceId) { setCatChecked(true); return; }
     apiRequest(`/validation/${workspaceId}`, "GET", undefined, { timeoutMs: 8000 })
       .then((data) => { setMyProfile(data?.data?.workspace_profile || null); setCatChecked(true); })
       .catch(() => setCatChecked(true));
@@ -1267,14 +1352,112 @@ function ApplyModal({ listing, request, onClose }) {
   const categoryBlocked = acceptedCats.length > 0 && catChecked && myProfile && !myCats.some((c) => acceptedCats.includes(c));
 
   // step: "choose" | "form"
-  const [step, setStep] = useState("choose");
+  const [step, setStep] = useState(blueprintReturn ? "form" : "choose");
   const [mode, setMode] = useState("ai"); // "ai" | "manual"
   const defaultTitle = request?.title
     ? `Response to: ${request.title}`
     : `Proposal for ${listing.company_name}`;
-  const [title, setTitle] = useState(defaultTitle);
-  const [summary, setSummary] = useState("");
+  const [title, setTitle] = useState(blueprintReturn?.title || defaultTitle);
+  const _summaryKey = `ea_cover_letter_${listing.workspace_id || "draft"}`;
+  const [summary, setSummary] = useState(() => {
+    try { return sessionStorage.getItem(_summaryKey) || ""; } catch { return ""; }
+  });
+  const slug = listing.company_name.replace(/\s+/g, "-").toLowerCase();
+  const pdfFilename = blueprintReturn?.document_html ? `proposal-${slug}.pdf` : null;
   const [file, setFile] = useState(null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  useEffect(() => {
+    if (!blueprintReturn?.document_html || !catChecked) return;
+    const cacheKey = "v6:" + blueprintReturn.document_html.slice(0, 200);
+    if (_pdfBlobCache.has(cacheKey)) {
+      setFile(new File([_pdfBlobCache.get(cacheKey)], `proposal-${slug}.pdf`, { type: "application/pdf" }));
+      return;
+    }
+    setPdfGenerating(true);
+    const dateStr = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+    const docTitle = blueprintReturn.title || "Business Proposal";
+    const recipient = listing.company_name;
+    const preparedBy = blueprintReturn.prepared_by || myProfile?.company_name || "";
+    const serviceFocus = blueprintReturn.service_focus || myProfile?.key_offering_focus || myProfile?.tagline || "";
+    const contactInfo = blueprintReturn.contact || userEmail || "";
+    // Strip title h1 + metadata paragraphs that are already on the cover
+    function stripBodyMeta(html) {
+      const d = new DOMParser().parseFromString(html || "", "text/html");
+      const b = d.body;
+      // Remove leading h1 (same as cover title)
+      if (b.firstElementChild?.tagName?.toLowerCase() === "h1") b.firstElementChild.remove();
+      // Remove consecutive leading paragraphs that contain metadata labels
+      const metaRe = /^(prepared\s*by|prepared\s*for|service\s*focus|contact|date)\s*:/i;
+      let el = b.firstElementChild;
+      while (el && el.tagName?.toLowerCase() === "p" && metaRe.test(el.textContent.trim())) {
+        const next = el.nextElementSibling;
+        el.remove();
+        el = next;
+      }
+      return b.innerHTML;
+    }
+    const cleanHtml = stripBodyMeta(
+      (blueprintReturn.document_html || "")
+        .replace(/—/g, ",").replace(/–/g, ",").replace(/ - /g, ", ")
+    );
+
+    _loadPdfMake().then(() => {
+      const bodyContent = _htmlToPdfContent(cleanHtml);
+      // Mark first body element to start on a new page after cover
+      if (bodyContent.length) bodyContent[0] = { ...bodyContent[0], pageBreak: "before", margin: [0, 14, 0, 0] };
+
+      // Build cover meta columns
+      const metaCols = [];
+      if (preparedBy) metaCols.push({ stack: [{ text: "PREPARED BY", style: "metaLabel" }, { text: preparedBy, style: "metaVal" }] });
+      metaCols.push({ stack: [{ text: "PREPARED FOR", style: "metaLabel" }, { text: recipient, style: "metaVal" }] });
+      metaCols.push({ stack: [{ text: "DATE", style: "metaLabel" }, { text: dateStr, style: "metaVal" }] });
+
+      const extraMeta = [];
+      if (serviceFocus) extraMeta.push({ text: [{ text: "SERVICE FOCUS  ", style: "metaLabel" }, { text: serviceFocus, style: "metaVal" }], margin: [0, 10, 0, 0] });
+      if (contactInfo) extraMeta.push({ text: [{ text: "CONTACT  ", style: "metaLabel" }, { text: contactInfo, style: "metaVal" }], margin: [0, 8, 0, 0] });
+
+      const docDef = {
+        pageSize: "A4",
+        pageMargins: [56, 20, 56, 24],
+        background(currentPage, pageSize) {
+          if (currentPage === 1) return { canvas: [{ type: "rect", x: 0, y: 0, w: pageSize.width, h: pageSize.height, color: "#0f172a" }] };
+          if (currentPage === 2) return { canvas: [{ type: "rect", x: 0, y: 0, w: pageSize.width, h: 5, color: "#6366f1" }] };
+          return null;
+        },
+        content: [
+          // Cover — white/indigo text on dark navy (painted by background())
+          { text: "BUSINESS PROPOSAL", style: "eyebrow", color: "#6366f1", margin: [0, 0, 0, 24] },
+          { text: docTitle, style: "coverTitle", color: "#f8fafc", margin: [0, 0, 0, 32] },
+          { canvas: [{ type: "line", x1: 0, y1: 0, x2: 483, y2: 0, lineWidth: 0.5, lineColor: "#334155" }], margin: [0, 0, 0, 24] },
+          { columns: metaCols, columnGap: 28, margin: [0, 0, 0, 0] },
+          ...extraMeta,
+          // Body — starts on page 2
+          ...bodyContent,
+        ],
+        styles: {
+          eyebrow: { fontSize: 7, bold: true, characterSpacing: 3 },
+          coverTitle: { fontSize: 26, bold: true, lineHeight: 1.25 },
+          metaLabel: { fontSize: 7, bold: true, color: "#475569", characterSpacing: 1.5 },
+          metaVal: { fontSize: 11, bold: true, color: "#cbd5e1" },
+          h1: { fontSize: 14, bold: true, color: "#0f172a", margin: [0, 18, 0, 6] },
+          h2: { fontSize: 12, bold: true, color: "#1e293b", margin: [0, 14, 0, 5] },
+          h3: { fontSize: 11, bold: true, color: "#334155", margin: [0, 10, 0, 4] },
+          body: { fontSize: 10, color: "#334155", lineHeight: 1.65 },
+        },
+        defaultStyle: { font: "Roboto", fontSize: 10, lineHeight: 1.5 },
+      };
+
+      window.pdfMake.createPdf(docDef).getBlob((blob) => {
+        _pdfBlobCache.set(cacheKey, blob);
+        setFile(new File([blob], `proposal-${slug}.pdf`, { type: "application/pdf" }));
+        setPdfGenerating(false);
+      });
+    }).catch(() => {
+      const fallback = blueprintReturn.document_markdown || blueprintReturn.document_html;
+      setFile(new File([fallback || ""], `proposal-${slug}.txt`, { type: "text/plain" }));
+      setPdfGenerating(false);
+    });
+  }, [catChecked]); // eslint-disable-line
   const [aiLoading, setAiLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -1282,8 +1465,20 @@ function ApplyModal({ listing, request, onClose }) {
 
   // Per-requirement responses (keyed by requirement index)
   const allReqs = request?.requirements || [];
-  const [reqResponses, setReqResponses] = useState(() => Object.fromEntries(allReqs.map((_, i) => [i, ""])));
-  const [reqFiles, setReqFiles] = useState({}); // for document/image/presentation uploads keyed by index
+  const _reqKey = `ea_req_responses_${request?.id || listing.workspace_id || "draft"}`;
+  const [reqResponses, setReqResponses] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(_reqKey);
+      if (saved) return JSON.parse(saved);
+    } catch { /* ignore */ }
+    return Object.fromEntries(allReqs.map((_, i) => [i, ""]));
+  });
+  const [reqFiles, setReqFiles] = useState({});
+
+  // Persist requirement responses to sessionStorage whenever they change
+  useEffect(() => {
+    try { sessionStorage.setItem(_reqKey, JSON.stringify(reqResponses)); } catch { /* ignore */ }
+  }, [reqResponses, _reqKey]);
 
   const REQ_FORMAT_META = {
     text:         { label: "Text",         icon: "✏️" },
@@ -1317,10 +1512,14 @@ function ApplyModal({ listing, request, onClose }) {
         recipient_workspace_id: listing.workspace_id,
         request_title: request?.title || null,
         request_description: request?.description || null,
-      });
-      setSummary(res.cover_letter || res.text || "");
-    } catch {
-      setError("AI generation failed. You can write the cover letter manually.");
+      }, { timeoutMs: 90000 });
+      const cl = res.cover_letter || res.text || "";
+      setSummary(cl);
+      try { sessionStorage.setItem(_summaryKey, cl); } catch {}
+    } catch (e) {
+      const msg = String(e?.message || e || "");
+      console.error("Cover letter generation error:", msg);
+      setError(msg || "Could not generate the cover letter. Please write it manually or try again.");
     } finally { setAiLoading(false); }
   }
 
@@ -1337,6 +1536,7 @@ function ApplyModal({ listing, request, onClose }) {
     e.preventDefault();
     if (!title.trim()) { setError("Please enter a proposal title."); return; }
     if (!allMandatoryAnswered) { setError("Please provide a response for all required items before submitting."); return; }
+    if (pdfGenerating) { setError("Your proposal document is still being prepared — please wait a moment and try again."); return; }
     setSubmitting(true); setError(null);
 
     // Convert per-requirement file uploads to base64
@@ -1355,11 +1555,19 @@ function ApplyModal({ listing, request, onClose }) {
         }))
       : undefined;
 
-    // General attachment (manual upload mode)
+    // General attachment — upload to storage, store URL (avoids base64-in-JSON size issues)
     const attachments = [];
     if (file) {
-      const fd = await readFileAsBase64(file).catch(() => null);
-      if (fd) attachments.push(fd);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const fd = await apiRequest("/proposals/upload-attachment", "POST", form, { timeoutMs: 120000 });
+        if (fd?.url) attachments.push({ url: fd.url, filename: fd.filename || file.name, mime: fd.mime || file.type, size: fd.size || file.size });
+      } catch (uploadErr) {
+        setSubmitting(false);
+        setError(`Document upload failed: ${uploadErr?.message || "unknown error"}. Please try again or remove the file and resubmit.`);
+        return;
+      }
     }
 
     const res = await submitProposal({
@@ -1371,8 +1579,10 @@ function ApplyModal({ listing, request, onClose }) {
       attachments,
     });
     setSubmitting(false);
-    if (res.ok) setDone(true);
-    else setError(res.error || "Submission failed. Please try again.");
+    if (res.ok) {
+      try { sessionStorage.removeItem("ea_proposal_return"); sessionStorage.removeItem(_summaryKey); sessionStorage.removeItem(_reqKey); } catch {}
+      setDone(true);
+    } else setError(res.error || "Submission failed. Please try again.");
   }
 
   const requirements = request?.requirements || [];
@@ -1468,7 +1678,19 @@ function ApplyModal({ listing, request, onClose }) {
             )}
 
             <div className="px-6 py-4 space-y-3">
-              <button type="button" onClick={() => { setMode("ai"); setStep("form"); }}
+              <button type="button" onClick={() => {
+                try {
+                  sessionStorage.setItem("ea_proposal_ctx", JSON.stringify({
+                    listing: { workspace_id: listing.workspace_id, company_name: listing.company_name, logo_data_url: listing.logo_data_url },
+                    request: request ? { id: request.id, title: request.title, description: request.description, requirements: request.requirements } : null,
+                    proposal_title: defaultTitle,
+                    request_title: request?.title || null,
+                    request_description: request?.description || null,
+                  }));
+                } catch {}
+                navigate("/blueprint?from=marketplace");
+                onClose();
+              }}
                 className="w-full flex items-start gap-4 rounded-2xl border border-brand-200 bg-brand-50 p-4 text-left transition hover:border-brand-400 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-900/20 dark:hover:border-brand-600 dark:hover:bg-brand-900/40">
                 <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white">
                   <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1477,12 +1699,7 @@ function ApplyModal({ listing, request, onClose }) {
                 </div>
                 <div>
                   <div className="text-[14px] font-bold text-brand-800 dark:text-brand-200">Use EnterprateAI</div>
-                  <div className="mt-0.5 text-[12px] text-brand-700 dark:text-brand-400">Fill out a smart proposal form. AI can generate your cover letter.</div>
-                  {!isPaid && (
-                    <div className="mt-2 inline-flex items-center gap-1 rounded-lg bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                      AI generation requires Starter Insight or higher
-                    </div>
-                  )}
+                  <div className="mt-0.5 text-[12px] text-brand-700 dark:text-brand-400">Generate a full proposal in Business Blueprints, then submit it here.</div>
                 </div>
               </button>
               <button type="button" onClick={() => { setMode("manual"); setStep("form"); }}
@@ -1519,6 +1736,16 @@ function ApplyModal({ listing, request, onClose }) {
               </button>
             </div>
 
+
+            {/* Blueprint return banner */}
+            {blueprintReturn && (
+              <div className="mx-6 mb-3 flex items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 dark:border-brand-800 dark:bg-brand-900/20">
+                <svg className="h-4 w-4 shrink-0 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                <p className="text-[12px] text-brand-800 dark:text-brand-200">
+                  <span className="font-semibold">EnterprateAI generated proposal attached.</span> Your Business Blueprints proposal is ready below. Add a cover letter and fill in any requirements, then submit.
+                </p>
+              </div>
+            )}
 
             {/* Requirements — format-aware per-item response fields */}
             {allReqs.length > 0 && (
@@ -1609,7 +1836,7 @@ function ApplyModal({ listing, request, onClose }) {
               <div>
                 <div className="mb-1.5 flex items-center justify-between">
                   <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-400">Cover Letter / Summary</label>
-                  {mode === "ai" && isPaid ? (
+                  {isPaid ? (
                     <button type="button" onClick={handleGenerateAI} disabled={aiLoading}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-brand-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
                       {aiLoading ? <Spinner size={10} /> : (
@@ -1619,14 +1846,14 @@ function ApplyModal({ listing, request, onClose }) {
                       )}
                       {aiLoading ? "Generating…" : "Generate with AI"}
                     </button>
-                  ) : mode === "ai" && !isPaid ? (
+                  ) : (
                     <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400" title="Upgrade to Starter Insight to use AI generation">
                       <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
                       AI · Paid only
                     </span>
-                  ) : null}
+                  )}
                 </div>
-                <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={5}
+                <textarea value={summary} onChange={(e) => { setSummary(e.target.value); try { sessionStorage.setItem(_summaryKey, e.target.value); } catch {} }} rows={5}
                   placeholder={isSpecific
                     ? "Explain specifically how you meet the requirements of this request, your approach, timeline, and relevant experience..."
                     : "Introduce yourself, explain why you're a great fit, and highlight key offerings..."}
@@ -1635,19 +1862,57 @@ function ApplyModal({ listing, request, onClose }) {
 
               <div>
                 <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">Attach Document <span className="font-normal text-slate-400">(PDF or Word, optional)</span></label>
-                <label className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed px-4 py-3 transition ${file ? "border-brand-400 bg-brand-50 dark:border-brand-600 dark:bg-brand-900/20" : "border-slate-200 bg-slate-50 hover:border-brand-300 dark:border-slate-700 dark:bg-slate-800/40"}`}>
+                <label className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed px-4 py-3 transition ${(file || pdfFilename) ? "border-brand-400 bg-brand-50 dark:border-brand-600 dark:bg-brand-900/20" : "border-slate-200 bg-slate-50 hover:border-brand-300 dark:border-slate-700 dark:bg-slate-800/40"}`}>
                   <svg className="h-5 w-5 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17,8 12,3 7,8" /><line x1="12" y1="3" x2="12" y2="15" />
                   </svg>
                   <span className="text-[12px] text-slate-600 dark:text-slate-400">
-                    {file ? file.name : "Click to upload a PDF or Word document"}
+                    {file ? file.name : pdfFilename ? pdfFilename : "Click to upload a PDF or Word document"}
                   </span>
                   <input type="file" accept=".pdf,.doc,.docx" className="sr-only"
-                    onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                    onChange={(e) => { setPdfGenerating(false); setFile(e.target.files?.[0] || null); }} />
                 </label>
-                {file && (
-                  <button type="button" onClick={() => setFile(null)} className="mt-1 text-[11px] text-slate-400 hover:text-red-500 transition">Remove file</button>
+                {(file || pdfFilename) && (
+                  <div className="mt-1.5 flex items-center justify-between">
+                    <button type="button" onClick={() => { setFile(null); }} className="text-[11px] text-slate-400 hover:text-red-500 transition">Remove file</button>
+                    {file && (
+                      <a href={URL.createObjectURL(file)} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-brand-600 hover:text-brand-700 transition">
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Preview / Download
+                      </a>
+                    )}
+                    {!file && pdfGenerating && (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                        <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                        Preparing PDF...
+                      </span>
+                    )}
+                  </div>
                 )}
+              </div>
+
+              {/* Pre-submit checklist */}
+              <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/40">
+                <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">What's included in this submission</div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <svg className={`h-3 w-3 shrink-0 ${summary.trim() ? "text-emerald-500" : "text-slate-300"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>
+                    <span className={summary.trim() ? "text-slate-700 dark:text-slate-300" : "text-slate-400"}>Cover letter / summary {!summary.trim() && <span className="text-amber-500">(empty)</span>}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <svg className={`h-3 w-3 shrink-0 ${file ? "text-emerald-500" : "text-amber-400"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>
+                    <span className={file ? "text-slate-700 dark:text-slate-300" : "text-amber-600 dark:text-amber-400"}>
+                      {file ? `Document: ${file.name}` : pdfFilename && pdfGenerating ? "Document: generating…" : "No document attached"}
+                    </span>
+                  </div>
+                  {allReqs.length > 0 && (
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <svg className={`h-3 w-3 shrink-0 ${allMandatoryAnswered ? "text-emerald-500" : "text-red-400"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>
+                      <span className="text-slate-700 dark:text-slate-300">{allReqs.length} requirement{allReqs.length !== 1 ? "s" : ""} from {listing.company_name}</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {error && (
@@ -1741,8 +2006,8 @@ function ProposalRequestDetailModal({ req, isOwn, onApply, onClose }) {
           <div className="flex flex-wrap gap-4 text-[12px] text-slate-500 dark:text-slate-400">
             {req.budget_range && (
               <span className="inline-flex items-center gap-1.5">
-                <svg className="h-3.5 w-3.5 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                Budget: <strong className="text-slate-700 dark:text-slate-300">{req.budget_range}</strong>
+                <svg className="h-3.5 w-3.5 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="11" rx="2"/><path d="M16 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0"/><path d="M6 12h.01M18 12h.01"/></svg>
+                Budget: <strong className="text-slate-700 dark:text-slate-300">{req.budget_currency || "GBP"} {req.budget_range}</strong>
               </span>
             )}
             {req.deadline && (
@@ -1907,9 +2172,9 @@ function ProposalRequestCard({ req, isLoggedIn, isOwn, onApply, onCompanyClick, 
           {req.budget_range && (
             <span className="inline-flex items-center gap-1">
               <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
+                <rect x="2" y="7" width="20" height="11" rx="2"/><path d="M16 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0"/><path d="M6 12h.01M18 12h.01"/>
               </svg>
-              {req.budget_range}
+              {req.budget_currency || "GBP"} {req.budget_range}
             </span>
           )}
           {req.deadline && (
@@ -2068,6 +2333,20 @@ export default function MarketplacePage() {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
+
+  // Detect return from Blueprint proposal generator
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("ea_proposal_return");
+      if (!raw) return;
+      // Keep in sessionStorage — only cleared after successful submission so the user can navigate back
+      const ret = JSON.parse(raw);
+      if (ret?.listing) {
+        setApplyTarget({ ...ret.listing, _request: ret.request || null, _blueprint_return: { title: ret.title, document_html: ret.document_html, document_markdown: ret.document_markdown || "", prepared_by: ret.prepared_by || "", service_focus: ret.service_focus || "", contact: ret.contact || "" } });
+        setActiveTab("requests");
+      }
+    } catch {}
+  }, []); // eslint-disable-line
 
   useEffect(() => {
     let alive = true;

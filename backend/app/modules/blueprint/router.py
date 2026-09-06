@@ -187,9 +187,7 @@ async def blueprint_documents_delete(
     document_id: str,
     user=Depends(get_current_user),
 ) -> Response:
-    ok = await delete_document(user_id=user["id"], document_id=document_id)
-    if not ok:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    await delete_document(user_id=user["id"], document_id=document_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

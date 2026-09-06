@@ -31,6 +31,7 @@ class ProposalRequestIn(BaseModel):
     title: str
     description: str | None = None
     budget_range: str | None = None
+    budget_currency: str | None = None
     budget_visible: bool = False
     deadline: str | None = None
     submission_cap: int | None = None
@@ -45,6 +46,7 @@ class ProposalRequestPatch(BaseModel):
     title: str | None = None
     description: str | None = None
     budget_range: str | None = None
+    budget_currency: str | None = None
     budget_visible: bool | None = None
     deadline: str | None = None
     submission_cap: int | None = None
@@ -85,6 +87,8 @@ class ProposalSubmitIn(BaseModel):
     title: str | None = None
     summary: str | None = None
     sections: list[dict] | None = None
+    requirement_responses: list[dict] | None = None
+    attachments: list[dict] | None = None
 
 
 class UploadSessionIn(BaseModel):

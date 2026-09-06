@@ -263,11 +263,16 @@ export default function BusinessPlanPage() {
       const res = await apiRequest(`/businesses/${businessId}/live-plan/import-extract?dry_run=true`, "POST", {
         document_id: documentId || undefined,
         raw_content: rawContent || undefined,
-      });
+      }, { timeoutMs: 180000 });
       setPreviewData(res);
       if (documentId) saveScanCache(documentId, res);
     } catch (err) {
-      setError(String(err?.message || "").replace(/^HTTP \d+:\s*/, "") || "Extraction failed. Please try again.");
+      const msg = String(err?.message || "");
+      setError(
+        msg.includes("NETWORK_ERROR") ? "Could not reach the server — the backend may be starting up. Please wait a moment and try again."
+        : msg.includes("timed out") ? "Extraction is taking too long. Please try again."
+        : msg.replace(/^HTTP \d+:\s*/, "") || "Extraction failed. Please try again."
+      );
     } finally {
       setAdopting(false);
     }

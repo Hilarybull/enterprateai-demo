@@ -208,7 +208,16 @@ function toRiskRecommendation(risk) {
   }
 }
 
-export function buildFinancialIntelligence({ catalogue, financials, validation, inputs }) {
+export function buildFinancialIntelligence({ catalogue, financials, validation, inputs, fxRates = {}, displayCurrencyIso = "GBP" }) {
+  // Convert an amount from itemCurrencyIso to the workspace display currency using fxRates
+  function toWs(amount, itemCurrencyRaw) {
+    const num = Number(amount) || 0;
+    if (!itemCurrencyRaw) return num;
+    const iso = (String(itemCurrencyRaw).match(/\(([A-Z]{3})\)\s*$/) || String(itemCurrencyRaw).match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || String(itemCurrencyRaw).toUpperCase();
+    if (!iso || iso === displayCurrencyIso) return num;
+    const rate = fxRates[iso];
+    return rate ? num * rate : num;
+  }
   const serviceValidation =
     validation?.serviceValidation ||
     (validation?.scores && validation?.metrics && validation?.outcome ? validation : null);
@@ -265,10 +274,12 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     return !isPendingWithinTerms(item, vendorTerms);
   });
 
-  // Revenue = grand total from paid + delivered (accrual basis)
-  const totalInvoiceRevenue = [...paidInvoices, ...deliveredInvoices].reduce((sum, item) => sum + toNumber(item.total_amount || item.subtotal_amount), 0);
+  // Revenue = grand total from paid + delivered (accrual basis), converted to workspace currency
+  const totalInvoiceRevenue = [...paidInvoices, ...deliveredInvoices].reduce((sum, item) => sum + toWs(toNumber(item.total_amount || item.subtotal_amount), item.currency || item.source_currency), 0);
   const totalInvoiceCostOfSales = paidInvoices.reduce((sum, item) => {
     if (item.cost_of_sales != null) return sum + toNumber(item.cost_of_sales);
+    const lineItemCos = Array.isArray(item.line_items) ? item.line_items.reduce((s, li) => s + (Number(li.qty) || 1) * toNumber(li.cost_of_sales), 0) : 0;
+    if (lineItemCos > 0) return sum + lineItemCos;
     const productIds = getRecordProductIds(item);
     if (!productIds.length) {
       const product = productMap.get(item.product_id);
@@ -277,7 +288,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     const perUnitCost = productIds.reduce((running, productId) => running + getProductCostOfSales(productMap.get(productId)), 0);
     return sum + perUnitCost * Math.max(1, toNumber(item.quantity || 1));
   }, 0);
-  const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toNumber(item.price), 0);
+  const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toWs(toNumber(item.price || item.amount || item.total_amount), item.currency || item.source_currency), 0);
 
   function receivedAmt(inv) {
     if (inv.payments && inv.payments.length > 0) {
@@ -297,7 +308,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       const d = new Date(raw);
       if (!Number.isFinite(d.getTime())) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const val = typeof field === "function" ? field(item) : field ? toNumber(item[field]) : toNumber(item.total_amount || item.subtotal_amount);
+      const rawVal = typeof field === "function" ? field(item) : field ? toNumber(item[field]) : toNumber(item.total_amount || item.subtotal_amount);
+      const val = toWs(rawVal, item.currency || item.source_currency);
       byMonth[key] = Number(((byMonth[key] || 0) + val).toFixed(2));
     }
     return byMonth;
@@ -313,8 +325,11 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
 
   const earnedInvoices = [...paidInvoices, ...deliveredInvoices];
   const invoiceRevenue = Number(mostRecentMonthTotal(earnedInvoices).toFixed(2));
-  const invoiceCostOfSales = Number(mostRecentMonthTotal(earnedInvoices, "cost_of_sales").toFixed(2));
-  const operationalExpenses = Number(mostRecentMonthTotal(paidExpenses, "price").toFixed(2));
+  const invoiceCostOfSales = Number(mostRecentMonthTotal(earnedInvoices, (inv) => {
+    if (inv.cost_of_sales != null) return toNumber(inv.cost_of_sales);
+    return Array.isArray(inv.line_items) ? inv.line_items.reduce((s, li) => s + (Number(li.qty) || 1) * toNumber(li.cost_of_sales), 0) : 0;
+  }).toFixed(2));
+  const operationalExpenses = Number(mostRecentMonthTotal(paidExpenses, (e) => toNumber(e.price || e.amount || e.total_amount)).toFixed(2));
   const contractRevenue = 0;
   const contractCostOfSales = 0;
   const contractPurchases = 0;
@@ -635,7 +650,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       cost_of_sales_by_month: buildMonthlyBreakdown(paidInvoices, (inv) => {
         const total = toNumber(inv.total_amount || inv.subtotal_amount || 0);
         const received = receivedAmt(inv);
-        const cos = toNumber(inv.cost_of_sales || 0);
+        const lineItemCos = Array.isArray(inv.line_items) ? inv.line_items.reduce((s, i) => s + (Number(i.qty) || 1) * toNumber(i.cost_of_sales), 0) : 0;
+        const cos = toNumber(inv.cost_of_sales || lineItemCos);
         const ratio = total > 0 ? received / total : 1;
         return cos * ratio;
       }),
@@ -650,7 +666,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
           return Math.max(0, toNumber(inv.total_amount || inv.subtotal_amount || 0) - receivedAmt(inv));
         }
       ),
-      expenses_by_month: buildMonthlyBreakdown(paidExpenses, "price"),
+      expenses_by_month: buildMonthlyBreakdown(paidExpenses, (e) => toNumber(e.price || e.amount || e.total_amount)),
     },
   };
 }

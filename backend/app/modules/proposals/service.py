@@ -138,11 +138,12 @@ async def create_request(user_id: str, workspace_id: str | None, payload: dict) 
         "title": (payload.get("title") or "").strip(),
         "description": payload.get("description"),
         "budget_range": payload.get("budget_range"),
+        "budget_currency": payload.get("budget_currency") or "GBP",
         "budget_visible": bool(payload.get("budget_visible", False)),
         "deadline": payload.get("deadline"),
         "submission_cap": payload.get("submission_cap"),
         "requirements": [
-            {"text": r.get("text", ""), "mandatory": bool(r.get("mandatory", False)), "weight": int(r.get("weight", 1))}
+            {"text": r.get("text", ""), "mandatory": bool(r.get("mandatory", False)), "weight": int(r.get("weight", 1)), "format": r.get("format") or "text"}
             for r in (payload.get("requirements") or [])
         ],
         "accepted_modes": payload.get("accepted_modes") or ["general"],
@@ -174,12 +175,12 @@ async def update_request(user_id: str, workspace_id: str | None, request_id: str
     if req.get("status") not in ("DRAFT", "PAUSED", "PUBLISHED"):
         raise HTTPException(status_code=400, detail="Only DRAFT, PAUSED, or PUBLISHED requests can be edited")
     now = _now()
-    for key in ("type", "title", "description", "budget_range", "budget_visible", "deadline", "submission_cap", "accepted_modes", "accepted_categories", "visibility", "specific_criteria"):
+    for key in ("type", "title", "description", "budget_range", "budget_currency", "budget_visible", "deadline", "submission_cap", "accepted_modes", "accepted_categories", "visibility", "specific_criteria"):
         if payload.get(key) is not None:
             req[key] = payload[key]
     if payload.get("requirements") is not None:
         req["requirements"] = [
-            {"text": r.get("text", ""), "mandatory": bool(r.get("mandatory", False)), "weight": int(r.get("weight", 1))}
+            {"text": r.get("text", ""), "mandatory": bool(r.get("mandatory", False)), "weight": int(r.get("weight", 1)), "format": r.get("format") or "text"}
             for r in payload["requirements"]
         ]
     req["updated_at"] = now
@@ -277,6 +278,18 @@ async def get_inbox(user_id: str, workspace_id: str | None) -> dict:
         reverse=True,
     )
     return {"items": items, "total": len(items)}
+
+
+async def delete_from_inbox(user_id: str, workspace_id: str | None, proposal_id: str) -> None:
+    ws = await _load_ws(user_id, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    ws_id, data = _ws_fields(ws)
+    inbox = list(data.get("proposal_inbox") or [])
+    inbox = [p for p in inbox if p.get("id") != proposal_id]
+    merged = dict(data)
+    merged["proposal_inbox"] = inbox
+    await _save_data(ws_id, user_id, merged)
 
 
 async def link_inbox_to_request(user_id: str, workspace_id: str | None, proposal_id: str, request_id: str | None) -> dict:
@@ -451,16 +464,21 @@ async def submit_proposal(user_id: str, workspace_id: str | None, payload: dict)
     if not prefs.get("enabled", False):
         raise HTTPException(status_code=400, detail="This business is not currently accepting proposals")
 
-    # Check for existing active submission (one-active rule)
-    existing_activity = proposer_data.get("proposal_activity") or []
-    active_statuses = {"SUBMITTED", "VIEWED", "UNDER_REVIEW", "CLARIFICATION_REQUESTED", "REVISION_REQUESTED", "SHORTLISTED", "PREFERRED", "NEGOTIATION"}
     request_id = payload.get("request_id")
-    for p in existing_activity:
-        if p.get("recipient_workspace_id") == recipient_ws_id:
-            if request_id and p.get("request_id") != request_id:
-                continue
-            if p.get("status") in active_statuses:
-                raise HTTPException(status_code=409, detail="You already have an active proposal with this business")
+
+    # One active submission per proposer workspace per recipient workspace
+    existing_inbox = rec_data.get("proposal_inbox") or []
+    active_statuses = {"SUBMITTED", "VIEWED", "UNDER_REVIEW", "CLARIFICATION_REQUESTED",
+                       "REVISION_REQUESTED", "SHORTLISTED", "PREFERRED", "NEGOTIATION"}
+    already_active = any(
+        p.get("proposer_workspace_id") == proposer_id and p.get("status") in active_statuses
+        for p in existing_inbox
+    )
+    if already_active:
+        raise HTTPException(
+            status_code=409,
+            detail="You already have an active proposal with this business. Withdraw or wait for it to be resolved before submitting again.",
+        )
 
     # Get proposer profile for display
     proposer_profile = proposer_data.get("workspace_profile") or {}
@@ -523,11 +541,12 @@ async def submit_proposal(user_id: str, workspace_id: str | None, payload: dict)
     proposer_merged["proposal_activity"] = [submission] + (proposer_data.get("proposal_activity") or [])
     await _save_data(proposer_id, user_id, proposer_merged)
 
-    # Write to recipient's inbox (best-effort)
+    # Write to recipient's inbox (best-effort) — reload fresh data to avoid overwriting concurrent deletes
     try:
-        rec_merged = dict(rec_data)
-        rec_merged["proposal_inbox"] = [submission] + (rec_data.get("proposal_inbox") or [])
-        await _save_data_any_user(recipient_ws_id, rec_merged)
+        fresh_rec_ws = await sb_select("workspaces", filters=[("id", "eq", recipient_ws_id)], single=True)
+        fresh_rec_data = dict((fresh_rec_ws or {}).get("data") or {}) if fresh_rec_ws else dict(rec_data)
+        fresh_rec_data["proposal_inbox"] = [submission] + (fresh_rec_data.get("proposal_inbox") or [])
+        await _save_data_any_user(recipient_ws_id, fresh_rec_data)
     except Exception:
         pass
 

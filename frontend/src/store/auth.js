@@ -38,7 +38,7 @@ async function fetchPlatformGrants() {
   try {
     return await apiRequest("/auth/grants", "GET");
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -128,7 +128,7 @@ export const useAuthStore = create((set, get) => ({
 
   refreshGrants: async () => {
     const grants = await fetchPlatformGrants();
-    set({ platformGrants: grants ?? [] });
+    if (grants !== null) set({ platformGrants: grants ?? [] });
     return grants;
   },
 

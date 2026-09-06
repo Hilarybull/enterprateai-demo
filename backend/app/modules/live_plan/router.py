@@ -99,24 +99,32 @@ async def import_extract_live_plan(
     user=Depends(get_current_user),
 ) -> dict:
     """Adopt a blueprint document or raw text — AI extracts fields and seeds the live plan."""
-    payload = payload or LivePlanImportExtractRequest()
-    if dry_run:
-        result = await import_extract_plan(
-            user_id=user["id"],
-            business_id=business_id,
-            document_id=payload.document_id,
-            raw_content=payload.raw_content,
-            dry_run=True,
-        )
+    import logging as _log
+    _logger = _log.getLogger(__name__)
+    try:
+        payload = payload or LivePlanImportExtractRequest()
+        if dry_run:
+            result = await import_extract_plan(
+                user_id=user["id"],
+                business_id=business_id,
+                document_id=payload.document_id,
+                raw_content=payload.raw_content,
+                dry_run=True,
+            )
+            return {"business_id": business_id, **result}
+        async with credit_guard(user["id"], "live_plan_import_extract", payload.idempotency_key):
+            result = await import_extract_plan(
+                user_id=user["id"],
+                business_id=business_id,
+                document_id=payload.document_id,
+                raw_content=payload.raw_content,
+            )
         return {"business_id": business_id, **result}
-    async with credit_guard(user["id"], "live_plan_import_extract", payload.idempotency_key):
-        result = await import_extract_plan(
-            user_id=user["id"],
-            business_id=business_id,
-            document_id=payload.document_id,
-            raw_content=payload.raw_content,
-        )
-    return {"business_id": business_id, **result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _logger.exception("import-extract failed for business %s: %s", business_id, exc)
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {exc}")
 
 
 @router.post("/confirm-adopt")

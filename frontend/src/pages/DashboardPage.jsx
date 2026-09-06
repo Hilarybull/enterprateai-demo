@@ -148,7 +148,9 @@ export default function DashboardPage() {
 
     const paidRevenue = paidInvs.reduce((s, i) => s + toWs(actualReceived(i), i.currency), 0);
     const paidCoS = paidInvs.reduce((s, i) => {
-      const total = rawAmt(i); const received = actualReceived(i); const cos = Number(i.cost_of_sales || 0);
+      const total = rawAmt(i); const received = actualReceived(i);
+      const lineItemCos = Array.isArray(i.line_items) ? i.line_items.reduce((ls, li) => ls + (Number(li.qty) || 1) * Number(li.cost_of_sales || 0), 0) : 0;
+      const cos = Number(i.cost_of_sales != null ? i.cost_of_sales : lineItemCos);
       return s + toWs(cos * (total > 0 ? received / total : 1), i.currency);
     }, 0);
     const paidExpTotal = paidExps.reduce((s, e) => s + toWs(Number(e.price || e.total_amount || 0), e.currency), 0);

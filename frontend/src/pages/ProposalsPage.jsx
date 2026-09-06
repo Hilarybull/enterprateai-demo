@@ -293,6 +293,8 @@ function RequestModal({ onClose, onSaved, editItem }) {
   const [newReqFormat, setNewReqFormat] = useState("text");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [aiDescLoading, setAiDescLoading] = useState(false);
+  const [aiDescHint, setAiDescHint] = useState("");
   const [catDropOpen, setCatDropOpen] = useState(false);
   const catDropRef = useRef(null);
 
@@ -386,6 +388,22 @@ function RequestModal({ onClose, onSaved, editItem }) {
     }
   }
 
+  async function handleAiDesc() {
+    if (!title.trim()) {
+      setAiDescHint("Enter a request title first");
+      setTimeout(() => setAiDescHint(""), 2500);
+      return;
+    }
+    setAiDescHint("");
+    setAiDescLoading(true);
+    try {
+      const res = await apiRequest("/proposals/generate-description", "POST", { title });
+      if (res?.description) setDescription(res.description);
+    } catch { /* silent */ } finally {
+      setAiDescLoading(false);
+    }
+  }
+
   function addReq() {
     const t = newReq.trim();
     if (!t) return;
@@ -407,7 +425,7 @@ function RequestModal({ onClose, onSaved, editItem }) {
     const effectiveVisibility = isInviteOnly ? "private" : visibility;
     const payload = {
       type, title: title.trim(), description: description.trim() || null,
-      budget_range: budget.trim() || null, budget_visible: budgetVisible,
+      budget_range: budget.trim() || null, budget_currency: wsCurrency || "GBP", budget_visible: budgetVisible,
       deadline: deadline || null,
       submission_cap: cap !== "" ? parseInt(cap, 10) : null,
       requirements,
@@ -484,17 +502,28 @@ function RequestModal({ onClose, onSaved, editItem }) {
           <div>
             <div className="mb-1.5 flex items-center justify-between gap-2">
               <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-400">Description</label>
-              <button type="button"
-                disabled={briefUploading}
-                onClick={() => briefInputRef.current?.click()}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-500 hover:border-brand-400 hover:text-brand-600 transition disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                {briefUploading ? "Extracting…" : "Upload Brief (PDF / DOCX / TXT)"}
-              </button>
-              <input ref={briefInputRef} type="file" accept=".pdf,.docx,.txt,.md" className="hidden"
-                onChange={(e) => { handleBriefUpload(e.target.files?.[0]); e.target.value = ""; }} />
+              <div className="flex items-center gap-2">
+                <button type="button"
+                  disabled={aiDescLoading}
+                  onClick={handleAiDesc}
+                  title="AI-generate a description from the title"
+                  className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-600 hover:bg-indigo-100 transition disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-400">
+                  {aiDescLoading
+                    ? <><svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity=".25"/><path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round"/></svg>Writing…</>
+                    : <><svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.09 3.26L16.5 4l-2.34 2.68L15 10l-3-1.8L9 10l.84-3.32L7.5 4l3.41 1.26L12 2z"/><path d="M5 14l.63 1.9L7.5 15l-1.37 1.56.87 1.94L5 17.4l-2 1.1.87-1.94L2.5 15l1.87.9L5 14z"/><path d="M19 14l.63 1.9 1.87-.9-1.37 1.56.87 1.94L19 17.4l-2 1.1.87-1.94L16.5 15l1.87.9L19 14z"/></svg>AI Fill</>}
+                </button>
+                <button type="button"
+                  disabled={briefUploading}
+                  onClick={() => briefInputRef.current?.click()}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-500 hover:border-brand-400 hover:text-brand-600 transition disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  {briefUploading ? "Extracting…" : "Upload Brief (PDF / DOCX / TXT)"}
+                </button>
+                <input ref={briefInputRef} type="file" accept=".pdf,.docx,.txt,.md" className="hidden"
+                  onChange={(e) => { handleBriefUpload(e.target.files?.[0]); e.target.value = ""; }} />
+              </div>
             </div>
-            {briefError && <p className="mb-1.5 text-[11px] text-red-500">{briefError}</p>}
+            {(briefError || aiDescHint) && <p className="mb-1.5 text-[11px] text-amber-600 dark:text-amber-400">{briefError || aiDescHint}</p>}
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={5}
               placeholder="Describe what you're looking for, your context, and any key criteria…&#10;Or upload a brief above to auto-fill this field."
               className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 resize-none" />
@@ -1086,7 +1115,7 @@ function RequestCard({ req, onEdit, onPublish, onClose: onCloseReq, onReopen, on
             </span>
           )}
           {req.budget_range && req.budget_visible && (
-            <span>Budget: {req.budget_range}</span>
+            <span>Budget: {req.budget_currency ? `${req.budget_currency} ` : ""}{req.budget_range}</span>
           )}
           {req.submission_count != null && (
             <span>{req.submission_count} proposal{req.submission_count !== 1 ? "s" : ""}</span>
@@ -1441,7 +1470,7 @@ function RequestDetailPanel({ req, onClose, onEdit }) {
               <div>
                 <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Budget</div>
                 <div className="font-semibold text-slate-700 dark:text-slate-300">
-                  {req.budget_visible ? req.budget_range : "Hidden from proposers"}
+                  {req.budget_visible ? `${req.budget_currency ? req.budget_currency + " " : ""}${req.budget_range}` : "Hidden from proposers"}
                 </div>
               </div>
             )}
@@ -1500,7 +1529,7 @@ function RequestDetailPanel({ req, onClose, onEdit }) {
 
 // ─── proposal card ─────────────────────────────────────────────────────────────
 
-function ProposalCard({ proposal, role, onClick }) {
+function ProposalCard({ proposal, role, onClick, onDelete }) {
   const isNew = role === "recipient" && proposal.status === "SUBMITTED" && !proposal.viewed_at;
 
   return (
@@ -1527,6 +1556,17 @@ function ProposalCard({ proposal, role, onClick }) {
               <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">To: {proposal.recipient_name}</p>
             )}
           </div>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onDelete(proposal.id); }}
+              className="shrink-0 flex h-6 w-6 items-center justify-center rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-500 transition dark:text-slate-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+              title="Remove from inbox">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4h6v2" />
+              </svg>
+            </button>
+          )}
         </div>
 
         {proposal.summary && (
@@ -1753,8 +1793,11 @@ function ProposalDetailModal({ proposal, role, onClose, onStatusChange }) {
                       : !item.attachment
                         ? <p className="text-[11px] italic text-slate-400 dark:text-slate-500">No response provided.</p>
                         : null}
-                    {item.attachment?.data_url && (
-                      <a href={item.attachment.data_url} download={item.attachment.filename}
+                    {(item.attachment?.url || item.attachment?.data_url) && (
+                      <a href={item.attachment.url || item.attachment.data_url}
+                        download={!item.attachment.url ? item.attachment.filename : undefined}
+                        target={item.attachment.url ? "_blank" : undefined}
+                        rel={item.attachment.url ? "noopener noreferrer" : undefined}
                         className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-brand-600 hover:bg-brand-50 transition dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-brand-900/20">
                         <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                         {item.attachment.filename || "Download file"}
@@ -1775,9 +1818,9 @@ function ProposalDetailModal({ proposal, role, onClose, onStatusChange }) {
             </div>
           ))}
 
-          {proposal.attachments?.length > 0 && (
-            <div>
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Attachments</div>
+          <div>
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Documents</div>
+            {proposal.attachments?.length > 0 ? (
               <div className="space-y-2">
                 {proposal.attachments.map((a, i) => (
                   <div key={i} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 text-[12px] dark:border-slate-700 dark:bg-slate-900">
@@ -1785,8 +1828,8 @@ function ProposalDetailModal({ proposal, role, onClose, onStatusChange }) {
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
                     </svg>
                     <span className="flex-1 truncate text-slate-600 dark:text-slate-400">{a.filename || a.name}</span>
-                    {a.data_url && (
-                      <a href={a.data_url} download={a.filename || a.name}
+                    {(a.url || a.data_url) && (
+                      <a href={a.url || a.data_url} download={!a.url ? (a.filename || a.name) : undefined} target={a.url ? "_blank" : undefined} rel={a.url ? "noopener noreferrer" : undefined}
                         className="shrink-0 rounded-lg bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-600 hover:bg-brand-100 transition dark:bg-brand-900/20 dark:text-brand-400">
                         Download
                       </a>
@@ -1794,8 +1837,10 @@ function ProposalDetailModal({ proposal, role, onClose, onStatusChange }) {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="text-[12px] italic text-slate-400 dark:text-slate-500">No document was attached to this submission.</p>
+            )}
+          </div>
 
           {/* Timeline */}
           {proposal.events?.length > 0 && (
@@ -1868,7 +1913,7 @@ function ProposalDetailModal({ proposal, role, onClose, onStatusChange }) {
 // ─── inbox tab ────────────────────────────────────────────────────────────────
 
 export function InboxTab() {
-  const { inbox, inboxLoading, inboxError, fetchInbox } = useProposalStore();
+  const { inbox, inboxLoading, inboxError, fetchInbox, deleteFromInbox } = useProposalStore();
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [search, setSearch] = useState("");
   const [showFilterMenu, setShowFilterMenu] = useState(false);
@@ -1964,7 +2009,7 @@ export function InboxTab() {
       {filtered.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((p) => (
-            <ProposalCard key={p.id} proposal={p} role="recipient" onClick={setSelected} />
+            <ProposalCard key={p.id} proposal={p} role="recipient" onClick={setSelected} onDelete={(id) => deleteFromInbox(id)} />
           ))}
         </div>
       )}

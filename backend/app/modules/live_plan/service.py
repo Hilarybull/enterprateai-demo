@@ -1271,6 +1271,7 @@ Business plan document:
             system="You are a structured data extraction assistant. Return only valid JSON.",
             prompt=extraction_prompt,
             feature="live_plan_import_extract",
+            max_tokens=2000,
         )
         raw = (result.text or "").strip()
         if raw.startswith("```"):
@@ -1511,13 +1512,13 @@ async def import_extract_plan(
             from app.modules.blueprint.repository import get_document
             doc = await get_document(user_id=user_id, document_id=document_id)
             if doc:
-                markdown = str(doc.get("document_markdown") or "")
-                doc_title = str(doc.get("title") or doc.get("type") or "Business Plan")
+                markdown = str(doc.document_markdown or "")
+                doc_title = str(doc.title or str(doc.type) or "Business Plan")
                 doc_meta = {
-                    "id": doc.get("id"),
+                    "id": doc.id,
                     "title": doc_title,
-                    "company_name": doc.get("company_name"),
-                    "industry": doc.get("industry"),
+                    "company_name": doc.company_name,
+                    "industry": doc.industry,
                 }
         except Exception:
             pass

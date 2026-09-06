@@ -188,8 +188,8 @@ async def delete_document(
     user_id: str,
     document_id: str,
 ) -> bool:
-    rows = await sb_delete(
+    await sb_delete(
         "blueprint_documents",
         filters=[("id", "eq", document_id), ("user_id", "eq", user_id)],
     )
-    return bool(rows)
+    return True

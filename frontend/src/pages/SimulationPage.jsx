@@ -128,6 +128,7 @@ export default function SimulationPage() {
 
   const [catalogueData, setCatalogueData] = useState({ products: [], customers: [], vendors: [] });
   const [financialsData, setFinancialsData] = useState({ invoices: [], expenses: [], contracts: [] });
+  const [fxRates, setFxRates] = useState({});
   const [acceptedValidation, setAcceptedValidation] = useState(null);
 
   const acceptedIdeaValidation = decisionStatus === "accepted" ? ideaValidation : null;
@@ -147,8 +148,10 @@ export default function SimulationPage() {
         financials: financialsData,
         validation: acceptedModuleValidation,
         inputs,
+        fxRates,
+        displayCurrencyIso: (currency?.match(/\(([A-Z]{3})\)\s*$/) || currency?.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || (currency || "GBP").toUpperCase(),
       }),
-    [acceptedModuleValidation, catalogueData, financialsData, inputs]
+    [acceptedModuleValidation, catalogueData, financialsData, inputs, fxRates, currency]
   );
 
   const stateSnapshot = financialInsights.stateSnapshot;
@@ -292,9 +295,20 @@ export default function SimulationPage() {
         const ws = await apiRequest("/validation/me", "GET");
         if (!alive || !ws) return;
         setCatalogueData(ws?.data?.catalogue || { products: [], customers: [], vendors: [] });
-        setFinancialsData(ws?.data?.financials || { invoices: [], expenses: [], contracts: [] });
+        const fin = ws?.data?.financials || { invoices: [], expenses: [], contracts: [] };
+        setFinancialsData(fin);
         setRegistrationStatus(ws?.data?.registration_status || { status: "not_started" });
         setAcceptedValidation(getAcceptedWorkspaceValidation(ws?.data));
+        // Fetch FX rates for any foreign-currency records
+        if (currency) {
+          const wsIso = (currency.match(/\(([A-Z]{3})\)\s*$/) || currency.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || currency.toUpperCase();
+          const allRecs = [...(fin.invoices || []), ...(fin.expenses || [])];
+          const foreign = [...new Set(allRecs.map(r => { const c = String(r.currency || r.source_currency || "").trim(); const iso = (c.match(/\(([A-Z]{3})\)\s*$/) || c.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || c.toUpperCase(); return iso; }).filter(iso => iso && iso !== wsIso && iso.length === 3))];
+          if (foreign.length) {
+            Promise.all(foreign.map(async from => { try { const d = await apiRequest(`/integrations/currency-rate?from_currency=${from}&to_currency=${wsIso}`, "GET"); return { from, rate: d?.rate ?? null }; } catch { return { from, rate: null }; } }))
+              .then(results => { if (!alive) return; const next = {}; results.forEach(({ from, rate }) => { if (rate != null) next[from] = rate; }); setFxRates(next); });
+          }
+        }
       } catch {
         // ignore
       }

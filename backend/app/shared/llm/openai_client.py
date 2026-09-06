@@ -22,7 +22,7 @@ class LLMTextResult:
 
 
 class LLMClient:
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:  # pragma: no cover
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -36,17 +36,14 @@ class OpenAIResponsesClient(LLMClient):
         self._settings = get_settings()
         self._user_id = user_id
 
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:
         if not self._settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY not configured")
 
         headers = {"Authorization": f"Bearer {self._settings.openai_api_key}"}
         payload = {
             "model": self._settings.openai_model,
-            # Long-form documents need more output room. This client is used only
-            # for narrative generation; all numeric/calculation outputs are
-            # blocked by guardrails upstream/downstream.
-            "max_output_tokens": 9000,
+            "max_output_tokens": max_tokens or 9000,
             "input": [
                 {"role": "system", "content": [{"type": "input_text", "text": system}]},
                 {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
@@ -106,7 +103,7 @@ class OpenAIResponsesClient(LLMClient):
 
 
 class NoopLLMClient(LLMClient):
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:
         return LLMTextResult(text="", provider="noop", model="none")
 
 
@@ -120,7 +117,7 @@ class AnthropicMessagesClient(LLMClient):
         self._settings = get_settings()
         self._user_id = user_id
 
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:
         if not self._settings.claude_api_key:
             raise RuntimeError("CLAUDE_API_KEY not configured")
 
@@ -131,7 +128,7 @@ class AnthropicMessagesClient(LLMClient):
         }
         payload = {
             "model": self._settings.claude_model,
-            "max_tokens": 8000,
+            "max_tokens": max_tokens or 8000,
             "temperature": 0.5,
             "system": system,
             "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
@@ -187,7 +184,7 @@ class GeminiGenerateClient(LLMClient):
         self._settings = get_settings()
         self._user_id = user_id
 
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:
         if not self._settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY not configured")
 
@@ -201,7 +198,7 @@ class GeminiGenerateClient(LLMClient):
                     "parts": [{"text": f"{system}\n\n{prompt}"}],
                 }
             ],
-            "generationConfig": {"temperature": 0.5, "maxOutputTokens": 8000},
+            "generationConfig": {"temperature": 0.5, "maxOutputTokens": max_tokens or 8000},
         }
 
         async with httpx.AsyncClient(timeout=900) as client:
@@ -271,11 +268,11 @@ class AutoLLMClient(LLMClient):
         if not self._clients:
             self._clients.append(NoopLLMClient())
 
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown") -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:
         last_err: Exception | None = None
         for c in self._clients:
             try:
-                res = await c.generate_text(system=system, prompt=prompt, feature=feature)
+                res = await c.generate_text(system=system, prompt=prompt, feature=feature, max_tokens=max_tokens)
                 # Some providers can return an HTTP 200 but our parsing yields empty text.
                 # Treat that as a failure so we can fall back to the next configured provider.
                 if not (res.text or "").strip() and not isinstance(c, NoopLLMClient):

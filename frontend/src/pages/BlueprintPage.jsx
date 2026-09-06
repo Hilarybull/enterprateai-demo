@@ -449,9 +449,12 @@ export default function BlueprintPage() {
   const [bpSearchParams, setBpSearchParams] = useSearchParams();
   const autoGenerateRef = useRef(false);
   const [fromValidation, setFromValidation] = useState(false);
+  const [marketplaceCtx, setMarketplaceCtx] = useState(null);
+  const [populatingFields, setPopulatingFields] = useState(false);
   useEffect(() => {
     const d = bpSearchParams.get("doc");
     const vws = bpSearchParams.get("validation_workspace");
+    const fromMkt = bpSearchParams.get("from") === "marketplace";
     if (d) {
       setSelectedDoc(d);
       setError(null);
@@ -466,7 +469,18 @@ export default function BlueprintPage() {
       setFromValidation(true);
       autoGenerateRef.current = true;
     }
-    if (d || vws) setBpSearchParams({}, { replace: true });
+    if (fromMkt) {
+      try {
+        const ctx = JSON.parse(sessionStorage.getItem("ea_proposal_ctx") || "null");
+        if (ctx) {
+          setMarketplaceCtx(ctx);
+          setSelectedDoc("client_proposal");
+          setIsModalOpen(true);
+          setShowInputs(true);
+        }
+      } catch {}
+    }
+    if (d || vws || fromMkt) setBpSearchParams({}, { replace: true });
   }, []); // eslint-disable-line
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showInputs, setShowInputs] = useState(true);
@@ -532,6 +546,28 @@ export default function BlueprintPage() {
   const [objectiveCustomByDoc, setObjectiveCustomByDoc] = useState({});
   const [followupChoice, setFollowupChoice] = useState("Quick reminder and recap of the main benefit, inviting a short call");
   const [followupCustom, setFollowupCustom] = useState("");
+
+  // Pre-fill proposal fields when arriving from Marketplace
+  useEffect(() => {
+    if (!marketplaceCtx) return;
+    setPopulatingFields(true);
+    const fillT = setTimeout(() => {
+      const clientName = marketplaceCtx.listing?.company_name || "";
+      if (clientName) {
+        setBillTo(clientName);
+        setCustomClientName(clientName);
+        setSelectedCustomerId("__other__");
+      }
+      const title = marketplaceCtx.request_title || marketplaceCtx.proposal_title || "";
+      if (title) setProposalTitle(title);
+      if (marketplaceCtx.request_description) {
+        setProblem(marketplaceCtx.request_description);
+        setDirtyFields((p) => ({ ...p, problem: true }));
+      }
+    }, 300);
+    const hideT = setTimeout(() => setPopulatingFields(false), 2400);
+    return () => { clearTimeout(fillT); clearTimeout(hideT); };
+  }, [marketplaceCtx]); // eslint-disable-line
 
   const [bpTab, setBpTab] = useState("overview");
   const [isLoading, setIsLoading] = useState(false);
@@ -2120,13 +2156,38 @@ export default function BlueprintPage() {
       const msg = rawMsg.toLowerCase();
       const isNetwork = msg.includes("network") || msg.includes("failed to fetch") || msg.includes("load");
       const is403 = rawMsg.startsWith("HTTP 403:");
-      setError(
-        isNetwork
-          ? "Network error — please check your connection and try again. Your inputs are saved."
-          : is403
-          ? rawMsg.replace(/^HTTP 403:\s*/i, "")
-          : rawMsg || "Blueprint generation failed"
-      );
+      let friendlyError = rawMsg || "Blueprint generation failed";
+      if (isNetwork) {
+        friendlyError = "Connection error. Check your internet and try again. Your inputs are saved.";
+      } else if (is403) {
+        friendlyError = rawMsg.replace(/^HTTP 403:\s*/i, "");
+      } else {
+        // Parse structured API errors and show a human-readable message
+        const httpMatch = rawMsg.match(/^HTTP (\d+):\s*(.*)/s);
+        if (httpMatch) {
+          const statusCode = Number(httpMatch[1]);
+          try {
+            const detail = JSON.parse(httpMatch[2])?.detail || JSON.parse(httpMatch[2]);
+            const errCode = detail?.error || detail;
+            if (errCode === "FEATURE_NOT_ENTITLED") {
+              friendlyError = statusCode === 402
+                ? "Your account does not have access to this feature yet. Contact support if you believe this is a mistake."
+                : "You are not entitled to use this feature on your current plan.";
+            } else if (errCode === "INSUFFICIENT_CREDITS") {
+              friendlyError = "You do not have enough credits to generate this document. Top up your credits and try again.";
+            } else if (errCode === "FEATURE_DISABLED") {
+              friendlyError = "This feature is currently unavailable. Please try again later.";
+            } else if (typeof errCode === "string") {
+              friendlyError = errCode.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+            }
+          } catch {
+            if (statusCode === 402) friendlyError = "Access denied. Your account may not have the required plan for this feature.";
+            else if (statusCode === 429) friendlyError = "Too many requests. Please wait a moment and try again.";
+            else if (statusCode >= 500) friendlyError = "Something went wrong on our end. Please try again shortly.";
+          }
+        }
+      }
+      setError(friendlyError);
       setShowInputs(true);
     } finally {
       setIsLoading(false);
@@ -2233,13 +2294,28 @@ export default function BlueprintPage() {
         [selectedDoc]: mergeSectionDrafts(selectedDoc, prev[selectedDoc] || "", markdown)
       }));
     } catch (e) {
-      const msg = String(e?.message || "").toLowerCase();
+      const rawMsg = e instanceof Error ? e.message : String(e || "");
+      const msg = rawMsg.toLowerCase();
       const isNetwork = msg.includes("network") || msg.includes("failed to fetch") || msg.includes("load");
-      setError(
-        isNetwork
-          ? "Network error — please check your connection and try again. Your inputs are saved."
-          : (e instanceof Error ? e.message : "Section generation failed")
-      );
+      let friendlyError = "Section generation failed. Please try again.";
+      if (isNetwork) {
+        friendlyError = "Connection error. Check your internet and try again.";
+      } else {
+        const httpMatch = rawMsg.match(/^HTTP (\d+):\s*(.*)/s);
+        if (httpMatch) {
+          const statusCode = Number(httpMatch[1]);
+          try {
+            const detail = JSON.parse(httpMatch[2])?.detail || JSON.parse(httpMatch[2]);
+            const errCode = detail?.error || detail;
+            if (errCode === "FEATURE_NOT_ENTITLED") friendlyError = "Your account does not have access to this feature.";
+            else if (errCode === "INSUFFICIENT_CREDITS") friendlyError = "Not enough credits. Top up and try again.";
+            else if (typeof errCode === "string") friendlyError = errCode.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+          } catch {
+            if (statusCode >= 500) friendlyError = "Something went wrong on our end. Please try again shortly.";
+          }
+        }
+      }
+      setError(friendlyError);
       setShowInputs(true);
     } finally {
       setIsLoading(false);
@@ -2723,13 +2799,6 @@ export default function BlueprintPage() {
       title: "Sales Letter",
       desc: "Persuasive sales letters that convert prospects.",
       color: "blue",
-    },
-    {
-      id: "rfq",
-      icon: <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>,
-      title: "Request Document",
-      desc: "RFP, RFQ or tender documents for procurement.",
-      color: "orange",
     },
   ];
   const colorMap = {
@@ -3752,6 +3821,15 @@ export default function BlueprintPage() {
         </div>
       )}
 
+      {populatingFields && (
+        <div className="fixed bottom-6 left-1/2 z-[9999] -translate-x-1/2 flex items-center gap-3 rounded-xl border border-brand-200 bg-white px-5 py-3 shadow-lg dark:border-brand-700 dark:bg-slate-900">
+          <svg className="h-4 w-4 shrink-0 animate-spin text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          <p className="text-[13px] font-medium text-slate-800 dark:text-slate-200">
+            Hold on, filling in your proposal details from the marketplace request...
+          </p>
+        </div>
+      )}
+
       {isModalOpen && selectedMeta ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
@@ -3883,6 +3961,73 @@ export default function BlueprintPage() {
                   </div>
                 ) : selectedDocResult?.document_markdown ? (
                   <div className="flex h-full min-h-0 flex-col gap-3">
+                    {marketplaceCtx && selectedDoc === "client_proposal" && (() => {
+                      const mktReqs = marketplaceCtx.request?.requirements || [];
+                      const mandatoryReqs = mktReqs.filter(r => typeof r === "object" && r?.mandatory);
+                      const optionalReqs = mktReqs.filter(r => !(typeof r === "object" && r?.mandatory));
+                      return (
+                        <div className="rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 dark:border-brand-800 dark:bg-brand-900/20 space-y-2">
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <div className="flex items-center gap-2">
+                              <svg className="h-4 w-4 shrink-0 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                              <span className="text-[12px] font-semibold text-brand-800 dark:text-brand-200">Proposal for {marketplaceCtx.listing?.company_name} is ready to submit</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                try {
+                                  sessionStorage.setItem("ea_proposal_return", JSON.stringify({
+                                    listing: marketplaceCtx.listing,
+                                    request: marketplaceCtx.request || null,
+                                    title: proposalTitle || `Proposal for ${marketplaceCtx.listing?.company_name}`,
+                                    document_html: editedHtmlByType["client_proposal"] || selectedDocResult.document_html || "",
+                                    document_markdown: selectedDocResult.document_markdown || "",
+                                    prepared_by: companyName || workspaceProfile?.company_name || "",
+                                    service_focus: solution || "",
+                                    contact: contactDetails || "",
+                                  }));
+                                } catch {}
+                                navigate("/marketplace?tab=requests");
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-brand-700 transition"
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                              Submit to {marketplaceCtx.listing?.company_name}
+                            </button>
+                          </div>
+                          {mktReqs.length > 0 && (() => {
+                            const BannerIcon = ({ fmt }) => {
+                              const cls = "h-3 w-3 shrink-0";
+                              if (fmt === "document") return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>;
+                              if (fmt === "image") return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>;
+                              if (fmt === "link") return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>;
+                              if (fmt === "presentation") return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>;
+                              if (fmt === "figures") return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
+                              return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>;
+                            };
+                            return (
+                              <div className="pt-1 border-t border-brand-200 dark:border-brand-700">
+                                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-brand-700 dark:text-brand-400">Still needed on submission</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {mandatoryReqs.map((r, i) => (
+                                    <span key={i} className="inline-flex items-center gap-1 rounded-md bg-brand-100 px-2 py-0.5 text-[10px] font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                                      <BannerIcon fmt={r?.format} />
+                                      <span className="opacity-70">Required:</span> {typeof r === "string" ? r : r?.text}
+                                    </span>
+                                  ))}
+                                  {optionalReqs.map((r, i) => (
+                                    <span key={i} className="inline-flex items-center gap-1 rounded-md bg-brand-50 border border-brand-200 px-2 py-0.5 text-[10px] font-medium text-brand-600 dark:bg-brand-900/20 dark:border-brand-700 dark:text-brand-400">
+                                      <BannerIcon fmt={typeof r === "object" ? r?.format : null} />
+                                      {typeof r === "string" ? r : r?.text}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      );
+                    })()}
                     {isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant ? (
                       <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                         Free plan read only. <Link to="/pricing" className="font-semibold underline hover:text-amber-900">Upgrade</Link> to edit, copy, share, or download.
@@ -4319,6 +4464,42 @@ export default function BlueprintPage() {
                       {/* Proposal extras */}
                       {showProposalExtras ? (
                         <>
+                          {/* Marketplace requirements callout — shown when arriving from a marketplace request */}
+                          {marketplaceCtx?.request?.requirements?.length > 0 && (() => {
+                            const reqs = marketplaceCtx.request.requirements;
+                            const mandatory = reqs.filter(r => typeof r === "object" && r?.mandatory);
+                            const optional = reqs.filter(r => !(typeof r === "object" && r?.mandatory));
+                            const FormatIcon = ({ fmt, cls = "h-3.5 w-3.5 shrink-0" }) => {
+                              if (fmt === "document") return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>;
+                              if (fmt === "image") return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>;
+                              if (fmt === "link") return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>;
+                              if (fmt === "presentation") return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>;
+                              if (fmt === "figures") return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
+                              return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>;
+                            };
+                            return (
+                              <div className="rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 dark:border-brand-800 dark:bg-brand-900/20">
+                                <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-brand-700 dark:text-brand-400">
+                                  {marketplaceCtx.listing?.company_name} needs with this proposal
+                                </p>
+                                <div className="flex flex-col gap-1.5">
+                                  {mandatory.map((r, i) => (
+                                    <div key={i} className="flex items-start gap-2 text-[12px] text-brand-800 dark:text-brand-200">
+                                      <FormatIcon fmt={r.format} cls="mt-px h-3.5 w-3.5 shrink-0 text-brand-600" />
+                                      <span><span className="font-semibold">Required:</span> {r.text || r}{r.format && r.format !== "text" ? <span className="ml-1 text-[10px] opacity-50">({r.format})</span> : null}</span>
+                                    </div>
+                                  ))}
+                                  {optional.map((r, i) => (
+                                    <div key={i} className="flex items-start gap-2 text-[12px] text-brand-700 dark:text-brand-300">
+                                      <FormatIcon fmt={typeof r === "object" ? r.format : null} cls="mt-px h-3.5 w-3.5 shrink-0 text-brand-500" />
+                                      <span>{typeof r === "string" ? r : r?.text}{typeof r === "object" && r?.format && r.format !== "text" ? <span className="ml-1 text-[10px] opacity-50">({r.format})</span> : null}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <p className="mt-2 text-[10px] text-brand-500 dark:text-brand-400">You can attach these on the submission form after generating.</p>
+                              </div>
+                            );
+                          })()}
                           <div>
                             <div className="ea-label">Proposal length</div>
                             <div className="flex gap-3">

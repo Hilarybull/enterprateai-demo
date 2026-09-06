@@ -749,10 +749,12 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
       const totalVat = subtotal * (vatRate / 100);
       saved.amount = subtotal + totalVat;
       saved.total_amount = saved.amount;
+      saved.cost_of_sales = items.reduce((s, i) => s + (Number(i.qty) || 1) * (Number(i.cost_of_sales) || 0), 0);
       saved.description = items.map(i => i.description).filter(Boolean).join(", ") || saved.description || "";
       if (type === "invoice") saved.invoice_number = saved.reference || "";
     } else {
       saved.total_amount = Number(saved.amount) || 0;
+      saved.price = saved.total_amount;
     }
     onSave(saved);
   }
@@ -2118,6 +2120,34 @@ export default function BusinessOperationsPage() {
     }
   }
 
+  async function convertQuoteToInvoice(quote) {
+    const now = new Date().toISOString();
+    const newInvoice = {
+      id: crypto.randomUUID(),
+      customer_name: quote.customer_name || quote.recipient || "",
+      recipient: quote.recipient || quote.customer_name || "",
+      description: quote.description || quote.title || "",
+      title: quote.title || quote.description || "",
+      items: quote.items || [],
+      amount: quote.amount || quote.total_amount || 0,
+      total_amount: quote.total_amount || quote.amount || 0,
+      currency: quote.currency || "GBP",
+      due_date: "",
+      status: "draft",
+      quote_id: quote.id,
+      created_at: now,
+      updated_at: now,
+    };
+    newInvoice.reference = dayRef("INV", now, invoices);
+    newInvoice.invoice_number = newInvoice.reference;
+    const next = [...invoices, newInvoice];
+    setInvoices(next);
+    await persist({ invoices: next, quotes, expenses, contracts });
+    setActiveTab("Sales");
+    setSalesSub("Invoices");
+    openEdit("invoice", newInvoice);
+  }
+
   function saveRecord(saved) {
     const type = recordModal?.type;
     let persistPayload = null;
@@ -2198,7 +2228,7 @@ export default function BusinessOperationsPage() {
       if (salesSub === "Invoices") openCreate("invoice");
       else openCreate("quote");
     }} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> Create</button>,
-    Procurement: <button type="button" onClick={() => { setProcSub("Requests"); setReqCreateTrigger(v => v + 1); }} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> New Request</button>,
+    Procurement: <button type="button" onClick={() => { setProcSub("Proposal Requests"); setReqCreateTrigger(v => v + 1); }} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> New Request</button>,
     Contracts: <button type="button" onClick={() => openCreate("contract")} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> Create Contract</button>,
     Transactions: <button type="button" onClick={() => openCreate("invoice")} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> New Transaction</button>,
     Reports: <div className="flex gap-2 relative">
@@ -2388,7 +2418,7 @@ export default function BusinessOperationsPage() {
                     Value: (q.total_amount || q.amount) ? `£${Number(q.total_amount || q.amount).toLocaleString()}` : "—",
                     Status: <StatusPill status={q.status || "Draft"} />,
                     Updated: fmtDate(q.updated_at || q.created_at),
-                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
+                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
                   }))}
                   emptyText="No sales activity yet"
                 />
@@ -2413,7 +2443,7 @@ export default function BusinessOperationsPage() {
                     Amount: formatMoney(Number(q.total_amount || q.amount || 0), q.currency),
                     Status: <StatusPill status={q.status || "Draft"} />,
                     Date: fmtDate(q.created_at || q.updated_at),
-                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
+                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
                   }))}
                   emptyText="No quotations yet"
                 />
@@ -2491,7 +2521,7 @@ export default function BusinessOperationsPage() {
                       Amount: formatMoney(Number(r.total_amount || r.amount || 0), r.currency),
                       "Date Paid": fmtDate(r.paid_at || r.date || r.created_at),
                       Status: <StatusPill status={r.status} paymentType={r.payment_type} />,
-                      Action: <ActionMenu items={[{ label: "View Receipt", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "View Invoice", onClick: () => openView("invoice", r) }]} />,
+                      Action: <ActionMenu items={[{ label: "View Receipt", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "View Invoice", onClick: () => openView("invoice", r) }, { label: "Edit", onClick: () => openEdit("invoice", r) }]} />,
                     }))}
                     emptyText="No receipts yet"
                   />
@@ -2504,7 +2534,7 @@ export default function BusinessOperationsPage() {
         {/* ===== PROCUREMENT ===== */}
         {activeTab === "Procurement" && (
           <>
-            <SubTabs tabs={["Overview", "Requests", "Sent RFQs", "Inbox", "Activity", "Evaluations", "Awards"]} active={procSub} onChange={setProcSub} />
+            <SubTabs tabs={["Overview", "Proposal Requests", "Sent RFQs", "Inbox", "Activity", "Evaluations", "Awards"]} active={procSub} onChange={setProcSub} />
             {procSub === "Overview" && (() => {
               const activeReqs = proposalRequests.filter(r => r.status === "PUBLISHED");
               const totalProposals = proposalRequests.reduce((s, r) => s + (r.submission_count || 0), 0);
@@ -2547,7 +2577,7 @@ export default function BusinessOperationsPage() {
                       Proposals: r.submission_count ?? 0,
                       Deadline: r.deadline ? new Date(r.deadline).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—",
                       Action: <ActionMenu items={[
-                        { label: "View Requests", onClick: () => setProcSub("Requests") },
+                        { label: "View Requests", onClick: () => setProcSub("Proposal Requests") },
                         { label: "View Evaluations", onClick: () => setProcSub("Evaluations") },
                       ]} />,
                     }))}
@@ -2556,7 +2586,7 @@ export default function BusinessOperationsPage() {
                 </>
               );
             })()}
-            {procSub === "Requests" && <div className="mt-2"><RequestsTab createTrigger={reqCreateTrigger} /></div>}
+            {procSub === "Proposal Requests" && <div className="mt-2"><RequestsTab createTrigger={reqCreateTrigger} /></div>}
             {procSub === "Sent RFQs" && (
               <>
                 <div className="flex gap-3 overflow-x-auto mt-2">
@@ -2616,7 +2646,7 @@ export default function BusinessOperationsPage() {
                     Status: <StatusPill status={r.status || "DRAFT"} />,
                     Action: <ActionMenu items={[
                       { label: "View Proposals", onClick: () => setProcSub("Inbox") },
-                      { label: "View Request", onClick: () => setProcSub("Requests") },
+                      { label: "View Request", onClick: () => setProcSub("Proposal Requests") },
                     ]} />,
                   }))}
                   emptyText="No proposal requests yet"
@@ -2870,7 +2900,7 @@ export default function BusinessOperationsPage() {
                   Amount: formatMoney(receivedAmt(r), r.currency),
                   Date: fmtDate(r.paid_at || r.date || r.created_at),
                   Status: <StatusPill status={r.status || "paid"} />,
-                  Action: <ActionMenu items={[{ label: "View", onClick: () => openView("invoice", r, { receiptMode: true }) }]} />,
+                  Action: <ActionMenu items={[{ label: "View", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "Edit", onClick: () => openEdit("invoice", r) }]} />,
                 }))}
                 emptyText="No receipts yet"
               />

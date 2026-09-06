@@ -148,13 +148,24 @@ async def _has_platform_grant(user_id: str, feature_code: str) -> bool:
             return len(rows) > 0
         except Exception:
             return False
+    # Also accept cross-module grants: marketplace grants cover blueprint proposal features
+    _CROSS_MODULE: dict[str, list[str]] = {
+        "blueprint": ["marketplace"],
+    }
+    modules_to_check = [module_key] + _CROSS_MODULE.get(module_key, [])
     try:
         rows = await sb_select(
             "user_platform_grants",
-            filters=[("user_id", "eq", user_id), ("module_key", "eq", module_key)],
+            filters=[("user_id", "eq", user_id)],
             columns="module_key,feature_key",
         )
-        return any(not row.get("feature_key") for row in rows)
+        for row in rows:
+            if row.get("module_key") not in modules_to_check:
+                continue
+            # Empty feature_key = whole module granted; matching = specific feature granted
+            if not row.get("feature_key") or row.get("feature_key") == feature_code:
+                return True
+        return False
     except Exception:
         return False
 
