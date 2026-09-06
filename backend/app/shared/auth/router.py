@@ -100,7 +100,6 @@ async def register(payload: RegisterRequest) -> UserPublic:
         "email_verification_token": verification_token,
         "name": payload.full_name,
         "phone": payload.phone,
-        "company": payload.company,
     }
     await sb_insert("users", user_doc)
     await _resolve_referral_attribution(user_doc["id"], payload.ref_click_id, payload.ref_code)
