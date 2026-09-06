@@ -171,7 +171,12 @@ export default function DashboardPage() {
     if (!livePlanSummary) return null;
     const planRev = Number(livePlanSummary.monthly_revenue_target) || 0;
     const planCost = Number(livePlanSummary.monthly_costs) || 0;
-    const planMargin = Number(livePlanSummary.gross_margin_pct) || 0;
+    const _storedMargin = Number(livePlanSummary.gross_margin_pct) || 0;
+    const planMargin = _storedMargin > 0 && _storedMargin < 100
+      ? _storedMargin
+      : (Number(livePlanSummary.monthly_revenue_target) > 0
+          ? Math.round((Number(livePlanSummary.monthly_revenue_target) - Number(livePlanSummary.monthly_costs || 0)) / Number(livePlanSummary.monthly_revenue_target) * 1000) / 10
+          : 0);
     // Use current-month revenue/costs only to compare against monthly targets
     const now = new Date();
     const curYear = now.getFullYear(); const curMonth = now.getMonth();
@@ -439,7 +444,7 @@ export default function DashboardPage() {
               })()}
 
               {/* Costs */}
-              {planKpis.planCost > 0 && (() => {
+              {planKpis.planRev > 0 && (() => {
                 const pct = planKpis.costPct;
                 const tone = pct == null ? "slate" : pct <= 100 ? "emerald" : pct <= 130 ? "amber" : "rose";
                 const toneText = { emerald: "text-emerald-600", amber: "text-amber-600", rose: "text-rose-600", slate: "text-slate-400" };
@@ -457,7 +462,7 @@ export default function DashboardPage() {
               })()}
 
               {/* Gross margin */}
-              {planKpis.planMargin > 0 && (() => {
+              {planKpis.planRev > 0 && (() => {
                 const diff = planKpis.marginDiff;
                 const tone = diff == null ? "slate" : diff >= 0 ? "emerald" : diff >= -5 ? "amber" : "rose";
                 const toneText = { emerald: "text-emerald-600", amber: "text-amber-600", rose: "text-rose-600", slate: "text-slate-400" };

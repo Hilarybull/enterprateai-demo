@@ -1319,7 +1319,7 @@ function _htmlToPdfContent(html) {
   return out;
 }
 
-function ApplyModal({ listing, request, onClose }) {
+function ApplyModal({ listing, request, onClose, onSuccess }) {
   const grad = avatarGradient(listing.company_name);
   const { submitProposal } = useProposalStore();
   const planKey = useAuthStore((s) => s.subscription?.plan_key ?? "explorer");
@@ -1581,6 +1581,7 @@ function ApplyModal({ listing, request, onClose }) {
     setSubmitting(false);
     if (res.ok) {
       try { sessionStorage.removeItem("ea_proposal_return"); sessionStorage.removeItem(_summaryKey); sessionStorage.removeItem(_reqKey); } catch {}
+      onSuccess?.(listing.workspace_id, request?.id);
       setDone(true);
     } else setError(res.error || "Submission failed. Please try again.");
   }
@@ -1847,10 +1848,11 @@ function ApplyModal({ listing, request, onClose }) {
                       {aiLoading ? "Generating…" : "Generate with AI"}
                     </button>
                   ) : (
-                    <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400" title="Upgrade to Starter Insight to use AI generation">
+                    <button type="button" onClick={() => alert("AI cover letter generation is available on Starter Insight and above. Upgrade your plan to unlock this feature.")}
+                      className="inline-flex items-center gap-1 rounded-lg bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-700 hover:bg-amber-100 transition dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400" title="Upgrade to Starter Insight to use AI generation">
                       <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
                       AI · Paid only
-                    </span>
+                    </button>
                   )}
                 </div>
                 <textarea value={summary} onChange={(e) => { setSummary(e.target.value); try { sessionStorage.setItem(_summaryKey, e.target.value); } catch {} }} rows={5}
@@ -2115,7 +2117,7 @@ function ProposalRequestDetailModal({ req, isOwn, onApply, onClose }) {
 
 // ─── Proposal Request Card ───────────────────────────────────────────────────
 
-function ProposalRequestCard({ req, isLoggedIn, isOwn, onApply, onCompanyClick, onViewDetail }) {
+function ProposalRequestCard({ req, isLoggedIn, isOwn, isApplied, onApply, onCompanyClick, onViewDetail }) {
   const deadlinePassed = req.deadline && new Date(req.deadline) < new Date();
   return (
     <article className="group flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-brand-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-600">
@@ -2215,6 +2217,20 @@ function ProposalRequestCard({ req, isLoggedIn, isOwn, onApply, onCompanyClick, 
           <div className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-[12px] font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500">
             Your request
           </div>
+        ) : isApplied ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onViewDetail}
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              View
+            </button>
+            <div className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 py-2.5 text-[12px] font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+              Applied
+            </div>
+          </div>
         ) : (
           <div className="flex gap-2">
             <button
@@ -2280,6 +2296,7 @@ export default function MarketplacePage() {
   const [serviceDetail, setServiceDetail] = useState(null); // { service, listing }
   const [applyTarget, setApplyTarget] = useState(null); // listing to apply to
   const [reqDetail, setReqDetail] = useState(null); // proposal request detail popup
+  const [appliedWorkspaceIds, setAppliedWorkspaceIds] = useState(() => new Set());
 
   const [propRequests, setPropRequests] = useState([]);
   const [propReqTotal, setPropReqTotal] = useState(0);
@@ -2734,6 +2751,7 @@ export default function MarketplacePage() {
                   req={req}
                   isLoggedIn={isLoggedIn}
                   isOwn={isLoggedIn && req.workspace_id === workspaceId}
+                  isApplied={appliedWorkspaceIds.has(req.workspace_id)}
                   onApply={() => isLoggedIn ? setApplyTarget({ workspace_id: req.workspace_id, company_name: req.company_name, logo_data_url: req.company_logo, _request: req }) : setGateAction("apply")}
                   onCompanyClick={() => apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {})}
                   onViewDetail={() => setReqDetail(req)}
@@ -2872,7 +2890,7 @@ export default function MarketplacePage() {
           onRequestQuote={(listing) => setRfqTarget({ listing, productName: null })} />
       )}
       {rfqTarget && <RFQModal listing={rfqTarget.listing} prefilledProduct={rfqTarget.productName} onClose={() => setRfqTarget(null)} />}
-      {applyTarget && <ApplyModal listing={applyTarget} request={applyTarget._request || null} onClose={() => setApplyTarget(null)} />}
+      {applyTarget && <ApplyModal listing={applyTarget} request={applyTarget._request || null} onClose={() => setApplyTarget(null)} onSuccess={(wsId) => setAppliedWorkspaceIds(prev => new Set([...prev, wsId]))} />}
       {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}
       {reqDetail && (
         <ProposalRequestDetailModal

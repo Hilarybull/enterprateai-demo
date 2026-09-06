@@ -1788,7 +1788,8 @@ export default function BusinessOperationsPage() {
     const today = new Date(); today.setHours(0,0,0,0);
     const overdueInvoices = invoices.filter(i => {
       const s = st(i.status);
-      if (["paid","delivered","cancelled"].includes(s)) return false;
+      if (s === "paid" && i.payment_type !== "partial") return false;
+      if (["delivered","cancelled"].includes(s)) return false;
       const due = i.due_date ? new Date(i.due_date) : null;
       return due && due < today;
     }).length;
@@ -2079,8 +2080,8 @@ export default function BusinessOperationsPage() {
     return computed ? { ...record, reference: computed } : record;
   }
 
-  function openEdit(type, record) {
-    setRecordModal({ mode: "edit", type, record: _withComputedRef(type, record) });
+  function openEdit(type, record, opts = {}) {
+    setRecordModal({ mode: "edit", type, record: _withComputedRef(type, record), ...opts });
   }
 
   function openView(type, record, opts = {}) {
@@ -2230,7 +2231,7 @@ export default function BusinessOperationsPage() {
     }} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> Create</button>,
     Procurement: <button type="button" onClick={() => { setProcSub("Proposal Requests"); setReqCreateTrigger(v => v + 1); }} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> New Request</button>,
     Contracts: <button type="button" onClick={() => openCreate("contract")} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> Create Contract</button>,
-    Transactions: <button type="button" onClick={() => openCreate("invoice")} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> New Transaction</button>,
+    Transactions: <button type="button" onClick={() => { if (txnSub === "Expenses") openCreate("expense"); else openCreate("invoice"); }} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> {txnSub === "Expenses" ? "New Expense" : "New Invoice"}</button>,
     Reports: <div className="flex gap-2 relative">
       <div className="relative">
         <button type="button" onClick={() => setShowRangeMenu(v => !v)}
@@ -2500,15 +2501,15 @@ export default function BusinessOperationsPage() {
             {salesSub === "Receipts" && (() => {
               const paidInvoices = invoices.filter(i => i.status === "paid" || i.status === "partial").sort((a, b) => new Date(b.paid_at || b.created_at || 0) - new Date(a.paid_at || a.created_at || 0));
               const totalReceived = paidInvoices.reduce((s, i) => {
-                const pmts = (i.payments || []).reduce((ps, p) => ps + Number(p.amount || 0), 0);
-                return s + (pmts > 0 ? pmts : Number(i.total_amount || i.amount || 0));
+                const pmts = (i.payments || []).reduce((ps, p) => ps + toWsConverted(p.amount, i.currency), 0);
+                return s + (pmts > 0 ? pmts : toWsConverted(i.total_amount || i.amount, i.currency));
               }, 0);
               return (
                 <>
                   <div className="flex gap-3 overflow-x-auto">
                     <KpiCard icon={ICheck} label="Receipts Issued" value={paidInvoices.length} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
-                    <KpiCard icon={ICheck} label="Fully Paid" value={invoices.filter(i => i.status === "paid").length} numColor="text-teal-600" iconBg="bg-teal-50" iconColor="text-teal-600" />
-                    <KpiCard icon={IClock} label="Partial Payments" value={invoices.filter(i => i.status === "partial").length} numColor="text-amber-500" iconBg="bg-amber-50" iconColor="text-amber-500" />
+                    <KpiCard icon={ICheck} label="Fully Paid" value={paidInvoices.filter(i => i.payment_type !== "partial").length} numColor="text-teal-600" iconBg="bg-teal-50" iconColor="text-teal-600" />
+                    <KpiCard icon={IClock} label="Partial Payments" value={paidInvoices.filter(i => i.payment_type === "partial").length} numColor="text-amber-500" iconBg="bg-amber-50" iconColor="text-amber-500" />
                     <KpiCard icon={IPound} label="Total Received" value={fmtMoney(totalReceived)} numColor="text-indigo-600" iconBg="bg-indigo-50" iconColor="text-indigo-600" />
                   </div>
                   <TableSection
@@ -2521,7 +2522,7 @@ export default function BusinessOperationsPage() {
                       Amount: formatMoney(Number(r.total_amount || r.amount || 0), r.currency),
                       "Date Paid": fmtDate(r.paid_at || r.date || r.created_at),
                       Status: <StatusPill status={r.status} paymentType={r.payment_type} />,
-                      Action: <ActionMenu items={[{ label: "View Receipt", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "View Invoice", onClick: () => openView("invoice", r) }, { label: "Edit", onClick: () => openEdit("invoice", r) }]} />,
+                      Action: <ActionMenu items={[{ label: "View Receipt", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "View Invoice", onClick: () => openView("invoice", r) }, { label: "Edit", onClick: () => openEdit("invoice", r, { receiptMode: true }) }]} />,
                     }))}
                     emptyText="No receipts yet"
                   />
@@ -2900,7 +2901,7 @@ export default function BusinessOperationsPage() {
                   Amount: formatMoney(receivedAmt(r), r.currency),
                   Date: fmtDate(r.paid_at || r.date || r.created_at),
                   Status: <StatusPill status={r.status || "paid"} />,
-                  Action: <ActionMenu items={[{ label: "View", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "Edit", onClick: () => openEdit("invoice", r) }]} />,
+                  Action: <ActionMenu items={[{ label: "View", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "Edit", onClick: () => openEdit("invoice", r, { receiptMode: true }) }]} />,
                 }))}
                 emptyText="No receipts yet"
               />
@@ -3042,7 +3043,15 @@ export default function BusinessOperationsPage() {
                     Proposals: quotes.filter(q => q.customer_name === name).length,
                     Won: quotes.filter(q => q.customer_name === name && (q.status === "won" || q.status === "accepted")).length,
                     Revenue: fmtMoney(invoices.filter(i => i.customer_name === name && ["paid","delivered"].includes((i.status||"").toLowerCase())).reduce((s, i) => s + toWsConverted(i.total_amount || i.amount || 0, i.currency), 0)),
-                    Receivables: fmtMoney(invoices.filter(i => i.customer_name === name && ["sent","overdue","delivered"].includes((i.status||"").toLowerCase())).reduce((s, i) => s + toWsConverted(i.total_amount || i.amount || 0, i.currency), 0)),
+                    Receivables: fmtMoney(invoices.filter(i => i.customer_name === name).reduce((s, i) => {
+                      const st2 = (i.status || "").toLowerCase();
+                      if (["sent","overdue","delivered"].includes(st2)) return s + toWsConverted(i.total_amount || i.amount || 0, i.currency);
+                      if (st2 === "paid" && i.payment_type === "partial") {
+                        const recv = (i.payments || []).reduce((ps, p) => ps + toWsConverted(p.amount, i.currency), 0);
+                        return s + toWsConverted(Math.max(0, Number(i.total_amount || i.amount || 0) - recv), i.currency);
+                      }
+                      return s;
+                    }, 0)),
                   }))}
                   emptyText="No sales data yet"
                 />
@@ -3101,14 +3110,14 @@ export default function BusinessOperationsPage() {
                 <TableSection title="Transactions Summary" searchPlaceholder="Search..."
                   cols={["Type", "Party", "Amount", "Date", "Status"]}
                   rows={[
-                    ...invoices.map(i => ({ _t: "Invoice", _party: i.customer_name || i.party_name || "—", _amt: Number(i.total_amount || i.amount || 0), _cur: i.currency, date: i.date || i.created_at, status: i.status })),
+                    ...invoices.map(i => ({ _t: "Invoice", _party: i.customer_name || i.party_name || "—", _amt: Number(i.total_amount || i.amount || 0), _cur: i.currency, date: i.date || i.created_at, status: i.status, _paymentType: i.payment_type })),
                     ...expenses.map(e => ({ _t: "Expense", _party: e.vendor_name || e.party_name || "—", _amt: Number(e.total_amount || e.amount || e.price || 0), _cur: e.currency, date: e.date || e.created_at, status: e.status })),
                   ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).slice(0, 20).map(r => ({
                     Type: <StatusPill status={r._t} />,
                     Party: r._party,
                     Amount: formatMoney(r._amt, r._cur),
                     Date: fmtDate(r.date),
-                    Status: <StatusPill status={r.status || "Pending"} />,
+                    Status: <StatusPill status={r.status || "Pending"} paymentType={r._paymentType} />,
                   }))}
                   emptyText="No transaction data yet"
                 />

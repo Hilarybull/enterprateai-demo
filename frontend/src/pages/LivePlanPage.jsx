@@ -466,31 +466,46 @@ export default function BusinessPlanPage() {
                   )}
 
                   {/* Financials */}
-                  {(previewData.extracted?.monthly_revenue_target || previewData.extracted?.monthly_costs || previewData.extracted?.gross_margin_pct) && (
-                    <div className="rounded-xl border border-amber-100 bg-white p-3">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 mb-2">Financials</div>
-                      <div className="grid grid-cols-3 gap-2">
-                        {previewData.extracted?.monthly_revenue_target != null && (
-                          <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-2 py-2 text-center">
-                            <div className="text-[10px] text-emerald-600 font-semibold">Revenue / mo</div>
-                            <div className="text-xs font-bold text-emerald-800 mt-0.5">£{Number(previewData.extracted.monthly_revenue_target).toLocaleString()}</div>
-                          </div>
-                        )}
-                        {previewData.extracted?.monthly_costs != null && (
-                          <div className="rounded-lg bg-rose-50 border border-rose-100 px-2 py-2 text-center">
-                            <div className="text-[10px] text-rose-600 font-semibold">Costs / mo</div>
-                            <div className="text-xs font-bold text-rose-800 mt-0.5">£{Number(previewData.extracted.monthly_costs).toLocaleString()}</div>
-                          </div>
-                        )}
-                        {previewData.extracted?.gross_margin_pct != null && (
-                          <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-2 py-2 text-center">
-                            <div className="text-[10px] text-indigo-600 font-semibold">Margin</div>
-                            <div className="text-xs font-bold text-indigo-800 mt-0.5">{previewData.extracted.gross_margin_pct}%</div>
-                          </div>
-                        )}
+                  {(previewData.extracted?.monthly_revenue_target || previewData.extracted?.monthly_costs || previewData.extracted?.gross_margin_pct) && (() => {
+                    const prev = previewData.extracted;
+                    const pRev = Number(prev.monthly_revenue_target) || 0;
+                    const pCost = Number(prev.monthly_costs) || 0;
+                    const pNet = pRev - pCost;
+                    const pMargin = prev.gross_margin_pct != null
+                      ? Number(prev.gross_margin_pct)
+                      : pRev > 0 ? Math.round((pRev - pCost) / pRev * 1000) / 10 : null;
+                    return (
+                      <div className="rounded-xl border border-amber-100 bg-white p-3">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 mb-2">Financials</div>
+                        <div className="grid grid-cols-4 gap-2">
+                          {prev.monthly_revenue_target != null && (
+                            <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-2 py-2 text-center">
+                              <div className="text-[10px] text-emerald-600 font-semibold">Revenue / mo</div>
+                              <div className="text-xs font-bold text-emerald-800 mt-0.5">£{pRev.toLocaleString()}</div>
+                            </div>
+                          )}
+                          {prev.monthly_costs != null && (
+                            <div className="rounded-lg bg-rose-50 border border-rose-100 px-2 py-2 text-center">
+                              <div className="text-[10px] text-rose-600 font-semibold">Costs / mo</div>
+                              <div className="text-xs font-bold text-rose-800 mt-0.5">£{pCost.toLocaleString()}</div>
+                            </div>
+                          )}
+                          {pMargin != null && (
+                            <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-2 py-2 text-center">
+                              <div className="text-[10px] text-indigo-600 font-semibold">Margin</div>
+                              <div className="text-xs font-bold text-indigo-800 mt-0.5">{pMargin}%</div>
+                            </div>
+                          )}
+                          {prev.monthly_revenue_target != null && prev.monthly_costs != null && (
+                            <div className={`rounded-lg border px-2 py-2 text-center ${pNet >= 0 ? "bg-teal-50 border-teal-100" : "bg-orange-50 border-orange-100"}`}>
+                              <div className={`text-[10px] font-semibold ${pNet >= 0 ? "text-teal-600" : "text-orange-600"}`}>Net profit</div>
+                              <div className={`text-xs font-bold mt-0.5 ${pNet >= 0 ? "text-teal-800" : "text-orange-800"}`}>£{pNet.toLocaleString()}</div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Products / services */}
                   {/* Key assumptions + Main risks side by side */}
@@ -590,31 +605,45 @@ export default function BusinessPlanPage() {
                   )}
 
                   {/* Financial Plan */}
-                  {(aMap.monthly_revenue_target != null || aMap.monthly_costs != null || aMap.gross_margin_pct != null) && (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-indigo-600">Financial Plan</div>
-                      <div className="grid grid-cols-3 gap-2">
-                        {aMap.monthly_revenue_target != null && (
-                          <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-2 py-2 text-center">
-                            <div className="text-[9px] font-semibold text-emerald-600">Revenue / mo</div>
-                            <div className="mt-0.5 text-sm font-bold text-emerald-800">£{Number(aMap.monthly_revenue_target).toLocaleString()}</div>
-                          </div>
-                        )}
-                        {aMap.monthly_costs != null && (
-                          <div className="rounded-xl bg-rose-50 border border-rose-100 px-2 py-2 text-center">
-                            <div className="text-[9px] font-semibold text-rose-600">Costs / mo</div>
-                            <div className="mt-0.5 text-sm font-bold text-rose-800">£{Number(aMap.monthly_costs).toLocaleString()}</div>
-                          </div>
-                        )}
-                        {aMap.gross_margin_pct != null && (
-                          <div className="rounded-xl bg-indigo-50 border border-indigo-100 px-2 py-2 text-center">
-                            <div className="text-[9px] font-semibold text-indigo-600">Gross margin</div>
-                            <div className="mt-0.5 text-sm font-bold text-indigo-800">{aMap.gross_margin_pct}%</div>
-                          </div>
-                        )}
+                  {(aMap.monthly_revenue_target != null || aMap.monthly_costs != null || aMap.gross_margin_pct != null) && (() => {
+                    const rev = Number(aMap.monthly_revenue_target) || 0;
+                    const cost = Number(aMap.monthly_costs) || 0;
+                    const netProfit = rev - cost;
+                    const computedMargin = aMap.gross_margin_pct != null
+                      ? Number(aMap.gross_margin_pct)
+                      : rev > 0 ? Math.round((rev - cost) / rev * 1000) / 10 : null;
+                    return (
+                      <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-indigo-600">Financial Plan</div>
+                        <div className="grid grid-cols-4 gap-2">
+                          {aMap.monthly_revenue_target != null && (
+                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-2 py-2 text-center">
+                              <div className="text-[9px] font-semibold text-emerald-600">Revenue / mo</div>
+                              <div className="mt-0.5 text-sm font-bold text-emerald-800">£{rev.toLocaleString()}</div>
+                            </div>
+                          )}
+                          {aMap.monthly_costs != null && (
+                            <div className="rounded-xl bg-rose-50 border border-rose-100 px-2 py-2 text-center">
+                              <div className="text-[9px] font-semibold text-rose-600">Costs / mo</div>
+                              <div className="mt-0.5 text-sm font-bold text-rose-800">£{cost.toLocaleString()}</div>
+                            </div>
+                          )}
+                          {computedMargin != null && (
+                            <div className="rounded-xl bg-indigo-50 border border-indigo-100 px-2 py-2 text-center">
+                              <div className="text-[9px] font-semibold text-indigo-600">Gross margin</div>
+                              <div className="mt-0.5 text-sm font-bold text-indigo-800">{computedMargin}%</div>
+                            </div>
+                          )}
+                          {(aMap.monthly_revenue_target != null && aMap.monthly_costs != null) && (
+                            <div className={`rounded-xl border px-2 py-2 text-center ${netProfit >= 0 ? "bg-teal-50 border-teal-100" : "bg-orange-50 border-orange-100"}`}>
+                              <div className={`text-[9px] font-semibold ${netProfit >= 0 ? "text-teal-600" : "text-orange-600"}`}>Net profit / mo</div>
+                              <div className={`mt-0.5 text-sm font-bold ${netProfit >= 0 ? "text-teal-800" : "text-orange-800"}`}>£{netProfit.toLocaleString()}</div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   </div>{/* end left column */}
 
