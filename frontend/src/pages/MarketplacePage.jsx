@@ -786,6 +786,7 @@ function SignUpGateModal({ action, onClose }) {
     rate: { title: "Sign in to rate", body: "Share your experience with this business. Create a free account or sign in." },
     publish: { title: "List your business", body: "Once you sign up and validate your business idea, you can publish it to the marketplace for others to discover." },
     rfq: { title: "Sign in to request a quote", body: "Create a free account or sign in to send a quotation request to this business." },
+    apply: { title: "Sign in to apply", body: "Create a free account or sign in to submit a proposal to this business." },
   };
   const { title, body } = messages[action] || messages.publish;
   useEffect(() => {
@@ -1351,7 +1352,7 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
   const myCats = [myIndustry, ...myServiceCats].filter(Boolean);
   const categoryBlocked = acceptedCats.length > 0 && catChecked && myProfile && !myCats.some((c) => acceptedCats.includes(c));
 
-  // step: "choose" | "form"
+  // step: "choose" | "form" | "upgrade"
   const [step, setStep] = useState(blueprintReturn ? "form" : "choose");
   const [mode, setMode] = useState("ai"); // "ai" | "manual"
   const defaultTitle = request?.title
@@ -1612,6 +1613,30 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
             </button>
           </div>
 
+        /* ── Upgrade gate ── */
+        ) : step === "upgrade" ? (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-accent-500 text-white">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Upgrade to Submit Proposals</h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
+              Submitting proposals and using the EnterprateAI Blueprint generator are available on paid plans. Upgrade to unlock full proposal capabilities.
+            </p>
+            <div className="mt-6 flex flex-col gap-2.5">
+              <button onClick={() => { onClose(); window.location.href = "/settings?tab=billing"; }}
+                className="w-full rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 py-2.5 text-[13px] font-bold text-white transition hover:opacity-90">
+                View Plans & Upgrade
+              </button>
+              <button onClick={() => setStep("choose")}
+                className="w-full rounded-xl border border-slate-200 py-2.5 text-[13px] font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                Go Back
+              </button>
+            </div>
+          </div>
+
         /* ── Category blocked ── */
         ) : categoryBlocked ? (
           <div className="px-6 py-10 text-center">
@@ -1680,6 +1705,7 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
 
             <div className="px-6 py-4 space-y-3">
               <button type="button" onClick={() => {
+                if (!isPaid) { setStep("upgrade"); return; }
                 try {
                   sessionStorage.setItem("ea_proposal_ctx", JSON.stringify({
                     listing: { workspace_id: listing.workspace_id, company_name: listing.company_name, logo_data_url: listing.logo_data_url },
@@ -1698,8 +1724,11 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
                     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                   </svg>
                 </div>
-                <div>
-                  <div className="text-[14px] font-bold text-brand-800 dark:text-brand-200">Use EnterprateAI</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[14px] font-bold text-brand-800 dark:text-brand-200">Use EnterprateAI</span>
+                    {!isPaid && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">Paid</span>}
+                  </div>
                   <div className="mt-0.5 text-[12px] text-brand-700 dark:text-brand-400">Generate a full proposal in Business Blueprints, then submit it here.</div>
                 </div>
               </button>
@@ -1710,9 +1739,14 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17,8 12,3 7,8" /><line x1="12" y1="3" x2="12" y2="15" />
                   </svg>
                 </div>
-                <div>
-                  <div className="text-[14px] font-bold text-slate-800 dark:text-slate-100">Upload / Write Manually</div>
-                  <div className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">Attach a PDF or Word doc and write your own cover letter.</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[14px] font-bold text-slate-800 dark:text-slate-100">Upload / Write Manually</span>
+                    {!isPaid && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-700 dark:text-slate-400">Preview</span>}
+                  </div>
+                  <div className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">
+                    {isPaid ? "Attach a PDF or Word doc and write your own cover letter." : "Write your proposal — upgrade to submit it to the business."}
+                  </div>
                 </div>
               </button>
             </div>
@@ -1926,12 +1960,20 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
                   className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
                   Cancel
                 </button>
-                <button type="submit" disabled={submitting || !allMandatoryAnswered}
-                  title={!allMandatoryAnswered ? "Respond to all required items above before submitting" : undefined}
-                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                  {submitting && <Spinner size={14} />}
-                  {submitting ? "Submitting…" : "Submit Proposal"}
-                </button>
+                {isPaid ? (
+                  <button type="submit" disabled={submitting || !allMandatoryAnswered}
+                    title={!allMandatoryAnswered ? "Respond to all required items above before submitting" : undefined}
+                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    {submitting && <Spinner size={14} />}
+                    {submitting ? "Submitting…" : "Submit Proposal"}
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => setStep("upgrade")}
+                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 px-4 py-2.5 text-[13px] font-bold text-white hover:opacity-90 transition">
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                    Upgrade to Submit
+                  </button>
+                )}
               </div>
             </form>
           </div>
