@@ -91,26 +91,15 @@ async def register(payload: RegisterRequest) -> UserPublic:
     existing = await sb_select("users", filters=[("email", "eq", payload.email.lower())], single=True)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
-    verification_token = secrets.token_urlsafe(32)
     user_doc = {
         "id": payload.email.lower(),
         "email": payload.email.lower(),
         "password_hash": hash_password(payload.password),
-        "email_verified": False,
-        "email_verification_token": verification_token,
         "name": payload.full_name,
-        "phone": payload.phone,
     }
     await sb_insert("users", user_doc)
     await _resolve_referral_attribution(user_doc["id"], payload.ref_click_id, payload.ref_code)
-    try:
-        # frontend_url may alias CORS_ORIGINS which can be a comma-separated list
-        frontend_base = str(settings.frontend_url).split(",")[0].strip().rstrip("/")
-        verify_url = f"{frontend_base}/verify-email?token={verification_token}"
-        await send_email_verification_email(to_email=payload.email, verify_url=verify_url, name=payload.full_name)
-    except Exception as e:
-        logger.warning("Verification email send failed for %s: %s", payload.email, e)
-    return UserPublic(id=user_doc["id"], email=user_doc["email"], email_verification_sent=True)
+    return UserPublic(id=user_doc["id"], email=user_doc["email"], email_verification_sent=False)
 
 
 @router.get("/verify-email")
