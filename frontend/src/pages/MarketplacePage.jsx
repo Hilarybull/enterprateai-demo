@@ -1135,7 +1135,7 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
                   <div className="text-[13px] font-bold text-brand-800 dark:text-brand-300">Request a Quotation</div>
                   <div className="mt-0.5 text-[11px] text-brand-600 dark:text-brand-400">Send your requirements and get a formal quote from {listing.company_name}.</div>
                 </div>
-                <button onClick={() => isLoggedIn ? onRequestQuote(listing) : onNeedAuth("rfq")}
+                <button onClick={() => onRequestQuote(listing)}
                   className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-brand-700 transition">
                   <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
                   Request Quotation
@@ -1626,7 +1626,7 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
               Submitting proposals and using the EnterprateAI Blueprint generator are available on paid plans. Upgrade to unlock full proposal capabilities.
             </p>
             <div className="mt-6 flex flex-col gap-2.5">
-              <button onClick={() => { onClose(); window.location.href = "/settings?tab=billing"; }}
+              <button onClick={() => { onClose(); window.location.href = "/pricing"; }}
                 className="w-full rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 py-2.5 text-[13px] font-bold text-white transition hover:opacity-90">
                 View Plans & Upgrade
               </button>
@@ -2833,7 +2833,7 @@ export default function MarketplacePage() {
                     product={product}
                     onOpen={setServiceDetail}
                     onCompanyClick={setSelected}
-                    onRequestQuote={(listing, productName) => isLoggedIn ? setRfqTarget({ listing, productName }) : setGateAction("rfq")}
+                    onRequestQuote={(listing, productName) => setRfqTarget({ listing, productName })}
                     isOwn={isOwn}
                   />
                 );
@@ -2919,7 +2919,7 @@ export default function MarketplacePage() {
         <ServiceDetailModal
           product={serviceDetail}
           onClose={() => setServiceDetail(null)}
-          onRequestQuote={(listing, productName) => { setServiceDetail(null); isLoggedIn ? setRfqTarget({ listing, productName }) : setGateAction("rfq"); }}
+          onRequestQuote={(listing, productName) => { setServiceDetail(null); setRfqTarget({ listing, productName }); }}
           onCompanyClick={(listing) => { setServiceDetail(null); setSelected(listing); }}
           isOwnListing={isLoggedIn && (myStatus?.workspace_id || workspaceId) === serviceDetail.listing.workspace_id}
           userEmail={userEmail}

@@ -1294,10 +1294,6 @@ export default function Layout() {
                               type="button"
                               className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
                               onClick={() => {
-                                const key = `${notif._notifType}-${notif.id}`;
-                                dismissedNotifIds.current.add(key);
-                                localStorage.setItem("ea_notif_dismissed", JSON.stringify([...dismissedNotifIds.current]));
-                                setNotifications((prev) => prev.filter((n) => !(n._notifType === notif._notifType && n.id === notif.id)));
                                 setNotifOpen(false);
                                 navigate(destination);
                               }}

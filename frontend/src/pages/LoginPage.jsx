@@ -190,7 +190,7 @@ export default function LoginPage() {
       <div className="pointer-events-none absolute bottom-0 right-0 hidden h-72 w-72 rounded-full bg-rose-200/24 blur-3xl lg:block" />
 
       <div className="relative mx-auto grid min-h-[100dvh] w-full max-w-none gap-5 px-3 py-3 sm:px-4 sm:py-4 lg:grid-cols-[minmax(0,1.14fr)_minmax(0,0.86fr)] lg:items-stretch lg:gap-5 lg:px-5 lg:py-4 xl:px-8 2xl:px-12 max-[900px]:gap-4 max-[900px]:py-2.5">
-        <section className="relative flex flex-col justify-between overflow-hidden rounded-[2rem] border border-white/70 bg-white/40 p-5 shadow-[0_24px_80px_rgba(77,106,255,0.10)] backdrop-blur sm:p-7 lg:p-9">
+        <section className="relative order-2 lg:order-1 flex flex-col justify-between overflow-hidden rounded-[2rem] border border-white/70 bg-white/40 p-5 shadow-[0_24px_80px_rgba(77,106,255,0.10)] backdrop-blur sm:p-7 lg:p-9">
           <div className="pointer-events-none absolute -left-24 top-40 hidden h-80 w-80 rounded-full border border-brand-100/80 bg-brand-100/40 lg:block" />
           <div className="pointer-events-none absolute -bottom-24 right-4 hidden h-64 w-64 rounded-full bg-rose-100/55 lg:block" />
 
@@ -246,7 +246,7 @@ export default function LoginPage() {
           </div>
         </section>
 
-        <section className="flex items-center justify-center lg:justify-end">
+        <section className="order-1 lg:order-2 flex items-center justify-center lg:justify-end">
           <div className="flex h-full w-full max-w-[740px] flex-col overflow-hidden rounded-[2rem] border border-[#dbe3f2] bg-white/95 p-4 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur sm:p-5 lg:h-[calc(100dvh-4rem)] lg:p-5 xl:p-7 max-[900px]:p-4 max-h-[calc(100svh-1.5rem)] lg:max-h-none">
             <div className="text-center">
               <h2 className="text-[1.9rem] font-black tracking-tight text-[#0b1026] sm:text-[2.1rem] max-[900px]:text-[1.6rem]">Welcome to EnterprateAI</h2>

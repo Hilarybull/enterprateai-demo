@@ -304,8 +304,9 @@ function SelectInput({ value, onChange, options }) {
   );
 }
 
-function ShareModal({ record, type, workspaceName, customers, onClose }) {
-  const typeLabel = type === "invoice" ? "Invoice" : type === "quote" ? "Quotation" : type === "expense" ? "Expense" : "Contract";
+function ShareModal({ record, type, receiptMode, workspaceName, customers, onClose }) {
+  const effectiveType = receiptMode ? "receipt" : type;
+  const typeLabel = effectiveType === "receipt" ? "Receipt" : effectiveType === "invoice" ? "Invoice" : effectiveType === "quote" ? "Quotation" : effectiveType === "expense" ? "Expense" : "Contract";
   const rawRef = record?.invoice_number || record?.reference || "";
   const ref = isUuidLike(rawRef) ? "" : rawRef;
   const party = record?.customer_name || record?.recipient || record?.vendor_name || record?.party_name || "";
@@ -326,7 +327,7 @@ function ShareModal({ record, type, workspaceName, customers, onClose }) {
   const [tokenLoading, setTokenLoading] = React.useState(true);
 
   const shareData = React.useRef({
-    type, ref, party, workspaceName: workspaceName || "",
+    type: effectiveType, ref, party, workspaceName: workspaceName || "",
     amount: amt, currency: cur,
     issued_at: record?.issued_at || record?.issue_date || "",
     description: record?.description || record?.product_name || (Array.isArray(record?.product_names) ? record.product_names.join(", ") : record?.product_names) || "",
@@ -1536,6 +1537,7 @@ ${form.notes ? `<!-- NOTES -->
       <ShareModal
         record={record}
         type={type}
+        receiptMode={receiptMode}
         workspaceName={workspaceName}
         customers={customers}
         onClose={() => setShowShareModal(false)}
@@ -1789,7 +1791,7 @@ export default function BusinessOperationsPage() {
     const overdueInvoices = invoices.filter(i => {
       const s = st(i.status);
       if (s === "paid" && i.payment_type !== "partial") return false;
-      if (["delivered","cancelled"].includes(s)) return false;
+      if (s === "cancelled") return false;
       const due = i.due_date ? new Date(i.due_date) : null;
       return due && due < today;
     }).length;
@@ -2492,7 +2494,7 @@ export default function BusinessOperationsPage() {
                     Amount: formatMoney(Number(inv.total_amount || inv.amount || 0), inv.currency),
                     Status: <StatusPill status={inv.status || "Draft"} paymentType={inv.payment_type} />,
                     "Due Date": fmtDate(inv.due_date || inv.created_at),
-                    Action: <ActionMenu items={[{ label: "View Invoice", onClick: () => openView("invoice", inv) }, { label: "Edit", onClick: () => openEdit("invoice", inv) }, ...(  (inv.status||"").toLowerCase() !== "delivered" ? [{ label: "Mark as Delivered", onClick: () => setDeliveryInvoice(inv) }] : [{ label: "Mark as UnDelivered", onClick: () => markAsStatus("invoice", inv.id, "sent") }]), { label: "Record Payment", onClick: () => setPaymentInvoice(inv) }, { label: "Share", onClick: () => shareRecord(inv) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("invoice", inv.id) }]} />,
+                    Action: <ActionMenu items={[{ label: "View Invoice", onClick: () => openView("invoice", inv) }, { label: "Edit", onClick: () => openEdit("invoice", inv) }, ...(  (inv.status||"").toLowerCase() !== "delivered" ? [{ label: "Mark as Delivered", onClick: () => setDeliveryInvoice(inv) }] : [{ label: "Mark as UnDelivered", onClick: () => markAsStatus("invoice", inv.id, inv.sent_at ? "sent" : "draft") }]), { label: "Record Payment", onClick: () => setPaymentInvoice(inv) }, { label: "Share", onClick: () => shareRecord(inv) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("invoice", inv.id) }]} />,
                   }))}
                   emptyText="No invoices yet"
                 />
@@ -2839,7 +2841,7 @@ export default function BusinessOperationsPage() {
                     Date: fmtDate(t.date || t.created_at),
                     Status: <StatusPill status={t.status || "Pending"} paymentType={t.payment_type} />,
                     "Linked Record": t._linked,
-                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView(t._t === "Expense" ? "expense" : "invoice", t) }, { label: "Edit", onClick: () => openEdit(t._t === "Expense" ? "expense" : "invoice", t) }, ...(t._t === "Expense" && (t.status||"").toLowerCase() !== "paid" ? [{ label: "Mark as Paid", onClick: () => markAsPaid("expense", t.id) }] : []), ...(t._t !== "Expense" && (t.status||"").toLowerCase() !== "delivered" ? [{ label: "Mark as Delivered", onClick: () => markAsStatus("invoice", t.id, "delivered") }] : []), ...(t._t !== "Expense" && (t.status||"").toLowerCase() === "delivered" ? [{ label: "Mark as UnDelivered", onClick: () => markAsStatus("invoice", t.id, "sent") }] : []), ...(t._t !== "Expense" ? [{ label: "Record Payment", onClick: () => setPaymentInvoice(t) }] : []), { label: "Share", onClick: () => shareRecord(t) }, { label: "Delete", tone: "danger", onClick: () => deleteItem(t._t === "Expense" ? "expense" : "invoice", t.id) }]} />,
+                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView(t._t === "Expense" ? "expense" : "invoice", t) }, { label: "Edit", onClick: () => openEdit(t._t === "Expense" ? "expense" : "invoice", t) }, ...(t._t === "Expense" && (t.status||"").toLowerCase() !== "paid" ? [{ label: "Mark as Paid", onClick: () => markAsPaid("expense", t.id) }] : []), ...(t._t !== "Expense" && (t.status||"").toLowerCase() !== "delivered" ? [{ label: "Mark as Delivered", onClick: () => markAsStatus("invoice", t.id, "delivered") }] : []), ...(t._t !== "Expense" && (t.status||"").toLowerCase() === "delivered" ? [{ label: "Mark as UnDelivered", onClick: () => markAsStatus("invoice", t.id, t.sent_at ? "sent" : "draft") }] : []), ...(t._t !== "Expense" ? [{ label: "Record Payment", onClick: () => setPaymentInvoice(t) }] : []), { label: "Share", onClick: () => shareRecord(t) }, { label: "Delete", tone: "danger", onClick: () => deleteItem(t._t === "Expense" ? "expense" : "invoice", t.id) }]} />,
                   }))}
                   emptyText="No transactions yet"
                 />
@@ -2863,7 +2865,7 @@ export default function BusinessOperationsPage() {
                     Amount: formatMoney(Number(inv.total_amount || inv.amount || 0), inv.currency),
                     Status: <StatusPill status={inv.status || "Draft"} paymentType={inv.payment_type} />,
                     "Due Date": fmtDate(inv.due_date || inv.created_at),
-                    Action: <ActionMenu items={[{ label: "View Invoice", onClick: () => openView("invoice", inv) }, { label: "Edit", onClick: () => openEdit("invoice", inv) }, ...(  (inv.status||"").toLowerCase() !== "delivered" ? [{ label: "Mark as Delivered", onClick: () => setDeliveryInvoice(inv) }] : [{ label: "Mark as UnDelivered", onClick: () => markAsStatus("invoice", inv.id, "sent") }]), { label: "Record Payment", onClick: () => setPaymentInvoice(inv) }, { label: "Share", onClick: () => shareRecord(inv) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("invoice", inv.id) }]} />,
+                    Action: <ActionMenu items={[{ label: "View Invoice", onClick: () => openView("invoice", inv) }, { label: "Edit", onClick: () => openEdit("invoice", inv) }, ...(  (inv.status||"").toLowerCase() !== "delivered" ? [{ label: "Mark as Delivered", onClick: () => setDeliveryInvoice(inv) }] : [{ label: "Mark as UnDelivered", onClick: () => markAsStatus("invoice", inv.id, inv.sent_at ? "sent" : "draft") }]), { label: "Record Payment", onClick: () => setPaymentInvoice(inv) }, { label: "Share", onClick: () => shareRecord(inv) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("invoice", inv.id) }]} />,
                   }))}
                   emptyText="No invoices yet"
                 />
