@@ -2357,7 +2357,12 @@ export default function MarketplacePage() {
   const isLoggedIn = Boolean(token);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
-  const [activeTab, setActiveTab] = useState(() => searchParams.get("request") ? "requests" : "products"); // "products" | "profiles"
+  const [activeTab, setActiveTab] = useState(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "requests" || searchParams.get("request")) return "requests";
+    if (tab === "profiles") return "profiles";
+    return "products";
+  });
   const [listings, setListings] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
