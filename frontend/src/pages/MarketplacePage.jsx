@@ -2188,8 +2188,9 @@ function ProposalRequestCard({ req, isLoggedIn, isOwn, isApplied, onApply, onCom
   function handleShare(e) {
     e.stopPropagation();
     const url = `${window.location.origin}/marketplace/request/${req.id}`;
+    const text = `${req.company_name} is looking for proposals: "${req.title}"${req.budget_range ? ` — Budget: ${req.budget_currency || "GBP"} ${req.budget_range}` : ""}. Apply now.`;
     if (navigator.share) {
-      navigator.share({ title: req.title, text: `${req.company_name} is looking for proposals: ${req.title}`, url }).catch(() => {});
+      navigator.share({ title: req.title, text, url }).catch(() => {});
     } else {
       navigator.clipboard?.writeText(url).catch(() => {});
       setShareCopied(true);
