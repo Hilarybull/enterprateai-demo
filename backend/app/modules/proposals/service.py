@@ -508,6 +508,8 @@ async def submit_proposal(user_id: str, workspace_id: str | None, payload: dict)
             if deadline:
                 try:
                     dl = datetime.fromisoformat(deadline.replace("Z", "+00:00"))
+                    if dl.tzinfo is None:
+                        dl = dl.replace(tzinfo=timezone.utc)
                     if dl < datetime.now(timezone.utc):
                         raise HTTPException(status_code=400, detail="The deadline for this request has passed")
                 except ValueError:
