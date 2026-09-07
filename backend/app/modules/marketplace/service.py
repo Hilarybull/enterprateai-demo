@@ -282,6 +282,46 @@ async def list_public_proposal_requests(*, search: str | None = None, page: int 
     return {"items": results[start: start + page_size], "total": total}
 
 
+async def get_public_proposal_request(*, request_id: str) -> dict:
+    """Fetch a single published proposal request by its ID."""
+    all_workspaces = await sb_select("workspaces", filters=[], order="updated_at", desc=True, limit=500)
+    for ws in (all_workspaces or []):
+        data = ws.get("data") or {}
+        profile = (data.get("workspace_profile") or {})
+        for req in (data.get("proposal_requests") or []):
+            if req.get("id") != request_id:
+                continue
+            if (req.get("status") or "").upper() != "PUBLISHED":
+                continue
+            modes = req.get("accepted_modes") or ["general"]
+            if "invite_only" in modes:
+                continue
+            if (req.get("visibility") or "marketplace") == "private":
+                continue
+            return {
+                "id": req.get("id", ""),
+                "title": req.get("title", ""),
+                "description": req.get("description", ""),
+                "category": req.get("category"),
+                "budget_range": req.get("budget_range"),
+                "budget_currency": req.get("budget_currency"),
+                "deadline": req.get("deadline"),
+                "submission_cap": req.get("submission_cap"),
+                "requirements": req.get("requirements") or [],
+                "accepted_modes": req.get("accepted_modes") or ["general"],
+                "accepted_categories": req.get("accepted_categories"),
+                "specific_criteria": req.get("specific_criteria"),
+                "visibility": req.get("visibility") or "marketplace",
+                "published_at": req.get("published_at") or req.get("created_at"),
+                "workspace_id": str(ws.get("id", "")),
+                "company_name": profile.get("company_name", ""),
+                "company_logo": profile.get("logo_data_url"),
+                "company_industry": profile.get("primary_industry", ""),
+                "company_country": profile.get("country", ""),
+            }
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+
+
 async def get_listing(*, workspace_id: str) -> dict:
     ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
     if not ws:

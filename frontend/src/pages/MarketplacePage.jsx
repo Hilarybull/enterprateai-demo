@@ -1646,7 +1646,7 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
               Submitting proposals and using the EnterprateAI Blueprint generator are available on paid plans. Upgrade to unlock full proposal capabilities.
             </p>
             <div className="mt-6 flex flex-col gap-2.5">
-              <button onClick={() => { onClose(); window.location.href = "/pricing"; }}
+              <button onClick={() => { onClose(); navigate("/pricing"); }}
                 className="w-full rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 py-2.5 text-[13px] font-bold text-white transition hover:opacity-90">
                 View Plans & Upgrade
               </button>
@@ -1777,7 +1777,8 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
 
         /* ── Form ── */
         ) : (
-          <div className="ea-scroll overflow-y-auto" style={{ maxHeight: "calc(95vh - 6px)" }}>
+          <div className="flex flex-col" style={{ maxHeight: "calc(95vh - 6px)" }}>
+          <div className="ea-scroll overflow-y-auto flex-1 min-h-0">
             <div className="relative px-6 pt-5 pb-2 flex items-start justify-between">
               <div>
                 <button type="button" onClick={() => setStep("choose")} className="mb-1 inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-slate-600 transition">
@@ -1879,7 +1880,7 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="px-6 pb-6 pt-2 space-y-4">
+            <form id="proposal-submit-form" onSubmit={handleSubmit} className="px-6 pb-4 pt-2 space-y-4">
               <div>
                 <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">
                   Proposal Title <span className="text-red-500">*</span>
@@ -1975,27 +1976,28 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">{error}</div>
               )}
 
-              <div className="flex gap-3 pt-1">
-                <button type="button" onClick={onClose}
-                  className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
-                  Cancel
-                </button>
-                {isPaid ? (
-                  <button type="submit" disabled={submitting || !allMandatoryAnswered}
-                    title={!allMandatoryAnswered ? "Respond to all required items above before submitting" : undefined}
-                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                    {submitting && <Spinner size={14} />}
-                    {submitting ? "Submitting…" : "Submit Proposal"}
-                  </button>
-                ) : (
-                  <button type="button" onClick={() => setStep("upgrade")}
-                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 px-4 py-2.5 text-[13px] font-bold text-white hover:opacity-90 transition">
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-                    Upgrade to Submit
-                  </button>
-                )}
-              </div>
             </form>
+          </div>
+          <div className="border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-4 flex gap-3 shrink-0">
+            <button type="button" onClick={onClose}
+              className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+              Cancel
+            </button>
+            {isPaid ? (
+              <button type="submit" form="proposal-submit-form" disabled={submitting || !allMandatoryAnswered}
+                title={!allMandatoryAnswered ? "Respond to all required items above before submitting" : undefined}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                {submitting && <Spinner size={14} />}
+                {submitting ? "Submitting…" : "Submit Proposal"}
+              </button>
+            ) : (
+              <button type="button" onClick={() => setStep("upgrade")}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 px-4 py-2.5 text-[13px] font-bold text-white hover:opacity-90 transition">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                Upgrade to Submit
+              </button>
+            )}
+          </div>
           </div>
         )}
       </div>
@@ -2181,6 +2183,20 @@ function ProposalRequestDetailModal({ req, isOwn, onApply, onClose }) {
 
 function ProposalRequestCard({ req, isLoggedIn, isOwn, isApplied, onApply, onCompanyClick, onViewDetail }) {
   const deadlinePassed = req.deadline && new Date(req.deadline) < new Date();
+  const [shareCopied, setShareCopied] = useState(false);
+
+  function handleShare(e) {
+    e.stopPropagation();
+    const url = `${window.location.origin}/marketplace/request/${req.id}`;
+    if (navigator.share) {
+      navigator.share({ title: req.title, text: `${req.company_name} is looking for proposals: ${req.title}`, url }).catch(() => {});
+    } else {
+      navigator.clipboard?.writeText(url).catch(() => {});
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    }
+  }
+
   return (
     <article className="group flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-brand-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-600">
       <div className="flex items-start gap-3">
@@ -2276,14 +2292,19 @@ function ProposalRequestCard({ req, isLoggedIn, isOwn, isApplied, onApply, onCom
 
       <div className="mt-auto pt-4">
         {isOwn ? (
-          <div className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-[12px] font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500">
-            Your request
+          <div className="flex gap-2">
+            <div className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-[12px] font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500">
+              Your request
+            </div>
+            <button type="button" onClick={handleShare} title={shareCopied ? "Link copied!" : "Share"}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition dark:border-slate-700 dark:hover:border-brand-600 dark:hover:text-brand-400">
+              {shareCopied ? <svg className="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                : <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>}
+            </button>
           </div>
         ) : isApplied ? (
           <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onViewDetail}
+            <button type="button" onClick={onViewDetail}
               className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
               View
@@ -2292,26 +2313,31 @@ function ProposalRequestCard({ req, isLoggedIn, isOwn, isApplied, onApply, onCom
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
               Applied
             </div>
+            <button type="button" onClick={handleShare} title={shareCopied ? "Link copied!" : "Share"}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition dark:border-slate-700 dark:hover:border-brand-600 dark:hover:text-brand-400">
+              {shareCopied ? <svg className="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                : <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>}
+            </button>
           </div>
         ) : (
           <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onViewDetail}
+            <button type="button" onClick={onViewDetail}
               className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
               View
             </button>
-            <button
-              type="button"
-              disabled={deadlinePassed}
-              onClick={onApply}
+            <button type="button" disabled={deadlinePassed} onClick={onApply}
               className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-[12px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
                 <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
               </svg>
               {deadlinePassed ? "Closed" : "Apply"}
+            </button>
+            <button type="button" onClick={handleShare} title={shareCopied ? "Link copied!" : "Share"}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition dark:border-slate-700 dark:hover:border-brand-600 dark:hover:text-brand-400">
+              {shareCopied ? <svg className="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                : <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>}
             </button>
           </div>
         )}
@@ -2816,7 +2842,7 @@ export default function MarketplacePage() {
                   isApplied={appliedWorkspaceIds.has(req.workspace_id)}
                   onApply={() => isLoggedIn ? setApplyTarget({ workspace_id: req.workspace_id, company_name: req.company_name, logo_data_url: req.company_logo, _request: req }) : setGateAction("apply")}
                   onCompanyClick={() => apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {})}
-                  onViewDetail={() => setReqDetail(req)}
+                  onViewDetail={() => navigate(`/marketplace/request/${req.id}`)}
                 />
               ))}
             </div>
@@ -2954,18 +2980,6 @@ export default function MarketplacePage() {
       {rfqTarget && <RFQModal listing={rfqTarget.listing} prefilledProduct={rfqTarget.productName} onClose={() => setRfqTarget(null)} />}
       {applyTarget && <ApplyModal listing={applyTarget} request={applyTarget._request || null} onClose={() => setApplyTarget(null)} onSuccess={(wsId) => setAppliedWorkspaceIds(prev => new Set([...prev, wsId]))} />}
       {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}
-      {reqDetail && (
-        <ProposalRequestDetailModal
-          req={reqDetail}
-          isOwn={isLoggedIn && reqDetail.workspace_id === workspaceId}
-          onClose={() => setReqDetail(null)}
-          onApply={() => {
-            setReqDetail(null);
-            if (isLoggedIn) setApplyTarget({ workspace_id: reqDetail.workspace_id, company_name: reqDetail.company_name, logo_data_url: reqDetail.company_logo, _request: reqDetail });
-            else setGateAction("apply");
-          }}
-        />
-      )}
 
       {/* Profile views modal */}
       {showViews && (

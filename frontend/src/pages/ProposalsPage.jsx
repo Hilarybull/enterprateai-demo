@@ -206,21 +206,6 @@ export function SettingsTab() {
       </div>
 
 
-      {!paid && (
-        <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/20">
-          <div className="flex items-start gap-3">
-            <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 9v4M12 17h.01" /><path d="M10.3 3.6l-8.7 15A2 2 0 0 0 3.3 21h17.4a2 2 0 0 0 1.7-3.4l-8.7-15a2 2 0 0 0-3.4 0Z" />
-            </svg>
-            <div>
-              <p className="text-[12px] font-semibold text-amber-700 dark:text-amber-300">Starter Insight plan required</p>
-              <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
-                Receiving and generating proposals requires a Starter Insight or higher plan. Saving settings is free.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {preferencesError && (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
@@ -1653,15 +1638,19 @@ function ProposalDetailModal({ proposal, role, onClose, onStatusChange }) {
       actions.push({ label: "Shortlist", status: "SHORTLISTED", cls: "bg-purple-600 hover:bg-purple-700" });
       actions.push({ label: "Request Clarification", status: "CLARIFICATION_REQUESTED", cls: "bg-amber-500 hover:bg-amber-600" });
       actions.push({ label: "Decline", status: "DECLINED", cls: "bg-red-500 hover:bg-red-600" });
+      actions.push({ label: "Undo (Back to Submitted)", status: "SUBMITTED", cls: "bg-slate-400 hover:bg-slate-500" });
     }
     if (proposal.status === "SHORTLISTED") {
       actions.push({ label: "Mark Preferred", status: "PREFERRED", cls: "bg-violet-600 hover:bg-violet-700" });
+      actions.push({ label: "Undo (Back to Under Review)", status: "UNDER_REVIEW", cls: "bg-slate-400 hover:bg-slate-500" });
     }
     if (proposal.status === "PREFERRED") {
       actions.push({ label: "Begin Negotiation", status: "NEGOTIATION", cls: "bg-fuchsia-600 hover:bg-fuchsia-700" });
+      actions.push({ label: "Undo (Back to Shortlisted)", status: "SHORTLISTED", cls: "bg-slate-400 hover:bg-slate-500" });
     }
     if (proposal.status === "NEGOTIATION") {
       actions.push({ label: "Award", status: "AWARDED", cls: "bg-emerald-600 hover:bg-emerald-700" });
+      actions.push({ label: "Undo (Back to Preferred)", status: "PREFERRED", cls: "bg-slate-400 hover:bg-slate-500" });
     }
   }
   if (role === "proposer") {
@@ -2045,6 +2034,21 @@ export function ActivityTab() {
           onStatusChange={() => { setSelected(null); fetchActivity(); }}
         />
       )}
+
+      <div className="mb-4 flex flex-wrap gap-3">
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 min-w-[120px]">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Total Submitted</p>
+          <p className="mt-0.5 text-[22px] font-bold text-slate-800 dark:text-slate-100">{activity.length}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 min-w-[120px]">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Active</p>
+          <p className="mt-0.5 text-[22px] font-bold text-blue-600">{activity.filter(p => ACTIVE_STATUSES.includes(p.status)).length}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 min-w-[120px]">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Awarded</p>
+          <p className="mt-0.5 text-[22px] font-bold text-emerald-600">{activity.filter(p => ["AWARDED","CONTRACT_DRAFTED","CONTRACTED"].includes(p.status)).length}</p>
+        </div>
+      </div>
 
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>

@@ -337,6 +337,7 @@ def html_to_pdf(html: str) -> bytes:
             self._is_th = False
             self._in_cover = False
             self._cover_divs = 0
+            self._div_as_block = False
 
         def _rl(self, s: str) -> str:
             s = re.sub(r"<strong>(.*?)</strong>", r"<b>\1</b>", s, flags=re.IGNORECASE | re.DOTALL)
@@ -388,6 +389,12 @@ def html_to_pdf(html: str) -> bytes:
                     self.flows.append(Spacer(1, 55 * mm))
                 elif self._in_cover:
                     self._cover_divs += 1
+                elif not self._block and "page-break" not in cls:
+                    # Contenteditable uses <div> as paragraph containers — treat as <p>
+                    self._block = "p"
+                    self._block_cls = cls
+                    self._buf = []
+                    self._div_as_block = True
                 return
             if tag in ("h1", "h2", "h3", "p"):
                 self._block = tag
@@ -444,10 +451,18 @@ def html_to_pdf(html: str) -> bytes:
                     self._in_ul = False
                     self._li_items = []
                 return
-            if tag == "div" and self._in_cover:
-                self._cover_divs -= 1
-                if self._cover_divs == 0:
-                    self._in_cover = False
+            if tag == "div":
+                if self._in_cover:
+                    self._cover_divs -= 1
+                    if self._cover_divs == 0:
+                        self._in_cover = False
+                elif self._div_as_block and self._block:
+                    text = self._rl("".join(self._buf).strip())
+                    self._emit_block(self._block, self._block_cls, text)
+                    self._block = None
+                    self._block_cls = ""
+                    self._buf = []
+                    self._div_as_block = False
                 return
             if self._block:
                 if tag in ("b", "strong"): self._buf.append("</b>")

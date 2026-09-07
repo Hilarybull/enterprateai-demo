@@ -26,6 +26,7 @@ from app.modules.marketplace.service import (
     get_profile_views,
     get_ratings,
     list_marketplace,
+    get_public_proposal_request,
     list_public_proposal_requests,
     list_rfqs,
     publish_workspace,
@@ -70,6 +71,11 @@ async def browse_proposal_requests(
     page_size: int = Query(default=50, ge=1, le=100),
 ):
     return await list_public_proposal_requests(search=search, page=page, page_size=page_size)
+
+
+@router.get("/proposal-requests/{request_id}")
+async def get_proposal_request(request_id: str):
+    return await get_public_proposal_request(request_id=request_id)
 
 
 @router.get("/listings/{workspace_id}", response_model=MarketplaceListingItem)

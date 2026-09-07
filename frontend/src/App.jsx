@@ -34,6 +34,7 @@ import AdminPage from "./pages/AdminPage";
 import PricingPage from "./pages/PricingPage";
 import PricingSuccessPage from "./pages/PricingSuccessPage";
 import MarketplacePage from "./pages/MarketplacePage";
+import ProposalRequestDetailPage from "./pages/ProposalRequestDetailPage";
 import AccountPage from "./pages/AccountPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
@@ -136,6 +137,7 @@ export default function App() {
         }
       />
       <Route path="/marketplace" element={<MarketplacePage />} />
+      <Route path="/marketplace/request/:requestId" element={<ProposalRequestDetailPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
     <DemoTour />
