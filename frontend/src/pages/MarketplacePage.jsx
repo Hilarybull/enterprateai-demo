@@ -2371,6 +2371,12 @@ export default function MarketplacePage() {
     if (tab === "profiles") return "profiles";
     return "products";
   });
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "requests" || searchParams.get("request")) setActiveTab("requests");
+    else if (tab === "profiles") setActiveTab("profiles");
+    else if (tab === "products") setActiveTab("products");
+  }, [searchParams]);
   const [listings, setListings] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -2853,7 +2859,7 @@ export default function MarketplacePage() {
                   isLoggedIn={isLoggedIn}
                   isOwn={isLoggedIn && req.workspace_id === workspaceId}
                   isApplied={appliedWorkspaceIds.has(req.workspace_id)}
-                  onApply={() => navigate(`/marketplace/request/${req.id}`)}
+                  onApply={() => setApplyTarget({ workspace_id: req.workspace_id, company_name: req.company_name, logo_data_url: req.company_logo, _request: req })}
                   onCompanyClick={() => apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {})}
                   onViewDetail={() => navigate(`/marketplace/request/${req.id}`)}
                 />
