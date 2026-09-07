@@ -1320,7 +1320,7 @@ function _htmlToPdfContent(html) {
   return out;
 }
 
-function ApplyModal({ listing, request, onClose, onSuccess }) {
+export function ApplyModal({ listing, request, onClose, onSuccess }) {
   const grad = avatarGradient(listing.company_name);
   const { submitProposal } = useProposalStore();
   const planKey = useAuthStore((s) => s.subscription?.plan_key ?? "explorer");

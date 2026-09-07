@@ -4,6 +4,7 @@ import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import logoUrl from "../enterprate-logo.png";
 import Spinner from "../components/Spinner";
+import { ApplyModal } from "./MarketplacePage";
 
 function fmt(str) {
   if (!str) return "";
@@ -94,6 +95,8 @@ export default function ProposalRequestDetailPage() {
   const [req, setReq] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [applyTarget, setApplyTarget] = useState(null); // { listing, request }
+  const [applyLoading, setApplyLoading] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -103,12 +106,22 @@ export default function ProposalRequestDetailPage() {
       .finally(() => setLoading(false));
   }, [requestId]);
 
-  function handleApply() {
+  async function handleApply() {
     if (!isLoggedIn) {
       navigate(`/login?next=/marketplace/request/${requestId}`);
       return;
     }
-    navigate(`/marketplace?request=${requestId}`);
+    if (!req) return;
+    setApplyLoading(true);
+    try {
+      const listing = await apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET");
+      setApplyTarget({ listing, request: req });
+    } catch {
+      // Fallback: navigate to marketplace apply flow
+      navigate(`/marketplace?request=${requestId}`);
+    } finally {
+      setApplyLoading(false);
+    }
   }
 
   const deadlinePassed = req?.deadline && new Date(req.deadline) < new Date();
@@ -153,6 +166,15 @@ export default function ProposalRequestDetailPage() {
           </div>
         </div>
       </header>
+
+      {applyTarget && (
+        <ApplyModal
+          listing={applyTarget.listing}
+          request={applyTarget.request}
+          onClose={() => setApplyTarget(null)}
+          onSuccess={() => setApplyTarget(null)}
+        />
+      )}
 
       {/* Content */}
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-8 sm:px-6">
@@ -306,14 +328,18 @@ export default function ProposalRequestDetailPage() {
               <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
                 <button
                   type="button"
-                  disabled={deadlinePassed}
+                  disabled={deadlinePassed || applyLoading}
                   onClick={handleApply}
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3.5 text-[14px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/>
-                    <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
-                  </svg>
-                  {deadlinePassed ? "Deadline Passed" : "Submit Proposal"}
+                  {applyLoading ? (
+                    <Spinner size={16} />
+                  ) : (
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/>
+                      <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
+                    </svg>
+                  )}
+                  {deadlinePassed ? "Deadline Passed" : applyLoading ? "Loading…" : "Submit Proposal"}
                 </button>
                 {!isLoggedIn && (
                   <p className="mt-2.5 text-center text-[11px] text-slate-500 dark:text-slate-400">
@@ -342,9 +368,9 @@ export default function ProposalRequestDetailPage() {
                     {req.company_country && <p className="text-[11px] text-slate-400 dark:text-slate-500">{req.company_country}</p>}
                   </div>
                 </div>
-                <button onClick={() => navigate(`/marketplace?workspace=${req.workspace_id}`)}
+                <button onClick={() => window.open(`/marketplace?workspace=${req.workspace_id}`, "_blank")}
                   className="mt-3 w-full rounded-xl border border-slate-200 py-2 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
-                  View Company Profile
+                  View Company Profile ↗
                 </button>
               </div>
             </div>
