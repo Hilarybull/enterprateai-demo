@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { useWorkspaceStore } from "../store/workspace";
 import logoUrl from "../enterprate-logo.png";
 import Spinner from "../components/Spinner";
-import { ApplyModal } from "./MarketplacePage";
+import { ApplyModal, BusinessProfileModal } from "./MarketplacePage";
 
 function fmt(str) {
   if (!str) return "";
@@ -90,13 +91,17 @@ export default function ProposalRequestDetailPage() {
   const { requestId } = useParams();
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
+  const userEmail = useAuthStore((s) => s.email);
   const isLoggedIn = Boolean(token);
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
   const [req, setReq] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [applyTarget, setApplyTarget] = useState(null); // { listing, request }
   const [applyLoading, setApplyLoading] = useState(false);
+  const [profileListing, setProfileListing] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -124,7 +129,21 @@ export default function ProposalRequestDetailPage() {
     }
   }
 
+  async function handleViewCompany() {
+    if (!req) return;
+    setProfileLoading(true);
+    try {
+      const listing = await apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET");
+      setProfileListing(listing);
+    } catch {
+      window.open(`/marketplace?workspace=${req.workspace_id}`, "_blank");
+    } finally {
+      setProfileLoading(false);
+    }
+  }
+
   const deadlinePassed = req?.deadline && new Date(req.deadline) < new Date();
+  const isOwn = isLoggedIn && req?.workspace_id === workspaceId;
   const reqs = req?.requirements || [];
   const acceptedModeLabel = Array.isArray(req?.accepted_modes)
     ? req.accepted_modes.map((m) => fmt(m)).join(", ")
@@ -173,6 +192,17 @@ export default function ProposalRequestDetailPage() {
           request={applyTarget.request}
           onClose={() => setApplyTarget(null)}
           onSuccess={() => setApplyTarget(null)}
+        />
+      )}
+      {profileListing && (
+        <BusinessProfileModal
+          listing={profileListing}
+          isLoggedIn={isLoggedIn}
+          userEmail={userEmail}
+          ownWorkspaceId={workspaceId}
+          onClose={() => setProfileListing(null)}
+          onNeedAuth={() => navigate("/login")}
+          onRequestQuote={() => {}}
         />
       )}
 
@@ -325,28 +355,35 @@ export default function ProposalRequestDetailPage() {
             {/* Sidebar */}
             <div className="space-y-4">
               {/* CTA */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
-                <button
-                  type="button"
-                  disabled={deadlinePassed || applyLoading}
-                  onClick={handleApply}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3.5 text-[14px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                  {applyLoading ? (
-                    <Spinner size={16} />
-                  ) : (
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/>
-                      <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
-                    </svg>
+              {isOwn ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-center dark:border-slate-700 dark:bg-slate-800">
+                  <p className="text-[13px] font-semibold text-slate-500 dark:text-slate-400">This is your request</p>
+                  <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">Manage it from your Business Operations dashboard.</p>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+                  <button
+                    type="button"
+                    disabled={deadlinePassed || applyLoading}
+                    onClick={handleApply}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3.5 text-[14px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    {applyLoading ? (
+                      <Spinner size={16} />
+                    ) : (
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/>
+                        <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
+                      </svg>
+                    )}
+                    {deadlinePassed ? "Deadline Passed" : applyLoading ? "Loading…" : "Submit Proposal"}
+                  </button>
+                  {!isLoggedIn && (
+                    <p className="mt-2.5 text-center text-[11px] text-slate-500 dark:text-slate-400">
+                      You'll need to sign in to submit.
+                    </p>
                   )}
-                  {deadlinePassed ? "Deadline Passed" : applyLoading ? "Loading…" : "Submit Proposal"}
-                </button>
-                {!isLoggedIn && (
-                  <p className="mt-2.5 text-center text-[11px] text-slate-500 dark:text-slate-400">
-                    You'll need to sign in to submit.
-                  </p>
-                )}
-              </div>
+                </div>
+              )}
 
               {/* Share panel */}
               <SharePanel req={req} />
@@ -368,10 +405,13 @@ export default function ProposalRequestDetailPage() {
                     {req.company_country && <p className="text-[11px] text-slate-400 dark:text-slate-500">{req.company_country}</p>}
                   </div>
                 </div>
-                <button onClick={() => window.open(`/marketplace?workspace=${req.workspace_id}`, "_blank")}
-                  className="mt-3 w-full rounded-xl border border-slate-200 py-2 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
-                  View Company Profile ↗
-                </button>
+                {!isOwn && (
+                  <button onClick={handleViewCompany} disabled={profileLoading}
+                    className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 py-2 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition disabled:opacity-60 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+                    {profileLoading && <Spinner size={12} />}
+                    View Company Profile
+                  </button>
+                )}
               </div>
             </div>
           </div>

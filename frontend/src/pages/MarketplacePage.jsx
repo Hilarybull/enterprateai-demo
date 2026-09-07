@@ -840,7 +840,7 @@ function DetailRow({ icon, label, value }) {
 
 // ─── business profile modal ───────────────────────────────────────────────────
 
-function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWorkspaceId, onNeedAuth, onRequestQuote }) {
+export function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWorkspaceId, onNeedAuth, onRequestQuote }) {
   const grad = avatarGradient(listing.company_name);
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
   const isOwnListing = isLoggedIn && ownWorkspaceId === listing.workspace_id;
