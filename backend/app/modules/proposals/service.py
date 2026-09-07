@@ -457,6 +457,9 @@ async def submit_proposal(user_id: str, workspace_id: str | None, payload: dict)
     if not recipient_ws_id:
         raise HTTPException(status_code=422, detail="recipient_workspace_id is required")
 
+    if proposer_id == recipient_ws_id:
+        raise HTTPException(status_code=400, detail="You cannot submit a proposal to your own business listing.")
+
     # Load recipient workspace
     rec_ws = await sb_select("workspaces", filters=[("id", "eq", recipient_ws_id)], single=True)
     if not rec_ws:
@@ -511,6 +514,11 @@ async def submit_proposal(user_id: str, workspace_id: str | None, payload: dict)
                     pass
             # Check submission cap
             cap = req.get("submission_cap")
+            if cap:
+                try:
+                    cap = int(cap)
+                except (TypeError, ValueError):
+                    cap = None
             if cap:
                 count = sum(1 for p in (rec_data.get("proposal_inbox") or []) if p.get("request_id") == request_id and p.get("status") not in ("WITHDRAWN", "DECLINED", "EXPIRED", "ARCHIVED"))
                 if count >= cap:

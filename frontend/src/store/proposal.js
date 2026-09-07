@@ -267,7 +267,13 @@ export const useProposalStore = create((set, get) => ({
       set((s) => ({ activity: [data, ...s.activity] }));
       return { ok: true, data };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : "Failed to submit proposal." };
+      const msg = e instanceof Error ? e.message : "";
+      const friendly = msg === "NETWORK_ERROR"
+        ? "Unable to reach the server. Please check your internet connection and try again."
+        : msg.startsWith("Request timed out")
+        ? "The request took too long. Please try again."
+        : msg.replace(/^HTTP \d+:\s*/, "") || "Failed to submit proposal.";
+      return { ok: false, error: friendly };
     }
   },
 

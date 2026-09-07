@@ -1331,6 +1331,7 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
   );
   const isPaid = ["starter_insight", "growth", "scale", "enterprise"].includes(planKey) || hasBlueprintGrant;
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+  const isOwnListing = workspaceId && listing.workspace_id === workspaceId;
   const navigate = useNavigate();
 
   // Detect return from Blueprint proposal generator
@@ -1566,7 +1567,11 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
         if (fd?.url) attachments.push({ url: fd.url, filename: fd.filename || file.name, mime: fd.mime || file.type, size: fd.size || file.size });
       } catch (uploadErr) {
         setSubmitting(false);
-        setError(`Document upload failed: ${uploadErr?.message || "unknown error"}. Please try again or remove the file and resubmit.`);
+        const uploadErrMsg = uploadErr?.message || "";
+        const uploadHuman = uploadErrMsg === "NETWORK_ERROR"
+          ? "Unable to reach the server — check your connection and try again, or remove the file to submit without it."
+          : `Document upload failed${uploadErrMsg ? `: ${uploadErrMsg.replace(/^HTTP \d+:\s*/, "")}` : ""}. Remove the file and resubmit, or try again.`;
+        setError(uploadHuman);
         return;
       }
     }
@@ -1598,8 +1603,23 @@ function ApplyModal({ listing, request, onClose, onSuccess }) {
       <div className="ea-dialog relative z-10 w-full max-w-lg overflow-hidden rounded-t-3xl sm:rounded-2xl" style={{ maxHeight: "95vh" }}>
         <div className={`h-1.5 w-full bg-gradient-to-r ${grad}`} />
 
-        {/* ── Success ── */}
-        {done ? (
+        {/* ── Own listing guard ── */}
+        {isOwnListing ? (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Can't submit to your own listing</h2>
+            <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">
+              This is your business profile. You can only submit proposals to other businesses on the marketplace.
+            </p>
+            <button onClick={onClose} className="mt-6 rounded-xl bg-slate-800 px-6 py-2.5 text-[13px] font-bold text-white hover:bg-slate-700 transition dark:bg-slate-700 dark:hover:bg-slate-600">
+              Got it
+            </button>
+          </div>
+
+        /* ── Success ── */
+        ) : done ? (
           <div className="px-6 py-10 text-center">
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
               <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>
