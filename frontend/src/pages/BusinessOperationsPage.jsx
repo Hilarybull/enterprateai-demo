@@ -656,7 +656,7 @@ function RecordDeliveryModal({ invoice, onRecord, onClose }) {
   );
 }
 
-function RecordModal({ mode, type, record, customers, catalogueProducts = [], allKnownCustomers, workspaceName, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode }) {
+function RecordModal({ mode, type, record, customers, catalogueProducts = [], allKnownCustomers, workspaceName, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType }) {
   const isView = mode === "view";
   const title = isView ? "View " : (mode === "edit" ? "Edit " : "New ");
   const typeLabel = receiptMode ? "Receipt" : type === "invoice" ? "Invoice" : type === "quote" ? "Quotation" : type === "expense" ? "Expense" : "Contract";
@@ -1457,7 +1457,7 @@ ${form.notes ? `<!-- NOTES -->
           </>)}
           {type === "contract" && (<>
             <Field label="Party Type">
-              {isView ? <div className="text-sm text-slate-900 capitalize">{form.party_type}</div> :
+              {isView || lockedPartyType ? <div className="text-sm text-slate-900 capitalize">{form.party_type}</div> :
                 <SelectInput value={form.party_type} onChange={set("party_type")} options={["customer", "vendor"]} />}
             </Field>
             <Field label={form.party_type === "vendor" ? "Vendor" : "Customer"}>
@@ -2067,11 +2067,11 @@ export default function BusinessOperationsPage() {
     }
   }
 
-  function openCreate(type) {
+  function openCreate(type, initialData = null) {
     const prefix = type === "invoice" ? "INV" : type === "quote" ? "QUO" : type === "expense" ? "EXP" : "CON";
     const existingList = type === "invoice" ? invoices : type === "quote" ? quotes : type === "expense" ? expenses : contracts;
     const nextRef = dayRef(prefix, Date.now(), existingList);
-    setRecordModal({ mode: "create", type, record: null, nextRef });
+    setRecordModal({ mode: "create", type, record: initialData, nextRef, lockedPartyType: initialData?.party_type || null });
   }
 
   function _withComputedRef(type, record) {
@@ -2121,6 +2121,54 @@ export default function BusinessOperationsPage() {
       setContracts(next);
       await persist({ invoices, quotes, expenses, contracts: next });
     }
+  }
+
+  async function convertQuoteToContract(quote) {
+    const now = new Date().toISOString();
+    const newContract = {
+      id: crypto.randomUUID(),
+      party_type: "customer",
+      party_name: quote.customer_name || quote.recipient || "",
+      description: quote.description || quote.title || "",
+      amount: quote.total_amount || quote.amount || 0,
+      status: "draft",
+      source: "Quotation",
+      quote_id: quote.id,
+      issued_at: now.slice(0, 10),
+      created_at: now,
+      updated_at: now,
+    };
+    newContract.reference = dayRef("CON", now, contracts);
+    const next = [...contracts, newContract];
+    setContracts(next);
+    await persist({ invoices, quotes, expenses, contracts: next });
+    setActiveTab("Contracts");
+    setContractSub("Customer Contracts");
+    openEdit("contract", newContract);
+  }
+
+  async function convertProposalToContract(proposal, requestTitle) {
+    const now = new Date().toISOString();
+    const newContract = {
+      id: crypto.randomUUID(),
+      party_type: "vendor",
+      party_name: proposal.proposer_name || proposal.company_name || "",
+      description: requestTitle || proposal.request_title || proposal.title || "",
+      amount: proposal.total_value || proposal.budget || 0,
+      status: "draft",
+      source: "Proposal",
+      proposal_id: proposal.id,
+      issued_at: now.slice(0, 10),
+      created_at: now,
+      updated_at: now,
+    };
+    newContract.reference = dayRef("CON", now, contracts);
+    const next = [...contracts, newContract];
+    setContracts(next);
+    await persist({ invoices, quotes, expenses, contracts: next });
+    setActiveTab("Contracts");
+    setContractSub("Vendor Contracts");
+    openEdit("contract", newContract);
   }
 
   async function convertQuoteToInvoice(quote) {
@@ -2232,7 +2280,10 @@ export default function BusinessOperationsPage() {
       else openCreate("quote");
     }} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> Create</button>,
     Procurement: <button type="button" onClick={() => { setProcSub("Proposal Requests"); setReqCreateTrigger(v => v + 1); }} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> New Request</button>,
-    Contracts: <button type="button" onClick={() => openCreate("contract")} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> Create Contract</button>,
+    Contracts: <button type="button" onClick={() => {
+      const partyType = contractSub === "Customer Contracts" ? "customer" : contractSub === "Vendor Contracts" ? "vendor" : null;
+      openCreate("contract", partyType ? { party_type: partyType } : null);
+    }} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> Create Contract</button>,
     Transactions: <button type="button" onClick={() => { if (txnSub === "Expenses") openCreate("expense"); else openCreate("invoice"); }} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition"><span className="text-lg leading-none">+</span> {txnSub === "Expenses" ? "New Expense" : "New Invoice"}</button>,
     Reports: <div className="flex gap-2 relative">
       <div className="relative">
@@ -2446,7 +2497,7 @@ export default function BusinessOperationsPage() {
                     Amount: formatMoney(Number(q.total_amount || q.amount || 0), q.currency),
                     Status: <StatusPill status={q.status || "Draft"} />,
                     Date: fmtDate(q.created_at || q.updated_at),
-                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
+                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }, { label: "Convert to Contract", onClick: () => convertQuoteToContract(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
                   }))}
                   emptyText="No quotations yet"
                 />
@@ -2672,7 +2723,7 @@ export default function BusinessOperationsPage() {
                     Vendor: p.proposer_name || p.company_name || "—",
                     Value: p.total_value != null ? fmtMoney(Number(p.total_value)) : (p.budget != null ? fmtMoney(Number(p.budget)) : "—"),
                     Awarded: fmtDate(p.awarded_at || p.updated_at),
-                    Action: <ActionMenu items={[{ label: "View Proposal", onClick: () => setProcSub("Inbox") }]} />,
+                    Action: <ActionMenu items={[{ label: "View Proposal", onClick: () => setProcSub("Inbox") }, { label: "Convert to Contract", onClick: () => convertProposalToContract(p, reqMap.get(p.request_id)?.title) }]} />,
                   }))}
                   emptyText="No awards yet. Award a contract from Procurement Inbox after negotiation."
                 />
@@ -3193,6 +3244,7 @@ export default function BusinessOperationsPage() {
           }
           nextRef={recordModal.nextRef}
           receiptMode={recordModal.receiptMode}
+          lockedPartyType={recordModal.lockedPartyType}
         />
       )}
 

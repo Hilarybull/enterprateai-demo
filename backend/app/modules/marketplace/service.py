@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from html import escape
 from uuid import uuid4
 
 from fastapi import HTTPException, status
 
 from app.modules.idea_validation.service import get_user_workspace, get_workspace
 from app.core.supabase import sb_select, sb_update, sb_upsert
+from app.shared.email.resend import send_email_via_resend
 
 
 async def _load_workspace(user_id: str, workspace_id: str | None):
@@ -554,7 +556,7 @@ async def approve_rfq(
         "cost_of_sales": cos_total,
         "total_amount": round(subtotal + cos_total, 2),
         "validity_days": validity_days,
-        "status": "draft",
+        "status": "sent",
         "rfq_id": rfq_id,
         "issued_at": now[:10],
         "created_at": now,
@@ -570,6 +572,38 @@ async def approve_rfq(
 
     merged = {**data, "financials": {**financials, "quotes": quotes, "rfq_requests": rfq_requests}}
     await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
+
+    # Notify the requester that their RFQ has been responded to with a quotation
+    try:
+        await send_email_via_resend(
+            to_email=rfq["customer_email"],
+            subject=f"Quotation received from {company_name}",
+            text_content=(
+                f"Hi {rfq.get('customer_name', 'there')},\n\n"
+                f"{company_name} has responded to your request for quotation.\n\n"
+                f"Quotation Reference: {quote['quotation_id']}\n"
+                f"Total: \xa3{quote['total_amount']:,.2f}\n"
+                f"Valid for: {validity_days} days\n\n"
+                "Please log in to your account to review the quotation details.\n"
+            ),
+            html_content=(
+                "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+                "line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+                f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;\">Quotation from {escape(company_name)}</h2>"
+                f"<p style=\"margin:0 0 12px;\">Hi {escape(rfq.get('customer_name', 'there'))},</p>"
+                f"<p style=\"margin:0 0 20px;\">{escape(company_name)} has responded to your request for quotation.</p>"
+                "<table style=\"width:100%;border-collapse:collapse;margin-bottom:20px;\">"
+                f"<tr><td style=\"padding:6px 0;color:#475569;\">Reference</td><td style=\"padding:6px 0;font-weight:600;\">{escape(quote['quotation_id'])}</td></tr>"
+                f"<tr><td style=\"padding:6px 0;color:#475569;\">Total</td><td style=\"padding:6px 0;font-weight:600;\">\xa3{quote['total_amount']:,.2f}</td></tr>"
+                f"<tr><td style=\"padding:6px 0;color:#475569;\">Valid for</td><td style=\"padding:6px 0;\">{validity_days} days</td></tr>"
+                "</table>"
+                "<p>Please log in to your account to review the quotation details.</p>"
+                "</div>"
+            ),
+            sender_name=company_name,
+        )
+    except Exception:
+        pass
 
     return {
         "rfq": rfq,

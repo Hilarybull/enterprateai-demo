@@ -90,6 +90,10 @@ async def save_preferences(user_id: str, workspace_id: str | None, payload: dict
     # Marketplace listing badge reads it directly.
     marketplace = dict(data.get("marketplace") or {})
     marketplace["open_for_proposals"] = bool(payload.get("enabled", False))
+    # Auto-publish workspace to marketplace when enabling proposals (if profile exists)
+    if bool(payload.get("enabled", False)) and data.get("workspace_profile") and not marketplace.get("is_active"):
+        marketplace["is_active"] = True
+        marketplace.setdefault("published_at", now)
     merged["marketplace"] = marketplace
     await _save_data(ws_id, user_id, merged)
     return merged["proposal_preferences"]

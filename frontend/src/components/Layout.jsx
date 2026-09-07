@@ -738,7 +738,7 @@ export default function Layout() {
     if (path.startsWith("/blueprint")) return "blueprint";
     if (path.startsWith("/simulation")) return "simulation";
     if (path.startsWith("/catalogue")) return "catalogue";
-    if (path.startsWith("/business-operations")) return "financials";
+    if (path.startsWith("/operations")) return "financials";
     if (path.startsWith("/registration")) return "registration";
     if (path.startsWith("/integrations")) return "integrations";
     if (path.startsWith("/reports")) return "reports";
@@ -1284,10 +1284,10 @@ export default function Layout() {
                       {notifications.length ? (
                         notifications.map((notif) => {
                           const destination = notif._notifType === "overdue"
-                            ? `/business-operations?tab=Sales&sub=Invoices`
+                            ? `/operations?tab=Sales&sub=Invoices`
                             : notif._notifType === "rfq"
-                            ? `/business-operations?tab=Sales&sub=Quotations`
-                            : `/business-operations?tab=Procurement&sub=Inbox`;
+                            ? `/operations?tab=Sales&sub=Quotations`
+                            : `/operations?tab=Procurement&sub=Inbox`;
                           return (
                             <button
                               key={`${notif._notifType}-${notif.id}`}
