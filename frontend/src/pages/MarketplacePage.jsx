@@ -1323,6 +1323,8 @@ function _htmlToPdfContent(html) {
 export function ApplyModal({ listing, request, onClose, onSuccess }) {
   const grad = avatarGradient(listing.company_name);
   const { submitProposal } = useProposalStore();
+  const token = useAuthStore((s) => s.token);
+  const isLoggedIn = Boolean(token);
   const planKey = useAuthStore((s) => s.subscription?.plan_key ?? "explorer");
   const platformGrants = useAuthStore((s) => s.platformGrants ?? []);
   const userEmail = useAuthStore((s) => s.user?.email || s.session?.user?.email || "");
@@ -1892,7 +1894,7 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
               <div>
                 <div className="mb-1.5 flex items-center justify-between">
                   <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-400">Cover Letter / Summary</label>
-                  {isPaid ? (
+                  {isLoggedIn ? (
                     <button type="button" onClick={handleGenerateAI} disabled={aiLoading}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-brand-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
                       {aiLoading ? <Spinner size={10} /> : (
@@ -1903,10 +1905,10 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
                       {aiLoading ? "Generating…" : "Generate with AI"}
                     </button>
                   ) : (
-                    <button type="button" onClick={() => alert("AI cover letter generation is available on Starter Insight and above. Upgrade your plan to unlock this feature.")}
-                      className="inline-flex items-center gap-1 rounded-lg bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-700 hover:bg-amber-100 transition dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400" title="Upgrade to Starter Insight to use AI generation">
+                    <button type="button" onClick={() => { onClose(); navigate(`/login?next=/marketplace/request/${request?.id || ""}`); }}
+                      className="inline-flex items-center gap-1 rounded-lg bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200 transition dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400" title="Sign in to use AI generation">
                       <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
-                      AI · Paid only
+                      Sign in to use AI
                     </button>
                   )}
                 </div>
@@ -1983,7 +1985,12 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
               className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
               Cancel
             </button>
-            {isPaid ? (
+            {!isLoggedIn ? (
+              <button type="button" onClick={() => { onClose(); navigate(`/login?next=/marketplace/request/${request?.id || ""}`); }}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 px-4 py-2.5 text-[13px] font-bold text-white hover:opacity-90 transition">
+                Sign In to Submit
+              </button>
+            ) : isPaid ? (
               <button type="submit" form="proposal-submit-form" disabled={submitting || !allMandatoryAnswered}
                 title={!allMandatoryAnswered ? "Respond to all required items above before submitting" : undefined}
                 className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
@@ -2846,7 +2853,7 @@ export default function MarketplacePage() {
                   isLoggedIn={isLoggedIn}
                   isOwn={isLoggedIn && req.workspace_id === workspaceId}
                   isApplied={appliedWorkspaceIds.has(req.workspace_id)}
-                  onApply={() => isLoggedIn ? setApplyTarget({ workspace_id: req.workspace_id, company_name: req.company_name, logo_data_url: req.company_logo, _request: req }) : setGateAction("apply")}
+                  onApply={() => navigate(`/marketplace/request/${req.id}`)}
                   onCompanyClick={() => apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {})}
                   onViewDetail={() => navigate(`/marketplace/request/${req.id}`)}
                 />

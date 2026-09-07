@@ -39,26 +39,25 @@ const REQ_FORMAT_META = {
 
 function SharePanel({ req }) {
   const [copied, setCopied] = useState(false);
+  const [liCopied, setLiCopied] = useState(false);
   const pageUrl = `${window.location.origin}/marketplace/request/${req.id}`;
 
-  const subject = encodeURIComponent(`Proposal Request: ${req.title} — ${req.company_name}`);
-  const emailBody = encodeURIComponent(
-    `Hi,\n\n${req.company_name} is looking for proposals:\n\n` +
-    `📌 ${req.title}\n` +
-    (req.description ? `${req.description}\n\n` : "\n") +
-    (req.budget_range ? `💰 Budget: ${req.budget_currency || "GBP"} ${req.budget_range}\n` : "") +
-    (req.deadline ? `📅 Deadline: ${new Date(req.deadline).toLocaleDateString()}\n` : "") +
-    `\nView & apply here:\n${pageUrl}`
-  );
+  const shareTitle = `${req.company_name} is looking for proposals: "${req.title}"`;
+  const shareText =
+    `${shareTitle}` +
+    (req.budget_range ? ` — Budget: ${req.budget_currency || "GBP"} ${req.budget_range}` : "") +
+    `. Apply now: ${pageUrl}`;
+
   const tweetText = encodeURIComponent(
-    `📢 ${req.company_name} is seeking proposals for "${req.title}"${req.budget_range ? ` — Budget: ${req.budget_currency || "GBP"} ${req.budget_range}` : ""}. Apply now:`
+    `${req.company_name} is seeking proposals for "${req.title}"` +
+    (req.budget_range ? ` — Budget: ${req.budget_currency || "GBP"} ${req.budget_range}` : "") +
+    `. Apply now:`
   );
   const waText = encodeURIComponent(
-    `*${req.title}*\n${req.company_name} is looking for proposals.\n\n` +
-    (req.description ? `${req.description}\n\n` : "") +
+    `*${req.title}* — ${req.company_name} is looking for proposals.\n` +
+    (req.budget_range ? `Budget: ${req.budget_currency || "GBP"} ${req.budget_range}\n` : "") +
     `Apply here: ${pageUrl}`
   );
-  const linkedInUrl = encodeURIComponent(pageUrl);
 
   function copyLink() {
     navigator.clipboard?.writeText(pageUrl).catch(() => {});
@@ -66,62 +65,79 @@ function SharePanel({ req }) {
     setTimeout(() => setCopied(false), 2500);
   }
 
-  const channels = [
-    {
-      label: "Email",
-      href: `mailto:?subject=${subject}&body=${emailBody}`,
-      icon: (
-        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/>
-        </svg>
-      ),
-      cls: "bg-slate-700 hover:bg-slate-800 text-white",
-    },
-    {
-      label: "WhatsApp",
-      href: `https://wa.me/?text=${waText}`,
-      icon: (
-        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
-          <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.118 1.524 5.855L.057 23.547a.5.5 0 0 0 .609.61l5.805-1.53A11.94 11.94 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.907 0-3.693-.516-5.222-1.415l-.374-.222-3.878 1.022 1.01-3.784-.241-.386A9.96 9.96 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
-        </svg>
-      ),
-      cls: "bg-[#25D366] hover:bg-[#20b858] text-white",
-    },
-    {
-      label: "X / Twitter",
-      href: `https://twitter.com/intent/tweet?text=${tweetText}&url=${encodeURIComponent(pageUrl)}`,
-      icon: (
-        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-        </svg>
-      ),
-      cls: "bg-black hover:bg-slate-800 text-white dark:bg-slate-800 dark:hover:bg-slate-700",
-    },
-    {
-      label: "LinkedIn",
-      href: `https://www.linkedin.com/sharing/share-offsite/?url=${linkedInUrl}`,
-      icon: (
-        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
-        </svg>
-      ),
-      cls: "bg-[#0A66C2] hover:bg-[#0958a8] text-white",
-    },
-  ];
+  function handleEmail() {
+    if (navigator.share) {
+      navigator.share({ title: shareTitle, text: shareText, url: pageUrl }).catch(() => {});
+    } else {
+      const subject = encodeURIComponent(`Proposal Request: ${req.title} — ${req.company_name}`);
+      const body = encodeURIComponent(
+        `${req.company_name} is looking for proposals:\n\n` +
+        `"${req.title}"\n` +
+        (req.budget_range ? `Budget: ${req.budget_currency || "GBP"} ${req.budget_range}\n` : "") +
+        `\nApply here: ${pageUrl}`
+      );
+      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    }
+  }
+
+  function handleLinkedIn() {
+    // LinkedIn share-offsite doesn't pre-fill text for non-partner apps.
+    // Copy the post text so user can paste it in.
+    navigator.clipboard?.writeText(shareText).catch(() => {});
+    setLiCopied(true);
+    setTimeout(() => setLiCopied(false), 4000);
+    window.open("https://www.linkedin.com/post/new", "_blank", "noreferrer");
+  }
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
       <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Share this request</p>
+
       <div className="grid grid-cols-2 gap-2">
-        {channels.map((ch) => (
-          <a key={ch.label} href={ch.href} target="_blank" rel="noreferrer"
-            className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-[12px] font-semibold transition ${ch.cls}`}>
-            {ch.icon}
-            {ch.label}
-          </a>
-        ))}
+        {/* Email / Native share */}
+        <button onClick={handleEmail}
+          className="flex items-center justify-center gap-2 rounded-xl bg-slate-700 py-2.5 text-[12px] font-semibold text-white hover:bg-slate-800 transition">
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/>
+          </svg>
+          Email
+        </button>
+
+        {/* WhatsApp */}
+        <a href={`https://wa.me/?text=${waText}`} target="_blank" rel="noreferrer"
+          className="flex items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-[12px] font-semibold text-white hover:bg-[#20b858] transition">
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+            <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.118 1.524 5.855L.057 23.547a.5.5 0 0 0 .609.61l5.805-1.53A11.94 11.94 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.907 0-3.693-.516-5.222-1.415l-.374-.222-3.878 1.022 1.01-3.784-.241-.386A9.96 9.96 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
+          </svg>
+          WhatsApp
+        </a>
+
+        {/* X / Twitter */}
+        <a href={`https://twitter.com/intent/tweet?text=${tweetText}&url=${encodeURIComponent(pageUrl)}`} target="_blank" rel="noreferrer"
+          className="flex items-center justify-center gap-2 rounded-xl bg-black py-2.5 text-[12px] font-semibold text-white hover:bg-slate-800 transition dark:bg-slate-800 dark:hover:bg-slate-700">
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+          </svg>
+          X / Twitter
+        </a>
+
+        {/* LinkedIn — copies text then opens composer */}
+        <button onClick={handleLinkedIn}
+          className="relative flex items-center justify-center gap-2 rounded-xl bg-[#0A66C2] py-2.5 text-[12px] font-semibold text-white hover:bg-[#0958a8] transition">
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+          </svg>
+          LinkedIn
+        </button>
       </div>
+
+      {liCopied && (
+        <p className="mt-2 text-center text-[11px] text-emerald-600 dark:text-emerald-400">
+          Post text copied — paste it in LinkedIn
+        </p>
+      )}
+
       <button onClick={copyLink}
         className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 py-2.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
         {copied ? (
@@ -160,17 +176,12 @@ export default function ProposalRequestDetailPage() {
   }, [requestId]);
 
   async function handleApply() {
-    if (!isLoggedIn) {
-      navigate(`/login?next=/marketplace/request/${requestId}`);
-      return;
-    }
     if (!req) return;
     setApplyLoading(true);
     try {
       const listing = await apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET");
       setApplyTarget({ listing, request: req });
     } catch {
-      // Fallback: navigate to marketplace apply flow
       navigate(`/marketplace?request=${requestId}`);
     } finally {
       setApplyLoading(false);
@@ -425,11 +436,6 @@ export default function ProposalRequestDetailPage() {
                     )}
                     {deadlinePassed ? "Deadline Passed" : applyLoading ? "Loading…" : "Submit Proposal"}
                   </button>
-                  {!isLoggedIn && (
-                    <p className="mt-2.5 text-center text-[11px] text-slate-500 dark:text-slate-400">
-                      You'll need to sign in to submit.
-                    </p>
-                  )}
                 </div>
               )}
 
