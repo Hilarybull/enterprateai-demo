@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timezone
 from uuid import uuid4
@@ -795,20 +796,30 @@ async def generate_cover_letter(*, user_id: str, payload: CoverLetterIn) -> str:
             + (f"\nRequest details: {payload.request_description}" if payload.request_description else "")
             + "\n\nWrite the cover letter now."
         )
-        result = await llm.generate_text(system=system, prompt=prompt, feature="proposals.cover_letter")
+        result = await asyncio.wait_for(
+            llm.generate_text(system=system, prompt=prompt, feature="proposals.cover_letter"),
+            timeout=45,
+        )
     return _clean_ai_text(getattr(result, "text", "") or "")
 
 
 async def generate_description(*, user_id: str, title: str) -> str:
-    """Not credit-gated. Returns "" on any failure — never raises."""
+    """Not credit-gated. Returns "" on any failure — never raises, never hangs.
+
+    A slow LLM provider must not hold the request open until the platform proxy
+    (Render) times it out with a 503, so the call is capped with a hard timeout.
+    """
+    system = (
+        "You help a business describe what they are looking for in a proposal request. "
+        "Return 2 to 4 sentences of plain prose. No markdown, no placeholders, no em dashes."
+    )
+    prompt = f"Proposal request title: {title}\n\nWrite a short description of what the requester is looking for."
     try:
         llm = await pick_llm_for_user(user_id)
-        system = (
-            "You help a business describe what they are looking for in a proposal request. "
-            "Return 2 to 4 sentences of plain prose. No markdown, no placeholders, no em dashes."
+        result = await asyncio.wait_for(
+            llm.generate_text(system=system, prompt=prompt, feature="proposals.description"),
+            timeout=25,
         )
-        prompt = f"Proposal request title: {title}\n\nWrite a short description of what the requester is looking for."
-        result = await llm.generate_text(system=system, prompt=prompt, feature="proposals.description")
         return _clean_ai_text(getattr(result, "text", "") or "")
     except Exception as exc:
         logger.info("proposal description generation failed: %s", exc)

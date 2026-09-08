@@ -459,7 +459,7 @@ function ProductCard({ product, onOpen, onRequestQuote, onCompanyClick, isOwn })
 
 // ─── business card ────────────────────────────────────────────────────────────
 
-function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
+function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick, onApproach }) {
   const grad = avatarGradient(listing.company_name);
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
   return (
@@ -538,6 +538,15 @@ function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
               <span className="text-[11px] font-semibold text-brand-600 group-hover:text-brand-700 dark:text-brand-400">View Profile →</span>
             )}
           </div>
+          {!isOwn && listing.is_open_to_proposals && onApproach ? (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onApproach(listing); }}
+              className="w-full rounded-xl border border-brand-300 bg-white px-3 py-1.5 text-[12px] font-semibold text-brand-700 transition hover:bg-brand-50 dark:border-brand-700 dark:bg-slate-900 dark:text-brand-300 dark:hover:bg-brand-900/20"
+            >
+              Send a proposal
+            </button>
+          ) : null}
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0 text-[11px] text-slate-500 dark:text-slate-400">
               {listing.phone_number ? (
@@ -1753,7 +1762,8 @@ export default function MarketplacePage() {
                   const isOwn = isLoggedIn && myStatus?.is_published && l.workspace_id === (myStatus?.workspace_id || workspaceId);
                   return (
                     <BusinessCard key={l.workspace_id} listing={l} onClick={setSelected} isOwn={isOwn}
-                      viewCount={isOwn ? profileViews?.total : null} onViewsClick={() => setShowViews(true)} />
+                      viewCount={isOwn ? profileViews?.total : null} onViewsClick={() => setShowViews(true)}
+                      onApproach={(listing) => setApproachTarget(listing)} />
                   );
                 })}
               </div>

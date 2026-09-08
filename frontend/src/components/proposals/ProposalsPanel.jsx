@@ -389,6 +389,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
   const [form, setForm] = useState(() => ({ ...EMPTY_REQUEST, ...(initial || {}), requirements: (initial?.requirements || []).map((r) => ({ ...r })) }));
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
+  const [aiNote, setAiNote] = useState(null);
   const [error, setError] = useState(null);
   const editing = !!initial?.id;
 
@@ -397,10 +398,19 @@ function RequestForm({ initial, onSaved, onCancel }) {
   async function generateDescription() {
     if (!form.title.trim()) { setError("Add a title first."); return; }
     setAiBusy(true);
+    setAiNote(null);
     try {
       const { description } = await apiRequest("/proposals/generate-description", "POST", { title: form.title.trim() });
-      if (description) set({ description });
-    } catch { /* non-blocking */ } finally { setAiBusy(false); }
+      if (description && description.trim()) {
+        set({ description });
+      } else {
+        setAiNote("Couldn't generate a description right now — write one below.");
+      }
+    } catch {
+      setAiNote("Couldn't generate a description right now — write one below.");
+    } finally {
+      setAiBusy(false);
+    }
   }
 
   async function save() {
@@ -447,6 +457,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
             </button>
           </div>
           <textarea rows={4} className="ea-input" value={form.description} onChange={(e) => set({ description: e.target.value })} placeholder="What you need, context, and how proposals will be judged." />
+          {aiNote ? <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">{aiNote}</div> : null}
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
@@ -541,6 +552,8 @@ function RequestsTab({ openNewNonce = 0 }) {
   const [inviteEmails, setInviteEmails] = useState("");
   const [inviteResult, setInviteResult] = useState(null);
   const [rowError, setRowError] = useState(null);
+  const [busyRow, setBusyRow] = useState(null); // { id, action }
+  const [copiedId, setCopiedId] = useState(null);
   const origin = typeof window !== "undefined" ? window.location.origin : "";
 
   useEffect(() => { fetchRequests(); }, []); // eslint-disable-line
@@ -548,8 +561,16 @@ function RequestsTab({ openNewNonce = 0 }) {
 
   async function act(id, action) {
     setRowError(null);
+    setBusyRow({ id, action });
     try { await requestAction(id, action); }
     catch (e) { setRowError(errText(e)); }
+    finally { setBusyRow(null); }
+  }
+
+  function copyLink(id) {
+    navigator.clipboard?.writeText(`${origin}/marketplace/request/${id}`).catch(() => {});
+    setCopiedId(id);
+    setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1600);
   }
 
   if (editing) {
@@ -587,27 +608,41 @@ function RequestsTab({ openNewNonce = 0 }) {
                   {r.submission_cap ? ` · cap ${r.submission_cap}` : ""}
                 </div>
               </div>
-              <div className="flex shrink-0 flex-wrap gap-1.5">
-                {r.status === "DRAFT" ? (
-                  <>
-                    <Button size="sm" variant="ghost" onClick={() => setEditing(r)}>Edit</Button>
-                    <Button size="sm" onClick={() => act(r.id, "publish")}>Publish</Button>
-                  </>
-                ) : null}
-                {r.status === "PUBLISHED" ? (
-                  <>
-                    <Button size="sm" variant="ghost" onClick={() => { navigator.clipboard?.writeText(`${origin}/marketplace/request/${r.id}`); }}>Copy link</Button>
-                    <Button size="sm" variant="ghost" onClick={() => { setInviteFor(r); setInviteEmails(""); setInviteResult(null); }}>Invite</Button>
-                    <Button size="sm" variant="secondary" onClick={() => act(r.id, "close")}>Close</Button>
-                  </>
-                ) : null}
-                {r.status === "CLOSED" ? (
-                  <Button size="sm" onClick={() => act(r.id, "reopen")}>Reopen</Button>
-                ) : null}
-                {r.status !== "PUBLISHED" ? (
-                  <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(r)}>Delete</Button>
-                ) : null}
-              </div>
+              {(() => {
+                const rowBusy = busyRow?.id === r.id;
+                const spin = <Spinner size={13} />;
+                return (
+                  <div className="flex shrink-0 flex-wrap gap-1.5">
+                    {r.status === "DRAFT" ? (
+                      <>
+                        <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => setEditing(r)}>Edit</Button>
+                        <Button size="sm" disabled={rowBusy} onClick={() => act(r.id, "publish")}>
+                          {rowBusy && busyRow.action === "publish" ? spin : "Publish"}
+                        </Button>
+                      </>
+                    ) : null}
+                    {r.status === "PUBLISHED" ? (
+                      <>
+                        <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => copyLink(r.id)}>
+                          {copiedId === r.id ? "Copied ✓" : "Copy link"}
+                        </Button>
+                        <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => { setInviteFor(r); setInviteEmails(""); setInviteResult(null); }}>Invite</Button>
+                        <Button size="sm" variant="secondary" disabled={rowBusy} onClick={() => act(r.id, "close")}>
+                          {rowBusy && busyRow.action === "close" ? spin : "Close"}
+                        </Button>
+                      </>
+                    ) : null}
+                    {r.status === "CLOSED" ? (
+                      <Button size="sm" disabled={rowBusy} onClick={() => act(r.id, "reopen")}>
+                        {rowBusy && busyRow.action === "reopen" ? spin : "Reopen"}
+                      </Button>
+                    ) : null}
+                    {r.status !== "PUBLISHED" ? (
+                      <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => setConfirmDelete(r)}>Delete</Button>
+                    ) : null}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         ))
@@ -649,7 +684,12 @@ function RequestsTab({ openNewNonce = 0 }) {
           message="Permanently delete this request? Submissions already received are kept."
           confirmLabel="Delete"
           danger
-          onConfirm={async () => { await deleteRequest(confirmDelete.id); setConfirmDelete(null); }}
+          onConfirm={() => {
+            const id = confirmDelete.id;
+            setConfirmDelete(null); // close immediately — deleteRequest is optimistic
+            setRowError(null);
+            deleteRequest(id).catch((e) => setRowError(errText(e)));
+          }}
           onCancel={() => setConfirmDelete(null)}
         />
       ) : null}
