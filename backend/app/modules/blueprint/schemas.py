@@ -1,10 +1,37 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, TypeAdapter, field_validator, model_validator
 
+_EMAIL_ADAPTER = TypeAdapter(EmailStr)
+
+
+def normalize_recipient_emails(value: Optional[str]) -> Optional[str]:
+    """Accept one or more email addresses separated by comma/semicolon/whitespace.
+
+    Returns a comma-joined, de-duplicated string (order preserved) or None.
+    Raises ValueError naming the first address that fails validation.
+    """
+    if value is None:
+        return None
+    parts = [p.strip() for p in re.split(r"[,;\s]+", str(value)) if p.strip()]
+    if not parts:
+        return None
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        try:
+            valid = _EMAIL_ADAPTER.validate_python(part)
+        except Exception as exc:  # noqa: BLE001 - surface a clean message
+            raise ValueError(f"Invalid email address: {part}") from exc
+        key = valid.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(valid)
+    return ",".join(out)
 
 
 BlueprintType = Literal[
@@ -116,8 +143,17 @@ class BlueprintShareLinkResponse(BaseModel):
 
 
 class BlueprintShareEmailRequest(BaseModel):
-    email: EmailStr
+    # One or more recipients (comma/semicolon/space separated).
+    email: str
     sender_email: Optional[EmailStr] = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _normalize_email(cls, v):
+        normalized = normalize_recipient_emails(v)
+        if not normalized:
+            raise ValueError("At least one recipient email is required")
+        return normalized
 
 
 class BlueprintShareEmailResponse(BaseModel):
@@ -149,7 +185,8 @@ class BlueprintShareCreateRequest(BaseModel):
 
 class BlueprintFinancialShareRequest(BaseModel):
     access_mode: str = "link"
-    email: Optional[EmailStr] = None
+    # One or more recipients (comma/semicolon/space separated); optional.
+    email: Optional[str] = None
     sender_email: Optional[EmailStr] = None
     # 0 (or omitted) means the link never expires.
     expires_in_days: int = Field(default=0, ge=0, le=3650)
@@ -162,6 +199,12 @@ class BlueprintFinancialShareRequest(BaseModel):
     pricing_model: Optional[str] = Field(default=None, max_length=40)
     document_markdown: str = Field(min_length=1)
     document_html: Optional[str] = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _normalize_email(cls, v):
+        # Accepts one or more comma/semicolon/space separated addresses.
+        return normalize_recipient_emails(v)
 
     @model_validator(mode="after")
     def validate_access_mode(self):

@@ -56,6 +56,43 @@ def _shared_document_url(token: str, *, viewer_email: str | None = None) -> str:
     return url
 
 
+def _split_recipients(value: str | None) -> list[str]:
+    return [part.strip() for part in str(value or "").split(",") if part.strip()]
+
+
+async def _send_share_email_to_recipients(
+    *,
+    recipients: list[str],
+    sender_email: str,
+    token: str,
+    document_title: str,
+    company_name: str,
+    expires_in_days: int | None,
+    document_type: str,
+) -> tuple[bool, str | None]:
+    """Deliver the share link to every recipient. Returns (any_sent, combined_error)."""
+    any_sent = False
+    errors: list[str] = []
+    for recipient in recipients:
+        try:
+            delivery = await send_document_share_email(
+                to_email=recipient,
+                sender_email=sender_email,
+                share_url=_shared_document_url(token, viewer_email=recipient),
+                document_title=document_title,
+                company_name=company_name,
+                expires_in_days=expires_in_days,
+                document_type=document_type,
+            )
+            if delivery.sent:
+                any_sent = True
+            elif delivery.error:
+                errors.append(f"{recipient}: {delivery.error}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{recipient}: {exc}")
+    return any_sent, ("; ".join(errors) or None)
+
+
 def _remaining_expiry_days(expires_at: str | None) -> int | None:
     if not expires_at:
         return None  # no expiry
@@ -254,9 +291,13 @@ async def blueprint_financial_documents_share(
     # recipient's email — the address is only used to deliver the link. Interactive
     # workflow shares (quotation acceptance, RFQ rejection) keep the email restriction.
     _doc_type = str(payload.type or "")
-    _lock_to_email = payload.email
+    _recipients = _split_recipients(payload.email)
+    # Plain financial docs are never locked. Workflow shares (quotation acceptance /
+    # RFQ rejection) still lock, but only ever have a single recipient.
     if _doc_type in {"invoice_template", "sales_quotation", "receipt"}:
         _lock_to_email = None
+    else:
+        _lock_to_email = _recipients[0] if _recipients else None
     token = await create_share_token(
         user_id=user["id"],
         document_id=document_id,
@@ -267,23 +308,16 @@ async def blueprint_financial_documents_share(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     email_sent = False
     email_error = None
-    if payload.email:
-        try:
-            sender_email = str(payload.sender_email or user["email"]).strip()
-            delivery = await send_document_share_email(
-                to_email=payload.email,
-                sender_email=sender_email,
-                share_url=_shared_document_url(token, viewer_email=payload.email),
-                document_title=payload.title,
-                company_name=payload.company_name,
-                expires_in_days=payload.expires_in_days,
-                document_type=payload.type,
-            )
-            email_sent = delivery.sent
-            email_error = delivery.error
-        except Exception as exc:
-            email_sent = False
-            email_error = str(exc)
+    if _recipients:
+        email_sent, email_error = await _send_share_email_to_recipients(
+            recipients=_recipients,
+            sender_email=str(payload.sender_email or user["email"]).strip(),
+            token=token,
+            document_title=payload.title,
+            company_name=payload.company_name,
+            expires_in_days=payload.expires_in_days,
+            document_type=payload.type,
+        )
     return BlueprintFinancialShareResponse(
         token=token,
         document_id=document_id,
@@ -323,16 +357,16 @@ async def blueprint_share_send_email(
 
     # Sending a share link by email is a plain transactional email and is not
     # credit-gated (mirrors financial-documents/share, which emails the link for free).
-    delivery = await send_document_share_email(
-        to_email=str(payload.email),
+    sent, error = await _send_share_email_to_recipients(
+        recipients=_split_recipients(payload.email),
         sender_email=str(payload.sender_email or user["email"]).strip(),
-        share_url=_shared_document_url(token, viewer_email=str(payload.email)),
+        token=token,
         document_title=str(doc.get("title") or "Shared document"),
         company_name=str(doc.get("company_name") or get_settings().app_name),
         expires_in_days=_remaining_expiry_days(share.get("expires_at")),
         document_type=str(doc.get("type") or "document"),
     )
-    return BlueprintShareEmailResponse(sent=delivery.sent, error=delivery.error)
+    return BlueprintShareEmailResponse(sent=sent, error=error)
 
 
 @router.get("/share/{token}", response_model=BlueprintSharedDocument)
