@@ -5,6 +5,7 @@ import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 import Spinner from "../components/Spinner";
 import logoUrl from "../enterprate-logo.png";
+import ApplyModal from "../components/proposals/ApplyModal";
 import { useDemoTour } from "../context/DemoTourContext";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -496,6 +497,9 @@ function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
           {listing.business_type && (
             <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-400">{fmt(listing.business_type)}</span>
           )}
+          {listing.is_open_to_proposals && (
+            <span className="rounded-lg bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800">Open to proposals</span>
+          )}
         </div>
 
         <p className="mt-3 line-clamp-3 text-[12px] leading-relaxed text-slate-600 dark:text-slate-400">{listing.about_company}</p>
@@ -817,7 +821,7 @@ function DetailRow({ icon, label, value }) {
 
 // ─── business profile modal ───────────────────────────────────────────────────
 
-function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWorkspaceId, onNeedAuth, onRequestQuote }) {
+function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWorkspaceId, onNeedAuth, onRequestQuote, onApproachProposal }) {
   const grad = avatarGradient(listing.company_name);
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
   const isOwnListing = isLoggedIn && ownWorkspaceId === listing.workspace_id;
@@ -1121,6 +1125,23 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
             </div>
           )}
 
+          {/* Approach for a proposal */}
+          {!isOwnListing && listing.is_open_to_proposals && (
+            <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-[13px] font-bold text-slate-800 dark:text-slate-200">Open to proposals</div>
+                  <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">Send {listing.company_name} an unsolicited proposal, even without an open request.</div>
+                </div>
+                <button onClick={() => onApproachProposal(listing)}
+                  className="shrink-0 inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white px-4 py-2 text-[12px] font-semibold text-brand-700 hover:bg-brand-50 transition dark:border-brand-700 dark:bg-slate-900 dark:text-brand-300 dark:hover:bg-brand-900/20">
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
+                  Approach for a proposal
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Ratings */}
           <div className="mt-6 border-t border-slate-100 dark:border-slate-800 pt-5">
             <h4 className="mb-4 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Ratings &amp; Reviews</h4>
@@ -1234,6 +1255,7 @@ export default function MarketplacePage() {
   const [selected, setSelected] = useState(null);
   const [gateAction, setGateAction] = useState(null);
   const [rfqTarget, setRfqTarget] = useState(null);
+  const [approachTarget, setApproachTarget] = useState(null);
   const [serviceDetail, setServiceDetail] = useState(null); // { service, listing }
 
   const PAGE_SIZE = 24;
@@ -1449,6 +1471,23 @@ export default function MarketplacePage() {
 
       {/* Main content */}
       <div className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
+        {/* Proposal requests entry point */}
+        <button
+          onClick={() => navigate("/marketplace/requests")}
+          className="mb-5 flex w-full items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-left transition hover:border-brand-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900"
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-900/50 dark:text-brand-400">
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M9 15h6M9 11h4" /></svg>
+            </div>
+            <div>
+              <div className="text-[13px] font-bold text-slate-800 dark:text-slate-200">Open proposal requests</div>
+              <div className="text-[12px] text-slate-500 dark:text-slate-400">Browse briefs from businesses looking for proposals, and apply.</div>
+            </div>
+          </div>
+          <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
+        </button>
+
         {/* Publish banner */}
         {isLoggedIn && myStatus && !myStatus.is_published && (
           <div className="mb-5 flex items-center justify-between gap-4 rounded-2xl border border-brand-200 bg-gradient-to-r from-brand-50 to-accent-50 px-5 py-4 dark:border-brand-800 dark:from-brand-900/20 dark:to-accent-900/20">
@@ -1700,13 +1739,22 @@ export default function MarketplacePage() {
           userEmail={userEmail}
         />
       )}
-      {selected && !rfqTarget && (
+      {selected && !rfqTarget && !approachTarget && (
         <BusinessProfileModal listing={selected} onClose={() => setSelected(null)} isLoggedIn={isLoggedIn}
           userEmail={userEmail} ownWorkspaceId={myStatus?.workspace_id || workspaceId}
           onNeedAuth={(action) => { setSelected(null); setGateAction(action); }}
-          onRequestQuote={(listing) => setRfqTarget({ listing, productName: null })} />
+          onRequestQuote={(listing) => setRfqTarget({ listing, productName: null })}
+          onApproachProposal={(listing) => setApproachTarget(listing)} />
       )}
       {rfqTarget && <RFQModal listing={rfqTarget.listing} prefilledProduct={rfqTarget.productName} onClose={() => setRfqTarget(null)} />}
+      {approachTarget && (
+        <ApplyModal
+          recipientWorkspaceId={approachTarget.workspace_id}
+          recipientName={approachTarget.company_name}
+          onClose={() => { setApproachTarget(null); setSelected(null); }}
+          onSubmitted={() => {}}
+        />
+      )}
       {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}
 
       {/* Profile views modal */}

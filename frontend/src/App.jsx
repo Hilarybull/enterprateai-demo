@@ -26,6 +26,8 @@ import BusinessPlanPage from "./pages/LivePlanPage";
 import RegistrationPage from "./pages/RegistrationPage";
 import CataloguePage from "./pages/CataloguePage";
 import FinancialsPage from "./pages/FinancialsPage";
+import ProposalRequestDetailPage from "./pages/ProposalRequestDetailPage";
+import ProposalRequestsPage from "./pages/ProposalRequestsPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import SharedBlueprintPage from "./pages/SharedBlueprintPage";
 import TeamPage from "./pages/TeamPage";
@@ -134,6 +136,8 @@ export default function App() {
         }
       />
       <Route path="/marketplace" element={<MarketplacePage />} />
+      <Route path="/marketplace/requests" element={<ProposalRequestsPage />} />
+      <Route path="/marketplace/request/:requestId" element={<ProposalRequestDetailPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
     <DemoTour />

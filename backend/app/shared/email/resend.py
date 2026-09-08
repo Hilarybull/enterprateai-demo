@@ -315,3 +315,75 @@ async def send_document_share_email(
         sender_name=sender_label,
         reply_to_email=sender_email,
     )
+
+
+async def send_proposal_invite_email(
+    *,
+    to_email: str,
+    sender_name: str,
+    request_title: str,
+    invite_url: str,
+) -> EmailDeliveryResult:
+    app_name = get_settings().app_name
+    subject = f"{sender_name} invited you to submit a proposal"
+    text_content = (
+        f"{sender_name} has invited you to submit a proposal for \"{request_title}\" via {app_name}.\n\n"
+        f"View the request and apply:\n{invite_url}"
+        + _FOOTER_TEXT
+    )
+    html_content = (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+        "line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+        "<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;\">You've been invited to submit a proposal</h2>"
+        f"<p style=\"margin:0 0 12px;\"><strong>{escape(sender_name)}</strong> invited you to submit a proposal for "
+        f"<strong>{escape(request_title)}</strong> via {escape(app_name)}.</p>"
+        f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(invite_url)}\" "
+        "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
+        "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">View request</a></p>"
+        + _FOOTER_HTML
+        + "</div>"
+    )
+    return await send_email_via_resend(
+        to_email=to_email,
+        subject=subject,
+        text_content=text_content,
+        html_content=html_content,
+        sender_name=sender_name,
+    )
+
+
+async def send_proposal_received_email(
+    *,
+    to_email: str,
+    recipient_name: str,
+    proposer_name: str,
+    request_title: str | None,
+    inbox_url: str,
+) -> EmailDeliveryResult:
+    app_name = get_settings().app_name
+    subject = f"New proposal from {proposer_name}"
+    context = f" in response to \"{request_title}\"" if request_title else ""
+    text_content = (
+        f"{proposer_name} submitted a proposal to {recipient_name}{context} via {app_name}.\n\n"
+        f"Review it in your proposal inbox:\n{inbox_url}"
+        + _FOOTER_TEXT
+    )
+    html_content = (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+        "line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+        "<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;\">You've received a new proposal</h2>"
+        f"<p style=\"margin:0 0 12px;\"><strong>{escape(proposer_name)}</strong> submitted a proposal to "
+        f"<strong>{escape(recipient_name)}</strong>{escape(context)}.</p>"
+        f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(inbox_url)}\" "
+        "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
+        "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">Open proposal inbox</a></p>"
+        + _FOOTER_HTML
+        + "</div>"
+    )
+    return await send_email_via_resend(
+        to_email=to_email,
+        subject=subject,
+        text_content=text_content,
+        html_content=html_content,
+        sender_name=recipient_name or app_name,
+    )

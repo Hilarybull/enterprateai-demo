@@ -145,6 +145,13 @@ export const MODULE_MIN_PLAN = {
   integrations: "decision_engine",
 };
 
+// Submitting a proposal (not just viewing the module) requires a paid plan.
+export function hasPaidAccess(planKey, status) {
+  if (status === "grandfathered") return true;
+  if (status === "trial" || status === "expired") return false;
+  return planRank(planKey) >= planRank("starter_insight");
+}
+
 // Scenario templates available for manual runs on the Starter plan.
 // All other paid plans get every template.
 export const STARTER_ALLOWED_SCENARIOS = ["tmpl_client_loss", "tmpl_payment_delay"];

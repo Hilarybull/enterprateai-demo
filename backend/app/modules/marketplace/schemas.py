@@ -45,6 +45,7 @@ class MarketplaceListingItem(BaseModel):
     facebook_url: str | None = None
     company_size: str | None = None
     year_established: int | None = None
+    is_open_to_proposals: bool = False
     published_at: str
     updated_at: str
     avg_rating: float | None = None
