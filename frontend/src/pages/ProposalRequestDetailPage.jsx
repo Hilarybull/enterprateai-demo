@@ -39,23 +39,26 @@ const REQ_FORMAT_META = {
 
 function SharePanel({ req }) {
   const [copied, setCopied] = useState(false);
-  const [liCopied, setLiCopied] = useState(false);
   const pageUrl = `${window.location.origin}/marketplace/request/${req.id}`;
+
+  const budgetStr = req.budget_range
+    ? `Budget: ${req.budget_currency || "GBP"} ${req.budget_range.replace(/ - /g, " to ")}`
+    : "";
 
   const shareTitle = `${req.company_name} is looking for proposals: "${req.title}"`;
   const shareText =
     `${shareTitle}` +
-    (req.budget_range ? ` — Budget: ${req.budget_currency || "GBP"} ${req.budget_range}` : "") +
+    (budgetStr ? `. ${budgetStr}` : "") +
     `. Apply now: ${pageUrl}`;
 
   const tweetText = encodeURIComponent(
     `${req.company_name} is seeking proposals for "${req.title}"` +
-    (req.budget_range ? ` — Budget: ${req.budget_currency || "GBP"} ${req.budget_range}` : "") +
+    (budgetStr ? `. ${budgetStr}` : "") +
     `. Apply now:`
   );
   const waText = encodeURIComponent(
-    `*${req.title}* — ${req.company_name} is looking for proposals.\n` +
-    (req.budget_range ? `Budget: ${req.budget_currency || "GBP"} ${req.budget_range}\n` : "") +
+    `${req.company_name} is looking for proposals: "${req.title}"\n` +
+    (budgetStr ? `${budgetStr}\n` : "") +
     `Apply here: ${pageUrl}`
   );
 
@@ -69,24 +72,25 @@ function SharePanel({ req }) {
     if (navigator.share) {
       navigator.share({ title: shareTitle, text: shareText, url: pageUrl }).catch(() => {});
     } else {
-      const subject = encodeURIComponent(`Proposal Request: ${req.title} — ${req.company_name}`);
+      const subject = encodeURIComponent(`Proposal Request: ${req.title} by ${req.company_name}`);
       const body = encodeURIComponent(
         `${req.company_name} is looking for proposals:\n\n` +
         `"${req.title}"\n` +
-        (req.budget_range ? `Budget: ${req.budget_currency || "GBP"} ${req.budget_range}\n` : "") +
+        (budgetStr ? `${budgetStr}\n` : "") +
         `\nApply here: ${pageUrl}`
       );
       window.location.href = `mailto:?subject=${subject}&body=${body}`;
     }
   }
 
+  // Use the backend OG-preview URL so LinkedIn's crawler gets proper meta tags.
+  // shareArticle pre-fills mini=true title+summary in the LinkedIn composer.
+  const apiBase = import.meta.env.VITE_API_URL || "";
+  const ogUrl = `${apiBase}/marketplace/proposal-requests/${req.id}/og`;
+  const liShareUrl = `https://www.linkedin.com/shareArticle?mini=true&url=${encodeURIComponent(ogUrl)}&title=${encodeURIComponent(shareTitle)}&summary=${encodeURIComponent(budgetStr ? `${budgetStr}. Apply now.` : "Apply now on EnterprateAI Marketplace.")}`;
+
   function handleLinkedIn() {
-    // LinkedIn share-offsite doesn't pre-fill text for non-partner apps.
-    // Copy the post text so user can paste it in.
-    navigator.clipboard?.writeText(shareText).catch(() => {});
-    setLiCopied(true);
-    setTimeout(() => setLiCopied(false), 4000);
-    window.open("https://www.linkedin.com/post/new", "_blank", "noreferrer");
+    window.open(liShareUrl, "_blank", "noreferrer");
   }
 
   return (
@@ -132,7 +136,7 @@ function SharePanel({ req }) {
         </button>
       </div>
 
-      {liCopied && (
+      {false && (
         <p className="mt-2 text-center text-[11px] text-emerald-600 dark:text-emerald-400">
           Post text copied — paste it in LinkedIn
         </p>
@@ -250,7 +254,7 @@ export default function ProposalRequestDetailPage() {
           listing={applyTarget.listing}
           request={applyTarget.request}
           onClose={() => setApplyTarget(null)}
-          onSuccess={() => setApplyTarget(null)}
+          onSuccess={() => {}}
         />
       )}
       {profileListing && (

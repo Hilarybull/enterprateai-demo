@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import io
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from html import escape
@@ -10,6 +12,80 @@ from fastapi import HTTPException, status
 from app.modules.idea_validation.service import get_user_workspace, get_workspace
 from app.core.supabase import sb_select, sb_update, sb_upsert
 from app.shared.email.resend import send_email_via_resend
+
+
+def _build_quotation_pdf(quote: dict, company_name: str, currency_symbol: str = "£") -> bytes:
+    """Generate a minimal quotation PDF using ReportLab."""
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
+        styles = getSampleStyleSheet()
+        brand = colors.HexColor("#4f46e5")
+
+        header_style = ParagraphStyle("header", parent=styles["Normal"], fontSize=20, textColor=brand, fontName="Helvetica-Bold")
+        sub_style = ParagraphStyle("sub", parent=styles["Normal"], fontSize=10, textColor=colors.HexColor("#475569"))
+        label_style = ParagraphStyle("label", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#64748b"))
+        body_style = ParagraphStyle("body", parent=styles["Normal"], fontSize=10)
+
+        story = [
+            Paragraph("QUOTATION", header_style),
+            Spacer(1, 0.2*cm),
+            Paragraph(f"From: <b>{escape(company_name)}</b>", body_style),
+            Paragraph(f"Reference: <b>{escape(quote.get('quotation_id', ''))}</b>", body_style),
+            Paragraph(f"Issued: {quote.get('issued_at', '')[:10]}", label_style),
+            Paragraph(f"Valid for: {quote.get('validity_days', 30)} days", label_style),
+            Spacer(1, 0.5*cm),
+            Paragraph(f"To: <b>{escape(quote.get('customer_name', ''))}</b>", body_style),
+            Spacer(1, 0.6*cm),
+        ]
+
+        items = quote.get("items") or []
+        table_data = [["Description", "Qty", "Unit Price", "Total"]]
+        for item in items:
+            qty = item.get("quantity", 1)
+            unit = float(item.get("unit_price", 0))
+            table_data.append([
+                item.get("product_name", "Item"),
+                str(qty),
+                f"{currency_symbol}{unit:,.2f}",
+                f"{currency_symbol}{qty * unit:,.2f}",
+            ])
+        subtotal = float(quote.get("subtotal_amount", 0))
+        table_data.append(["", "", "Subtotal", f"{currency_symbol}{subtotal:,.2f}"])
+        total = float(quote.get("total_amount", subtotal))
+        table_data.append(["", "", "TOTAL", f"{currency_symbol}{total:,.2f}"])
+
+        col_widths = [9*cm, 2*cm, 3.5*cm, 3.5*cm]
+        t = Table(table_data, colWidths=col_widths)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), brand),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 9),
+            ("FONTSIZE", (0, 1), (-1, -1), 9),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("GRID", (0, 0), (-1, -3), 0.25, colors.HexColor("#e2e8f0")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -3), [colors.white, colors.HexColor("#f8fafc")]),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+            ("LINEABOVE", (2, -2), (-1, -2), 0.5, colors.HexColor("#94a3b8")),
+            ("LINEABOVE", (2, -1), (-1, -1), 1, brand),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(t)
+
+        doc.build(story)
+        return buf.getvalue()
+    except Exception:
+        return b""
 
 
 async def _load_workspace(user_id: str, workspace_id: str | None):
@@ -460,6 +536,7 @@ async def submit_rfq(
         "status": "pending",
         "created_at": now,
         "quote_id": None,
+        "sender_workspace_id": sender_workspace_id,
     }
     rfq_requests.append(rfq)
     merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
@@ -614,7 +691,15 @@ async def approve_rfq(
     await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
 
     # Notify the requester that their RFQ has been responded to with a quotation
+    workspace_email = profile.get("email") or None
     try:
+        pdf_bytes = _build_quotation_pdf(quote, company_name)
+        attachments = None
+        if pdf_bytes:
+            attachments = [{
+                "filename": f"Quotation-{quote['quotation_id']}.pdf",
+                "content": base64.b64encode(pdf_bytes).decode(),
+            }]
         await send_email_via_resend(
             to_email=rfq["customer_email"],
             subject=f"Quotation received from {company_name}",
@@ -624,7 +709,7 @@ async def approve_rfq(
                 f"Quotation Reference: {quote['quotation_id']}\n"
                 f"Total: \xa3{quote['total_amount']:,.2f}\n"
                 f"Valid for: {validity_days} days\n\n"
-                "Please log in to your account to review the quotation details.\n"
+                "Please find the quotation PDF attached to this email.\n"
             ),
             html_content=(
                 "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
@@ -637,13 +722,40 @@ async def approve_rfq(
                 f"<tr><td style=\"padding:6px 0;color:#475569;\">Total</td><td style=\"padding:6px 0;font-weight:600;\">\xa3{quote['total_amount']:,.2f}</td></tr>"
                 f"<tr><td style=\"padding:6px 0;color:#475569;\">Valid for</td><td style=\"padding:6px 0;\">{validity_days} days</td></tr>"
                 "</table>"
-                "<p>Please log in to your account to review the quotation details.</p>"
+                "<p>Please find the quotation PDF attached to this email. You can also log in to your account to review it.</p>"
                 "</div>"
             ),
             sender_name=company_name,
+            reply_to_email=workspace_email,
+            attachments=attachments,
         )
     except Exception:
         pass
+
+    # Update the sender's workspace sent_rfqs to reflect the approved status
+    sender_workspace_id = rfq.get("sender_workspace_id")
+    if sender_workspace_id:
+        try:
+            sender_ws = await sb_select("workspaces", filters=[("id", "eq", sender_workspace_id)], single=True)
+            if sender_ws:
+                s_data = sender_ws.get("data") or {}
+                s_fin = s_data.get("financials") or {}
+                sent_rfqs = list(s_fin.get("sent_rfqs") or [])
+                updated = False
+                for r in sent_rfqs:
+                    if r.get("id") == rfq["id"]:
+                        r["status"] = "approved"
+                        r["quote_id"] = quote_id
+                        r["quote_ref"] = quote["quotation_id"]
+                        r["quote_total"] = quote["total_amount"]
+                        r["approved_at"] = now
+                        updated = True
+                        break
+                if updated:
+                    s_merged = {**s_data, "financials": {**s_fin, "sent_rfqs": sent_rfqs}}
+                    await sb_update("workspaces", filters=[("id", "eq", sender_workspace_id)], payload={"data": s_merged, "updated_at": now})
+        except Exception:
+            pass
 
     return {
         "rfq": rfq,

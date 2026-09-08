@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+import json
+from html import escape
 
+from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import HTMLResponse
+
+from app.core.config import get_settings
 from app.shared.auth.deps import get_current_user, get_optional_user
 from app.modules.marketplace.schemas import (
     MarketplaceListResponse,
@@ -76,6 +81,76 @@ async def browse_proposal_requests(
 @router.get("/proposal-requests/{request_id}")
 async def get_proposal_request(request_id: str):
     return await get_public_proposal_request(request_id=request_id)
+
+
+@router.get("/proposal-requests/{request_id}/og", include_in_schema=False)
+async def proposal_request_og_preview(request_id: str) -> HTMLResponse:
+    """OG meta-tag HTML page for social link previews; JS-redirects to the SPA."""
+    settings = get_settings()
+    frontend_url = settings.frontend_url.rstrip("/")
+    spa_url = f"{frontend_url}/marketplace/request/{request_id}"
+
+    og_title = "Proposal Request | EnterprateAI"
+    og_description = "Submit a proposal on EnterprateAI Marketplace."
+    og_image = ""
+
+    try:
+        req = await get_public_proposal_request(request_id=request_id)
+        if req:
+            company = req.get("company_name", "")
+            title = req.get("title", "")
+            description = req.get("description", "")
+            budget_range = req.get("budget_range", "")
+            budget_currency = req.get("budget_currency", "GBP")
+            logo = req.get("company_logo", "")
+
+            if title and company:
+                og_title = f"{company} is looking for proposals: \"{title}\""
+            elif title:
+                og_title = title
+
+            parts = []
+            if description:
+                parts.append(description[:200])
+            if budget_range:
+                parts.append(f"Budget: {budget_currency} {budget_range.replace(' - ', ' to ')}")
+            parts.append("Apply now on EnterprateAI.")
+            og_description = " ".join(parts)
+
+            if logo:
+                og_image = logo
+    except Exception:
+        pass
+
+    h_title = escape(og_title)
+    h_desc = escape(og_description)
+    h_url = escape(spa_url)
+    h_image = escape(og_image)
+    js_url = json.dumps(spa_url)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta http-equiv="refresh" content="0; url={h_url}"/>
+<title>{h_title}</title>
+<meta property="og:title" content="{h_title}"/>
+<meta property="og:description" content="{h_desc}"/>
+<meta property="og:url" content="{h_url}"/>
+<meta property="og:type" content="article"/>
+<meta property="og:site_name" content="EnterprateAI Marketplace"/>
+{f'<meta property="og:image" content="{h_image}"/>' if h_image else ''}
+<meta name="twitter:card" content="summary"/>
+<meta name="twitter:title" content="{h_title}"/>
+<meta name="twitter:description" content="{h_desc}"/>
+<link rel="canonical" href="{h_url}"/>
+</head>
+<body>
+<script>window.location.replace({js_url});</script>
+<p>Redirecting… <a href="{h_url}">Click here if not redirected</a></p>
+</body>
+</html>"""
+    return HTMLResponse(content=html, status_code=200)
 
 
 @router.get("/listings/{workspace_id}", response_model=MarketplaceListingItem)

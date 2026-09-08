@@ -53,6 +53,7 @@ async def send_email_via_resend(
     html_content: str,
     sender_name: str | None = None,
     reply_to_email: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> EmailDeliveryResult:
     ready, reason = _email_ready()
     if not ready:
@@ -75,6 +76,8 @@ async def send_email_via_resend(
             "X-Entity-Ref-ID": str(uuid.uuid4()),
         },
     }
+    if attachments:
+        payload["attachments"] = attachments
 
     logger.info("Sending email via Resend to=%s subject=%r from=%s", to_email, subject, from_email)
     try:

@@ -19,6 +19,7 @@ NO FABRICATED DATA
 NO PLACEHOLDERS / NO SKELETON OUTPUT
 - Do not output templates with blank sections.
 - Do not use placeholders such as "TBD", "N/A", "Add details here", or leave a section empty.
+- NEVER use square-bracket substitution placeholders such as [Company Name], [Client Name], [Your Company], [Date], [Amount], or any [Field]. If information is missing, omit it or write generically (e.g. "our team" instead of [Company Name]).
 - Do not write meta commentary like "This section will cover...".
 - Every included section must contain real narrative content.
 

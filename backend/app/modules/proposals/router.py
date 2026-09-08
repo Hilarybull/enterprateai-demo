@@ -255,6 +255,8 @@ async def generate_cover_letter(
         f"Introduce the submitting company, explain why they are a great fit, and highlight a key strength or relevant offering. "
         f"Context: {context}. "
         f"Write in first person plural (we/our). "
+        f"CRITICAL: Never use placeholder text like [Company Name], [Your Company], [Client Name], or any bracketed substitutions. "
+        f"If a company name is not provided, refer to 'our team' or 'our company' instead. "
         f"Do not use em dashes, en dashes, hyphens, or any dash characters anywhere in the text. Use commas or full stops instead. "
         f"Return only the cover letter text, no subject line, no labels, no markdown, no bullet points."
     )

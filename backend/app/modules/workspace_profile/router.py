@@ -13,7 +13,7 @@ from app.modules.workspace_profile.service import get_profile, patch_profile, up
 router = APIRouter(prefix="/workspace/profile", tags=["workspace_profile"])
 
 
-@router.get("", response_model=WorkspaceProfileResponse)
+@router.get("", response_model=None)
 async def read_profile(
     workspace_id: str | None = None,
     user=Depends(get_current_user),

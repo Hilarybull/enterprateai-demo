@@ -2260,8 +2260,18 @@ export default function ProposalsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const action = searchParams.get("action");
   const target = searchParams.get("target");
+  const tabParam = searchParams.get("tab");
   const showSubmit = (action === "upload" || action === "generate") && target;
   const panelRef = useRef(null);
+
+  // Auto-switch to the tab specified in the URL (e.g. ?tab=activity)
+  useEffect(() => {
+    if (tabParam && panelRef.current) {
+      if (tabParam === "activity" && panelRef.current.switchToActivity) {
+        panelRef.current.switchToActivity();
+      }
+    }
+  }, [tabParam]);
 
   function handleSubmitSuccess() {
     setSearchParams({});

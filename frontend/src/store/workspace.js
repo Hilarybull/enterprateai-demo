@@ -68,57 +68,31 @@ export const useWorkspaceStore = create(
         }),
 
       resetForUser: (email) =>
-        set((state) => {
-          if (!email) {
-            return {
-              workspaceId: null,
-              workspaceName: null,
-              workspaceLogo: null,
-              workspaceCompanyName: null,
-              workspaceOwnerEmail: null,
-              decisionStatus: null,
-              serviceDecisionStatus: null,
-              workspaceLoadedAt: null,
-              inputs: null,
-              ideaValidation: null,
-              draftIdeaValidation: null,
-              draftServiceIdea: null,
-              validation: null,
-              validationEntryId: null,
-              currency: "GBP",
-              isMemberMode: false,
-              membershipId: null,
-              memberPermissionType: null,
-              memberPermissions: null,
-              memberWorkspaceName: null,
-            };
-          }
-          const ownerMismatch = state.workspaceOwnerEmail && state.workspaceOwnerEmail !== email;
-          if (ownerMismatch) {
-            return {
-              workspaceId: null,
-              workspaceName: null,
-              workspaceLogo: null,
-              workspaceOwnerEmail: email,
-              decisionStatus: null,
-              serviceDecisionStatus: null,
-              workspaceLoadedAt: null,
-              inputs: null,
-              ideaValidation: null,
-              draftIdeaValidation: null,
-              draftServiceIdea: null,
-              validation: null,
-              validationEntryId: null,
-              currency: "GBP",
-              isMemberMode: false,
-              membershipId: null,
-              memberPermissionType: null,
-              memberPermissions: null,
-              memberWorkspaceName: null,
-            };
-          }
-          return { workspaceOwnerEmail: email };
-        })
+        set(() => ({
+          // Clear workspace identity on auth hydration so we always reload the
+          // authoritative workspace from the server instead of reusing a stale
+          // pinned workspace from a previous session.
+          workspaceId: null,
+          workspaceName: null,
+          workspaceLogo: null,
+          workspaceCompanyName: null,
+          workspaceOwnerEmail: email || null,
+          decisionStatus: null,
+          serviceDecisionStatus: null,
+          workspaceLoadedAt: null,
+          inputs: null,
+          ideaValidation: null,
+          draftIdeaValidation: null,
+          draftServiceIdea: null,
+          validation: null,
+          validationEntryId: null,
+          currency: "GBP",
+          isMemberMode: false,
+          membershipId: null,
+          memberPermissionType: null,
+          memberPermissions: null,
+          memberWorkspaceName: null,
+        }))
     }),
     {
       name: "ea_workspace",
@@ -131,18 +105,14 @@ export const useWorkspaceStore = create(
         decisionStatus: state.decisionStatus,
         serviceDecisionStatus: state.serviceDecisionStatus,
         workspaceLoadedAt: state.workspaceLoadedAt,
-        inputs: state.inputs,
-        ideaValidation: state.ideaValidation,
-        draftIdeaValidation: state.draftIdeaValidation,
-        draftServiceIdea: state.draftServiceIdea,
-        validation: state.validation,
-        validationEntryId: state.validationEntryId,
         currency: state.currency || "GBP",
         isMemberMode: state.isMemberMode,
         membershipId: state.membershipId,
         memberPermissionType: state.memberPermissionType,
         memberPermissions: state.memberPermissions,
         memberWorkspaceName: state.memberWorkspaceName,
+        // inputs, ideaValidation, draftIdeaValidation, draftServiceIdea, validation,
+        // validationEntryId intentionally NOT persisted — always fetched fresh from API.
       })
     }
   )

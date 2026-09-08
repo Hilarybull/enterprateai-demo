@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 import anyio
@@ -114,6 +115,64 @@ async def sb_update(
 ) -> Any:
     def _run():
         client = get_supabase_client()
+
+        # Workspace features share one JSON document. A request that started
+        # earlier can otherwise write its stale copy after the master profile
+        # was saved, making the profile appear to revert or disappear.
+        workspace_id = next(
+            (value for col, op, value in filters if col == "id" and op == "eq"),
+            None,
+        )
+        if table == "workspaces" and workspace_id and isinstance(payload.get("data"), dict):
+            for _attempt in range(5):
+                current_rows = (
+                    client.table("workspaces")
+                    .select("id,data,updated_at")
+                    .eq("id", workspace_id)
+                    .limit(1)
+                    .execute()
+                    .data
+                )
+                if not current_rows:
+                    return []
+
+                current = current_rows[0]
+                current_data = dict(current.get("data") or {})
+                incoming_data = dict(payload["data"])
+                current_profile = current_data.get("workspace_profile")
+                incoming_revision = incoming_data.get("workspace_profile_updated_at")
+                current_revision = current_data.get("workspace_profile_updated_at")
+
+                # Only the dedicated profile endpoint supplies a revision.
+                # All other whole-document writes must retain the current
+                # master profile, including legacy profiles without a stamp.
+                if current_profile and (
+                    not incoming_revision
+                    or (current_revision and str(current_revision) > str(incoming_revision))
+                ):
+                    incoming_data["workspace_profile"] = current_profile
+                    if current_revision:
+                        incoming_data["workspace_profile_updated_at"] = current_revision
+
+                guarded_payload = dict(payload)
+                guarded_payload["data"] = incoming_data
+                guarded_payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+                q = client.table(table).update(guarded_payload)
+                for col, op, value in filters:
+                    if op == "eq":
+                        q = q.eq(col, value)
+                    elif op == "neq":
+                        q = q.neq(col, value)
+                    elif op == "in":
+                        q = q.in_(col, value)
+                if current.get("updated_at"):
+                    q = q.eq("updated_at", current["updated_at"])
+                rows = q.execute().data
+                if rows:
+                    return rows
+            raise RuntimeError("Workspace changed repeatedly while saving; please retry")
+
         q = client.table(table).update(payload)
         for col, op, value in filters:
             if op == "eq":
@@ -122,8 +181,7 @@ async def sb_update(
                 q = q.neq(col, value)
             elif op == "in":
                 q = q.in_(col, value)
-        res = q.execute()
-        return res.data
+        return q.execute().data
 
     return await anyio.to_thread.run_sync(lambda: _run_with_retry(_run))
 

@@ -284,7 +284,9 @@ async def _ensure_demo_workspace(user_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         existing = await sb_select("workspaces", filters=[("user_id", "eq", user_id)], limit=1, single=True)
         if existing:
-            await sb_update("workspaces", filters=[("id", "eq", existing["id"])], payload={"data": demo_data, "updated_at": now})
+            # Keep any existing workspace intact so demo login cannot overwrite
+            # a user's real workspace if they reuse the same email elsewhere.
+            return
         else:
             await sb_insert("workspaces", {
                 "id": str(uuid4()),

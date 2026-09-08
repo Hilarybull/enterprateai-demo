@@ -1322,6 +1322,7 @@ function _htmlToPdfContent(html) {
 
 export function ApplyModal({ listing, request, onClose, onSuccess }) {
   const grad = avatarGradient(listing.company_name);
+  const navigate = useNavigate();
   const { submitProposal } = useProposalStore();
   const token = useAuthStore((s) => s.token);
   const isLoggedIn = Boolean(token);
@@ -1334,7 +1335,6 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
   const isPaid = ["starter_insight", "growth", "scale", "enterprise"].includes(planKey) || hasBlueprintGrant;
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const isOwnListing = workspaceId && listing.workspace_id === workspaceId;
-  const navigate = useNavigate();
 
   // Detect return from Blueprint proposal generator
   const blueprintReturn = listing._blueprint_return || null;
@@ -1355,7 +1355,7 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
   const myCats = [myIndustry, ...myServiceCats].filter(Boolean);
   const categoryBlocked = acceptedCats.length > 0 && catChecked && myProfile && !myCats.some((c) => acceptedCats.includes(c));
 
-  // step: "choose" | "form" | "upgrade"
+  // step: "choose" | "form" | "upgrade" | "signup"
   const [step, setStep] = useState(blueprintReturn ? "form" : "choose");
   const [mode, setMode] = useState("ai"); // "ai" | "manual"
   const defaultTitle = request?.title
@@ -1628,11 +1628,45 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
             </div>
             <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Proposal Submitted!</h2>
             <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">
-              Sent to <span className="font-semibold text-slate-700 dark:text-slate-300">{listing.company_name}</span>.
+              Sent to <span className="font-semibold text-slate-700 dark:text-slate-300">{listing.company_name}</span>. You can track and withdraw it from your Activity tab.
             </p>
-            <button onClick={onClose} className="mt-6 rounded-xl bg-emerald-600 px-6 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition">
-              Done
-            </button>
+            <div className="mt-6 flex flex-col gap-2.5">
+              <button onClick={() => { onClose(); navigate("/proposals?tab=activity"); }}
+                className="w-full rounded-xl bg-emerald-600 px-6 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition">
+                View My Submissions
+              </button>
+              <button onClick={onClose} className="w-full rounded-xl border border-slate-200 px-6 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+                Stay on Marketplace
+              </button>
+            </div>
+          </div>
+
+        /* ── Signup gate (unauthenticated) ── */
+        ) : step === "signup" ? (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
+              </svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Sign up for free first</h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
+              Create a free EnterprateAI account to get started. Once you're in, you can explore the platform and upgrade when you're ready to submit proposals.
+            </p>
+            <div className="mt-6 flex flex-col gap-2.5">
+              <button onClick={() => { onClose(); navigate(`/login?signup=1&next=/marketplace/request/${request?.id || ""}`); }}
+                className="w-full rounded-xl bg-emerald-600 py-2.5 text-[13px] font-bold text-white transition hover:bg-emerald-700">
+                Create Free Account
+              </button>
+              <button onClick={() => { onClose(); navigate(`/login?next=/marketplace/request/${request?.id || ""}`); }}
+                className="w-full rounded-xl border border-slate-200 py-2.5 text-[13px] font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                Already have an account? Sign In
+              </button>
+              <button onClick={() => setStep("choose")}
+                className="text-[12px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition">
+                Go Back
+              </button>
+            </div>
           </div>
 
         /* ── Upgrade gate ── */
@@ -1986,9 +2020,9 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
               Cancel
             </button>
             {!isLoggedIn ? (
-              <button type="button" onClick={() => { onClose(); navigate(`/login?next=/marketplace/request/${request?.id || ""}`); }}
+              <button type="button" onClick={() => setStep("signup")}
                 className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 px-4 py-2.5 text-[13px] font-bold text-white hover:opacity-90 transition">
-                Sign In to Submit
+                Sign Up / Sign In
               </button>
             ) : isPaid ? (
               <button type="submit" form="proposal-submit-form" disabled={submitting || !allMandatoryAnswered}
@@ -2195,7 +2229,8 @@ function ProposalRequestCard({ req, isLoggedIn, isOwn, isApplied, onApply, onCom
   function handleShare(e) {
     e.stopPropagation();
     const url = `${window.location.origin}/marketplace/request/${req.id}`;
-    const text = `${req.company_name} is looking for proposals: "${req.title}"${req.budget_range ? ` — Budget: ${req.budget_currency || "GBP"} ${req.budget_range}` : ""}. Apply now.`;
+    const budget = req.budget_range ? `. Budget: ${req.budget_currency || "GBP"} ${req.budget_range.replace(/ - /g, " to ")}` : "";
+    const text = `${req.company_name} is looking for proposals: "${req.title}"${budget}. Apply now.`;
     if (navigator.share) {
       navigator.share({ title: req.title, text, url }).catch(() => {});
     } else {

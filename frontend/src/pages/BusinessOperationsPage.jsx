@@ -2656,7 +2656,9 @@ export default function BusinessOperationsPage() {
                   rows={[...sentRfqs].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(r => ({
                     Vendor: r.recipient_company_name || "—",
                     Items: Array.isArray(r.items) ? r.items.map(i => `${i.quantity || 1}× ${i.name}`).join(", ") : "—",
-                    Message: r.message || "—",
+                    Message: r.status === "approved" && r.quote_ref
+                      ? <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">Ref: {r.quote_ref}{r.quote_total != null ? ` · £${Number(r.quote_total).toLocaleString(undefined, {minimumFractionDigits:2,maximumFractionDigits:2})}` : ""}</span>
+                      : (r.message || "—"),
                     Status: <StatusPill status={r.status === "approved" ? "Quote Received" : r.status === "rejected" ? "Declined" : "Pending"} />,
                     Sent: fmtDate(r.created_at),
                     Action: <ActionMenu items={[{ label: "Go to Marketplace", onClick: () => navigate("/marketplace") }]} />,

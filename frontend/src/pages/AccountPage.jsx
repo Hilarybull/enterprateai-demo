@@ -345,7 +345,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
   const [companyName, setCompanyName] = useState(p.company_name || "");
   const [businessType, setBusinessType] = useState(p.business_type || "");
   const [primaryIndustry, setPrimaryIndustry] = useState(
-    p.primary_industry && !INDUSTRIES.some((o) => o.value === p.primary_industry) ? "Other" : (p.primary_industry || "")
+    p.primary_industry && !INDUSTRIES.some((o) => o.value === p.primary_industry) ? "other" : (p.primary_industry || "")
   );
   const [customIndustry, setCustomIndustry] = useState(
     p.primary_industry && !INDUSTRIES.some((o) => o.value === p.primary_industry) ? p.primary_industry : ""
@@ -385,7 +385,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
   const [twitter, setTwitter] = useState(p.twitter_url || "");
   const [instagram, setInstagram] = useState(p.instagram_url || "");
 
-  const [operatingStage, setOperatingStage] = useState(p.operating_stage || "");
+  const [operatingStage, setOperatingStage] = useState(p.operating_stage === "growth" ? "growing" : (p.operating_stage || ""));
   const [deliveryModel, setDeliveryModel] = useState(p.delivery_model || "");
   const [revenueModel, setRevenueModel] = useState(p.primary_revenue_model || "");
   const [targetCustomer, setTargetCustomer] = useState(p.target_customer_type || "");
@@ -408,7 +408,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
     setMsg(null);
     if (!companyName.trim()) return setMsg({ type: "error", text: "Company name is required." });
     if (!businessType) return setMsg({ type: "error", text: "Business type is required." });
-    const resolvedIndustry = primaryIndustry === "Other" ? customIndustry.trim() : primaryIndustry;
+    const resolvedIndustry = primaryIndustry === "other" ? customIndustry.trim() : primaryIndustry;
     if (!resolvedIndustry) return setMsg({ type: "error", text: "Primary industry is required." });
     if (!aboutCompany.trim()) return setMsg({ type: "error", text: "About company is required." });
     const resolvedCountry = country === "Other" ? customCountry.trim() : country.trim();
@@ -511,7 +511,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
             <SelectInput value={primaryIndustry} onChange={(e) => { setPrimaryIndustry(e.target.value); setCustomIndustry(""); }} placeholder="Select industry">
               {INDUSTRIES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </SelectInput>
-            {primaryIndustry === "Other" && (
+            {primaryIndustry === "other" && (
               <Input
                 className="mt-2"
                 value={customIndustry}
@@ -798,14 +798,27 @@ function WorkspaceTab({ workspaceId }) {
   const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
   const [ws, setWs] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     if (!workspaceId) { setLoading(false); return; }
     let alive = true;
-    apiRequest(`/validation/${workspaceId}`, "GET", undefined, { timeoutMs: 15000 })
-      .then((data) => { if (alive) { setWs(data?.data || null); setLoading(false); } })
-      .catch(() => { if (alive) setLoading(false); });
+    setLoading(true);
+    setLoadError(null);
+    apiRequest(`/workspace/profile?workspace_id=${encodeURIComponent(workspaceId)}`, "GET", undefined, { timeoutMs: 15000 })
+      .then((data) => {
+        if (alive) {
+          setWs(data?.profile ? { workspace_profile: data.profile } : null);
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (alive) {
+          setLoadError(err?.message || "Could not load workspace master data.");
+          setLoading(false);
+        }
+      });
     return () => { alive = false; };
   }, [workspaceId]);
 
@@ -858,6 +871,10 @@ function WorkspaceTab({ workspaceId }) {
         </svg>
       </div>
     );
+  }
+
+  if (loadError) {
+    return <Alert type="error" message={loadError} />;
   }
 
   if (!companyName || editing) {

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import html2pdf from "html2pdf.js";
 import Button from "../components/Button";
 import DocumentShareModal from "../components/DocumentShareModal";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -564,7 +563,10 @@ export default function FinancialsPage() {
     const unpaidExps = activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid");
     const paidExps = activeExpenses.filter((e) => String(e.status || "").toLowerCase() === "paid");
     const today = new Date();
-    const overdueInvCount = deliveredInvs.filter((i) => i.due_date && new Date(i.due_date) < today).length;
+    const overdueInvCount = activeInvoices.filter((i) => {
+      const st = String(i.status || "").toLowerCase();
+      return st !== "paid" && i.due_date && new Date(i.due_date) < today;
+    }).length;
 
     // Helper: raw amount received for an invoice (in invoice's own currency)
     function receivedAmt(i) {
@@ -1197,37 +1199,19 @@ export default function FinancialsPage() {
     ].join("\n");
   }
 
-  async function downloadPdfFile(html, filename) {
+  function downloadPdfFile(html, _filename) {
     try {
-      const container = document.createElement("div");
-      container.innerHTML = html;
-      container.style.width = "210mm";
-      container.style.padding = "12mm";
-      container.style.boxSizing = "border-box";
-      container.style.fontSize = "14px";
-      container.style.lineHeight = "1.5";
-      container.style.color = "#0f172a";
-      container.style.background = "#ffffff";
-      document.body.appendChild(container);
-      await html2pdf()
-        .set({
-          filename,
-          margin: [10, 10, 10, 10],
-          pagebreak: { mode: ["css", "legacy", "avoid-all"] },
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: {
-            scale: 3,
-            useCORS: true,
-            windowWidth: 794,
-            windowHeight: 1123,
-            backgroundColor: "#ffffff",
-            letterRendering: true
-          },
-          jsPDF: { unit: "pt", format: "a4", orientation: "portrait", compress: true }
-        })
-        .from(container)
-        .save();
-      document.body.removeChild(container);
+      const iframe = document.createElement("iframe");
+      iframe.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;border:0;visibility:hidden;";
+      document.body.appendChild(iframe);
+      const doc = iframe.contentDocument || iframe.contentWindow.document;
+      doc.open();
+      doc.write(html);
+      doc.close();
+      setTimeout(() => {
+        iframe.contentWindow.print();
+        setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 2000);
+      }, 400);
     } catch (e) {
       setError("Unable to generate the PDF. Please refresh and try again.");
     }
@@ -2130,7 +2114,6 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       });
       const { rfq, quote, workspace_id: wsId, company_name } = result;
       setRfqRequests((prev) => prev.map((r) => r.id === rfqId ? rfq : r));
-      setQuotes((prev) => [quote, ...prev.filter((q) => q.id !== quote.id)]);
       // Build PDF HTML and send share link to customer
       const customer = { name: rfq.customer_name };
       const quoteHtml = buildRfqQuoteHtml(quote, customer, company_name);
@@ -2146,14 +2129,18 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
         document_html: quoteHtml,
         document_markdown: `Quotation ${quote.quotation_id || quote.id} for ${rfq.customer_name}`,
       }, { timeoutMs: 120000 });
-      if (shareRes?.token) {
-        const nextQuotes = quotes.map((q) => q.id === quote.id ? { ...q, share_document_id: shareRes.document_id, share_token: shareRes.token } : q);
-        setQuotes(nextQuotes);
-        await persist({ invoices, quotes: nextQuotes, expenses, contracts });
-        window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
-        if (shareRes.email_sent === false) {
-          setError(`Quotation saved but email delivery failed: ${shareRes.email_error || "unknown error"}. Check your Resend configuration.`);
-        }
+      // Build the final quote object (with share token if available), then update
+      // state and persist in ONE step — avoids the stale-closure overwrite where
+      // quotes.map() on line below would use pre-setQuotes state and wipe the quote.
+      const finalQuote = shareRes?.token
+        ? { ...quote, share_document_id: shareRes.document_id, share_token: shareRes.token }
+        : quote;
+      const nextQuotes = [finalQuote, ...quotes.filter((q) => q.id !== finalQuote.id)];
+      setQuotes(nextQuotes);
+      await persist({ invoices, quotes: nextQuotes, expenses, contracts });
+      window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
+      if (shareRes?.email_sent === false) {
+        setError(`Quotation saved but email delivery failed: ${shareRes.email_error || "unknown error"}. Check your Resend configuration.`);
       }
     } catch (e) {
       setError(((e instanceof Error ? e.message : "") || "Failed to send quotation.").replace(/^HTTP \d+:\s*/i, "") || "Failed to send quotation.");
@@ -2457,7 +2444,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             { label: "Cost of Sales", value: formatMoney(overviewKpis.paidCoS), sub: "from paid invoices", tone: overviewKpis.paidCoS > 0 ? "amber" : "slate", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
             { label: "Receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered").length} delivered · ${activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial").length} partial`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate", type: "invoices-unpaid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" || (String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial")) },
             { label: "Pending payables", value: formatMoney(overviewKpis.pendingPay), sub: `${expensePendingCount} unpaid expense${expensePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingPay > 0 ? "rose" : "slate", type: "expenses-unpaid", items: activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid") },
-            { label: "Overdue invoices", value: overviewKpis.overdueInvCount, sub: overviewKpis.overdueInvCount > 0 ? "require immediate action" : "all within terms", tone: overviewKpis.overdueInvCount > 0 ? "rose" : "emerald", type: "invoices-overdue", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" && i.due_date && new Date(i.due_date) < new Date()) },
+            { label: "Overdue invoices", value: overviewKpis.overdueInvCount, sub: overviewKpis.overdueInvCount > 0 ? "require immediate action" : "all within terms", tone: overviewKpis.overdueInvCount > 0 ? "rose" : "emerald", type: "invoices-overdue", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid" && i.due_date && new Date(i.due_date) < new Date()) },
           ].map((kpi) => {
             const isOpen = overviewDrill?.type === kpi.type;
             return (

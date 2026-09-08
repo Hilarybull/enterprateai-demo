@@ -27,11 +27,24 @@ async def get_profile(*, user_id: str, workspace_id: str | None = None):
     profile = data.get("workspace_profile")
     if not profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace profile not found")
+    _OPERATING_STAGE_MAP = {"growth": "growing"}
+    _DELIVERY_MODEL_MAP = {"manual_only": "manual", "fully_automated": "automated"}
+    normalized = dict(profile)
+    if normalized.get("operating_stage") in _OPERATING_STAGE_MAP:
+        normalized["operating_stage"] = _OPERATING_STAGE_MAP[normalized["operating_stage"]]
+    if normalized.get("delivery_model") in _DELIVERY_MODEL_MAP:
+        normalized["delivery_model"] = _DELIVERY_MODEL_MAP[normalized["delivery_model"]]
     try:
-        parsed = WorkspaceProfile.model_validate(profile)
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Workspace profile invalid")
-    return {"workspace_id": str(ws.id), "profile": parsed, "updated_at": ws.updated_at}
+        parsed: WorkspaceProfile | dict = WorkspaceProfile.model_validate(normalized)
+        profile_out = parsed.model_dump()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Workspace profile validation failed for workspace %s: %s", ws.id, exc
+        )
+        # Return raw data so the user can still view and fix their profile — never 422 on a read
+        profile_out = normalized
+    return {"workspace_id": str(ws.id), "profile": profile_out, "updated_at": ws.updated_at}
 
 
 async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: WorkspaceProfile):
@@ -55,12 +68,22 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
             merged_profile = WorkspaceProfile.model_validate(base)
         except Exception as e:
             raise HTTPException(status_code=422, detail=str(e))
-        await update_workspace(user_id=user_id, workspace_id=str(ws.id), data_patch={"workspace_profile": merged_profile.model_dump()})
+        await update_workspace(
+            user_id=user_id,
+            workspace_id=str(ws.id),
+            data_patch={
+                "workspace_profile": merged_profile.model_dump(),
+                "workspace_profile_updated_at": now,
+            },
+        )
         ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
         return {"workspace_id": str(ws.id), "profile": merged_profile, "updated_at": ws.updated_at}
 
     # Create a workspace if none exists yet
-    payload = {"workspace_profile": profile.model_dump()}
+    payload = {
+        "workspace_profile": profile.model_dump(),
+        "workspace_profile_updated_at": now,
+    }
     ws_id = await create_workspace(user_id=user_id, name=profile.company_name, data=payload)
     ws = await get_workspace(user_id=user_id, workspace_id=ws_id)
     return {"workspace_id": str(ws.id), "profile": profile, "updated_at": ws.updated_at}
@@ -81,6 +104,13 @@ async def patch_profile(*, user_id: str, workspace_id: str | None, profile_patch
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
-    await update_workspace(user_id=user_id, workspace_id=str(ws.id), data_patch={"workspace_profile": validated.model_dump()})
+    await update_workspace(
+        user_id=user_id,
+        workspace_id=str(ws.id),
+        data_patch={
+            "workspace_profile": validated.model_dump(),
+            "workspace_profile_updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
     ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
     return {"workspace_id": str(ws.id), "profile": validated, "updated_at": ws.updated_at}

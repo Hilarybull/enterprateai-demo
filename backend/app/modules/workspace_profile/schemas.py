@@ -7,20 +7,8 @@ from pydantic import BaseModel, Field, model_validator
 
 
 BusinessType = Literal["sole_trader", "partnership", "limited_company", "llp", "non_profit", "startup"]
-PrimaryIndustry = Literal[
-    "consulting",
-    "technology",
-    "finance",
-    "healthcare",
-    "education",
-    "retail",
-    "ecommerce",
-    "logistics",
-    "manufacturing",
-    "real_estate",
-    "marketing",
-    "other",
-]
+# The UI supports a user-entered industry when the fixed list is insufficient.
+PrimaryIndustry = str
 CompanySize = Literal["solo", "2-5", "6-10", "11-50", "51-200", "200+"]
 MonthlyRevenueRange = Literal["0-1k", "1k-5k", "5k-10k", "10k-50k", "50k-100k", "100k+"]
 OperatingStage = Literal["idea", "pre_revenue", "early_revenue", "growing", "established"]
