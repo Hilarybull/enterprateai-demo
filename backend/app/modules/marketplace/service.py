@@ -61,6 +61,7 @@ def _build_listing_item(ws: dict) -> dict | None:
         "facebook_url": profile.get("facebook_url"),
         "company_size": profile.get("company_size"),
         "year_established": profile.get("year_established"),
+        "is_open_to_proposals": bool(profile.get("is_open_to_proposals")),
         "published_at": published_at,
         "updated_at": updated_at,
         "avg_rating": None,

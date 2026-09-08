@@ -5,6 +5,7 @@ import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 import Spinner from "../components/Spinner";
 import logoUrl from "../enterprate-logo.png";
+import ApplyModal from "../components/proposals/ApplyModal";
 import { useDemoTour } from "../context/DemoTourContext";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -496,6 +497,9 @@ function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick }) {
           {listing.business_type && (
             <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-400">{fmt(listing.business_type)}</span>
           )}
+          {listing.is_open_to_proposals && (
+            <span className="rounded-lg bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-800">Open to proposals</span>
+          )}
         </div>
 
         <p className="mt-3 line-clamp-3 text-[12px] leading-relaxed text-slate-600 dark:text-slate-400">{listing.about_company}</p>
@@ -817,7 +821,7 @@ function DetailRow({ icon, label, value }) {
 
 // ─── business profile modal ───────────────────────────────────────────────────
 
-function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWorkspaceId, onNeedAuth, onRequestQuote }) {
+function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWorkspaceId, onNeedAuth, onRequestQuote, onApproachProposal }) {
   const grad = avatarGradient(listing.company_name);
   const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
   const isOwnListing = isLoggedIn && ownWorkspaceId === listing.workspace_id;
@@ -1121,6 +1125,23 @@ function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWork
             </div>
           )}
 
+          {/* Approach for a proposal */}
+          {!isOwnListing && listing.is_open_to_proposals && (
+            <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-[13px] font-bold text-slate-800 dark:text-slate-200">Open to proposals</div>
+                  <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">Send {listing.company_name} an unsolicited proposal, even without an open request.</div>
+                </div>
+                <button onClick={() => onApproachProposal(listing)}
+                  className="shrink-0 inline-flex items-center gap-2 rounded-xl border border-brand-300 bg-white px-4 py-2 text-[12px] font-semibold text-brand-700 hover:bg-brand-50 transition dark:border-brand-700 dark:bg-slate-900 dark:text-brand-300 dark:hover:bg-brand-900/20">
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
+                  Approach for a proposal
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Ratings */}
           <div className="mt-6 border-t border-slate-100 dark:border-slate-800 pt-5">
             <h4 className="mb-4 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Ratings &amp; Reviews</h4>
@@ -1210,11 +1231,14 @@ export default function MarketplacePage() {
   const isLoggedIn = Boolean(token);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
-  const [activeTab, setActiveTab] = useState("products"); // "products" | "profiles"
+  const [activeTab, setActiveTab] = useState("products"); // "products" | "profiles" | "requests"
   const [listings, setListings] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const [proposalRequests, setProposalRequests] = useState([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
 
   const [myStatus, setMyStatus] = useState(null);
   const [profileViews, setProfileViews] = useState(null);
@@ -1234,6 +1258,7 @@ export default function MarketplacePage() {
   const [selected, setSelected] = useState(null);
   const [gateAction, setGateAction] = useState(null);
   const [rfqTarget, setRfqTarget] = useState(null);
+  const [approachTarget, setApproachTarget] = useState(null);
   const [serviceDetail, setServiceDetail] = useState(null); // { service, listing }
 
   const PAGE_SIZE = 24;
@@ -1274,6 +1299,19 @@ export default function MarketplacePage() {
     load();
     return () => { alive = false; };
   }, [debouncedSearch, filterIndustry, filterType, page, refreshKey]);
+
+  useEffect(() => {
+    if (activeTab !== "requests") return;
+    let alive = true;
+    setRequestsLoading(true);
+    const params = new URLSearchParams();
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    apiRequest(`/proposals/public/requests${params.toString() ? `?${params}` : ""}`, "GET")
+      .then((res) => { if (alive) setProposalRequests(res.items || []); })
+      .catch(() => { if (alive) setProposalRequests([]); })
+      .finally(() => { if (alive) setRequestsLoading(false); });
+    return () => { alive = false; };
+  }, [activeTab, debouncedSearch]);
 
   useEffect(() => {
     if (!isLoggedIn || !workspaceId) return;
@@ -1444,7 +1482,27 @@ export default function MarketplacePage() {
         {/* Tour-only hidden tab anchor */}
         <button data-tour="marketplace-products-tab" className="hidden" aria-hidden="true" tabIndex={-1} />
         <button data-tour="marketplace-profiles-tab" className="hidden" aria-hidden="true" tabIndex={-1} />
-        <div className="mt-6" />
+
+        <div className="mx-auto mt-6 flex max-w-md gap-1 rounded-2xl bg-white/15 p-1 backdrop-blur">
+          {[
+            { v: "products", l: "Products & Services" },
+            { v: "profiles", l: "Businesses" },
+            { v: "requests", l: "Proposal Requests" },
+          ].map((t) => (
+            <button
+              key={t.v}
+              type="button"
+              onClick={() => { setActiveTab(t.v); setPage(1); }}
+              className={
+                "flex-1 rounded-xl px-3 py-2 text-[12px] font-semibold transition " +
+                (activeTab === t.v ? "bg-white text-brand-700 shadow-sm" : "text-white/80 hover:text-white")
+              }
+            >
+              {t.l}
+            </button>
+          ))}
+        </div>
+        <div className="mt-4" />
       </div>
 
       {/* Main content */}
@@ -1535,6 +1593,11 @@ export default function MarketplacePage() {
               {total} business{total !== 1 ? "es" : ""}
             </span>
           )}
+          {activeTab === "requests" && !requestsLoading && (
+            <span className="ml-auto text-[12px] text-slate-400 dark:text-slate-500">
+              {proposalRequests.length} request{proposalRequests.length !== 1 ? "s" : ""}
+            </span>
+          )}
         </div>
 
         {/* Filter panel */}
@@ -1575,9 +1638,9 @@ export default function MarketplacePage() {
         )}
 
         {/* Content */}
-        {error ? (
+        {error && activeTab !== "requests" ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">{error}</div>
-        ) : loading ? (
+        ) : loading && activeTab !== "requests" ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4">
             <Spinner size={24} />
             <p className="text-sm text-slate-500 dark:text-slate-400">Loading marketplace…</p>
@@ -1612,6 +1675,50 @@ export default function MarketplacePage() {
                     onRequestQuote={(listing, productName) => isLoggedIn ? setRfqTarget({ listing, productName }) : setGateAction("rfq")}
                     isOwn={isOwn}
                   />
+                );
+              })}
+            </div>
+          )
+        ) : activeTab === "requests" ? (
+          /* ── Proposal Requests tab ── */
+          requestsLoading ? (
+            <div className="flex flex-col items-center justify-center py-24 gap-4">
+              <Spinner size={24} />
+              <p className="text-sm text-slate-500 dark:text-slate-400">Loading requests…</p>
+            </div>
+          ) : proposalRequests.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800">
+                <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M9 15h6M9 11h4" /></svg>
+              </div>
+              <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">No open proposal requests</h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Businesses looking for proposals will post their briefs here.</p>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {proposalRequests.map((r) => {
+                const deadline = r.deadline ? new Date(r.deadline) : null;
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => navigate(`/marketplace/request/${r.id}`)}
+                    className="ea-card ea-card-hover flex flex-col p-5 text-left"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-lg bg-brand-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                        {String(r.type || "general").replace(/^\w/, (c) => c.toUpperCase())}
+                      </span>
+                      {deadline && !Number.isNaN(deadline.getTime()) ? (
+                        <span className="text-[11px] text-slate-400 dark:text-slate-500">Deadline {deadline.toLocaleDateString()}</span>
+                      ) : null}
+                    </div>
+                    <h3 className="mt-2 text-[15px] font-bold text-slate-900 dark:text-slate-100">{r.title}</h3>
+                    {r.company_name ? <p className="text-[12px] text-slate-500 dark:text-slate-400">{r.company_name}</p> : null}
+                    {r.description ? (
+                      <p className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-slate-600 dark:text-slate-400">{r.description}</p>
+                    ) : null}
+                    <span className="mt-auto pt-4 text-[12px] font-semibold text-brand-600 dark:text-brand-400">View &amp; apply →</span>
+                  </button>
                 );
               })}
             </div>
@@ -1700,13 +1807,22 @@ export default function MarketplacePage() {
           userEmail={userEmail}
         />
       )}
-      {selected && !rfqTarget && (
+      {selected && !rfqTarget && !approachTarget && (
         <BusinessProfileModal listing={selected} onClose={() => setSelected(null)} isLoggedIn={isLoggedIn}
           userEmail={userEmail} ownWorkspaceId={myStatus?.workspace_id || workspaceId}
           onNeedAuth={(action) => { setSelected(null); setGateAction(action); }}
-          onRequestQuote={(listing) => setRfqTarget({ listing, productName: null })} />
+          onRequestQuote={(listing) => setRfqTarget({ listing, productName: null })}
+          onApproachProposal={(listing) => setApproachTarget(listing)} />
       )}
       {rfqTarget && <RFQModal listing={rfqTarget.listing} prefilledProduct={rfqTarget.productName} onClose={() => setRfqTarget(null)} />}
+      {approachTarget && (
+        <ApplyModal
+          recipientWorkspaceId={approachTarget.workspace_id}
+          recipientName={approachTarget.company_name}
+          onClose={() => { setApproachTarget(null); setSelected(null); }}
+          onSubmitted={() => {}}
+        />
+      )}
       {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}
 
       {/* Profile views modal */}

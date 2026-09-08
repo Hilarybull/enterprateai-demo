@@ -12,8 +12,10 @@ import SegmentedTabs from "../components/SegmentedTabs";
 import ReportTable, { StatusBadge } from "../components/ReportTable";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import { FinancialIllustration, IllustrationCard } from "../components/Illustrations";
+import ProposalsPanel from "../components/proposals/ProposalsPanel";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
+import { useProposalStore } from "../store/proposals";
 import { useAuthStore } from "../store/auth";
 import { hasFeatureAccess } from "../lib/permissions";
 import { normalisePlanKey } from "../lib/plans";
@@ -181,11 +183,15 @@ export default function FinancialsPage() {
   const [activeTab, setActiveTab] = useState(() => firstAccessibleFinancialsTab());
   const [searchParams, setSearchParams] = useSearchParams();
   const [overviewDrill, setOverviewDrill] = useState(null); // { label, type, items }
+  const proposalsUnread = useProposalStore((s) => s.inboxUnread);
+  const fetchProposalInbox = useProposalStore((s) => s.fetchInbox);
 
   useEffect(() => {
     const t = searchParams.get("tab");
     if (t) { setActiveTab(t); setSearchParams({}, { replace: true }); }
   }, []); // eslint-disable-line
+
+  useEffect(() => { if (workspaceId) fetchProposalInbox(); }, [workspaceId, fetchProposalInbox]);
   const [statusDateModal, setStatusDateModal] = useState(null); // { type, id, status, label }
   const [recordPaymentModal, setRecordPaymentModal] = useState(null); // { invoiceId }
   const [paymentHistoryModal, setPaymentHistoryModal] = useState(null); // { invoiceId }
@@ -2428,6 +2434,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             ...(canFinancialsFeature("invoices") ? [{ value: "invoices", label: "Invoices", "data-tour": "financials-invoices-tab" }] : []),
             ...(canFinancialsFeature("quotations") ? [{ value: "quotes", label: "Quotations" }] : []),
             ...(canFinancialsFeature("expenses") ? [{ value: "expenses", label: "Expenses" }] : []),
+            { value: "proposals", label: proposalsUnread ? `Proposals (${proposalsUnread})` : "Proposals" },
             ...(canFinancialsFeature("contracts") ? [{ value: "contracts", label: "Contracts" }] : []),
             { value: "receipts", label: "Receipts" },
             { value: "report", label: "Report" },
@@ -5477,6 +5484,12 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             return `mailto:${recipient}?subject=${subject}&body=${body}`;
           }}
         />
+      ) : null}
+
+      {activeTab === "proposals" ? (
+        <div className="mt-6">
+          <ProposalsPanel />
+        </div>
       ) : null}
     </div>
   );
