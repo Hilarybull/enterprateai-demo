@@ -115,11 +115,18 @@ export default function ProposalRequestDetailPage() {
           <Link to="/marketplace" className="flex items-center gap-2">
             <img src={enterprateLogo} alt="EnterprateAI" className="h-6 w-auto max-w-[130px] object-contain sm:h-7" />
           </Link>
-          <Link to="/marketplace" className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400">Browse marketplace</Link>
+          <Link to="/marketplace/requests" className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400">Browse marketplace</Link>
         </div>
       </header>
 
       <main className="mx-auto max-w-3xl px-4 pb-16 pt-8 sm:px-6">
+        <Link
+          to="/marketplace/requests"
+          className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400"
+        >
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
+          All proposal requests
+        </Link>
         {loading ? (
           <div className="flex justify-center py-20"><Spinner size={24} /></div>
         ) : error ? (
