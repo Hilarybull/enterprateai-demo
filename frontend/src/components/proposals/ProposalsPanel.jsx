@@ -461,7 +461,16 @@ function RequestForm({ initial, onSaved, onCancel }) {
           </div>
           <div>
             <div className="ea-label">Budget (optional)</div>
-            <Input value={form.budget_range} onChange={(e) => set({ budget_range: e.target.value })} placeholder="e.g. £10k–£20k" />
+            <div className="flex gap-2">
+              <select
+                className="ea-input w-[92px] shrink-0"
+                value={form.budget_currency || "GBP"}
+                onChange={(e) => set({ budget_currency: e.target.value })}
+              >
+                {["GBP", "USD", "EUR", "NGN", "CAD", "AUD"].map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <Input value={form.budget_range} onChange={(e) => set({ budget_range: e.target.value })} placeholder="e.g. 10k–20k" />
+            </div>
           </div>
           <div>
             <div className="ea-label">Max submissions (optional)</div>
@@ -490,6 +499,15 @@ function RequestForm({ initial, onSaved, onCancel }) {
                   onChange={(e) => set({ requirements: form.requirements.map((x, j) => j === i ? { ...x, text: e.target.value } : x) })}
                   placeholder="e.g. Minimum 3 years in B2B SaaS"
                 />
+                <label className="flex items-center gap-1 text-xs text-slate-500" title="Scoring weight used when evaluating proposals">
+                  <span className="hidden sm:inline">Weight</span>
+                  <input
+                    type="number" min="1" max="10"
+                    className="ea-input w-14 px-2"
+                    value={r.weight ?? 1}
+                    onChange={(e) => set({ requirements: form.requirements.map((x, j) => j === i ? { ...x, weight: e.target.value } : x) })}
+                  />
+                </label>
                 <label className="flex items-center gap-1 text-xs text-slate-500">
                   <input type="checkbox" checked={!!r.mandatory} onChange={(e) => set({ requirements: form.requirements.map((x, j) => j === i ? { ...x, mandatory: e.target.checked } : x) })} />
                   Required
@@ -515,7 +533,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
 }
 
 // ── Requests tab ──────────────────────────────────────────────────────────
-function RequestsTab() {
+function RequestsTab({ openNewNonce = 0 }) {
   const { requests, requestsLoading, requestsError, fetchRequests, requestAction, deleteRequest, inviteToRequest } = useProposalStore();
   const [editing, setEditing] = useState(null); // request obj or "new" or null
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -526,6 +544,7 @@ function RequestsTab() {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
 
   useEffect(() => { fetchRequests(); }, []); // eslint-disable-line
+  useEffect(() => { if (openNewNonce > 0) setEditing("new"); }, [openNewNonce]);
 
   async function act(id, action) {
     setRowError(null);
@@ -545,10 +564,7 @@ function RequestsTab() {
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-between">
-        <p className="text-sm text-slate-500">Publish a brief and receive structured proposals.</p>
-        <Button size="sm" onClick={() => setEditing("new")}>New request</Button>
-      </div>
+      <p className="text-sm text-slate-500">Publish a brief and receive structured proposals.</p>
       {rowError ? <InlineAlert kind="error" message={rowError} /> : null}
       {requestsError ? <InlineAlert kind="error" message={requestsError} /> : null}
       {requestsLoading ? (
@@ -728,7 +744,8 @@ function SettingsTab() {
 
 // ── Panel (rendered as a tab inside Financials) ───────────────────────────
 export default function ProposalsPanel() {
-  const [tab, setTab] = useState("inbox");
+  const [tab, setTab] = useState("requests");
+  const [newReqNonce, setNewReqNonce] = useState(0);
   const inboxUnread = useProposalStore((s) => s.inboxUnread);
   const fetchInbox = useProposalStore((s) => s.fetchInbox);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -736,22 +753,27 @@ export default function ProposalsPanel() {
   useEffect(() => { fetchInbox(); }, [workspaceId]); // eslint-disable-line
 
   const options = useMemo(() => ([
+    { value: "requests", label: "Requests" },
     { value: "inbox", label: inboxUnread ? `Inbox (${inboxUnread})` : "Inbox" },
     { value: "activity", label: "Activity" },
-    { value: "requests", label: "Requests" },
     { value: "settings", label: "Settings" },
   ]), [inboxUnread]);
+
+  const startNewRequest = () => { setTab("requests"); setNewReqNonce((n) => n + 1); };
 
   return (
     <div>
       <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
         Receive structured proposals for your requests, and submit proposals to other businesses.
       </p>
-      <div className="max-w-md"><SegmentedTabs value={tab} onChange={setTab} options={options} size="sm" /></div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="max-w-md flex-1"><SegmentedTabs value={tab} onChange={setTab} options={options} size="sm" /></div>
+        <Button size="sm" onClick={startNewRequest}>New request</Button>
+      </div>
       <div className="mt-4">
+        {tab === "requests" ? <RequestsTab openNewNonce={newReqNonce} /> : null}
         {tab === "inbox" ? <InboxTab /> : null}
         {tab === "activity" ? <ActivityTab /> : null}
-        {tab === "requests" ? <RequestsTab /> : null}
         {tab === "settings" ? <SettingsTab /> : null}
       </div>
     </div>
