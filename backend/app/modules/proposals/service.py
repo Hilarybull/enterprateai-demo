@@ -73,6 +73,29 @@ def _company_name(ws: dict | None) -> str:
     return profile.get("company_name") or (ws or {}).get("name") or "Business"
 
 
+def _company_public(ws: dict | None) -> dict | None:
+    """A safe, public subset of a workspace's profile for the request detail popup."""
+    if not ws:
+        return None
+    profile = ((ws.get("data") or {}).get("workspace_profile")) or {}
+    if not profile:
+        return {"workspace_id": ws.get("id"), "company_name": _company_name(ws)}
+    loc = ", ".join([p for p in (profile.get("city"), profile.get("country")) if p])
+    return {
+        "workspace_id": ws.get("id"),
+        "company_name": profile.get("company_name") or _company_name(ws),
+        "tagline": profile.get("tagline"),
+        "about_company": profile.get("about_company"),
+        "primary_industry": profile.get("primary_industry"),
+        "business_type": profile.get("business_type"),
+        "location": loc or None,
+        "website": profile.get("website"),
+        "linkedin_url": profile.get("linkedin_url"),
+        "logo_data_url": profile.get("logo_data_url"),
+        "is_open_to_proposals": bool(profile.get("is_open_to_proposals")),
+    }
+
+
 async def _can_submit_proposals(user_id: str) -> bool:
     """Submitting a proposal requires a paid plan (Starter and above)."""
     plan_key, plan_status = await get_user_plan_info(user_id)
@@ -152,6 +175,34 @@ async def save_preferences(*, user_id: str, prefs: ProposalPreferences) -> dict:
     # opted-in workspace shows up in the marketplace query.
     await _sync_discoverability(ws, enabled=prefs.enabled, visibility=prefs.visibility)
     return await get_preferences(user_id=user_id)
+
+
+async def _ensure_proposals_enabled(ws: dict) -> None:
+    """Publishing a proposal request is itself opting in — make sure this
+    workspace's proposal_preferences.enabled is true so submissions aren't
+    rejected with "not accepting proposals"."""
+    now = _now()
+    existing = await sb_select(
+        "proposal_preferences", filters=[("workspace_id", "eq", ws["id"])], single=True
+    )
+    if existing and existing.get("enabled"):
+        return
+    if existing:
+        await sb_update(
+            "proposal_preferences",
+            filters=[("workspace_id", "eq", ws["id"])],
+            payload={"enabled": True, "updated_at": now},
+        )
+        visibility = existing.get("visibility") or "marketplace"
+    else:
+        await sb_insert(
+            "proposal_preferences",
+            {"workspace_id": ws["id"], "user_id": ws.get("user_id"), "enabled": True,
+             **{k: v for k, v in _DEFAULT_PREFS.items() if k != "enabled"},
+             "created_at": now, "updated_at": now},
+        )
+        visibility = _DEFAULT_PREFS["visibility"]
+    await _sync_discoverability(ws, enabled=True, visibility=visibility)
 
 
 async def _sync_discoverability(ws: dict, *, enabled: bool, visibility: str) -> None:
@@ -325,6 +376,13 @@ async def set_request_status(*, user_id: str, request_id: str, action: str) -> d
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Add a title before publishing.")
     updates = {"status": target, "updated_at": _now()}
     await sb_update("proposal_requests", filters=[("id", "eq", request_id)], payload=updates)
+    if action == "publish":
+        try:
+            ws = await _workspace_row(row["workspace_id"])
+            if ws:
+                await _ensure_proposals_enabled(ws)
+        except Exception as exc:  # non-fatal — publishing still succeeds
+            logger.warning("auto-enable proposals on publish failed for ws=%s: %s", row.get("workspace_id"), exc)
     return _request_out({**row, **updates})
 
 
@@ -428,7 +486,9 @@ async def get_public_request(*, request_id: str, user_id: str | None) -> dict:
         is_owner = bool(owner_ws and owner_ws["id"] == row["workspace_id"])
     if row.get("status") != "PUBLISHED" and not is_owner:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
-    return _public_request_out(row, is_owner=is_owner)
+    out = _public_request_out(row, is_owner=is_owner)
+    out["company"] = _company_public(await _workspace_row(row["workspace_id"]))
+    return out
 
 
 # ── Proposals: submission ─────────────────────────────────────────────────

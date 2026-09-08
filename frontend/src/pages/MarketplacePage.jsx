@@ -1495,7 +1495,6 @@ export default function MarketplacePage() {
         <div className="mx-auto mt-6 flex max-w-md gap-1 rounded-2xl bg-white/15 p-1 backdrop-blur">
           {[
             { v: "products", l: "Products & Services" },
-            { v: "profiles", l: "Businesses" },
             { v: "requests", l: "Proposal Requests" },
           ].map((t) => (
             <button

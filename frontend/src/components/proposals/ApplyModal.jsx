@@ -38,11 +38,18 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const subscription = useAuthStore((s) => s.subscription);
+  const platformGrants = useAuthStore((s) => s.platformGrants);
   const submitProposal = useMemo(() => (payload) => apiRequest("/proposals/submit", "POST", payload), []);
   const fetchActivity = useProposalStore((s) => s.fetchActivity);
 
+  const currentPath = typeof window !== "undefined" ? window.location.pathname + window.location.search : "/marketplace";
   const isLoggedIn = Boolean(token);
-  const canSubmit = hasPaidAccess(subscription?.plan_key, subscription?.status);
+  // A paid plan OR an admin platform grant covering proposals — mirrors the
+  // backend _can_submit_proposals check, which maps feature "proposal_section"
+  // to module "blueprint" and matches any grant on that module.
+  const hasProposalGrant = (platformGrants || []).some((g) => g.module_key === "blueprint");
+  const canSubmit =
+    hasPaidAccess(subscription?.plan_key, subscription?.status) || hasProposalGrant;
   const isUnsolicited = !request?.id;
   const requirements = request?.requirements || [];
 
@@ -175,7 +182,14 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
       setStep("success");
       onSubmitted?.(proposal);
     } catch (e) {
-      setError(errText(e));
+      const msg = errText(e);
+      // Backend 402 — plan/grant check failed server-side (e.g. state changed
+      // since the modal opened). Route to the upgrade gate rather than an alert.
+      if (/HTTP 402/i.test(e?.message || "") || /Starter plan or above/i.test(msg)) {
+        setStep("upgrade");
+      } else {
+        setError(msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -218,11 +232,11 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
             <div className="py-6 text-center">
               <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Sign up for free first</h3>
               <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">
-                You need an EnterprateAI workspace to submit a proposal. Creating one is free and takes a minute.
+                You need a free EnterprateAI workspace to submit a proposal. It takes a minute, and you come straight back here.
               </p>
-              <div className="mt-4 flex justify-center gap-2">
-                <Button onClick={() => navigate("/login")}>Create account / Sign in</Button>
-                <Button variant="secondary" onClick={onClose}>Not now</Button>
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                <Button onClick={() => navigate(`/login?signup=1&next=${encodeURIComponent(currentPath)}`)}>Create free account</Button>
+                <Button variant="secondary" onClick={() => navigate(`/login?next=${encodeURIComponent(currentPath)}`)}>Sign in</Button>
               </div>
             </div>
           ) : null}
