@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import Spinner from "../components/Spinner";
 import logoUrl from "../enterprate-logo.png";
 import ApplyModal from "../components/proposals/ApplyModal";
+import { readProposalContext } from "../lib/proposalContext";
 import { useDemoTour } from "../context/DemoTourContext";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -1267,7 +1268,13 @@ export default function MarketplacePage() {
   const [selected, setSelected] = useState(null);
   const [gateAction, setGateAction] = useState(null);
   const [rfqTarget, setRfqTarget] = useState(null);
-  const [approachTarget, setApproachTarget] = useState(null);
+  const [approachTarget, setApproachTarget] = useState(() => {
+    // Returning from the "Use EnterprateAI" round-trip for an unsolicited proposal.
+    const ctx = readProposalContext();
+    return ctx?.blueprintReturn?.attachment && !ctx.requestId && ctx.recipientWorkspaceId
+      ? { workspace_id: ctx.recipientWorkspaceId, company_name: ctx.recipientName }
+      : null;
+  });
   const [serviceDetail, setServiceDetail] = useState(null); // { service, listing }
 
   const PAGE_SIZE = 24;

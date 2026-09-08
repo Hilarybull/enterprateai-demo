@@ -6,6 +6,7 @@ import Spinner from "../components/Spinner";
 import ApplyModal from "../components/proposals/ApplyModal";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { readProposalContext } from "../lib/proposalContext";
 import enterprateLogo from "../logo.png";
 
 function fmtDate(v) {
@@ -79,7 +80,11 @@ export default function ProposalRequestDetailPage() {
   const [request, setRequest] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [applyOpen, setApplyOpen] = useState(false);
+  const [applyOpen, setApplyOpen] = useState(() => {
+    // Returning from the "Use EnterprateAI" round-trip — reopen the modal.
+    const ctx = readProposalContext();
+    return Boolean(ctx?.blueprintReturn?.attachment && ctx.requestId === requestId);
+  });
   const [profileOpen, setProfileOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 

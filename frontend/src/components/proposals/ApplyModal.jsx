@@ -8,6 +8,12 @@ import { useAuthStore } from "../../store/auth";
 import { useProposalStore } from "../../store/proposals";
 import { hasPaidAccess } from "../../lib/plans";
 import { apiRequest, getApiBaseUrl } from "../../api/client";
+import {
+  readProposalContext,
+  writeProposalContext,
+  clearProposalContext,
+  contextMatches,
+} from "../../lib/proposalContext";
 
 function errText(e) {
   const m = e instanceof Error ? e.message : String(e || "");
@@ -18,14 +24,19 @@ function genId() {
   return (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now() + Math.random());
 }
 
-const BRIEF_EXTS = [".pdf", ".doc", ".docx", ".txt", ".rtf", ".md"];
+function httpStatus(e) {
+  const m = (e && e.message) || "";
+  const hit = m.match(/^HTTP (\d{3})/i);
+  return hit ? Number(hit[1]) : 0;
+}
 
 /**
  * ApplyModal — submit a proposal to a business, against a request or unsolicited.
  *
- * Step machine:  signup? → upgrade? → choose → (upload | write) → preview → success
- *   - auth check runs before the plan check (an unauthenticated user should never
- *     see an "upgrade" prompt).
+ * Step machine:  choose → (blueprint round-trip | write) → preview → success
+ *   signup / upgrade are reached only from the "Use EnterprateAI" option or a
+ *   failed submit — never on modal open. "Upload / Write Manually" is ungated;
+ *   a free/anonymous user can fill the form and is gated at Submit instead.
  *
  * props:
  *   recipientWorkspaceId  (required)
@@ -53,12 +64,17 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
   const isUnsolicited = !request?.id;
   const requirements = request?.requirements || [];
 
-  const [step, setStep] = useState(!isLoggedIn ? "signup" : !canSubmit ? "upgrade" : "choose");
+  // Returning from the "Use EnterprateAI" round-trip with a generated PDF?
+  const returned = useMemo(() => {
+    const ctx = readProposalContext();
+    const match = contextMatches(ctx, { requestId: request?.id || null, recipientWorkspaceId });
+    return match && ctx?.blueprintReturn?.attachment ? ctx.blueprintReturn.attachment : null;
+  }, [request?.id, recipientWorkspaceId]);
+
+  const [step, setStep] = useState(returned ? "write" : "choose");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
-  const [extracting, setExtracting] = useState(false);
-  const briefRef = useRef(null);
   const fileRef = useRef(null);
 
   const [form, setForm] = useState({
@@ -66,11 +82,32 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     summary: "",
     sections: [],
     responses: Object.fromEntries(requirements.map((r) => [r.id, ""])),
-    attachments: [],
+    attachments: returned ? [returned] : [],
   });
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
-  // ── AI cover letter ──────────────────────────────────────────────────────
+  function close() {
+    clearProposalContext();
+    onClose();
+  }
+
+  // ── "Use EnterprateAI" — hand off to Business Blueprints ──────────────────
+  function startBlueprint() {
+    if (!isLoggedIn) { setStep("signup"); return; }
+    if (!canSubmit) { setStep("upgrade"); return; }
+    writeProposalContext({
+      recipientWorkspaceId,
+      recipientName: recipientName || null,
+      requestId: request?.id || null,
+      requestTitle: request?.title || null,
+      requestDescription: request?.description || null,
+      requirements,
+      origin: currentPath,
+    });
+    navigate("/blueprint?from=marketplace");
+  }
+
+  // ── AI cover letter (secondary, in-form tool) ────────────────────────────
   async function generateCoverLetter() {
     setAiBusy(true);
     setError(null);
@@ -115,42 +152,6 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     }
   }
 
-  // ── Upload-first flow: extract a brief, pre-fill the cover letter ─────────
-  async function handleBriefFile(file) {
-    if (!file) return;
-    const name = file.name.toLowerCase();
-    if (!BRIEF_EXTS.some((ext) => name.endsWith(ext))) {
-      setError("Upload a PDF, Word, or text document.");
-      return;
-    }
-    setExtracting(true);
-    setError(null);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(`${getApiBaseUrl()}/proposals/extract-brief`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: fd,
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.detail || "Could not read that file");
-      const { text } = await res.json();
-      // Keep the original file as an attachment too (best-effort).
-      let meta = null;
-      try { meta = await uploadOne(file); } catch { /* non-blocking */ }
-      setForm((f) => ({
-        ...f,
-        summary: text || f.summary,
-        attachments: meta ? [...f.attachments, meta] : f.attachments,
-      }));
-      setStep("write");
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setExtracting(false);
-    }
-  }
-
   // ── Sections ─────────────────────────────────────────────────────────────
   const addSection = () => set({ sections: [...form.sections, { _k: genId(), heading: "", content: "" }] });
   const updateSection = (i, patch) => set({ sections: form.sections.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
@@ -178,14 +179,17 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
         attachments: form.attachments,
       };
       const proposal = await submitProposal(payload);
+      clearProposalContext();
       fetchActivity();
       setStep("success");
       onSubmitted?.(proposal);
     } catch (e) {
+      const code = httpStatus(e);
       const msg = errText(e);
-      // Backend 402 — plan/grant check failed server-side (e.g. state changed
-      // since the modal opened). Route to the upgrade gate rather than an alert.
-      if (/HTTP 402/i.test(e?.message || "") || /Starter plan or above/i.test(msg)) {
+      // Gate at submit: unauthenticated → signup, unentitled → upgrade.
+      if (code === 401 || /not authenticated|sign in/i.test(msg)) {
+        setStep("signup");
+      } else if (code === 402 || /Starter plan or above/i.test(msg)) {
         setStep("upgrade");
       } else {
         setError(msg);
@@ -211,7 +215,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     : `Submit a proposal${recipientName ? ` to ${recipientName}` : ""}`;
 
   return (
-    <div className="fixed inset-0 z-[130] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed inset-0 z-[130] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
       <div className="flex max-h-[94vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-slate-900 sm:rounded-2xl">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-700">
           <div>
@@ -220,13 +224,16 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">For “{request.title}”</p>
             ) : null}
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+          <button type="button" onClick={close} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {error ? <div className="mb-3"><InlineAlert kind="error" message={error} /></div> : null}
+          {returned && step === "write" ? (
+            <div className="mb-3"><InlineAlert kind="success" message="Your Blueprint proposal is attached. Add a short cover letter and submit." /></div>
+          ) : null}
 
           {step === "signup" ? (
             <div className="py-6 text-center">
@@ -249,7 +256,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
               </p>
               <div className="mt-4 flex justify-center gap-2">
                 <Button onClick={() => navigate("/pricing")}>See plans</Button>
-                <Button variant="secondary" onClick={onClose}>Not now</Button>
+                <Button variant="secondary" onClick={close}>Not now</Button>
               </div>
             </div>
           ) : null}
@@ -257,21 +264,17 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
           {step === "choose" ? (
             <div className="py-2">
               <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">How would you like to start your proposal?</p>
-              <input ref={briefRef} type="file" accept=".pdf,.doc,.docx,.txt,.rtf,.md" className="hidden" onChange={(e) => { handleBriefFile(e.target.files?.[0]); e.target.value = ""; }} />
               <div className="grid gap-3 sm:grid-cols-2">
                 <button
                   type="button"
-                  disabled={extracting}
-                  onClick={() => briefRef.current?.click()}
-                  className="rounded-2xl border border-slate-200 p-4 text-left transition hover:border-brand-300 hover:bg-brand-50/40 disabled:opacity-60 dark:border-slate-700 dark:hover:bg-brand-900/10"
+                  onClick={startBlueprint}
+                  className="rounded-2xl border-2 border-brand-500 bg-brand-50/50 p-4 text-left transition hover:bg-brand-50 dark:border-brand-500 dark:bg-brand-900/20 dark:hover:bg-brand-900/30"
                 >
-                  <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-900/40 dark:text-brand-300">
-                    {extracting ? <Spinner size={16} /> : (
-                      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M12 18v-6M9 15h6" /></svg>
-                    )}
+                  <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-brand-600 text-white">
+                    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2Z" /></svg>
                   </div>
-                  <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">{extracting ? "Reading your brief…" : "Upload a brief"}</div>
-                  <div className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">We read a PDF, Word, or text file and pre-fill your cover letter.</div>
+                  <div className="text-[13px] font-semibold text-brand-800 dark:text-brand-200">Use EnterprateAI</div>
+                  <div className="mt-0.5 text-[12px] text-slate-600 dark:text-slate-400">Generate a full proposal in Business Blueprints, then submit it here.</div>
                 </button>
                 <button
                   type="button"
@@ -281,8 +284,8 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
                   <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                     <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
                   </div>
-                  <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Write it myself</div>
-                  <div className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">Start from a blank form with a cover letter, sections, and attachments.</div>
+                  <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Upload / Write Manually</div>
+                  <div className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">Attach a PDF or Word doc and write your own cover letter.</div>
                 </button>
               </div>
             </div>
@@ -418,7 +421,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
               </p>
               <div className="mt-4 flex justify-center gap-2">
                 <Button onClick={() => navigate("/financials?tab=proposals")}>Go to Proposals</Button>
-                <Button variant="secondary" onClick={onClose}>Close</Button>
+                <Button variant="secondary" onClick={close}>Close</Button>
               </div>
             </div>
           ) : null}
@@ -427,7 +430,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
         {step === "choose" || step === "write" || step === "preview" ? (
           <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4 dark:border-slate-700">
             {step === "choose" ? (
-              <Button variant="secondary" onClick={onClose}>Cancel</Button>
+              <Button variant="secondary" onClick={close}>Cancel</Button>
             ) : step === "preview" ? (
               <Button variant="secondary" onClick={() => setStep("write")}>Back</Button>
             ) : (
