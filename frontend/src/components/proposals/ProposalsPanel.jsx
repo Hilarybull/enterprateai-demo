@@ -48,9 +48,11 @@ function fmtDate(v) {
 
 function errText(e) {
   const raw = (e instanceof Error ? e.message : String(e || "")).replace(/^HTTP \d+:\s*/i, "");
+  if (/network_error|failed to fetch|networkerror|load failed/i.test(raw)) return "Couldn't reach the server. Check your connection and try again.";
   if (/bearer token|not authenticated|401|unauthor/i.test(raw)) return "Your session has expired — please sign in again.";
-  if (/failed to fetch|networkerror|load failed/i.test(raw)) return "Couldn't reach the server. Check your connection and try again.";
-  if (/^\s*(5\d\d|internal server)/i.test(raw) || /schema cache|does not exist/i.test(raw)) return "Something went wrong on our side. Please try again in a moment.";
+  if (/greater than or equal to 1/i.test(raw)) return "Max submissions must be at least 1.";
+  if (/greater than or equal to|less than or equal to|should be a valid|value_error/i.test(raw)) return "Some values are out of range — please check the form.";
+  if (/^\s*(5\d\d|internal server)/i.test(raw) || /schema cache|does not exist|timed out/i.test(raw)) return "Something went wrong on our side. Please try again in a moment.";
   return raw || "Something went wrong.";
 }
 
@@ -471,7 +473,19 @@ function RequestForm({ initial, onSaved, onCancel }) {
   }
 
   async function save() {
-    if (!form.title.trim()) { setError("A title is required."); return; }
+    if (!form.title.trim()) { setError("Give the request a title."); return; }
+    const cap = form.submission_cap ? Number(form.submission_cap) : null;
+    if (cap !== null && (!Number.isFinite(cap) || cap < 1)) {
+      setError("Max submissions must be a whole number of 1 or more.");
+      return;
+    }
+    if (form.deadline) {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      if (new Date(form.deadline) < today) {
+        setError("The closing date is in the past. Pick today or a future date.");
+        return;
+      }
+    }
     setBusy(true);
     setError(null);
     const payload = {
@@ -482,7 +496,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
       budget_currency: form.budget_currency || null,
       budget_visible: !!form.budget_visible,
       deadline: form.deadline || null,
-      submission_cap: form.submission_cap ? Number(form.submission_cap) : null,
+      submission_cap: cap,
       visibility: form.visibility,
       requirements: (form.requirements || []).filter((r) => (r.text || "").trim()).map((r) => ({
         id: r.id, text: r.text.trim(), mandatory: !!r.mandatory, weight: Number(r.weight) || 1,
@@ -502,7 +516,6 @@ function RequestForm({ initial, onSaved, onCancel }) {
   return (
     <SectionCard title={editing ? "Edit request" : "New proposal request"}>
       <div className="space-y-3">
-        {error ? <InlineAlert kind="error" message={error} /> : null}
         <div>
           <div className="ea-label">Title</div>
           <Input value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. Brand refresh for a fintech startup" />
@@ -526,7 +539,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
           </div>
           <div>
             <div className="ea-label">Deadline</div>
-            <Input type="date" value={form.deadline || ""} onChange={(e) => set({ deadline: e.target.value })} />
+            <Input type="date" min={new Date().toISOString().slice(0, 10)} value={form.deadline || ""} onChange={(e) => set({ deadline: e.target.value })} />
           </div>
           <div>
             <div className="ea-label">Budget (optional)</div>
@@ -543,7 +556,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
           </div>
           <div>
             <div className="ea-label">Max submissions (optional)</div>
-            <Input type="number" min="1" value={form.submission_cap} onChange={(e) => set({ submission_cap: e.target.value })} />
+            <Input type="number" min="1" step="1" value={form.submission_cap} onChange={(e) => { const v = e.target.value; set({ submission_cap: v === "" ? "" : String(Math.max(1, Math.floor(Number(v) || 1))) }); }} />
           </div>
         </div>
         <div className="flex flex-wrap gap-4 text-sm">
@@ -615,6 +628,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
           </div>
         </div>
 
+        {error ? <InlineAlert kind="error" message={error} /> : null}
         <div className="flex gap-2 pt-1">
           <Button onClick={save} disabled={busy}>{busy ? <Spinner size={14} /> : editing ? "Save changes" : "Create request"}</Button>
           <Button variant="secondary" onClick={onCancel}>Cancel</Button>
@@ -664,46 +678,56 @@ function RequestsTab({ openNewNonce = 0 }) {
       ) : !requests.length ? (
         <p className="py-8 text-center text-sm text-slate-500">No requests yet.</p>
       ) : (
-        requests.map((r) => (
-          <div key={r.id} className="ea-card p-3 sm:p-4">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-semibold text-slate-900 dark:text-slate-100">{r.title}</span>
-                  <Badge tone={r.status === "PUBLISHED" ? "success" : r.status === "CLOSED" ? "slate" : "warn"}>{label(r.status)}</Badge>
-                  {r.visibility === "private" ? <Badge tone="slate">Invite-only</Badge> : null}
-                </div>
-                <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                  {r.submission_count} submission{r.submission_count === 1 ? "" : "s"}
-                  {r.deadline ? ` · closes ${fmtDate(r.deadline)}` : ""}
-                  {r.submission_cap ? ` · cap ${r.submission_cap}` : ""}
-                </div>
-              </div>
-              {(() => {
-                const rowBusy = busyRow?.id === r.id;
-                const items = [
-                  { label: "Edit request", onClick: () => setEditing(r) },
-                  r.status === "DRAFT" && { label: "Publish", onClick: () => act(r.id, "publish") },
-                  r.status === "PUBLISHED" && { label: copiedId === r.id ? "Link copied ✓" : "Copy link", onClick: () => copyLink(r.id) },
-                  r.status === "PUBLISHED" && { label: "Invite proposers", onClick: () => { setInviteFor(r); setInviteEmails(""); setInviteResult(null); } },
-                  r.status === "PUBLISHED" && { label: "Close request", onClick: () => act(r.id, "close") },
-                  r.status === "CLOSED" && { label: "Reopen", onClick: () => act(r.id, "reopen") },
-                  r.status !== "PUBLISHED" && { label: "Delete", onClick: () => setConfirmDelete(r), danger: true },
-                ];
-                return (
-                  <div className="flex shrink-0 items-center gap-2">
-                    {rowBusy ? <Spinner size={14} /> : null}
-                    {r.status === "DRAFT" ? (
-                      <Button size="sm" disabled={rowBusy} onClick={() => act(r.id, "publish")}>Publish</Button>
-                    ) : null}
-                    <RowMenu items={items} disabled={rowBusy} />
+        requests.map((r) => {
+          const openPublic = () => window.open(`/marketplace/request/${r.id}`, "_blank", "noopener");
+          return (
+            <div key={r.id} className="ea-card p-3 sm:p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <button type="button" onClick={openPublic} className="min-w-0 text-left">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-slate-900 hover:text-brand-700 dark:text-slate-100">{r.title}</span>
+                    <Badge tone={r.status === "PUBLISHED" ? "success" : r.status === "CLOSED" ? "slate" : "warn"}>{label(r.status)}</Badge>
+                    {r.visibility === "private" ? <Badge tone="slate">Invite-only</Badge> : null}
                   </div>
-                );
-              })()}
+                  <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    {r.submission_count} submission{r.submission_count === 1 ? "" : "s"}
+                    {r.deadline ? ` · closes ${fmtDate(r.deadline)}` : ""}
+                    {r.submission_cap ? ` · cap ${r.submission_cap}` : ""}
+                  </div>
+                </button>
+                {(() => {
+                  const rowBusy = busyRow?.id === r.id;
+                  const items = [
+                    { label: "View public page", onClick: openPublic },
+                    { label: "Edit request", onClick: () => setEditing(r) },
+                    r.status === "DRAFT" && { label: "Publish", onClick: () => act(r.id, "publish") },
+                    r.status === "PUBLISHED" && { label: "Copy link", onClick: () => copyLink(r.id) },
+                    r.status === "PUBLISHED" && { label: "Invite proposers", onClick: () => { setInviteFor(r); setInviteEmails(""); setInviteResult(null); } },
+                    r.status === "PUBLISHED" && { label: "Close request", onClick: () => act(r.id, "close") },
+                    r.status === "CLOSED" && { label: "Reopen", onClick: () => act(r.id, "reopen") },
+                    r.status !== "PUBLISHED" && { label: "Delete", onClick: () => setConfirmDelete(r), danger: true },
+                  ];
+                  return (
+                    <div className="flex shrink-0 items-center gap-2">
+                      {rowBusy ? <Spinner size={14} /> : null}
+                      {r.status === "DRAFT" ? (
+                        <Button size="sm" disabled={rowBusy} onClick={() => act(r.id, "publish")}>Publish</Button>
+                      ) : null}
+                      <RowMenu items={items} disabled={rowBusy} />
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
-          </div>
-        ))
+          );
+        })
       )}
+
+      {copiedId ? (
+        <div className="fixed bottom-5 left-1/2 z-[140] -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-xs font-medium text-white shadow-lg dark:bg-slate-700">
+          Link copied to clipboard
+        </div>
+      ) : null}
 
       {editing ? (
         <div

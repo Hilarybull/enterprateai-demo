@@ -318,7 +318,6 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {error ? <div className="mb-3"><InlineAlert kind="error" message={error} /></div> : null}
           {returned && step === "write" ? (
             <div className="mb-3"><InlineAlert kind="success" message="Your Blueprint proposal is attached. Add a short cover letter and submit." /></div>
           ) : null}
@@ -548,6 +547,12 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
             </div>
           ) : null}
         </div>
+
+        {error && (step === "choose" || step === "write" || step === "preview") ? (
+          <div className="border-t border-slate-200 px-5 pt-3 dark:border-slate-700">
+            <InlineAlert kind="error" message={error} />
+          </div>
+        ) : null}
 
         {step === "choose" || step === "write" || step === "preview" ? (
           <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4 dark:border-slate-700">

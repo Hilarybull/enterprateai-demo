@@ -318,6 +318,22 @@ def _shape_requirement_responses(responses, requirements) -> list[dict] | None:
     return out or None
 
 
+def _reject_past_deadline(deadline) -> None:
+    if not deadline:
+        return
+    try:
+        if date.fromisoformat(str(deadline)[:10]) < _today():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="The closing date has already passed. Choose today or a future date.",
+            )
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The closing date isn't a valid date.",
+        )
+
+
 def _requirement_answered(req: dict, resp: dict | None) -> bool:
     """A requirement is satisfied when its response matches the declared format."""
     if not resp:
@@ -330,6 +346,7 @@ def _requirement_answered(req: dict, resp: dict | None) -> bool:
 
 async def create_request(*, user_id: str, payload: ProposalRequestIn) -> dict:
     ws = await _owner_workspace(user_id)
+    _reject_past_deadline(payload.deadline)
     now = _now()
     row = {
         "id": str(uuid4()),
@@ -377,6 +394,8 @@ async def patch_request(*, user_id: str, request_id: str, payload: ProposalReque
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This request can no longer be edited.",
         )
+    if payload.deadline is not None:
+        _reject_past_deadline(payload.deadline)
     updates: dict = {}
     for field in (
         "type", "title", "description", "budget_range", "budget_currency",
@@ -411,6 +430,8 @@ async def set_request_status(*, user_id: str, request_id: str, action: str) -> d
         )
     if action == "publish" and not (row.get("title") or "").strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Add a title before publishing.")
+    if action in ("publish", "reopen"):
+        _reject_past_deadline(row.get("deadline"))
     updates = {"status": target, "updated_at": _now()}
     await sb_update("proposal_requests", filters=[("id", "eq", request_id)], payload=updates)
     if action == "publish":
@@ -524,7 +545,11 @@ async def get_public_request(*, request_id: str, user_id: str | None) -> dict:
     if row.get("status") != "PUBLISHED" and not is_owner:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
     out = _public_request_out(row, is_owner=is_owner)
-    out["company"] = _company_public(await _workspace_row(row["workspace_id"]))
+    try:
+        out["company"] = _company_public(await _workspace_row(row["workspace_id"]))
+    except Exception as exc:  # company block is a nicety — never fail the page over it
+        logger.warning("public request company lookup failed for %s: %s", request_id, exc)
+        out["company"] = None
     return out
 
 

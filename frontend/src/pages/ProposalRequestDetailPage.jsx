@@ -91,11 +91,25 @@ export default function ProposalRequestDetailPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
+    // Watchdog — never leave the page spinning if the request hangs or a
+    // backend error slips past apiRequest's own timeout.
+    const watchdog = setTimeout(() => {
+      if (!cancelled) { setError("This request is taking too long to load. Please try again shortly."); setLoading(false); }
+    }, 15000);
     apiRequest(`/proposals/public/requests/${requestId}`, "GET")
       .then((d) => { if (!cancelled) { setRequest(d); setError(null); } })
-      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message.replace(/^HTTP \d+:\s*/i, "") : "Request not found"); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .catch((e) => {
+        if (cancelled) return;
+        const m = (e instanceof Error ? e.message : "").replace(/^HTTP \d+:\s*/i, "");
+        setError(
+          /404|not found/i.test(m) ? "This request isn't available — it may have been closed or removed."
+          : /network_error|failed to fetch/i.test(m) ? "Couldn't reach the server. Check your connection and try again."
+          : m || "This request isn't available right now.",
+        );
+      })
+      .finally(() => { if (!cancelled) { clearTimeout(watchdog); setLoading(false); } });
+    return () => { cancelled = true; clearTimeout(watchdog); };
   }, [requestId]);
 
   function share() {
@@ -110,7 +124,12 @@ export default function ProposalRequestDetailPage() {
   }
 
   const deadline = fmtDate(request?.deadline);
-  const closed = request && request.status !== "PUBLISHED";
+  const deadlinePassed = (() => {
+    if (!request?.deadline) return false;
+    const d = new Date(request.deadline); const t = new Date(); t.setHours(0, 0, 0, 0);
+    return !Number.isNaN(d.getTime()) && d < t;
+  })();
+  const closed = request && (request.status !== "PUBLISHED" || deadlinePassed);
   const company = request?.company;
 
   return (
