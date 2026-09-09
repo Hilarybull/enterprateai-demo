@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
@@ -1241,7 +1241,13 @@ export default function MarketplacePage() {
   const isLoggedIn = Boolean(token);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
-  const [activeTab, setActiveTab] = useState("products"); // "products" | "profiles" | "requests"
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(
+    () => (searchParams.get("tab") === "requests" ? "requests" : "products"),
+  ); // "products" | "requests"
+  useEffect(() => {
+    if (searchParams.get("tab")) setSearchParams({}, { replace: true });
+  }, []); // eslint-disable-line
   const [listings, setListings] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -1276,6 +1282,19 @@ export default function MarketplacePage() {
       : null;
   });
   const [serviceDetail, setServiceDetail] = useState(null); // { service, listing }
+  const [requestApply, setRequestApply] = useState(null); // { recipientWorkspaceId, recipientName, request }
+  const [copiedReqId, setCopiedReqId] = useState(null);
+
+  function shareRequest(id) {
+    const url = `${typeof window !== "undefined" ? window.location.origin : ""}/marketplace/request/${id}`;
+    if (typeof navigator !== "undefined" && navigator.share) {
+      navigator.share({ title: "Proposal request", url }).catch(() => {});
+      return;
+    }
+    navigator.clipboard?.writeText(url).catch(() => {});
+    setCopiedReqId(id);
+    setTimeout(() => setCopiedReqId((c) => (c === id ? null : c)), 1600);
+  }
 
   const PAGE_SIZE = 24;
 
@@ -1714,11 +1733,7 @@ export default function MarketplacePage() {
               {proposalRequests.map((r) => {
                 const deadline = r.deadline ? new Date(r.deadline) : null;
                 return (
-                  <button
-                    key={r.id}
-                    onClick={() => navigate(`/marketplace/request/${r.id}`)}
-                    className="ea-card ea-card-hover flex flex-col p-5 text-left"
-                  >
+                  <div key={r.id} className="ea-card flex flex-col p-5">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-lg bg-brand-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
                         {String(r.type || "general").replace(/^\w/, (c) => c.toUpperCase())}
@@ -1727,13 +1742,52 @@ export default function MarketplacePage() {
                         <span className="text-[11px] text-slate-400 dark:text-slate-500">Deadline {deadline.toLocaleDateString()}</span>
                       ) : null}
                     </div>
-                    <h3 className="mt-2 text-[15px] font-bold text-slate-900 dark:text-slate-100">{r.title}</h3>
-                    {r.company_name ? <p className="text-[12px] text-slate-500 dark:text-slate-400">{r.company_name}</p> : null}
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/marketplace/request/${r.id}`)}
+                      className="mt-2 text-left"
+                    >
+                      <h3 className="text-[15px] font-bold text-slate-900 hover:text-brand-700 dark:text-slate-100">{r.title}</h3>
+                      {r.company_name ? <p className="text-[12px] text-slate-500 dark:text-slate-400">{r.company_name}</p> : null}
+                    </button>
                     {r.description ? (
                       <p className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-slate-600 dark:text-slate-400">{r.description}</p>
                     ) : null}
-                    <span className="mt-auto pt-4 text-[12px] font-semibold text-brand-600 dark:text-brand-400">View &amp; apply →</span>
-                  </button>
+                    <div className="mt-auto flex items-center gap-1 pt-4">
+                      <button
+                        type="button"
+                        title={copiedReqId === r.id ? "Link copied" : "Share"}
+                        onClick={() => shareRequest(r.id)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+                      >
+                        {copiedReqId === r.id ? (
+                          <svg className="h-4 w-4 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>
+                        ) : (
+                          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        title="View details"
+                        onClick={() => navigate(`/marketplace/request/${r.id}`)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                      </button>
+                      <button
+                        type="button"
+                        title="Apply now"
+                        onClick={() => setRequestApply({
+                          recipientWorkspaceId: r.workspace_id,
+                          recipientName: r.company_name,
+                          request: { id: r.id, title: r.title, description: r.description, requirements: r.requirements || [] },
+                        })}
+                        className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white transition hover:bg-brand-700"
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -1837,6 +1891,15 @@ export default function MarketplacePage() {
           recipientName={approachTarget.company_name}
           onClose={() => { setApproachTarget(null); setSelected(null); }}
           onSubmitted={() => {}}
+        />
+      )}
+      {requestApply && (
+        <ApplyModal
+          recipientWorkspaceId={requestApply.recipientWorkspaceId}
+          recipientName={requestApply.recipientName}
+          request={requestApply.request}
+          onClose={() => setRequestApply(null)}
+          onSubmitted={() => setRequestApply(null)}
         />
       )}
       {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}

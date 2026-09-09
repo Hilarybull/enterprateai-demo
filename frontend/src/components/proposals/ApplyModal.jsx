@@ -16,8 +16,16 @@ import {
 } from "../../lib/proposalContext";
 
 function errText(e) {
-  const m = e instanceof Error ? e.message : String(e || "");
-  return m.replace(/^HTTP \d+:\s*/i, "") || "Something went wrong.";
+  const raw = (e instanceof Error ? e.message : String(e || "")).replace(/^HTTP \d+:\s*/i, "");
+  if (/bearer token|not authenticated|401|unauthor/i.test(raw)) return "Please sign in to continue.";
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) return "Couldn't reach the server. Check your connection and try again.";
+  if (/^\s*5\d\d\b|internal server|schema cache|does not exist/i.test(raw)) return "Something went wrong on our side. Please try again in a moment.";
+  return raw || "Something went wrong.";
+}
+
+function looksUnauthed(e) {
+  const m = (e && e.message) || "";
+  return /^HTTP 401/i.test(m) || /bearer token|not authenticated|unauthor/i.test(m);
 }
 
 function genId() {
@@ -81,10 +89,39 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     title: request?.title ? `Proposal: ${request.title}` : "",
     summary: "",
     sections: [],
-    responses: Object.fromEntries(requirements.map((r) => [r.id, ""])),
+    // one entry per requirement: { text, attachment }
+    responses: Object.fromEntries(requirements.map((r) => [r.id, { text: "", attachment: null }])),
     attachments: returned ? [returned] : [],
   });
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const setResp = (id, patch) =>
+    setForm((f) => ({ ...f, responses: { ...f.responses, [id]: { ...(f.responses[id] || { text: "", attachment: null }), ...patch } } }));
+
+  const isFileReq = (r) => r.response_type === "file" || r.response_type === "image";
+  const reqAnswered = (r) => {
+    const v = form.responses[r.id] || {};
+    return isFileReq(r) ? Boolean(v.attachment?.url) : Boolean((v.text || "").trim());
+  };
+
+  function pickRequirementFile(r) {
+    if (!isLoggedIn) { setStep("signup"); return; }
+    const inp = document.createElement("input");
+    inp.type = "file";
+    if (r.response_type === "image") inp.accept = "image/*";
+    inp.onchange = async () => {
+      const file = inp.files && inp.files[0];
+      if (!file) return;
+      setError(null);
+      try {
+        const meta = await uploadOne(file);
+        setResp(r.id, { attachment: meta });
+      } catch (e) {
+        if (looksUnauthed(e)) { setStep("signup"); return; }
+        setError(errText(e));
+      }
+    };
+    inp.click();
+  }
 
   function close() {
     clearProposalContext();
@@ -109,6 +146,8 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
 
   // ── AI cover letter (secondary, in-form tool) ────────────────────────────
   async function generateCoverLetter() {
+    if (!isLoggedIn) { setStep("signup"); return; }
+    if (!canSubmit) { setStep("upgrade"); return; }
     setAiBusy(true);
     setError(null);
     try {
@@ -141,12 +180,14 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
   }
 
   async function addAttachments(files) {
+    if (!isLoggedIn) { setStep("signup"); return; }
     setError(null);
     for (const file of files) {
       try {
         const meta = await uploadOne(file);
         setForm((f) => ({ ...f, attachments: [...f.attachments, meta] }));
       } catch (e) {
+        if (looksUnauthed(e)) { setStep("signup"); return; }
         setError(errText(e));
       }
     }
@@ -173,9 +214,14 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
         title: form.title.trim() || null,
         summary: form.summary.trim() || null,
         sections: cleanSections(),
-        requirement_responses: Object.entries(form.responses)
-          .filter(([, v]) => (v || "").trim())
-          .map(([requirement_id, response]) => ({ requirement_id, response: response.trim() })),
+        requirement_responses: requirements
+          .filter(reqAnswered)
+          .map((r) => {
+            const v = form.responses[r.id] || {};
+            return isFileReq(r)
+              ? { requirement_id: r.id, attachment: v.attachment }
+              : { requirement_id: r.id, response: (v.text || "").trim() };
+          }),
         attachments: form.attachments,
       };
       const proposal = await submitProposal(payload);
@@ -187,7 +233,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
       const code = httpStatus(e);
       const msg = errText(e);
       // Gate at submit: unauthenticated → signup, unentitled → upgrade.
-      if (code === 401 || /not authenticated|sign in/i.test(msg)) {
+      if (code === 401 || looksUnauthed(e)) {
         setStep("signup");
       } else if (code === 402 || /Starter plan or above/i.test(msg)) {
         setStep("upgrade");
@@ -199,11 +245,12 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     }
   }
 
-  const mandatoryUnanswered = requirements.some((r) => r.mandatory && !(form.responses[r.id] || "").trim());
-  const hasContent = form.summary.trim() || cleanSections().length > 0 || form.attachments.length > 0;
+  const mandatoryUnanswered = requirements.some((r) => r.mandatory && !reqAnswered(r));
+  const hasContent = form.summary.trim() || cleanSections().length > 0 || form.attachments.length > 0
+    || requirements.some(reqAnswered);
 
   function goPreview() {
-    if (mandatoryUnanswered) { setError("Answer the required questions first."); return; }
+    if (mandatoryUnanswered) { setError("Provide every required item before continuing."); return; }
     if (!hasContent) { setError("Add a cover letter, a section, or an attachment before previewing."); return; }
     setError(null);
     setStep("preview");
@@ -351,20 +398,44 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
               {requirements.length ? (
                 <div className="space-y-3">
                   <div className="ea-label">Requirement responses</div>
-                  {requirements.map((r) => (
-                    <div key={r.id}>
-                      <div className="mb-1 text-xs text-slate-600 dark:text-slate-300">
-                        {r.text} {r.mandatory ? <span className="font-semibold text-rose-500">*</span> : null}
+                  {requirements.map((r) => {
+                    const v = form.responses[r.id] || { text: "", attachment: null };
+                    const rt = r.response_type || "text";
+                    return (
+                      <div key={r.id}>
+                        <div className="mb-1 text-xs text-slate-600 dark:text-slate-300">
+                          {r.text} {r.mandatory ? <span className="font-semibold text-rose-500">*</span> : null}
+                          <span className="ml-1 text-[10px] uppercase tracking-wide text-slate-400">
+                            {rt === "file" ? "file" : rt === "image" ? "image" : rt === "link" ? "link" : rt === "number" ? "number" : rt === "paragraph" ? "" : ""}
+                          </span>
+                        </div>
+                        {isFileReq(r) ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button size="sm" variant="secondary" onClick={() => pickRequirementFile(r)}>
+                              {v.attachment ? "Replace" : rt === "image" ? "Upload image" : "Upload file"}
+                            </Button>
+                            {v.attachment ? (
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs dark:bg-slate-800">
+                                {v.attachment.filename}
+                                <button type="button" className="text-slate-400 hover:text-rose-500" onClick={() => setResp(r.id, { attachment: null })}>×</button>
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400">{r.mandatory ? "Required" : "Optional"}</span>
+                            )}
+                          </div>
+                        ) : rt === "paragraph" ? (
+                          <textarea rows={3} className="ea-input" value={v.text} onChange={(e) => setResp(r.id, { text: e.target.value })} placeholder={r.mandatory ? "Required" : "Optional"} />
+                        ) : (
+                          <Input
+                            type={rt === "link" ? "url" : rt === "number" ? "number" : "text"}
+                            value={v.text}
+                            onChange={(e) => setResp(r.id, { text: e.target.value })}
+                            placeholder={rt === "link" ? "https://…" : r.mandatory ? "Required" : "Optional"}
+                          />
+                        )}
                       </div>
-                      <textarea
-                        rows={2}
-                        className="ea-input"
-                        value={form.responses[r.id] || ""}
-                        onChange={(e) => set({ responses: { ...form.responses, [r.id]: e.target.value } })}
-                        placeholder={r.mandatory ? "Required" : "Optional"}
-                      />
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : null}
 
@@ -398,12 +469,19 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
                   <p className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">{s.content}</p>
                 </div>
               ))}
-              {requirements.filter((r) => (form.responses[r.id] || "").trim()).map((r) => (
-                <div key={r.id}>
-                  <div className="text-xs font-semibold text-slate-500">{r.text}</div>
-                  <p className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">{form.responses[r.id]}</p>
-                </div>
-              ))}
+              {requirements.filter(reqAnswered).map((r) => {
+                const v = form.responses[r.id] || {};
+                return (
+                  <div key={r.id}>
+                    <div className="text-xs font-semibold text-slate-500">{r.text}</div>
+                    {isFileReq(r) ? (
+                      <p className="text-slate-700 dark:text-slate-300">📎 {v.attachment?.filename}</p>
+                    ) : (
+                      <p className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">{v.text}</p>
+                    )}
+                  </div>
+                );
+              })}
               {form.attachments.length ? (
                 <div className="text-xs text-slate-500">{form.attachments.length} attachment{form.attachments.length === 1 ? "" : "s"}</div>
               ) : null}

@@ -277,18 +277,55 @@ async def list_requests(*, user_id: str) -> dict:
     return {"items": items, "total": len(items)}
 
 
+_REQUIREMENT_RESPONSE_TYPES = {"text", "paragraph", "link", "number", "file", "image"}
+
+
 def _normalize_requirements(reqs) -> list[dict]:
     out = []
     for r in (reqs or []):
         d = r.model_dump() if hasattr(r, "model_dump") else dict(r)
         d["id"] = d.get("id") or f"req_{uuid4().hex[:8]}"
+        rtype = str(d.get("response_type") or "text")
+        if rtype not in _REQUIREMENT_RESPONSE_TYPES:
+            rtype = "text"
         out.append({
             "id": d["id"],
             "text": d.get("text") or "",
             "mandatory": bool(d.get("mandatory")),
             "weight": int(d.get("weight") or 1),
+            "response_type": rtype,
         })
     return out
+
+
+def _shape_requirement_responses(responses, requirements) -> list[dict] | None:
+    """Store each answer with its requirement text + type so the recipient can
+    read it (and download file/image answers) without re-loading the request."""
+    if not responses:
+        return None
+    by_id = {r.get("id"): r for r in (requirements or [])}
+    out = []
+    for resp in responses:
+        d = resp.model_dump() if hasattr(resp, "model_dump") else dict(resp)
+        req = by_id.get(d.get("requirement_id")) or {}
+        out.append({
+            "requirement_id": d.get("requirement_id"),
+            "requirement_text": req.get("text") or "",
+            "response_type": req.get("response_type") or "text",
+            "response": d.get("response"),
+            "attachment": d.get("attachment"),
+        })
+    return out or None
+
+
+def _requirement_answered(req: dict, resp: dict | None) -> bool:
+    """A requirement is satisfied when its response matches the declared format."""
+    if not resp:
+        return False
+    if str(req.get("response_type") or "text") in ("file", "image"):
+        att = resp.get("attachment")
+        return bool(att and att.get("url"))
+    return bool(str(resp.get("response") or "").strip())
 
 
 async def create_request(*, user_id: str, payload: ProposalRequestIn) -> dict:
@@ -335,10 +372,10 @@ async def _get_own_request(user_id: str, request_id: str) -> dict:
 
 async def patch_request(*, user_id: str, request_id: str, payload: ProposalRequestPatch) -> dict:
     row = await _get_own_request(user_id, request_id)
-    if row.get("status") != "DRAFT":
+    if row.get("status") not in ("DRAFT", "PUBLISHED", "CLOSED"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only draft requests can be edited. Close the request to make changes.",
+            detail="This request can no longer be edited.",
         )
     updates: dict = {}
     for field in (
@@ -605,6 +642,19 @@ async def submit_proposal(*, user_id: str, user_email: str, payload: ProposalSub
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This request has reached its submission limit.")
         request_title = request_row.get("title")
 
+        # Mandatory requirements must be answered in the format the recipient asked for.
+        resp_by_id = {r.requirement_id: r.model_dump() for r in (payload.requirement_responses or [])}
+        missing = [
+            req.get("text") or "a required item"
+            for req in (request_row.get("requirements") or [])
+            if req.get("mandatory") and not _requirement_answered(req, resp_by_id.get(req.get("id")))
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Complete every required item before submitting: " + "; ".join(missing),
+            )
+
     now = _now()
     proposer_name = _company_name(proposer_ws)
     recipient_name = _company_name(recipient_ws)
@@ -624,7 +674,9 @@ async def submit_proposal(*, user_id: str, user_email: str, payload: ProposalSub
         "title": (payload.title or "").strip() or None,
         "summary": payload.summary,
         "sections": [s.model_dump() for s in (payload.sections or [])] or None,
-        "requirement_responses": [r.model_dump() for r in (payload.requirement_responses or [])] or None,
+        "requirement_responses": _shape_requirement_responses(
+            payload.requirement_responses, (request_row or {}).get("requirements") or []
+        ),
         "attachments": [a.model_dump() for a in (payload.attachments or [])] or None,
         "events": [initial_event],
         "status": sm.SUBMITTED,

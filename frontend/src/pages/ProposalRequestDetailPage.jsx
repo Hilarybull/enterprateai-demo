@@ -116,17 +116,17 @@ export default function ProposalRequestDetailPage() {
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fbff_0%,#f8fafc_45%,#f8fafc_100%)] dark:bg-slate-950">
       <header className="border-b border-slate-200/80 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3 sm:px-6">
+        <div className="mx-auto flex w-full max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
           <Link to="/marketplace" className="flex items-center gap-2">
             <img src={enterprateLogo} alt="EnterprateAI" className="h-6 w-auto max-w-[130px] object-contain sm:h-7" />
           </Link>
-          <Link to="/marketplace/requests" className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400">Browse marketplace</Link>
+          <Link to="/marketplace?tab=requests" className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400">Browse marketplace</Link>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-4 pb-16 pt-8 sm:px-6">
+      <main className="mx-auto w-full max-w-4xl px-4 pb-16 pt-8 sm:px-6">
         <Link
-          to="/marketplace/requests"
+          to="/marketplace?tab=requests"
           className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400"
         >
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>

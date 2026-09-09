@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import SectionCard from "../SectionCard";
 import SegmentedTabs from "../SegmentedTabs";
@@ -47,8 +47,55 @@ function fmtDate(v) {
 }
 
 function errText(e) {
-  const m = e instanceof Error ? e.message : String(e || "");
-  return m.replace(/^HTTP \d+:\s*/i, "") || "Something went wrong.";
+  const raw = (e instanceof Error ? e.message : String(e || "")).replace(/^HTTP \d+:\s*/i, "");
+  if (/bearer token|not authenticated|401|unauthor/i.test(raw)) return "Your session has expired — please sign in again.";
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) return "Couldn't reach the server. Check your connection and try again.";
+  if (/^\s*(5\d\d|internal server)/i.test(raw) || /schema cache|does not exist/i.test(raw)) return "Something went wrong on our side. Please try again in a moment.";
+  return raw || "Something went wrong.";
+}
+
+// ── Kebab (3-dot) row menu ────────────────────────────────────────────────
+function RowMenu({ items, disabled }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  const visible = (items || []).filter(Boolean);
+  if (!visible.length) return null;
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        aria-label="More actions"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800"
+      >
+        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg>
+      </button>
+      {open ? (
+        <div className="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+          {visible.map((it, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => { setOpen(false); it.onClick(); }}
+              className={
+                "block w-full px-3 py-2 text-left text-[13px] transition hover:bg-slate-50 dark:hover:bg-slate-800 " +
+                (it.danger ? "text-rose-600 dark:text-rose-400" : "text-slate-700 dark:text-slate-200")
+              }
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 // ── Proposal detail modal ─────────────────────────────────────────────────
@@ -153,8 +200,18 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
               <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Requirement responses</div>
               <ul className="space-y-2">
                 {p.requirement_responses.map((r, i) => (
-                  <li key={i} className="rounded-lg border border-slate-200 p-2 text-slate-700 dark:border-slate-700 dark:text-slate-300">
-                    {r.response}
+                  <li key={i} className="rounded-lg border border-slate-200 p-2 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-300">
+                    {r.requirement_text ? (
+                      <div className="mb-1 text-xs font-medium text-slate-500">{r.requirement_text}</div>
+                    ) : null}
+                    {r.attachment?.url ? (
+                      <a href={r.attachment.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand-600 hover:underline dark:text-brand-400">
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+                        {r.attachment.filename || "Download"}
+                      </a>
+                    ) : (
+                      <div className="whitespace-pre-wrap">{r.response}</div>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -350,7 +407,7 @@ function ActivityTab() {
     return (
       <p className="py-8 text-center text-sm text-slate-500">
         You haven't submitted any proposals yet.{" "}
-        <Link to="/marketplace/requests" className="text-brand-600 hover:underline dark:text-brand-400">Browse open requests</Link>.
+        <Link to="/marketplace?tab=requests" className="text-brand-600 hover:underline dark:text-brand-400">Browse open requests</Link>.
       </p>
     );
   }
@@ -429,6 +486,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
       visibility: form.visibility,
       requirements: (form.requirements || []).filter((r) => (r.text || "").trim()).map((r) => ({
         id: r.id, text: r.text.trim(), mandatory: !!r.mandatory, weight: Number(r.weight) || 1,
+        response_type: r.response_type || "text",
       })),
     };
     try {
@@ -501,34 +559,57 @@ function RequestForm({ initial, onSaved, onCancel }) {
 
         <div>
           <div className="ea-label">Requirements</div>
+          <p className="mb-2 text-[11px] text-slate-400">Set what each item asks for. Proposers can't submit until every <span className="font-medium">Required</span> item is provided in the format you choose.</p>
           <div className="space-y-2">
-            {(form.requirements || []).map((r, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <input
-                  className="ea-input flex-1"
-                  value={r.text}
-                  onChange={(e) => set({ requirements: form.requirements.map((x, j) => j === i ? { ...x, text: e.target.value } : x) })}
-                  placeholder="e.g. Minimum 3 years in B2B SaaS"
-                />
-                <label className="flex items-center gap-1 text-xs text-slate-500" title="Scoring weight used when evaluating proposals">
-                  <span className="hidden sm:inline">Weight</span>
-                  <input
-                    type="number" min="1" max="10"
-                    className="ea-input w-14 px-2"
-                    value={r.weight ?? 1}
-                    onChange={(e) => set({ requirements: form.requirements.map((x, j) => j === i ? { ...x, weight: e.target.value } : x) })}
-                  />
-                </label>
-                <label className="flex items-center gap-1 text-xs text-slate-500">
-                  <input type="checkbox" checked={!!r.mandatory} onChange={(e) => set({ requirements: form.requirements.map((x, j) => j === i ? { ...x, mandatory: e.target.checked } : x) })} />
-                  Required
-                </label>
-                <button type="button" className="text-slate-400 hover:text-rose-500" onClick={() => set({ requirements: form.requirements.filter((_, j) => j !== i) })}>
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                </button>
-              </div>
-            ))}
-            <Button size="sm" variant="secondary" onClick={() => set({ requirements: [...(form.requirements || []), { text: "", mandatory: false, weight: 1 }] })}>
+            {(form.requirements || []).map((r, i) => {
+              const upd = (patch) => set({ requirements: form.requirements.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+              return (
+                <div key={i} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                  <div className="flex items-start gap-2">
+                    <input
+                      className="ea-input flex-1"
+                      value={r.text}
+                      onChange={(e) => upd({ text: e.target.value })}
+                      placeholder="e.g. Minimum 3 years in B2B SaaS · Portfolio of past work · Fixed quote"
+                    />
+                    <button type="button" className="mt-2 shrink-0 text-slate-400 hover:text-rose-500" onClick={() => set({ requirements: form.requirements.filter((_, j) => j !== i) })}>
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                    </button>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-500 dark:text-slate-400">
+                    <label className="flex items-center gap-1.5">
+                      Answer as
+                      <select
+                        className="ea-input h-8 w-auto py-0 text-xs"
+                        value={r.response_type || "text"}
+                        onChange={(e) => upd({ response_type: e.target.value })}
+                      >
+                        <option value="text">Short text</option>
+                        <option value="paragraph">Paragraph</option>
+                        <option value="link">Link / URL</option>
+                        <option value="number">Number</option>
+                        <option value="file">File upload</option>
+                        <option value="image">Image upload</option>
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-1.5" title="Scoring weight used when evaluating proposals">
+                      Weight
+                      <input
+                        type="number" min="1" max="10"
+                        className="ea-input h-8 w-14 px-2 py-0"
+                        value={r.weight ?? 1}
+                        onChange={(e) => upd({ weight: e.target.value })}
+                      />
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <input type="checkbox" checked={!!r.mandatory} onChange={(e) => upd({ mandatory: e.target.checked })} />
+                      Required
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+            <Button size="sm" variant="secondary" onClick={() => set({ requirements: [...(form.requirements || []), { text: "", mandatory: false, weight: 1, response_type: "text" }] })}>
               Add requirement
             </Button>
           </div>
@@ -573,16 +654,6 @@ function RequestsTab({ openNewNonce = 0 }) {
     setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1600);
   }
 
-  if (editing) {
-    return (
-      <RequestForm
-        initial={editing === "new" ? null : editing}
-        onSaved={() => setEditing(null)}
-        onCancel={() => setEditing(null)}
-      />
-    );
-  }
-
   return (
     <div className="space-y-3">
       <p className="text-sm text-slate-500">Publish a brief and receive structured proposals.</p>
@@ -610,36 +681,22 @@ function RequestsTab({ openNewNonce = 0 }) {
               </div>
               {(() => {
                 const rowBusy = busyRow?.id === r.id;
-                const spin = <Spinner size={13} />;
+                const items = [
+                  { label: "Edit request", onClick: () => setEditing(r) },
+                  r.status === "DRAFT" && { label: "Publish", onClick: () => act(r.id, "publish") },
+                  r.status === "PUBLISHED" && { label: copiedId === r.id ? "Link copied ✓" : "Copy link", onClick: () => copyLink(r.id) },
+                  r.status === "PUBLISHED" && { label: "Invite proposers", onClick: () => { setInviteFor(r); setInviteEmails(""); setInviteResult(null); } },
+                  r.status === "PUBLISHED" && { label: "Close request", onClick: () => act(r.id, "close") },
+                  r.status === "CLOSED" && { label: "Reopen", onClick: () => act(r.id, "reopen") },
+                  r.status !== "PUBLISHED" && { label: "Delete", onClick: () => setConfirmDelete(r), danger: true },
+                ];
                 return (
-                  <div className="flex shrink-0 flex-wrap gap-1.5">
+                  <div className="flex shrink-0 items-center gap-2">
+                    {rowBusy ? <Spinner size={14} /> : null}
                     {r.status === "DRAFT" ? (
-                      <>
-                        <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => setEditing(r)}>Edit</Button>
-                        <Button size="sm" disabled={rowBusy} onClick={() => act(r.id, "publish")}>
-                          {rowBusy && busyRow.action === "publish" ? spin : "Publish"}
-                        </Button>
-                      </>
+                      <Button size="sm" disabled={rowBusy} onClick={() => act(r.id, "publish")}>Publish</Button>
                     ) : null}
-                    {r.status === "PUBLISHED" ? (
-                      <>
-                        <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => copyLink(r.id)}>
-                          {copiedId === r.id ? "Copied ✓" : "Copy link"}
-                        </Button>
-                        <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => { setInviteFor(r); setInviteEmails(""); setInviteResult(null); }}>Invite</Button>
-                        <Button size="sm" variant="secondary" disabled={rowBusy} onClick={() => act(r.id, "close")}>
-                          {rowBusy && busyRow.action === "close" ? spin : "Close"}
-                        </Button>
-                      </>
-                    ) : null}
-                    {r.status === "CLOSED" ? (
-                      <Button size="sm" disabled={rowBusy} onClick={() => act(r.id, "reopen")}>
-                        {rowBusy && busyRow.action === "reopen" ? spin : "Reopen"}
-                      </Button>
-                    ) : null}
-                    {r.status !== "PUBLISHED" ? (
-                      <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => setConfirmDelete(r)}>Delete</Button>
-                    ) : null}
+                    <RowMenu items={items} disabled={rowBusy} />
                   </div>
                 );
               })()}
@@ -647,6 +704,21 @@ function RequestsTab({ openNewNonce = 0 }) {
           </div>
         ))
       )}
+
+      {editing ? (
+        <div
+          className="fixed inset-0 z-[130] flex items-start justify-center overflow-y-auto bg-slate-950/50 p-0 sm:p-4"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setEditing(null); }}
+        >
+          <div className="w-full max-w-2xl sm:my-6">
+            <RequestForm
+              initial={editing === "new" ? null : editing}
+              onSaved={() => setEditing(null)}
+              onCancel={() => setEditing(null)}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {inviteFor ? (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) setInviteFor(null); }}>
