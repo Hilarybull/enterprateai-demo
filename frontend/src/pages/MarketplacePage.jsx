@@ -1242,16 +1242,24 @@ export default function MarketplacePage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
   const [searchParams, setSearchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState(() => {
+  const [activeTab, setActiveTabState] = useState(() => {
     if (searchParams.get("tab") === "requests") return "requests";
+    if (searchParams.get("tab") === "products") return "products";
     // Returning from a proposal detour (Blueprint / sign-in) for a request —
     // land back on the requests tab, not products.
     const ctx = readProposalContext();
     if ((ctx?.blueprintReturn?.attachment || ctx?.draft) && ctx.requestId) return "requests";
     return "products";
   }); // "products" | "requests"
+  // Keep the tab in the URL so a refresh stays on it.
+  const syncTabToUrl = (v) => {
+    const n = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+    n.set("tab", v);
+    setSearchParams(n, { replace: true });
+  };
+  const setActiveTab = (v) => { setActiveTabState(v); syncTabToUrl(v); };
   useEffect(() => {
-    if (searchParams.get("tab")) setSearchParams({}, { replace: true });
+    if (!searchParams.get("tab")) syncTabToUrl(activeTab);
   }, []); // eslint-disable-line
   const [listings, setListings] = useState([]);
   const [total, setTotal] = useState(0);

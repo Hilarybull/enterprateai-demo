@@ -318,14 +318,18 @@ function InboxTab() {
 
   useEffect(() => { fetchInbox(); fetchRequests(); }, []); // eslint-disable-line
 
-  if (inboxLoading) return <div className="flex justify-center py-10"><Spinner size={22} /></div>;
-  if (inboxError) return <InlineAlert kind="error" message={inboxError} />;
-  if (!inbox.length) {
-    return <p className="py-8 text-center text-sm text-slate-500">No proposals received yet. Publish a request to attract submissions.</p>;
-  }
+  // Only the first load blanks the tab. Background refetches (e.g. after
+  // opening a proposal marks it viewed) must not unmount the open detail
+  // modal — that caused an open→refetch→remount→refetch blink loop.
+  if (inboxLoading && !inbox.length) return <div className="flex justify-center py-10"><Spinner size={22} /></div>;
+  if (inboxError && !inbox.length) return <InlineAlert kind="error" message={inboxError} />;
 
   return (
     <div className="space-y-2">
+      {inboxError ? <InlineAlert kind="error" message={inboxError} /> : null}
+      {!inbox.length && !inboxLoading ? (
+        <p className="py-8 text-center text-sm text-slate-500">No proposals received yet. Publish a request to attract submissions.</p>
+      ) : null}
       {inbox.map((p) => (
         <div key={p.id} className="ea-card p-3 sm:p-4">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -403,19 +407,19 @@ function ActivityTab() {
 
   useEffect(() => { fetchActivity(); }, []); // eslint-disable-line
 
-  if (activityLoading) return <div className="flex justify-center py-10"><Spinner size={22} /></div>;
-  if (activityError) return <InlineAlert kind="error" message={activityError} />;
-  if (!activity.length) {
-    return (
-      <p className="py-8 text-center text-sm text-slate-500">
-        You haven't submitted any proposals yet.{" "}
-        <Link to="/marketplace?tab=requests" className="text-brand-600 hover:underline dark:text-brand-400">Browse open requests</Link>.
-      </p>
-    );
-  }
+  // Background refetches must not unmount an open detail modal (blink loop).
+  if (activityLoading && !activity.length) return <div className="flex justify-center py-10"><Spinner size={22} /></div>;
+  if (activityError && !activity.length) return <InlineAlert kind="error" message={activityError} />;
 
   return (
     <div className="space-y-2">
+      {activityError ? <InlineAlert kind="error" message={activityError} /> : null}
+      {!activity.length && !activityLoading ? (
+        <p className="py-8 text-center text-sm text-slate-500">
+          You haven't submitted any proposals yet.{" "}
+          <Link to="/marketplace?tab=requests" className="text-brand-600 hover:underline dark:text-brand-400">Browse open requests</Link>.
+        </p>
+      ) : null}
       {activity.map((p) => (
         <button key={p.id} type="button" className="ea-card block w-full p-3 text-left sm:p-4" onClick={() => setOpen(p)}>
           <div className="flex flex-wrap items-center gap-2">
