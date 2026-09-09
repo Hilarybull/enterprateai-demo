@@ -375,8 +375,8 @@ export default function BlueprintPage() {
         setIsModalOpen(true);
         setShowInputs(true);
         setError(null);
-        if (ctx.recipientName) { setBillTo(ctx.recipientName); setCustomClientName(ctx.recipientName); }
-        setProposalTitle(ctx.requestTitle ? `Proposal: ${ctx.requestTitle}` : (ctx.recipientName ? `Proposal for ${ctx.recipientName}` : ""));
+        // The actual field prefill happens in the effect below, once the
+        // client_proposal form has mounted and its own loaders have settled.
       }
     }
     if (d || vws || from) setBpSearchParams({}, { replace: true });
@@ -682,6 +682,29 @@ export default function BlueprintPage() {
       setSectionTabByDoc((prev) => ({ ...prev, [selectedDoc]: null }));
     }
   }, [selectedDoc]);
+
+  // Prefill the proposal from the marketplace request that sent the user here.
+  // Runs once, after the client_proposal form is the active doc.
+  const mktPrefilledRef = useRef(false);
+  useEffect(() => {
+    if (!mktReturn || mktPrefilledRef.current || selectedDoc !== "client_proposal") return;
+    mktPrefilledRef.current = true;
+    setSelectedCustomerId(OTHER_CUSTOMER_ID);
+    if (mktReturn.recipientName) {
+      setCustomClientName(mktReturn.recipientName);
+      setBillTo(mktReturn.recipientName);
+      setDirtyFields((p) => ({ ...p, companyName: true }));
+    }
+    if (mktReturn.requestDescription) {
+      setDirtyFields((p) => ({ ...p, problem: true }));
+      setProblem(mktReturn.requestDescription);
+    }
+    setProposalTitle(
+      mktReturn.requestTitle
+        ? `Proposal: ${mktReturn.requestTitle}`
+        : (mktReturn.recipientName ? `Proposal for ${mktReturn.recipientName}` : ""),
+    );
+  }, [mktReturn, selectedDoc]); // eslint-disable-line
 
   useEffect(() => {
     if (!isLoading) return;

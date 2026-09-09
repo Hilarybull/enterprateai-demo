@@ -281,6 +281,9 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
           {returned && step === "write" ? (
             <div className="mb-3"><InlineAlert kind="success" message="Your Blueprint proposal is attached. Add a short cover letter and submit." /></div>
           ) : null}
+          {!isLoggedIn && step === "write" ? (
+            <div className="mb-3"><InlineAlert kind="info" message="You can draft your proposal now. Creating a free account is only needed to use AI, attach files, or submit." /></div>
+          ) : null}
 
           {step === "signup" ? (
             <div className="py-6 text-center">
