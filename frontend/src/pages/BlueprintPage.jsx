@@ -307,6 +307,7 @@ export default function BlueprintPage() {
   const { triggerDemoGate } = useDemoTour() || {};
   const navigate = useNavigate();
   const workspaceIdStored = useWorkspaceStore((s) => s.workspaceId);
+  const workspaceNameStored = useWorkspaceStore((s) => s.workspaceName);
   const workspaceLogoStored = useWorkspaceStore((s) => s.workspaceLogo);
   const setWorkspaceIdStored = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceNameStored = useWorkspaceStore((s) => s.setWorkspaceName);
@@ -691,24 +692,27 @@ export default function BlueprintPage() {
     if (!mktReturn || mktPrefilledRef.current || selectedDoc !== "client_proposal") return;
     mktPrefilledRef.current = true;
 
-    // Client — force the "type a name" path so the field is visible, fill it.
+    // Client — the recipient of the proposal. Force the "type a name" path so
+    // the field renders, and fill it. (Business name is the proposer's own and
+    // is left to the workspace auto-fill.)
     setSelectedCustomerId(OTHER_CUSTOMER_ID);
     if (mktReturn.recipientName) {
       setCustomClientName(mktReturn.recipientName);
       setBillTo(mktReturn.recipientName);
-      setDirtyFields((p) => ({ ...p, companyName: true }));
     }
 
-    // Problem / brief — the request description plus the requirements the
-    // recipient wants addressed, so the generated proposal covers them.
+    // Problem — always seeded from the request so the proposal answers the
+    // brief, not the proposer's own workspace data. Force it (mark dirty) so
+    // Blueprint's own loaders don't overwrite it.
     const reqLines = (mktReturn.requirements || [])
       .map((r) => (typeof r === "string" ? r : r?.text))
       .filter(Boolean)
       .map((t) => `- ${t}`);
-    const brief = [
-      mktReturn.requestDescription || "",
-      reqLines.length ? `\nRequirements to address:\n${reqLines.join("\n")}` : "",
-    ].join("").trim();
+    const briefParts = [];
+    if (mktReturn.requestTitle) briefParts.push(`${mktReturn.recipientName || "The client"} is requesting: ${mktReturn.requestTitle}.`);
+    if (mktReturn.requestDescription) briefParts.push(mktReturn.requestDescription);
+    if (reqLines.length) briefParts.push(`Requirements to address:\n${reqLines.join("\n")}`);
+    const brief = briefParts.join("\n\n").trim();
     if (brief) {
       setDirtyFields((p) => ({ ...p, problem: true }));
       setProblem(brief);
@@ -747,7 +751,7 @@ export default function BlueprintPage() {
 
     // Workspace profile is master data — it wins over idea validation for all master fields
     if (!dirtyFields.companyName && !companyName) {
-      const name = workspaceProfile?.company_name || ctx.business_name || "";
+      const name = workspaceProfile?.company_name || ctx.business_name || workspaceNameStored || "";
       if (name) setCompanyName(name);
     }
     if (!dirtyFields.industry && !industry) {
@@ -884,7 +888,7 @@ export default function BlueprintPage() {
 
         // Master data fields: workspace profile always wins; idea validation only fills genuine gaps
         if (!dirtyFields.companyName && !companyName)
-          setCompanyName(workspaceProfile.company_name || profile.business_name || "");
+          setCompanyName(workspaceProfile.company_name || profile.business_name || workspaceNameStored || "");
         if (!dirtyFields.industry && !industry) {
           const ivSector = ivCtx.sector_category === "Other" ? (ivCtx.sector_other || "") : (ivCtx.sector_category || ivCtx.sector || "");
           setIndustry(workspaceProfile.primary_industry || profile.primary_industry || ivSector || profile.business_type || ivCtx.primary_industry || ivCtx.business_type || "");
