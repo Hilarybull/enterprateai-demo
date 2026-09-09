@@ -684,21 +684,37 @@ export default function BlueprintPage() {
   }, [selectedDoc]);
 
   // Prefill the proposal from the marketplace request that sent the user here.
-  // Runs once, after the client_proposal form is the active doc.
+  // Runs once, after the client_proposal form is the active doc, so the
+  // proposer edits a populated form and the generation uses the brief.
   const mktPrefilledRef = useRef(false);
   useEffect(() => {
     if (!mktReturn || mktPrefilledRef.current || selectedDoc !== "client_proposal") return;
     mktPrefilledRef.current = true;
+
+    // Client — force the "type a name" path so the field is visible, fill it.
     setSelectedCustomerId(OTHER_CUSTOMER_ID);
     if (mktReturn.recipientName) {
       setCustomClientName(mktReturn.recipientName);
       setBillTo(mktReturn.recipientName);
       setDirtyFields((p) => ({ ...p, companyName: true }));
     }
-    if (mktReturn.requestDescription) {
+
+    // Problem / brief — the request description plus the requirements the
+    // recipient wants addressed, so the generated proposal covers them.
+    const reqLines = (mktReturn.requirements || [])
+      .map((r) => (typeof r === "string" ? r : r?.text))
+      .filter(Boolean)
+      .map((t) => `- ${t}`);
+    const brief = [
+      mktReturn.requestDescription || "",
+      reqLines.length ? `\nRequirements to address:\n${reqLines.join("\n")}` : "",
+    ].join("").trim();
+    if (brief) {
       setDirtyFields((p) => ({ ...p, problem: true }));
-      setProblem(mktReturn.requestDescription);
+      setProblem(brief);
     }
+
+    // Title
     setProposalTitle(
       mktReturn.requestTitle
         ? `Proposal: ${mktReturn.requestTitle}`
