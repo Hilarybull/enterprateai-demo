@@ -71,7 +71,15 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
   const canSubmit =
     hasPaidAccess(subscription?.plan_key, subscription?.status) || hasProposalGrant;
   const isUnsolicited = !request?.id;
-  const requirements = request?.requirements || [];
+  // Normalise — older requests may lack id / response_type on their items.
+  const requirements = useMemo(
+    () => (request?.requirements || []).map((r, i) => ({
+      ...r,
+      id: r.id || `req_${i}`,
+      response_type: r.response_type || "text",
+    })),
+    [request?.requirements],
+  );
 
   // Coming back to this modal after a detour — either the "Use EnterprateAI"
   // round-trip (PDF attached) or a sign-in (form draft saved).
@@ -123,24 +131,34 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     return isFileReq(r) ? Boolean(v.attachment?.url) : Boolean((v.text || "").trim());
   };
 
+  // One real hidden <input> in the DOM, retargeted per requirement — a
+  // detached createElement('input') does not fire change reliably in prod.
+  const reqFileRef = useRef(null);
+  const pendingReqRef = useRef(null);
+
   function pickRequirementFile(r) {
     if (!isLoggedIn) { stashDraftAndSignup(); return; }
-    const inp = document.createElement("input");
-    inp.type = "file";
-    if (r.response_type === "image") inp.accept = "image/*";
-    inp.onchange = async () => {
-      const file = inp.files && inp.files[0];
-      if (!file) return;
-      setError(null);
-      try {
-        const meta = await uploadOne(file);
-        setResp(r.id, { attachment: meta });
-      } catch (e) {
-        if (looksUnauthed(e)) { stashDraftAndSignup(); return; }
-        setError(errText(e));
-      }
-    };
-    inp.click();
+    pendingReqRef.current = r;
+    const el = reqFileRef.current;
+    if (!el) return;
+    el.accept = r.response_type === "image" ? "image/*" : "";
+    el.value = "";
+    el.click();
+  }
+
+  async function onRequirementFileChange(e) {
+    const file = e.target.files && e.target.files[0];
+    const r = pendingReqRef.current;
+    e.target.value = "";
+    if (!file || !r) return;
+    setError(null);
+    try {
+      const meta = await uploadOne(file);
+      setResp(r.id, { attachment: meta });
+    } catch (err) {
+      if (looksUnauthed(err)) { stashDraftAndSignup(); return; }
+      setError(errText(err));
+    }
   }
 
   function close() {
@@ -441,6 +459,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
               {requirements.length ? (
                 <div className="space-y-3">
                   <div className="ea-label">Requirement responses</div>
+                  <input ref={reqFileRef} type="file" className="hidden" onChange={onRequirementFileChange} />
                   {requirements.map((r) => {
                     const v = form.responses[r.id] || { text: "", attachment: null };
                     const rt = r.response_type || "text";
