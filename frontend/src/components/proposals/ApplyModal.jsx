@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Button from "../Button";
 import Input from "../Input";
@@ -92,7 +92,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     };
   }, [request?.id, recipientWorkspaceId]);
   const returned = resume.attachment;
-  const savedDraft = isLoggedIn ? resume.draft : null;
+  const savedDraft = resume.draft;
 
   const [step, setStep] = useState(returned || savedDraft ? "write" : "choose");
   const [error, setError] = useState(null);
@@ -116,7 +116,8 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
         summary: savedDraft.summary ?? base.summary,
         sections: Array.isArray(savedDraft.sections) ? savedDraft.sections : base.sections,
         responses: { ...base.responses, ...(savedDraft.responses || {}) },
-        attachments: returned ? base.attachments : (savedDraft.attachments || base.attachments),
+        // The saved draft's attachments already include the Blueprint PDF.
+        attachments: savedDraft.attachments?.length ? savedDraft.attachments : base.attachments,
       };
     }
     return base;
@@ -162,9 +163,36 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
   }
 
   function close() {
-    clearProposalContext();
+    // Don't wipe the context here — an accidental close (X / backdrop / Cancel)
+    // must not throw away a generated Blueprint PDF or a half-written draft.
+    // It only matches this exact request/recipient, and it's cleared on submit.
     onClose();
   }
+
+  // Keep the context's draft in step with the form so a refresh or an
+  // accidental close can restore the write step exactly as it was.
+  useEffect(() => {
+    if (step !== "write" && step !== "preview") return;
+    const t = setTimeout(() => {
+      patchProposalContext({
+        recipientWorkspaceId,
+        recipientName: recipientName || null,
+        requestId: request?.id || null,
+        requestTitle: request?.title || null,
+        requestDescription: request?.description || null,
+        requirements,
+        origin: currentPath,
+        draft: {
+          title: form.title,
+          summary: form.summary,
+          sections: form.sections,
+          responses: form.responses,
+          attachments: form.attachments,
+        },
+      });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [step, form]); // eslint-disable-line
 
   // Save whatever's typed so the form is intact after the user signs in.
   function stashDraftAndSignup() {
@@ -321,7 +349,8 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     : `Submit a proposal${recipientName ? ` to ${recipientName}` : ""}`;
 
   return (
-    <div className="fixed inset-0 z-[130] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+    <div className="fixed inset-0 z-[130] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4">
+      {/* No backdrop-click-to-close — a stray click shouldn't drop a proposal in progress. Use the ✕. */}
       <div className="flex max-h-[94vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-slate-900 sm:rounded-2xl">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-700">
           <div>

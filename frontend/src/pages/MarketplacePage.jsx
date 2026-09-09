@@ -1242,9 +1242,14 @@ export default function MarketplacePage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
   const [searchParams, setSearchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState(
-    () => (searchParams.get("tab") === "requests" ? "requests" : "products"),
-  ); // "products" | "requests"
+  const [activeTab, setActiveTab] = useState(() => {
+    if (searchParams.get("tab") === "requests") return "requests";
+    // Returning from a proposal detour (Blueprint / sign-in) for a request —
+    // land back on the requests tab, not products.
+    const ctx = readProposalContext();
+    if ((ctx?.blueprintReturn?.attachment || ctx?.draft) && ctx.requestId) return "requests";
+    return "products";
+  }); // "products" | "requests"
   useEffect(() => {
     if (searchParams.get("tab")) setSearchParams({}, { replace: true });
   }, []); // eslint-disable-line
