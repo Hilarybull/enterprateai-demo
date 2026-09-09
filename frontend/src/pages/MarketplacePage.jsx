@@ -1275,14 +1275,29 @@ export default function MarketplacePage() {
   const [gateAction, setGateAction] = useState(null);
   const [rfqTarget, setRfqTarget] = useState(null);
   const [approachTarget, setApproachTarget] = useState(() => {
-    // Returning from the "Use EnterprateAI" round-trip for an unsolicited proposal.
+    // Coming back to an unsolicited proposal after a Blueprint round-trip or a sign-in.
     const ctx = readProposalContext();
-    return ctx?.blueprintReturn?.attachment && !ctx.requestId && ctx.recipientWorkspaceId
+    return (ctx?.blueprintReturn?.attachment || ctx?.draft) && !ctx.requestId && ctx.recipientWorkspaceId
       ? { workspace_id: ctx.recipientWorkspaceId, company_name: ctx.recipientName }
       : null;
   });
   const [serviceDetail, setServiceDetail] = useState(null); // { service, listing }
-  const [requestApply, setRequestApply] = useState(null); // { recipientWorkspaceId, recipientName, request }
+  const [requestApply, setRequestApply] = useState(() => {
+    // Coming back to a request-linked proposal after a Blueprint round-trip or a sign-in.
+    const ctx = readProposalContext();
+    return (ctx?.blueprintReturn?.attachment || ctx?.draft) && ctx.requestId && ctx.recipientWorkspaceId
+      ? {
+          recipientWorkspaceId: ctx.recipientWorkspaceId,
+          recipientName: ctx.recipientName,
+          request: {
+            id: ctx.requestId,
+            title: ctx.requestTitle,
+            description: ctx.requestDescription,
+            requirements: ctx.requirements || [],
+          },
+        }
+      : null;
+  }); // { recipientWorkspaceId, recipientName, request }
   const [copiedReqId, setCopiedReqId] = useState(null);
 
   function shareRequest(id) {

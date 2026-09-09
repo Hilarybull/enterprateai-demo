@@ -11,6 +11,7 @@ import { apiRequest, getApiBaseUrl } from "../../api/client";
 import {
   readProposalContext,
   writeProposalContext,
+  patchProposalContext,
   clearProposalContext,
   contextMatches,
 } from "../../lib/proposalContext";
@@ -72,26 +73,45 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
   const isUnsolicited = !request?.id;
   const requirements = request?.requirements || [];
 
-  // Returning from the "Use EnterprateAI" round-trip with a generated PDF?
-  const returned = useMemo(() => {
+  // Coming back to this modal after a detour — either the "Use EnterprateAI"
+  // round-trip (PDF attached) or a sign-in (form draft saved).
+  const resume = useMemo(() => {
     const ctx = readProposalContext();
-    const match = contextMatches(ctx, { requestId: request?.id || null, recipientWorkspaceId });
-    return match && ctx?.blueprintReturn?.attachment ? ctx.blueprintReturn.attachment : null;
+    if (!contextMatches(ctx, { requestId: request?.id || null, recipientWorkspaceId })) return {};
+    return {
+      attachment: ctx?.blueprintReturn?.attachment || null,
+      draft: ctx?.draft || null,
+    };
   }, [request?.id, recipientWorkspaceId]);
+  const returned = resume.attachment;
+  const savedDraft = isLoggedIn ? resume.draft : null;
 
-  const [step, setStep] = useState(returned ? "write" : "choose");
+  const [step, setStep] = useState(returned || savedDraft ? "write" : "choose");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const fileRef = useRef(null);
 
-  const [form, setForm] = useState({
-    title: request?.title ? `Proposal: ${request.title}` : "",
-    summary: "",
-    sections: [],
-    // one entry per requirement: { text, attachment }
-    responses: Object.fromEntries(requirements.map((r) => [r.id, { text: "", attachment: null }])),
-    attachments: returned ? [returned] : [],
+  const [form, setForm] = useState(() => {
+    const base = {
+      title: request?.title ? `Proposal: ${request.title}` : "",
+      summary: "",
+      sections: [],
+      // one entry per requirement: { text, attachment }
+      responses: Object.fromEntries(requirements.map((r) => [r.id, { text: "", attachment: null }])),
+      attachments: returned ? [returned] : [],
+    };
+    if (savedDraft) {
+      return {
+        ...base,
+        title: savedDraft.title ?? base.title,
+        summary: savedDraft.summary ?? base.summary,
+        sections: Array.isArray(savedDraft.sections) ? savedDraft.sections : base.sections,
+        responses: { ...base.responses, ...(savedDraft.responses || {}) },
+        attachments: returned ? base.attachments : (savedDraft.attachments || base.attachments),
+      };
+    }
+    return base;
   });
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const setResp = (id, patch) =>
@@ -104,7 +124,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
   };
 
   function pickRequirementFile(r) {
-    if (!isLoggedIn) { setStep("signup"); return; }
+    if (!isLoggedIn) { stashDraftAndSignup(); return; }
     const inp = document.createElement("input");
     inp.type = "file";
     if (r.response_type === "image") inp.accept = "image/*";
@@ -116,7 +136,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
         const meta = await uploadOne(file);
         setResp(r.id, { attachment: meta });
       } catch (e) {
-        if (looksUnauthed(e)) { setStep("signup"); return; }
+        if (looksUnauthed(e)) { stashDraftAndSignup(); return; }
         setError(errText(e));
       }
     };
@@ -128,9 +148,30 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     onClose();
   }
 
+  // Save whatever's typed so the form is intact after the user signs in.
+  function stashDraftAndSignup() {
+    patchProposalContext({
+      recipientWorkspaceId,
+      recipientName: recipientName || null,
+      requestId: request?.id || null,
+      requestTitle: request?.title || null,
+      requestDescription: request?.description || null,
+      requirements,
+      origin: currentPath,
+      draft: {
+        title: form.title,
+        summary: form.summary,
+        sections: form.sections,
+        responses: form.responses,
+        attachments: form.attachments,
+      },
+    });
+    setStep("signup");
+  }
+
   // ── "Use EnterprateAI" — hand off to Business Blueprints ──────────────────
   function startBlueprint() {
-    if (!isLoggedIn) { setStep("signup"); return; }
+    if (!isLoggedIn) { stashDraftAndSignup(); return; }
     if (!canSubmit) { setStep("upgrade"); return; }
     writeProposalContext({
       recipientWorkspaceId,
@@ -146,7 +187,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
 
   // ── AI cover letter (secondary, in-form tool) ────────────────────────────
   async function generateCoverLetter() {
-    if (!isLoggedIn) { setStep("signup"); return; }
+    if (!isLoggedIn) { stashDraftAndSignup(); return; }
     if (!canSubmit) { setStep("upgrade"); return; }
     setAiBusy(true);
     setError(null);
@@ -180,14 +221,14 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
   }
 
   async function addAttachments(files) {
-    if (!isLoggedIn) { setStep("signup"); return; }
+    if (!isLoggedIn) { stashDraftAndSignup(); return; }
     setError(null);
     for (const file of files) {
       try {
         const meta = await uploadOne(file);
         setForm((f) => ({ ...f, attachments: [...f.attachments, meta] }));
       } catch (e) {
-        if (looksUnauthed(e)) { setStep("signup"); return; }
+        if (looksUnauthed(e)) { stashDraftAndSignup(); return; }
         setError(errText(e));
       }
     }
@@ -234,7 +275,7 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
       const msg = errText(e);
       // Gate at submit: unauthenticated → signup, unentitled → upgrade.
       if (code === 401 || looksUnauthed(e)) {
-        setStep("signup");
+        stashDraftAndSignup();
       } else if (code === 402 || /Starter plan or above/i.test(msg)) {
         setStep("upgrade");
       } else {
@@ -281,8 +322,8 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
           {returned && step === "write" ? (
             <div className="mb-3"><InlineAlert kind="success" message="Your Blueprint proposal is attached. Add a short cover letter and submit." /></div>
           ) : null}
-          {!isLoggedIn && step === "write" ? (
-            <div className="mb-3"><InlineAlert kind="info" message="You can draft your proposal now. Creating a free account is only needed to use AI, attach files, or submit." /></div>
+          {savedDraft && step === "write" && !returned ? (
+            <div className="mb-3"><InlineAlert kind="success" message="Welcome back — your proposal draft is here. Finish it and submit." /></div>
           ) : null}
 
           {step === "signup" ? (

@@ -83,7 +83,7 @@ export default function ProposalRequestDetailPage() {
   const [applyOpen, setApplyOpen] = useState(() => {
     // Returning from the "Use EnterprateAI" round-trip — reopen the modal.
     const ctx = readProposalContext();
-    return Boolean(ctx?.blueprintReturn?.attachment && ctx.requestId === requestId);
+    return Boolean((ctx?.blueprintReturn?.attachment || ctx?.draft) && ctx.requestId === requestId);
   });
   const [profileOpen, setProfileOpen] = useState(false);
   const [copied, setCopied] = useState(false);
