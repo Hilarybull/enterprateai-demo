@@ -597,8 +597,15 @@ export default function Layout() {
               .map((i) => ({ ...i, _notifType: "overdue" }))
           : [];
         const dismissed = dismissedNotifIds.current;
+        let proposalNotifs = [];
+        try {
+          const inbox = await apiRequest("/proposals/inbox", "GET");
+          proposalNotifs = (inbox?.items || [])
+            .filter((p) => p.status === "SUBMITTED" && !p.viewed_at)
+            .map((p) => ({ ...p, _notifType: "proposal" }));
+        } catch { /* proposals optional — never block the app shell */ }
         setNotifications(
-          [...overdueInvoices, ...pendingRfqs].filter(
+          [...overdueInvoices, ...pendingRfqs, ...proposalNotifs].filter(
             (n) => !dismissed.has(`${n._notifType}-${n.id}`)
           )
         );
@@ -1248,7 +1255,9 @@ export default function Layout() {
                         notifications.map((notif) => {
                           const destination = notif._notifType === "overdue"
                             ? `/financials?tab=invoices`
-                            : `/financials?tab=quotations`;
+                            : notif._notifType === "proposal"
+                              ? `/financials?tab=proposals`
+                              : `/financials?tab=quotations`;
                           return (
                             <button
                               key={`${notif._notifType}-${notif.id}`}
@@ -1277,6 +1286,17 @@ export default function Layout() {
                                       {notif.currency || ""}{Number(notif.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </span>
                                   )}
+                                </>
+                              ) : notif._notifType === "proposal" ? (
+                                <>
+                                  <div className="flex w-full items-center justify-between gap-2">
+                                    <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{notif.proposer_name || "A business"}</span>
+                                    <span className="shrink-0 rounded-md bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-600 dark:bg-brand-900/30 dark:text-brand-400">Proposal</span>
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    New proposal{notif.request_title ? ` for “${notif.request_title}”` : ""}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400">{notif.submitted_at ? new Date(notif.submitted_at).toLocaleDateString() : ""}</span>
                                 </>
                               ) : (
                                 <>
