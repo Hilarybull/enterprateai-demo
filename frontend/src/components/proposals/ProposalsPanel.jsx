@@ -158,6 +158,37 @@ function MsgAttachments({ items }) {
   );
 }
 
+function ClarificationThread({ thread, recipientName, proposerName }) {
+  if (!thread.length) {
+    return <p className="py-6 text-center text-sm text-slate-500">No clarification messages yet.</p>;
+  }
+  return (
+    <ul className="space-y-2">
+      {thread.map((e, i) => {
+        const fromRecipient = e.status === "CLARIFICATION_REQUESTED";
+        return (
+          <li
+            key={i}
+            className={
+              "rounded-lg border p-2.5 text-sm " +
+              (fromRecipient
+                ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/15 dark:text-amber-200"
+                : "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300")
+            }
+          >
+            <div className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide opacity-70">
+              {fromRecipient ? `${recipientName || "Recipient"} asked` : `${proposerName || "Proposer"} replied`}
+              {" · "}{fmtDate(e.timestamp)}
+            </div>
+            <div className="whitespace-pre-wrap">{e.reason}</div>
+            <MsgAttachments items={e.attachments} />
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 // ── Proposal detail modal ─────────────────────────────────────────────────
 function ProposalDetail({ proposal, role, onClose, onChanged }) {
   const transitionStatus = useProposalStore((s) => s.transitionStatus);
@@ -172,6 +203,7 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
   const [clarifyFiles, setClarifyFiles] = useState([]);
   const [replyText, setReplyText] = useState("");
   const [replyFiles, setReplyFiles] = useState([]);
+  const [clarifyViewOpen, setClarifyViewOpen] = useState(false);
   const [full, setFull] = useState(proposal);
   const { upload, uploading } = useUploader();
   const clarifyFileRef = useRef(null);
@@ -278,6 +310,16 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
                 {p.title || p.request_title || "Proposal"}
               </h2>
               <StatusBadge status={p.status} />
+              {clarifyThread.length ? (
+                <button
+                  type="button"
+                  onClick={() => setClarifyViewOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300"
+                >
+                  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+                  Clarification · {clarifyThread.length}
+                </button>
+              ) : null}
             </div>
             <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               {role === "recipient" ? `From ${p.proposer_name}` : `To ${p.recipient_name}`}
@@ -348,34 +390,14 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
           ) : null}
 
           {clarifyThread.length ? (
-            <div>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Clarification</div>
-              <ul className="space-y-2">
-                {clarifyThread.map((e, i) => {
-                  const fromRecipient = e.status === "CLARIFICATION_REQUESTED";
-                  return (
-                    <li
-                      key={i}
-                      className={
-                        "rounded-lg border p-2.5 text-sm " +
-                        (fromRecipient
-                          ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/15 dark:text-amber-200"
-                          : "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300")
-                      }
-                    >
-                      <div className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide opacity-70">
-                        {fromRecipient
-                          ? `${p.recipient_name || "Recipient"} asked`
-                          : `${p.proposer_name || "Proposer"} replied`}
-                        {" · "}{fmtDate(e.timestamp)}
-                      </div>
-                      <div className="whitespace-pre-wrap">{e.reason}</div>
-                      <MsgAttachments items={e.attachments} />
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
+            <button
+              type="button"
+              onClick={() => setClarifyViewOpen(true)}
+              className="flex w-full items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-left text-sm text-amber-800 hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-900/15 dark:text-amber-200"
+            >
+              <span className="font-medium">Clarification thread · {clarifyThread.length} message{clarifyThread.length === 1 ? "" : "s"}</span>
+              <span className="text-xs opacity-70">Open ›</span>
+            </button>
           ) : null}
 
           {(p.events || []).length ? (
@@ -510,6 +532,30 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
           </div>
         ) : null}
       </div>
+
+      {clarifyViewOpen ? (
+        <div
+          className="fixed inset-0 z-[135] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setClarifyViewOpen(false); }}
+        >
+          <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-slate-900 sm:rounded-2xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5 dark:border-slate-700">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Clarification</h3>
+                <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
+                  {p.title || p.request_title || "Proposal"} · {role === "recipient" ? p.proposer_name : p.recipient_name}
+                </p>
+              </div>
+              <button type="button" onClick={() => setClarifyViewOpen(false)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <ClarificationThread thread={clarifyThread} recipientName={p.recipient_name} proposerName={p.proposer_name} />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
