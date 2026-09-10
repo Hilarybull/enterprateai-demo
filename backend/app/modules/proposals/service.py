@@ -776,7 +776,7 @@ async def submit_proposal(*, user_id: str, user_email: str, payload: ProposalSub
                 recipient_name=recipient_name,
                 proposer_name=proposer_name,
                 request_title=request_title,
-                inbox_url=f"{base}/proposals",
+                inbox_url=f"{base}/financials?tab=proposals",
             )
     except Exception as exc:
         logger.warning("proposal received-email failed: %s", exc)

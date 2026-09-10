@@ -120,6 +120,7 @@ export default function App() {
         <Route path="registration" element={<RequireWorkspace><RegistrationPage /></RequireWorkspace>} />
         <Route path="catalogue" element={<RequireWorkspace><CataloguePage /></RequireWorkspace>} />
         <Route path="financials" element={<RequireWorkspace><FinancialsPage /></RequireWorkspace>} />
+        <Route path="proposals" element={<Navigate to="/financials?tab=proposals" replace />} />
         <Route path="team" element={<TeamPage />} />
         <Route path="account" element={<AccountPage />} />
         <Route path="credits" element={<CreditsPage />} />
