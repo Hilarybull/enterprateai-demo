@@ -105,11 +105,13 @@ class ProposalReviseIn(BaseModel):
     requirement_responses: Optional[list[RequirementResponseIn]] = None
     attachments: Optional[list[AttachmentIn]] = None
     note: Optional[str] = Field(default=None, max_length=2000)
+    note_attachments: Optional[list[AttachmentIn]] = None  # files attached to the clarification reply
 
 
 class StatusTransitionIn(BaseModel):
     status: str
     reason: Optional[str] = Field(default=None, max_length=2000)
+    attachments: Optional[list[AttachmentIn]] = None  # files attached to a clarification request
 
 
 class LinkRequestIn(BaseModel):

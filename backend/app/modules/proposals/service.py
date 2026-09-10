@@ -809,10 +809,14 @@ async def revise_proposal(*, user_id: str, proposal_id: str, payload: ProposalRe
     if payload.attachments is not None:
         updates["attachments"] = [a.model_dump() for a in payload.attachments] or None
     events = list(proposal.get("events") or [])
-    events.append({
+    rev_event = {
         "status": sm.REVISION_REQUESTED, "timestamp": now, "actor": "proposer",
         "reason": (payload.note or "Revision submitted"),
-    })
+    }
+    note_att = [a.model_dump() for a in (payload.note_attachments or [])]
+    if note_att:
+        rev_event["attachments"] = note_att
+    events.append(rev_event)
     updates["events"] = events
     await sb_update("proposals", filters=[("id", "eq", proposal_id)], payload=updates)
     await _notify_user(
@@ -915,7 +919,7 @@ async def link_proposal_to_request(*, user_id: str, proposal_id: str, request_id
 
 
 # ── Status transitions ────────────────────────────────────────────────────
-async def transition_status(*, user_id: str, proposal_id: str, target: str, reason: str | None) -> dict:
+async def transition_status(*, user_id: str, proposal_id: str, target: str, reason: str | None, attachments=None) -> dict:
     target = (target or "").strip().upper()
     if target not in sm.ALL_STATUSES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown status '{target}'.")
@@ -941,7 +945,11 @@ async def transition_status(*, user_id: str, proposal_id: str, target: str, reas
 
     now = _now()
     events = list(proposal.get("events") or [])
-    events.append({"status": target, "timestamp": now, "actor": actor, "reason": reason or None})
+    event = {"status": target, "timestamp": now, "actor": actor, "reason": reason or None}
+    att_list = [a.model_dump() if hasattr(a, "model_dump") else dict(a) for a in (attachments or [])]
+    if att_list:
+        event["attachments"] = att_list
+    events.append(event)
     updates = {"status": target, "events": events, "updated_at": now}
     if target == sm.VIEWED and not proposal.get("viewed_at"):
         updates["viewed_at"] = now

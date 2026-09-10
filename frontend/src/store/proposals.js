@@ -140,10 +140,11 @@ export const useProposalStore = create((set, get) => ({
   },
 
   // ── Shared: status transitions ─────────────────────────────
-  async transitionStatus(proposalId, statusValue, reason) {
+  async transitionStatus(proposalId, statusValue, reason, attachments) {
     const row = await apiRequest(`/proposals/${proposalId}/status`, "POST", {
       status: statusValue,
       reason: reason || null,
+      attachments: attachments?.length ? attachments : null,
     });
     set({
       inbox: get().inbox.map((p) => (p.id === proposalId ? { ...p, ...row } : p)),

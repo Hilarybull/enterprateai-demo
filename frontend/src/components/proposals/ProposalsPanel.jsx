@@ -10,7 +10,8 @@ import InlineAlert from "../InlineAlert";
 import ConfirmDialog from "../ConfirmDialog";
 import { useProposalStore, PROPOSAL_ACTIVE_STATUSES } from "../../store/proposals";
 import { useWorkspaceStore } from "../../store/workspace";
-import { apiRequest } from "../../api/client";
+import { useAuthStore } from "../../store/auth";
+import { apiRequest, getApiBaseUrl } from "../../api/client";
 
 // ── Status presentation ────────────────────────────────────────────────────
 const STATUS_TONE = {
@@ -100,6 +101,63 @@ function RowMenu({ items, disabled }) {
   );
 }
 
+// ── Message attachment uploader ──────────────────────────────────────────
+function useUploader() {
+  const token = useAuthStore((s) => s.token);
+  const [uploading, setUploading] = useState(false);
+  async function upload(files) {
+    setUploading(true);
+    const out = [];
+    try {
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch(`${getApiBaseUrl()}/proposals/upload-attachment`, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: fd,
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.detail || "Upload failed");
+        out.push(await res.json());
+      }
+    } finally {
+      setUploading(false);
+    }
+    return out;
+  }
+  return { upload, uploading };
+}
+
+function FileChips({ files, onRemove }) {
+  if (!files.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {files.map((f, i) => (
+        <span key={i} className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+          {f.filename || `File ${i + 1}`}
+          <button type="button" className="text-slate-400 hover:text-rose-500" onClick={() => onRemove(i)}>
+            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function MsgAttachments({ items }) {
+  if (!items?.length) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-2">
+      {items.map((a, i) => (
+        <a key={i} href={a.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] text-brand-600 hover:bg-white/60 dark:border-slate-600 dark:text-brand-400">
+          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+          {a.filename || "Download"}
+        </a>
+      ))}
+    </div>
+  );
+}
+
 // ── Proposal detail modal ─────────────────────────────────────────────────
 function ProposalDetail({ proposal, role, onClose, onChanged }) {
   const transitionStatus = useProposalStore((s) => s.transitionStatus);
@@ -111,8 +169,26 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
   const [reviseText, setReviseText] = useState(proposal.summary || "");
   const [clarifyOpen, setClarifyOpen] = useState(false);
   const [clarifyText, setClarifyText] = useState("");
+  const [clarifyFiles, setClarifyFiles] = useState([]);
   const [replyText, setReplyText] = useState("");
+  const [replyFiles, setReplyFiles] = useState([]);
   const [full, setFull] = useState(proposal);
+  const { upload, uploading } = useUploader();
+  const clarifyFileRef = useRef(null);
+  const replyFileRef = useRef(null);
+
+  async function pickFiles(e, setter) {
+    const files = [...(e.target.files || [])];
+    e.target.value = "";
+    if (!files.length) return;
+    setError(null);
+    try {
+      const metas = await upload(files);
+      setter((prev) => [...prev, ...metas]);
+    } catch (err) {
+      setError(errText(err));
+    }
+  }
 
   useEffect(() => {
     // Opening as recipient marks it viewed / returns latest server state.
@@ -141,10 +217,11 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
     setBusy("CLARIFICATION_REQUESTED");
     setError(null);
     try {
-      const row = await transitionStatus(p.id, "CLARIFICATION_REQUESTED", clarifyText.trim());
+      const row = await transitionStatus(p.id, "CLARIFICATION_REQUESTED", clarifyText.trim(), clarifyFiles);
       setFull((prev) => ({ ...prev, ...row }));
       setClarifyOpen(false);
       setClarifyText("");
+      setClarifyFiles([]);
       onChanged?.(row);
     } catch (e) {
       setError(errText(e));
@@ -174,6 +251,7 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
     setError(null);
     try {
       const payload = { note: replyText.trim() };
+      if (replyFiles.length) payload.note_attachments = replyFiles;
       if ((reviseText || "").trim() && reviseText.trim() !== (p.summary || "").trim()) {
         payload.summary = reviseText.trim();
       }
@@ -181,6 +259,7 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
       setFull((prev) => ({ ...prev, ...row }));
       setReviseOpen(false);
       setReplyText("");
+      setReplyFiles([]);
       onChanged?.(row);
     } catch (e) {
       setError(errText(e));
@@ -291,6 +370,7 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
                         {" · "}{fmtDate(e.timestamp)}
                       </div>
                       <div className="whitespace-pre-wrap">{e.reason}</div>
+                      <MsgAttachments items={e.attachments} />
                     </li>
                   );
                 })}
@@ -332,11 +412,16 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
                   value={clarifyText}
                   onChange={(e) => setClarifyText(e.target.value)}
                 />
-                <div className="flex gap-2">
+                <input ref={clarifyFileRef} type="file" multiple className="hidden" onChange={(e) => pickFiles(e, setClarifyFiles)} />
+                <FileChips files={clarifyFiles} onRemove={(i) => setClarifyFiles((f) => f.filter((_, j) => j !== i))} />
+                <div className="flex flex-wrap gap-2">
                   <Button size="sm" disabled={busy != null} onClick={requestClarification}>
                     {busy === "CLARIFICATION_REQUESTED" ? <Spinner size={14} /> : "Send request"}
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => { setClarifyOpen(false); setClarifyText(""); setError(null); }}>Cancel</Button>
+                  <Button size="sm" variant="secondary" disabled={uploading} onClick={() => clarifyFileRef.current?.click()}>
+                    {uploading ? <Spinner size={14} /> : "Attach files"}
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => { setClarifyOpen(false); setClarifyText(""); setClarifyFiles([]); setError(null); }}>Cancel</Button>
                 </div>
               </div>
             ) : null}
@@ -373,11 +458,16 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
                     onChange={(e) => setReviseText(e.target.value)}
                   />
                 </div>
-                <div className="flex gap-2">
+                <input ref={replyFileRef} type="file" multiple className="hidden" onChange={(e) => pickFiles(e, setReplyFiles)} />
+                <FileChips files={replyFiles} onRemove={(i) => setReplyFiles((f) => f.filter((_, j) => j !== i))} />
+                <div className="flex flex-wrap gap-2">
                   <Button size="sm" disabled={busy != null} onClick={submitRevision}>
                     {busy === "revise" ? <Spinner size={14} /> : "Send reply & revision"}
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => { setReviseOpen(false); setError(null); }}>Cancel</Button>
+                  <Button size="sm" variant="secondary" disabled={uploading} onClick={() => replyFileRef.current?.click()}>
+                    {uploading ? <Spinner size={14} /> : "Attach files"}
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => { setReviseOpen(false); setReplyFiles([]); setError(null); }}>Cancel</Button>
                 </div>
               </div>
             ) : null}
