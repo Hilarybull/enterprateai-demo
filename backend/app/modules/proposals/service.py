@@ -660,19 +660,26 @@ async def submit_proposal(*, user_id: str, user_email: str, payload: ProposalSub
     if not (rprefs and rprefs.get("enabled")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This business is not accepting proposals right now.")
 
-    # Duplicate-active guard.
+    # Duplicate-active guard. A proposal the recipient has removed from their
+    # inbox no longer blocks a resubmission — they've discarded it.
     existing = await sb_select(
         "proposals",
         filters=[
             ("proposer_workspace_id", "eq", proposer_ws["id"]),
             ("recipient_workspace_id", "eq", recipient_ws["id"]),
         ],
-        columns="id,status",
+        columns="id,status,inbox_hidden",
     )
-    if any((e.get("status") in sm.ACTIVE_STATUSES) for e in (existing or [])):
+    if any(
+        (e.get("status") in sm.ACTIVE_STATUSES) and not e.get("inbox_hidden")
+        for e in (existing or [])
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="You already have an active proposal with this business.",
+            detail=(
+                "You already have an active proposal with this business. "
+                "Withdraw it from Financials → Proposals → Activity before sending a new one."
+            ),
         )
 
     request_row = None
