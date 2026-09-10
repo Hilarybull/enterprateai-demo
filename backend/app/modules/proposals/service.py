@@ -18,7 +18,11 @@ from app.modules.proposals.schemas import (
     ProposalReviseIn,
     ProposalSubmitIn,
 )
-from app.shared.email.resend import send_proposal_invite_email, send_proposal_received_email
+from app.shared.email.resend import (
+    send_proposal_invite_email,
+    send_proposal_received_email,
+    send_proposal_update_email,
+)
 from app.shared.llm.openai_client import get_user_plan_info, pick_llm_for_user
 
 logger = logging.getLogger(__name__)
@@ -578,6 +582,12 @@ def _proposal_out(row: dict, *, viewer: str) -> dict:
     }
     if viewer == "recipient":
         base["proposer_email"] = row.get("proposer_email")
+    # Surface the latest clarification question so both sides can show it prominently.
+    clar = [
+        e for e in (row.get("events") or [])
+        if e.get("status") == sm.CLARIFICATION_REQUESTED and str(e.get("reason") or "").strip()
+    ]
+    base["clarification_note"] = clar[-1].get("reason") if clar else None
     return base
 
 
@@ -604,6 +614,28 @@ async def _resolve_actor(user_id: str, proposal: dict) -> str:
         if owner_ws["id"] == proposal.get("proposer_workspace_id"):
             return "proposer"
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot access this proposal.")
+
+
+async def _notify_user(user_id: str | None, *, headline: str, body: str, cta_label: str, sender_name: str | None = None) -> None:
+    """Best-effort email to a proposal party — never raises."""
+    if not user_id:
+        return
+    try:
+        u = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
+        email = (u or {}).get("email")
+        if not (email and "@" in str(email)):
+            return
+        base = (get_settings().frontend_url or "").rstrip("/")
+        await send_proposal_update_email(
+            to_email=str(email),
+            headline=headline,
+            body=body,
+            cta_label=cta_label,
+            cta_url=f"{base}/financials?tab=proposals",
+            sender_name=sender_name,
+        )
+    except Exception as exc:
+        logger.warning("proposal notify email failed: %s", exc)
 
 
 async def submit_proposal(*, user_id: str, user_email: str, payload: ProposalSubmitIn) -> dict:
@@ -776,6 +808,17 @@ async def revise_proposal(*, user_id: str, proposal_id: str, payload: ProposalRe
     })
     updates["events"] = events
     await sb_update("proposals", filters=[("id", "eq", proposal_id)], payload=updates)
+    await _notify_user(
+        proposal.get("recipient_user_id"),
+        headline=f"{proposal.get('proposer_name') or 'A business'} answered your clarification request",
+        body=(
+            f"{proposal.get('proposer_name') or 'A business'} submitted a revised proposal"
+            + (f" for \"{proposal.get('request_title')}\"" if proposal.get("request_title") else "")
+            + ". Review the update and continue."
+        ),
+        cta_label="Open proposal inbox",
+        sender_name=proposal.get("proposer_name"),
+    )
     return _proposal_out({**proposal, **updates}, viewer="proposer")
 
 
@@ -873,6 +916,12 @@ async def transition_status(*, user_id: str, proposal_id: str, target: str, reas
     actor = await _resolve_actor(user_id, proposal)
     current = proposal.get("status") or sm.SUBMITTED
 
+    if target == sm.CLARIFICATION_REQUESTED and not str(reason or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tell the proposer what you'd like them to clarify.",
+        )
+
     if not sm.can_transition(current, target, actor):
         allowed = sorted(sm.allowed_transitions(current, actor))
         raise HTTPException(
@@ -890,6 +939,18 @@ async def transition_status(*, user_id: str, proposal_id: str, target: str, reas
     if target == sm.VIEWED and not proposal.get("viewed_at"):
         updates["viewed_at"] = now
     await sb_update("proposals", filters=[("id", "eq", proposal_id)], payload=updates)
+    if target == sm.CLARIFICATION_REQUESTED:
+        await _notify_user(
+            proposal.get("proposer_user_id"),
+            headline=f"{proposal.get('recipient_name') or 'A business'} requested clarification",
+            body=(
+                f"{proposal.get('recipient_name') or 'A business'} asked for clarification"
+                + (f" on your proposal for \"{proposal.get('request_title')}\"" if proposal.get("request_title") else " on your proposal")
+                + f": {str(reason).strip()}"
+            ),
+            cta_label="Respond to the request",
+            sender_name=proposal.get("recipient_name"),
+        )
     return _proposal_out({**proposal, **updates}, viewer=actor)
 
 

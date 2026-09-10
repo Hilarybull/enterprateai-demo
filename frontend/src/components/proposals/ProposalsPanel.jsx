@@ -109,6 +109,9 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
   const [reason, setReason] = useState("");
   const [reviseOpen, setReviseOpen] = useState(false);
   const [reviseText, setReviseText] = useState(proposal.summary || "");
+  const [clarifyOpen, setClarifyOpen] = useState(false);
+  const [clarifyText, setClarifyText] = useState("");
+  const [replyText, setReplyText] = useState("");
   const [full, setFull] = useState(proposal);
 
   useEffect(() => {
@@ -124,6 +127,31 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
   const actions = role === "recipient" ? (RECIPIENT_ACTIONS[p.status] || []) : [];
   const canWithdraw = role === "proposer" && PROPOSAL_ACTIVE_STATUSES.includes(p.status);
   const canRevise = role === "proposer" && p.status === "CLARIFICATION_REQUESTED";
+
+  const clarificationNote =
+    p.clarification_note ||
+    [...(p.events || [])].reverse().find((e) => e.status === "CLARIFICATION_REQUESTED" && (e.reason || "").trim())?.reason ||
+    null;
+  const clarifyThread = (p.events || []).filter(
+    (e) => ["CLARIFICATION_REQUESTED", "REVISION_REQUESTED"].includes(e.status) && (e.reason || "").trim(),
+  );
+
+  async function requestClarification() {
+    if (!clarifyText.trim()) { setError("Write what you'd like the proposer to clarify."); return; }
+    setBusy("CLARIFICATION_REQUESTED");
+    setError(null);
+    try {
+      const row = await transitionStatus(p.id, "CLARIFICATION_REQUESTED", clarifyText.trim());
+      setFull((prev) => ({ ...prev, ...row }));
+      setClarifyOpen(false);
+      setClarifyText("");
+      onChanged?.(row);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function move(target) {
     setBusy(target);
@@ -141,13 +169,18 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
   }
 
   async function submitRevision() {
+    if (!replyText.trim()) { setError("Write a reply to the clarification request."); return; }
     setBusy("revise");
     setError(null);
     try {
-      const row = await reviseProposal(p.id, { summary: reviseText, note: reason.trim() || null });
+      const payload = { note: replyText.trim() };
+      if ((reviseText || "").trim() && reviseText.trim() !== (p.summary || "").trim()) {
+        payload.summary = reviseText.trim();
+      }
+      const row = await reviseProposal(p.id, payload);
       setFull((prev) => ({ ...prev, ...row }));
       setReviseOpen(false);
-      setReason("");
+      setReplyText("");
       onChanged?.(row);
     } catch (e) {
       setError(errText(e));
@@ -235,6 +268,36 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
             </div>
           ) : null}
 
+          {clarifyThread.length ? (
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Clarification</div>
+              <ul className="space-y-2">
+                {clarifyThread.map((e, i) => {
+                  const fromRecipient = e.status === "CLARIFICATION_REQUESTED";
+                  return (
+                    <li
+                      key={i}
+                      className={
+                        "rounded-lg border p-2.5 text-sm " +
+                        (fromRecipient
+                          ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/15 dark:text-amber-200"
+                          : "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300")
+                      }
+                    >
+                      <div className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide opacity-70">
+                        {fromRecipient
+                          ? `${p.recipient_name || "Recipient"} asked`
+                          : `${p.proposer_name || "Proposer"} replied`}
+                        {" · "}{fmtDate(e.timestamp)}
+                      </div>
+                      <div className="whitespace-pre-wrap">{e.reason}</div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+
           {(p.events || []).length ? (
             <div>
               <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">History</div>
@@ -254,7 +317,73 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
         {(actions.length || canWithdraw || canRevise) ? (
           <div className="space-y-2 border-t border-slate-200 px-5 py-4 dark:border-slate-700">
             {error ? <InlineAlert kind="error" message={error} /> : null}
-            {(actions.length || reviseOpen) ? (
+
+            {/* Recipient: ask for clarification */}
+            {clarifyOpen ? (
+              <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-900/15">
+                <div className="text-xs font-semibold text-amber-800 dark:text-amber-200">
+                  What would you like {p.proposer_name || "the proposer"} to clarify?
+                </div>
+                <textarea
+                  rows={3}
+                  autoFocus
+                  className="ea-input"
+                  placeholder="e.g. Please break down the pricing for phase 2, and confirm the delivery timeline."
+                  value={clarifyText}
+                  onChange={(e) => setClarifyText(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button size="sm" disabled={busy != null} onClick={requestClarification}>
+                    {busy === "CLARIFICATION_REQUESTED" ? <Spinner size={14} /> : "Send request"}
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => { setClarifyOpen(false); setClarifyText(""); setError(null); }}>Cancel</Button>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Proposer: reply to the clarification + optionally revise */}
+            {reviseOpen ? (
+              <div className="space-y-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                {clarificationNote ? (
+                  <div className="rounded-lg bg-amber-50 p-2.5 text-sm text-amber-900 dark:bg-amber-900/15 dark:text-amber-200">
+                    <div className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide opacity-70">
+                      {p.recipient_name || "Recipient"} asked
+                    </div>
+                    <div className="whitespace-pre-wrap">{clarificationNote}</div>
+                  </div>
+                ) : null}
+                <div>
+                  <div className="ea-label">Your reply</div>
+                  <textarea
+                    rows={3}
+                    autoFocus
+                    className="ea-input"
+                    placeholder="Answer their questions here."
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <div className="ea-label">Update your cover letter (optional)</div>
+                  <textarea
+                    rows={4}
+                    className="ea-input"
+                    placeholder="Leave unchanged to keep your original cover letter."
+                    value={reviseText}
+                    onChange={(e) => setReviseText(e.target.value)}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" disabled={busy != null} onClick={submitRevision}>
+                    {busy === "revise" ? <Spinner size={14} /> : "Send reply & revision"}
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => { setReviseOpen(false); setError(null); }}>Cancel</Button>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Recipient: generic optional note for the other transitions */}
+            {actions.length && !clarifyOpen ? (
               <input
                 className="ea-input"
                 placeholder="Optional note to the other party"
@@ -262,44 +391,32 @@ function ProposalDetail({ proposal, role, onClose, onChanged }) {
                 onChange={(e) => setReason(e.target.value)}
               />
             ) : null}
-            {reviseOpen ? (
-              <textarea
-                rows={4}
-                className="ea-input"
-                placeholder="Updated cover letter / clarification"
-                value={reviseText}
-                onChange={(e) => setReviseText(e.target.value)}
-              />
-            ) : null}
-            <div className="flex flex-wrap gap-2">
-              {actions.map(([target, text]) => (
-                <Button
-                  key={target}
-                  size="sm"
-                  variant={target === "DECLINED" ? "danger" : "primary"}
-                  disabled={busy != null}
-                  onClick={() => move(target)}
-                >
-                  {busy === target ? <Spinner size={14} /> : text}
-                </Button>
-              ))}
-              {canRevise && !reviseOpen ? (
-                <Button size="sm" onClick={() => setReviseOpen(true)}>Submit revision</Button>
-              ) : null}
-              {reviseOpen ? (
-                <>
-                  <Button size="sm" disabled={busy != null} onClick={submitRevision}>
-                    {busy === "revise" ? <Spinner size={14} /> : "Send revision"}
+
+            {!clarifyOpen && !reviseOpen ? (
+              <div className="flex flex-wrap gap-2">
+                {actions.map(([target, text]) => (
+                  <Button
+                    key={target}
+                    size="sm"
+                    variant={target === "DECLINED" ? "danger" : "primary"}
+                    disabled={busy != null}
+                    onClick={() => (target === "CLARIFICATION_REQUESTED" ? (setError(null), setClarifyOpen(true)) : move(target))}
+                  >
+                    {busy === target ? <Spinner size={14} /> : text}
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => setReviseOpen(false)}>Cancel</Button>
-                </>
-              ) : null}
-              {canWithdraw ? (
-                <Button size="sm" variant="secondary" disabled={busy != null} onClick={() => move("WITHDRAWN")}>
-                  {busy === "WITHDRAWN" ? <Spinner size={14} /> : "Withdraw"}
-                </Button>
-              ) : null}
-            </div>
+                ))}
+                {canRevise ? (
+                  <Button size="sm" onClick={() => { setError(null); setReviseText(p.summary || ""); setReviseOpen(true); }}>
+                    Respond & submit revision
+                  </Button>
+                ) : null}
+                {canWithdraw ? (
+                  <Button size="sm" variant="secondary" disabled={busy != null} onClick={() => move("WITHDRAWN")}>
+                    {busy === "WITHDRAWN" ? <Spinner size={14} /> : "Withdraw"}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

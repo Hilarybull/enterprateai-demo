@@ -8,6 +8,7 @@ import BusinessAssistant from "./BusinessAssistant";
 import InviteModal from "./InviteModal";
 import OnboardingModal, { hasSeenOnboarding } from "./OnboardingModal";
 import WorkspacePrompt from "./WorkspacePrompt";
+import { ToastContainer } from "./Toast";
 import { WorkspaceProfilePanel } from "./WorkspaceProfileCard";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 import { hasModuleAccess, isPlatformModuleGranted, isPlatformModuleRestricted } from "../lib/permissions";
@@ -295,7 +296,9 @@ export default function Layout() {
   const workspaceSwitcherRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [notifToasts, setNotifToasts] = useState([]);
   const dismissedNotifIds = useRef(new Set(JSON.parse(localStorage.getItem("ea_notif_dismissed") || "[]")));
+  const seenNotifIds = useRef(new Set(JSON.parse(localStorage.getItem("ea_notif_seen") || "[]")));
   const [helpOpen, setHelpOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [helpName, setHelpName] = useState("");
@@ -604,11 +607,38 @@ export default function Layout() {
             .filter((p) => p.status === "SUBMITTED" && !p.viewed_at)
             .map((p) => ({ ...p, _notifType: "proposal" }));
         } catch { /* proposals optional — never block the app shell */ }
-        setNotifications(
-          [...overdueInvoices, ...pendingRfqs, ...proposalNotifs].filter(
-            (n) => !dismissed.has(`${n._notifType}-${n.id}`)
-          )
+        let clarifyNotifs = [];
+        try {
+          const act = await apiRequest("/proposals/activity", "GET");
+          clarifyNotifs = (act?.items || [])
+            .filter((p) => p.status === "CLARIFICATION_REQUESTED")
+            .map((p) => ({ ...p, _notifType: "clarification" }));
+        } catch { /* optional */ }
+        const nextNotifs = [...overdueInvoices, ...pendingRfqs, ...proposalNotifs, ...clarifyNotifs].filter(
+          (n) => !dismissed.has(`${n._notifType}-${n.id}`)
         );
+        setNotifications(nextNotifs);
+        if (!cancelled) {
+          const fresh = nextNotifs.filter(
+            (n) => (n._notifType === "proposal" || n._notifType === "clarification") &&
+              !seenNotifIds.current.has(`${n._notifType}-${n.id}`)
+          );
+          if (fresh.length) {
+            setNotifToasts((t) => [
+              ...t,
+              ...fresh.map((n) => ({
+                id: `${n._notifType}-${n.id}`,
+                kind: "info",
+                title: n._notifType === "clarification" ? "Clarification requested" : "New proposal",
+                message: n._notifType === "clarification"
+                  ? `${n.recipient_name || "A business"} asked for clarification${n.request_title ? ` on “${n.request_title}”` : ""}.`
+                  : `${n.proposer_name || "A business"} sent you a proposal${n.request_title ? ` for “${n.request_title}”` : ""}.`,
+              })),
+            ]);
+            fresh.forEach((n) => seenNotifIds.current.add(`${n._notifType}-${n.id}`));
+            localStorage.setItem("ea_notif_seen", JSON.stringify([...seenNotifIds.current]));
+          }
+        }
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
         else setDecisionStatus(null);
@@ -1255,7 +1285,7 @@ export default function Layout() {
                         notifications.map((notif) => {
                           const destination = notif._notifType === "overdue"
                             ? `/financials?tab=invoices`
-                            : notif._notifType === "proposal"
+                            : (notif._notifType === "proposal" || notif._notifType === "clarification")
                               ? `/financials?tab=proposals`
                               : `/financials?tab=quotations`;
                           return (
@@ -1297,6 +1327,19 @@ export default function Layout() {
                                     New proposal{notif.request_title ? ` for “${notif.request_title}”` : ""}
                                   </span>
                                   <span className="text-[10px] text-slate-400">{notif.submitted_at ? new Date(notif.submitted_at).toLocaleDateString() : ""}</span>
+                                </>
+                              ) : notif._notifType === "clarification" ? (
+                                <>
+                                  <div className="flex w-full items-center justify-between gap-2">
+                                    <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{notif.recipient_name || "A business"}</span>
+                                    <span className="shrink-0 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">Clarification</span>
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    Clarification requested{notif.request_title ? ` on “${notif.request_title}”` : ""}
+                                  </span>
+                                  {notif.clarification_note ? (
+                                    <span className="line-clamp-2 text-[10px] text-slate-400">{notif.clarification_note}</span>
+                                  ) : null}
                                 </>
                               ) : (
                                 <>
@@ -1504,6 +1547,7 @@ export default function Layout() {
       {onboardingOpen && !workspaceId && !demoTour?.active && (
         <OnboardingModal onDismiss={() => setOnboardingOpen(false)} userId={email} />
       )}
+      <ToastContainer toasts={notifToasts} onClose={(id) => setNotifToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
   );
 }
