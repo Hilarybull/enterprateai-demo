@@ -790,10 +790,10 @@ function PaymentModal({ plan, billing, onClose }) {
           </div>
         </div>
 
-        <div className="flex flex-col items-center justify-center gap-1.5 border-t border-slate-100 px-5 py-3 text-[12px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
-          <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 border-t border-slate-100 px-5 py-3 text-center text-[12px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
             <svg
-              className="h-3.5 w-3.5"
+              className="h-3.5 w-3.5 shrink-0"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -802,14 +802,20 @@ function PaymentModal({ plan, billing, onClose }) {
               <rect x="3" y="11" width="18" height="11" rx="2" />
               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
-            Payments secured by <span className="font-bold tracking-tight text-[#635bff]">Stripe</span> · Cancel anytime · Questions?{" "}
+            Payments secured by <span className="font-bold tracking-tight text-[#635bff]">Stripe</span>
+          </span>
+          <span className="hidden sm:inline text-slate-300 dark:text-slate-600">·</span>
+          <span className="whitespace-nowrap">Cancel anytime</span>
+          <span className="hidden sm:inline text-slate-300 dark:text-slate-600">·</span>
+          <span className="inline-flex items-center gap-1 whitespace-nowrap">
+            Questions?
             <a
               href={`mailto:${SUPPORT_EMAIL}`}
               className="font-medium text-brand-600 hover:underline dark:text-brand-400"
             >
               {SUPPORT_EMAIL}
             </a>
-          </div>
+          </span>
         </div>
       </div>
     </div>
