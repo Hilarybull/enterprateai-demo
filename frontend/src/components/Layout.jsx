@@ -24,8 +24,8 @@ const NAV = [
   { to: "/simulation", label: "Simulation", subtitle: "Run what-if scenarios", icon: "beaker", moduleKey: "simulation", public: true },
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
-  { to: "/catalogue", label: "Catalogue", subtitle: "Products & offers", icon: "box", moduleKey: "catalogue" },
-  { to: "/financials", label: "Financials", subtitle: "Invoicing & tracking", icon: "cash", moduleKey: "financials" },
+  { to: "/catalogue", label: "Catalogue", subtitle: "Products, customers & vendors", icon: "box", moduleKey: "catalogue" },
+  { to: "/financials", label: "Financials", subtitle: "Invoices, receipts, contracts, expenses & quotations", icon: "cash", moduleKey: "financials" },
   { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: "integrations" },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
   { to: "/referrals", label: "Referrals", subtitle: "Earn 5% per referral", icon: "share", moduleKey: null, public: true },
@@ -220,6 +220,7 @@ function SidebarLink({ item, onClick, forceInactive, locked, tourActive }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-semibold text-slate-500 dark:text-slate-500">{item.label}</div>
+          {item.subtitle && <div className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight mt-0.5">{item.subtitle}</div>}
         </div>
         <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">Soon</span>
       </div>
@@ -238,6 +239,7 @@ function SidebarLink({ item, onClick, forceInactive, locked, tourActive }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-semibold text-slate-500 dark:text-slate-500">{item.label}</div>
+          {item.subtitle && <div className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight mt-0.5">{item.subtitle}</div>}
         </div>
         <div className="shrink-0 rounded-full bg-brand-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-brand-600 dark:bg-brand-900/20 dark:text-brand-400">
           Upgrade
@@ -270,6 +272,7 @@ function SidebarLink({ item, onClick, forceInactive, locked, tourActive }) {
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13px] font-semibold">{item.label}</div>
+        {item.subtitle && <div className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight mt-0.5">{item.subtitle}</div>}
       </div>
     </NavLink>
   );
@@ -618,6 +621,7 @@ export default function Layout() {
           (n) => !dismissed.has(`${n._notifType}-${n.id}`)
         );
         setNotifications(nextNotifs);
+        // Pop a toast for proposal / clarification items not seen before.
         if (!cancelled) {
           const fresh = nextNotifs.filter(
             (n) => (n._notifType === "proposal" || n._notifType === "clarification") &&
@@ -761,7 +765,7 @@ export default function Layout() {
     new URLSearchParams(location.search).get("from") === "module";
 
   const Sidebar = (
-    <aside className="flex h-full min-h-0 w-[260px] flex-col overflow-hidden border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[280px] lg:px-5">
+    <aside className="flex h-full min-h-0 w-[260px] flex-col overflow-y-auto border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[280px] lg:px-5">
       <div className="mx-1 flex items-start justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
         <div className="min-w-0">
           <div className="flex items-center gap-2">

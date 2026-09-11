@@ -28,7 +28,10 @@ export async function apiRequest(path, method, body, options) {
     if (e && typeof e === "object" && e.name === "AbortError") {
       throw new Error("Request timed out. Please try again.");
     }
-    // Network error (backend down, wrong port, CORS, etc.)
+    // Network error (backend down, wrong port, CORS, etc.). Kept as the "NETWORK_ERROR"
+    // sentinel string on purpose — callers match on it to show a friendly message
+    // (see store/auth.js, ValidationWizardPage, FinancialsPage, etc.). Every caller
+    // must translate it before showing it to a user; don't render this string directly.
     throw new Error("NETWORK_ERROR");
   } finally {
     clearTimeout(timeoutId);

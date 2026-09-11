@@ -326,8 +326,17 @@ export default function BlueprintPage() {
   const authEmail = useAuthStore((s) => s.email);
   const subscription = useAuthStore((s) => s.subscription);
   const livePlanHref = "/business-plan";
+  const [hasLivePlan, setHasLivePlan] = useState(false);
+  const [showPlanChoice, setShowPlanChoice] = useState(false);
 
   useEffect(() => { refreshGrants(); }, []);
+
+  useEffect(() => {
+    if (!workspaceIdStored) return;
+    apiRequest(`/businesses/${workspaceIdStored}/live-plan`, "GET")
+      .then((res) => { if (res?.plan) setHasLivePlan(true); })
+      .catch(() => {});
+  }, [workspaceIdStored]);
 
   const isFreeOrTrial = !subscription ||
     ["free_trial", "explorer", "expired"].includes(subscription?.plan_key) ||
@@ -1990,7 +1999,7 @@ export default function BlueprintPage() {
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null,
         proposal_length: selectedDoc === "client_proposal" ? proposalLength : null,
       };
-      const res = await apiRequestWithRetry("/blueprint/generate", "POST", generateBody, { timeoutMs: 900000 });
+      const res = await apiRequestWithRetry("/blueprint/generate", "POST", generateBody, { timeoutMs: 180000 });
       let resolvedDocumentId = res?.document_id || null;
       if (!resolvedDocumentId) {
         const latestDocs = await refreshSavedDocs();
@@ -2034,7 +2043,7 @@ export default function BlueprintPage() {
                   document_id: null,
                   sections: sectionsForDoc(selectedDoc).map((s) => s.id),
                 },
-                { timeoutMs: 900000 }
+                { timeoutMs: 180000 }
               );
               const draftsMarkdown = resDrafts?.document_markdown || "";
               if (draftsMarkdown) {
@@ -2205,7 +2214,7 @@ export default function BlueprintPage() {
         followup_sequence: followupChoice === "Other" ? followupCustom : followupChoice,
         sections: chosen,
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null
-      }, { timeoutMs: 900000 });
+      }, { timeoutMs: 180000 });
       const markdown = res?.document_markdown || "";
       setSectionDraftsByDoc((prev) => ({
         ...prev,
@@ -2654,6 +2663,8 @@ export default function BlueprintPage() {
             {error}
           </div>
         ) : null}
+
+        <div id="documents" />
         <SectionCard title="Documents" subtitle="Click a document to generate it.">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {DOCUMENTS.map((d) => {
@@ -2664,8 +2675,8 @@ export default function BlueprintPage() {
                   type="button"
                   onClick={() => {
                     if (!canAccess) return;
-                    if (d.id === "business_plan" && import.meta.env.VITE_ENABLE_LIVE_PLAN) {
-                      navigate(livePlanHref);
+                    if (d.id === "business_plan") {
+                      setShowPlanChoice(true);
                       return;
                     }
                     openDoc(d.id);
@@ -2705,6 +2716,39 @@ export default function BlueprintPage() {
           </div>
         </SectionCard>
 
+        {showPlanChoice && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowPlanChoice(false)}>
+            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-1 text-base font-semibold text-slate-900">Choose a plan</div>
+              <div className="mb-4 text-xs text-slate-500">Generate the standard business plan or open the live business plan for ongoing tracking.</div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-semibold text-slate-900">Generate business plan</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">Create a structured business plan from your blueprint inputs.</div>
+                  <div className="mt-4">
+                    <button type="button" onClick={() => { setShowPlanChoice(false); openDoc("business_plan"); }}
+                      className="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700">
+                      Generate
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4">
+                  <div className="text-sm font-semibold text-slate-900">Live business plan</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">Track assumptions, KPIs, and performance over time.</div>
+                  <div className="mt-4">
+                    <Link to="/business-plan" className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+                      Open live plan
+                    </Link>
+                  </div>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowPlanChoice(false)}
+                className="mt-4 text-xs text-slate-400 hover:text-slate-600">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {visibleSavedDocs.length ? (
           <SectionCard title="Saved Documents" subtitle="Open and edit your generated documents anytime.">
@@ -2750,6 +2794,7 @@ export default function BlueprintPage() {
             </div>
           </SectionCard>
         ) : null}
+
 
       </div>
 
