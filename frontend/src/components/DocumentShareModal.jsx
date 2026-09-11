@@ -73,17 +73,8 @@ export default function DocumentShareModal({
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim());
   }
 
-  // Split one or more addresses on comma / semicolon / whitespace.
-  function parseEmailList(v) {
-    return String(v || "").split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
-  }
-  function invalidEmailIn(v) {
-    return parseEmailList(v).find((e) => !isValidEmail(e)) || null;
-  }
-
   // When the email lock is disabled, the email field is an optional delivery
-  // target ("email a copy to") rather than an access restriction, and it can
-  // hold multiple comma-separated recipients.
+  // target ("email a copy to") rather than an access restriction.
   const emailIsDelivery = !allowEmailLock;
 
   async function handleGenerate() {
@@ -93,13 +84,10 @@ export default function DocumentShareModal({
       setError("Enter the email address for this share link.");
       return;
     }
-    if (emailRequired || (emailIsDelivery && email.trim())) {
-      const bad = invalidEmailIn(email);
-      if (bad) {
-        setEmailInvalid(true);
-        setError(`"${bad}" is not a valid email address.`);
-        return;
-      }
+    if ((emailRequired || (emailIsDelivery && email.trim())) && !isValidEmail(email)) {
+      setEmailInvalid(true);
+      setError("Enter a valid email address (e.g. name@company.com).");
+      return;
     }
     setLoading(true);
     setEmailInvalid(false);
@@ -120,7 +108,7 @@ export default function DocumentShareModal({
       });
     } catch (e) {
       const raw = (e instanceof Error ? e.message : "") || "";
-      if (raw === "NETWORK_ERROR") {
+      if (e?.code === "NETWORK_ERROR" || raw === "NETWORK_ERROR") {
         setError("Unable to reach the server. Please check your connection and try again.");
       } else {
         const clean = raw.replace(/^HTTP \d+:\s*/i, "");
@@ -151,11 +139,6 @@ export default function DocumentShareModal({
     const recipient = accessMode === "email" ? email.trim() : mailRecipient.trim();
     if (!recipient) {
       setError("Enter a recipient email.");
-      return;
-    }
-    const bad = invalidEmailIn(recipient);
-    if (bad) {
-      setError(`"${bad}" is not a valid email address.`);
       return;
     }
     setError("");
@@ -272,10 +255,10 @@ export default function DocumentShareModal({
                 </span>
               </label>
               <input
-                type={emailIsDelivery ? "text" : "email"}
+                type="email"
                 value={email}
                 onChange={(e) => { setEmail(e.target.value); setEmailInvalid(false); }}
-                placeholder={emailIsDelivery ? "name@company.com, another@company.com" : "recipient@company.com"}
+                placeholder="recipient@company.com"
                 className={
                   "w-full rounded-xl border bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:ring-2 " +
                   (emailInvalid
@@ -285,7 +268,7 @@ export default function DocumentShareModal({
               />
               {emailIsDelivery ? (
                 <div className="mt-1.5 text-[11px] text-slate-500">
-                  Separate multiple recipients with a comma. Anyone with the link can still open it.
+                  We'll email the link here. Anyone with the link can still open it.
                 </div>
               ) : null}
             </div>
@@ -351,18 +334,18 @@ export default function DocumentShareModal({
               {(onSendEmail || getMailtoHref) && accessMode === "link" && mailPromptOpen ? (
                 <div className="rounded-lg border border-slate-200 bg-white p-3">
                   <label className="mb-1.5 block text-[12px] font-semibold text-slate-700">
-                    Recipient email(s)
+                    Recipient email
                     <span className="ml-1 font-normal text-slate-400">(required)</span>
                   </label>
                   <input
-                    type="text"
+                    type="email"
                     value={mailRecipient}
                     onChange={(e) => setMailRecipient(e.target.value)}
-                    placeholder="name@company.com, another@company.com"
+                    placeholder="recipient@company.com"
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
                   />
                   <div className="mt-2 text-[11px] text-slate-500">
-                    Separate multiple recipients with a comma. This does not lock the link - it only chooses where to send it.
+                    This does not lock the link to this address. It only chooses where the app should send the open link.
                   </div>
                 </div>
               ) : null}

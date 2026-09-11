@@ -23,7 +23,7 @@ import CreditConfirmModal from "../components/CreditConfirmModal";
 
 function humanizeValidationError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
-  if (msg === "NETWORK_ERROR") {
+  if (e?.code === "NETWORK_ERROR" || msg === "NETWORK_ERROR") {
     const base = import.meta.env.VITE_API_URL ?? import.meta.env.REACT_APP_BACKEND_URL ?? "http://localhost:8000";
     return `Can't reach the server at ${base}. Start the backend and check your API URL.`;
   }

@@ -28,7 +28,7 @@ import CreditConfirmModal from "../components/CreditConfirmModal";
 // which already has this translation). Route every catch here through this helper.
 function humanizeSimError(e, fallback) {
   const msg = e instanceof Error ? e.message : String(e || "");
-  if (msg === "NETWORK_ERROR" || /failed to fetch|timeout/i.test(msg)) {
+  if (e?.code === "NETWORK_ERROR" || msg === "NETWORK_ERROR" || /failed to fetch|timeout/i.test(msg)) {
     return "Network error — please check your connection and try again.";
   }
   return msg || fallback;
