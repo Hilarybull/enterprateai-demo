@@ -6,10 +6,19 @@ import { Component } from "react";
 // also throws away any in-progress form state (e.g. a partially filled wizard)
 // that wasn't already persisted. This catches it, shows a recoverable message,
 // and lets the user retry without losing the rest of the app.
+
+// TEMPORARY DIAGNOSTIC MODE — a real crash is happening in production for one
+// specific account and we can't reproduce it locally. This renders the raw
+// error message + component stack directly on screen (instead of only in the
+// browser console) so it can be screenshotted without anyone needing to open
+// devtools. Revert this block (put the plain friendly message back) once the
+// bug behind it is found and fixed — this should not stay on in the long run.
+const DIAGNOSTIC_MODE = true;
+
 export default class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, info: null };
   }
 
   static getDerivedStateFromError(error) {
@@ -17,12 +26,13 @@ export default class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
+    this.setState({ info });
     // eslint-disable-next-line no-console
     console.error("Unhandled UI error:", error, info?.componentStack);
   }
 
   handleRetry = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState({ hasError: false, error: null, info: null });
   };
 
   render() {
@@ -35,6 +45,18 @@ export default class ErrorBoundary extends Component {
             This section hit an unexpected error. Your work elsewhere in the app is safe — try again, or reload the page if the
             problem continues.
           </p>
+          {DIAGNOSTIC_MODE && this.state.error && (
+            <div className="mt-3 max-h-64 overflow-auto rounded-lg border border-rose-200 bg-rose-50 p-3 text-left dark:border-rose-900/50 dark:bg-rose-950/30">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-rose-700 dark:text-rose-400">
+                Diagnostic detail — please screenshot this box
+              </div>
+              <pre className="mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-snug text-rose-800 dark:text-rose-300">
+                {String(this.state.error?.message || this.state.error)}
+                {this.state.error?.stack ? `\n\n${this.state.error.stack}` : ""}
+                {this.state.info?.componentStack ? `\n\nComponent stack:${this.state.info.componentStack}` : ""}
+              </pre>
+            </div>
+          )}
           <div className="mt-4 flex items-center justify-center gap-2">
             <button
               type="button"
