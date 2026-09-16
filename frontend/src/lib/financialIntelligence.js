@@ -26,7 +26,8 @@ function parseDate(dateLike) {
 function addDays(dateLike, days) {
   const base = parseDate(dateLike) || new Date();
   const next = new Date(base);
-  next.setDate(next.getDate() + Math.max(0, Number(days || 0)));
+  const numericDays = Number(days);
+  next.setDate(next.getDate() + Math.max(0, Number.isFinite(numericDays) ? numericDays : 0));
   return next;
 }
 
@@ -55,7 +56,13 @@ function addToSchedule(schedule, dateLike, amount) {
 }
 
 function effectiveDueDate(item, fallbackTermsDays) {
-  return item?.due_date || addDays(item?.issued_at || item?.created_at || item?.updated_at, fallbackTermsDays).toISOString();
+  // fallbackTermsDays often comes straight from a free-text payment_terms field
+  // (e.g. "1day", "2 Instalment") rather than a clean number — addDays() does
+  // Number(days) internally, and a non-numeric string there produces NaN, which
+  // makes setDate(NaN) turn the Date invalid and crash on .toISOString(). Route
+  // through parsePaymentTerms() (already used elsewhere for the same field) so
+  // this always gets a safe integer.
+  return item?.due_date || addDays(item?.issued_at || item?.created_at || item?.updated_at, parsePaymentTerms(fallbackTermsDays)).toISOString();
 }
 
 function normaliseStatus(value, fallback = "pending") {
