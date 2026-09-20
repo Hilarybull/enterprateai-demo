@@ -1,0 +1,1082 @@
+/* Auth layout tuned to the provided EnterprateAI reference. */
+
+.lg-page {
+  --lg-ink: #050816;
+  --lg-navy: #091238;
+  --lg-red: #ff224d;
+  --lg-blue: #285df5;
+  --lg-link: #1d28ce;
+  --lg-muted: #667099;
+  --lg-font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  min-height: 100vh;
+  min-height: 100dvh;
+  position: relative;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 28px 26px 24px;
+  color: var(--lg-ink);
+  font-family: var(--lg-font);
+  background:
+    radial-gradient(circle at 20% 15%, rgba(220, 227, 255, 0.85) 0%, rgba(220, 227, 255, 0.16) 18%, transparent 38%),
+    radial-gradient(circle at 82% 88%, rgba(219, 214, 255, 0.85) 0%, rgba(219, 214, 255, 0.2) 18%, transparent 38%),
+    linear-gradient(135deg, #eef2ff 0%, #eef4ff 34%, #f8f9ff 68%, #f4f1ff 100%);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.lg-page *,
+.lg-page *::before,
+.lg-page *::after {
+  box-sizing: border-box;
+}
+
+.lg-page :where(h1, h2, p, ul) {
+  margin: 0;
+  padding: 0;
+}
+
+.lg-page :where(ul) {
+  list-style: none;
+}
+
+.lg-page :where(button) {
+  font: inherit;
+  cursor: pointer;
+}
+
+.lg-page :where(a) {
+  text-decoration: none;
+}
+
+.lg-shell {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.64fr) minmax(420px, 0.95fr);
+  gap: 24px;
+  max-width: 1450px;
+  margin: 0 auto;
+  align-items: start;
+}
+
+.lg-shell-bg {
+  position: absolute;
+  inset: auto -12% -18% 44%;
+  height: 44%;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 62% 72% at 58% 80%, rgba(196, 187, 255, 0.35), transparent 72%),
+    radial-gradient(ellipse 52% 60% at 82% 94%, rgba(187, 201, 255, 0.28), transparent 74%);
+}
+
+.lg-left {
+  position: relative;
+  min-height: calc(100dvh - 52px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: 36px;
+  background: linear-gradient(180deg, rgba(252, 252, 255, 0.96) 0%, rgba(247, 249, 255, 0.98) 100%);
+  box-shadow: 0 24px 70px -26px rgba(92, 108, 204, 0.24);
+  padding: 92px 58px 18px 58px;
+}
+
+.lg-left-head {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 112px;
+  pointer-events: none;
+}
+
+.lg-left-logo {
+  position: absolute;
+  top: 28px;
+  left: 42px;
+  width: 242px;
+  height: auto;
+}
+
+.lg-pill {
+  position: absolute;
+  top: 30px;
+  right: 48px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 175px;
+  height: 48px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: rgba(234, 238, 252, 0.95);
+  color: #47517c;
+  font-size: 12.7px;
+  line-height: 18px;
+}
+
+.lg-pill-icon {
+  width: 20px;
+  height: 20px;
+  color: #2a38da;
+}
+
+.lg-h1 {
+  max-width: 860px;
+  font-size: clamp(52px, 4.55vw, 71px);
+  line-height: 0.93;
+  font-weight: 800;
+  letter-spacing: -0.055em;
+  color: var(--lg-ink);
+}
+
+.lg-h1-accent {
+  color: var(--lg-red);
+}
+
+.lg-lead {
+  max-width: 840px;
+  margin-top: 18px;
+  font-size: clamp(19px, 1.6vw, 24px);
+  line-height: 1.5;
+  letter-spacing: -0.015em;
+  color: var(--lg-muted);
+}
+
+.lg-bold {
+  margin-top: 12px;
+  font-size: clamp(19px, 1.55vw, 23px);
+  line-height: 1.4;
+  font-weight: 700;
+  color: var(--lg-navy);
+}
+
+.lg-groups {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 30px;
+  min-height: 0;
+}
+
+.lg-group {
+  position: relative;
+  min-height: 0;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  overflow: hidden;
+}
+
+.lg-group-mint {
+  background: linear-gradient(100deg, #edfaf3 0%, #edf8f8 100%);
+}
+
+.lg-group-blue {
+  background: linear-gradient(100deg, #edf2ff 0%, #edf4ff 100%);
+}
+
+.lg-group-purple {
+  background: linear-gradient(100deg, #f1effd 0%, #f3f1ff 100%);
+}
+
+.lg-tile {
+  position: absolute;
+  left: 18px;
+  top: 32px;
+  width: 60px;
+  height: 60px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 14px 26px -13px rgba(60, 93, 200, 0.38);
+}
+
+.lg-tile-mint {
+  background: linear-gradient(140deg, #31d0ab 0%, #00b793 100%);
+  box-shadow: 0 14px 26px -13px rgba(8, 170, 130, 0.55);
+}
+
+.lg-tile-blue {
+  background: linear-gradient(140deg, #6f97ff 0%, #386ff4 100%);
+}
+
+.lg-tile-purple {
+  background: linear-gradient(140deg, #9f6cf7 0%, #7a3dfc 100%);
+  box-shadow: 0 14px 26px -13px rgba(122, 61, 252, 0.5);
+}
+
+.lg-feature-icon {
+  width: 34px;
+  height: 34px;
+}
+
+.lg-group-title {
+  position: absolute;
+  left: 111px;
+  top: 42px;
+  font-size: clamp(19px, 1.25vw, 22px);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.lg-group-title-mint {
+  color: #0c6d57;
+}
+
+.lg-group-title-blue {
+  color: #184ad7;
+}
+
+.lg-group-title-purple {
+  color: #4c21d3;
+}
+
+.lg-group-sub {
+  position: absolute;
+  left: 111px;
+  top: 68px;
+  font-size: clamp(15px, 1.08vw, 17px);
+  line-height: 1.35;
+  color: #67728f;
+}
+
+.lg-chips {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: auto;
+  bottom: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.lg-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+  font-size: clamp(13px, 0.95vw, 16px);
+  font-weight: 500;
+  line-height: 1.25;
+  color: #59637f;
+}
+
+.lg-chip + .lg-chip::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 50%;
+  width: 1px;
+  height: 30px;
+  transform: translateY(-50%);
+  background: rgba(207, 214, 229, 0.95);
+}
+
+.lg-chip-squeeze {
+  letter-spacing: -0.06em;
+}
+
+.lg-dot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+}
+
+.lg-dot svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lg-dot-mint {
+  background: #109d81;
+}
+
+.lg-dot-blue {
+  background: #1f68f6;
+}
+
+.lg-dot-purple {
+  background: #7e45f5;
+}
+
+.lg-trust {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid #e3e5ef;
+}
+
+.lg-trust-item {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  font-size: 15px;
+  color: #5f6687;
+  white-space: nowrap;
+}
+
+.lg-ring-check {
+  width: 26px;
+  height: 26px;
+  color: #2634d8;
+}
+
+.lg-right {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+}
+
+.lg-topline {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  margin: 0 26px 28px 0;
+  font-size: 15px;
+  color: #5f6784;
+}
+
+.lg-topline button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lg-link);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.lg-card {
+  flex: none;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  border-radius: 34px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 30px 72px -26px rgba(92, 108, 204, 0.24);
+  padding: 44px 40px 30px;
+}
+
+.lg-card-logo {
+  display: block;
+  width: 243px;
+  height: auto;
+  margin: 0 auto;
+}
+
+.lg-welcome {
+  margin-top: 30px;
+  text-align: center;
+  font-size: clamp(30px, 2.55vw, 36px);
+  line-height: 1.15;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  color: #000;
+}
+
+.lg-signsub {
+  margin-top: 10px;
+  text-align: center;
+  font-size: clamp(16px, 1.2vw, 18px);
+  line-height: 1.35;
+  color: #636a84;
+}
+
+.lg-form {
+  margin-top: 30px;
+}
+
+.lg-field + .lg-field {
+  margin-top: 24px;
+}
+
+.lg-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lg-label {
+  display: block;
+  margin-bottom: 9px;
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 500;
+  color: #27314d;
+}
+
+.lg-forgot {
+  margin-bottom: 9px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--lg-link);
+}
+
+.lg-forgot:hover,
+.lg-topline button:hover,
+.lg-switch button:hover {
+  text-decoration: underline;
+}
+
+.lg-input-wrap {
+  position: relative;
+  height: 52px;
+}
+
+.lg-field-icon {
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  width: 20px;
+  height: 16px;
+  transform: translateY(-50%);
+  color: #8088a7;
+  pointer-events: none;
+}
+
+.lg-field-icon-lock {
+  width: 18px;
+  height: 22px;
+}
+
+.lg-input {
+  width: 100%;
+  height: 52px;
+  padding: 0 48px 0 52px;
+  border: 1px solid #e3e5ee;
+  border-radius: 11px;
+  background: #fff;
+  font: 400 16px/1 var(--lg-font);
+  color: #171b31;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.lg-input::placeholder {
+  color: #8d95ad;
+  opacity: 1;
+}
+
+.lg-input-password::placeholder {
+  letter-spacing: 3px;
+  font-size: 11px;
+}
+
+.lg-input:focus {
+  border-color: #7a90f5;
+  box-shadow: 0 0 0 3px rgba(40, 93, 245, 0.12);
+}
+
+.lg-eye {
+  position: absolute;
+  inset: 0 6px 0 auto;
+  width: 40px;
+  border: 0;
+  background: none;
+  color: #a0a6bc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lg-eye:hover {
+  color: #70789a;
+}
+
+.lg-eye-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.lg-error {
+  margin-top: 14px;
+}
+
+.lg-error-switch {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lg-link);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.lg-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 13px;
+  width: 100%;
+  height: 56px;
+  margin-top: 28px;
+  border: 0;
+  border-radius: 13px;
+  background: linear-gradient(180deg, #2f6af8 0%, #245cf4 100%);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 500;
+  box-shadow: 0 14px 28px -14px rgba(36, 92, 244, 0.72);
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.lg-submit:hover:not(:disabled) {
+  filter: brightness(1.02);
+  transform: translateY(-1px);
+}
+
+.lg-submit:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.lg-btn-arrow {
+  width: 22px;
+  height: 22px;
+}
+
+.lg-or {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 24px;
+  color: #68708d;
+  font-size: 14px;
+}
+
+.lg-or::before,
+.lg-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #e4e8f2;
+}
+
+.lg-or span {
+  padding: 0 18px;
+}
+
+.lg-google {
+  position: relative;
+  height: 56px;
+  margin-top: 16px;
+}
+
+.lg-google-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border: 1px solid #e4e6ef;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 20px -14px rgba(45, 61, 120, 0.26);
+  color: #101425;
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.lg-google:hover .lg-google-face {
+  border-color: #d2d8ea;
+}
+
+.lg-google-g {
+  width: 24px;
+  height: 24px;
+}
+
+.lg-google-hit {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.01;
+  border-radius: 12px;
+}
+
+.lg-google-hit > div {
+  transform: scale(1, 1.5);
+  transform-origin: top center;
+}
+
+.lg-switch {
+  margin-top: 30px;
+  text-align: center;
+  font-size: 15px;
+  color: #6a7087;
+}
+
+.lg-switch button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lg-link);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.lg-secure {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  margin-top: 22px;
+  color: #1a24bf;
+}
+
+.lg-secure > div {
+  color: #5f6580;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.lg-secure-icon {
+  width: 22px;
+  height: 26px;
+}
+
+.lg-secure-sub {
+  margin-top: 2px;
+  color: #73798e;
+}
+
+.lg-tagline {
+  position: absolute;
+  right: 56px;
+  bottom: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  transform: rotate(-7deg);
+  transform-origin: right bottom;
+  color: #5060cf;
+  font-family: "Caveat", "Segoe Script", cursive;
+  font-size: 23px;
+  line-height: 1.05;
+  pointer-events: none;
+}
+
+.lg-tagline span:first-child {
+  align-self: flex-start;
+  margin-left: 6px;
+}
+
+.lg-tagline-line {
+  width: 180px;
+  height: 12px;
+  margin-top: 3px;
+  color: #8d93df;
+}
+
+.lg-shell-verify {
+  grid-template-columns: 1fr;
+}
+
+.lg-shell-verify .lg-verify-card {
+  margin-top: 0;
+}
+
+@media (max-height: 980px) and (min-width: 1181px) {
+  .lg-page {
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+
+  .lg-left {
+    padding: 62px 50px 14px 50px;
+  }
+
+  .lg-left-head {
+    height: 88px;
+  }
+
+  .lg-left-logo {
+    top: 18px;
+    width: 206px;
+  }
+
+  .lg-pill {
+    top: 18px;
+    right: 34px;
+    height: 40px;
+    font-size: 11.5px;
+  }
+
+  .lg-h1 {
+    font-size: clamp(40px, 3.5vw, 56px);
+    line-height: 0.94;
+    letter-spacing: -0.05em;
+  }
+
+  .lg-lead {
+    margin-top: 12px;
+    font-size: clamp(14px, 1.05vw, 16px);
+    line-height: 1.38;
+  }
+
+  .lg-bold {
+    margin-top: 8px;
+    font-size: clamp(15px, 1.05vw, 17px);
+  }
+
+  .lg-groups {
+    gap: 12px;
+    margin-top: 16px;
+  }
+
+  .lg-group {
+    min-height: 128px;
+  }
+
+  .lg-tile {
+    top: 16px;
+    left: 14px;
+    width: 48px;
+    height: 48px;
+    border-radius: 15px;
+  }
+
+  .lg-feature-icon {
+    width: 28px;
+    height: 28px;
+  }
+
+  .lg-group-title {
+    top: 20px;
+    left: 80px;
+    font-size: 15px;
+  }
+
+  .lg-group-sub {
+    top: 38px;
+    left: 80px;
+    font-size: 11.5px;
+  }
+
+  .lg-chips {
+    top: 65px;
+    left: 14px;
+    right: 14px;
+  }
+
+  .lg-chip {
+    gap: 8px;
+    font-size: 9.4px;
+  }
+
+  .lg-chip + .lg-chip::before {
+    left: -10px;
+    height: 18px;
+  }
+
+  .lg-dot {
+    width: 16px;
+    height: 16px;
+  }
+
+  .lg-dot svg {
+    width: 11px;
+    height: 11px;
+  }
+
+  .lg-trust {
+    margin-top: 18px;
+    padding-top: 16px;
+  }
+
+  .lg-trust-item {
+    gap: 8px;
+    font-size: 12px;
+  }
+
+  .lg-ring-check {
+    width: 20px;
+    height: 20px;
+  }
+
+  .lg-right {
+    padding-top: 0;
+  }
+
+  .lg-topline {
+    margin-bottom: 16px;
+  }
+
+  .lg-card {
+    padding: 30px 30px 20px;
+  }
+
+  .lg-card-logo {
+    width: 198px;
+  }
+
+  .lg-welcome {
+    margin-top: 20px;
+    font-size: 28px;
+  }
+
+  .lg-signsub {
+    margin-top: 6px;
+    font-size: 14px;
+  }
+
+  .lg-form {
+    margin-top: 20px;
+  }
+
+  .lg-field + .lg-field {
+    margin-top: 16px;
+  }
+
+  .lg-input-wrap,
+  .lg-input {
+    height: 46px;
+  }
+
+  .lg-submit {
+    height: 48px;
+    margin-top: 18px;
+    font-size: 17px;
+  }
+
+  .lg-or {
+    margin-top: 14px;
+  }
+
+  .lg-google {
+    margin-top: 10px;
+    height: 46px;
+  }
+
+  .lg-switch {
+    margin-top: 16px;
+  }
+
+  .lg-secure {
+    margin-top: 14px;
+  }
+}
+
+.lg-verify-card {
+  max-width: 440px;
+  margin: 10vh auto 0;
+  padding: 34px 28px 30px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 24px 60px -24px rgba(92, 108, 204, 0.24);
+  text-align: center;
+}
+
+.lg-card-logo-verify {
+  width: 214px;
+}
+
+.lg-verify-mark {
+  width: 58px;
+  height: 58px;
+  margin: 18px auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #eef4ff;
+  color: #285df5;
+}
+
+.lg-verify-card h1 {
+  margin-top: 16px;
+  font-size: 28px;
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.lg-verify-card p {
+  margin-top: 10px;
+  color: #66708d;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.lg-submit-verify {
+  margin-top: 20px;
+}
+
+@media (max-width: 1180px) {
+  .lg-page {
+    padding: 18px;
+  }
+
+  .lg-shell {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+    align-items: start;
+  }
+
+  .lg-left {
+    min-height: 0;
+    display: block;
+    padding: 88px 28px 24px;
+  }
+
+  .lg-left-head {
+    height: 96px;
+  }
+
+  .lg-left-logo {
+    left: 28px;
+    width: 210px;
+  }
+
+  .lg-pill {
+    right: 26px;
+  }
+
+  .lg-trust {
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .lg-right {
+    padding-top: 0;
+    display: block;
+  }
+
+  .lg-topline {
+    margin-right: 6px;
+  }
+
+  .lg-card {
+    min-height: 0;
+    flex: none;
+    padding: 40px 24px 28px;
+  }
+
+  .lg-tagline {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .lg-page {
+    padding: 12px;
+  }
+
+  .lg-left {
+    padding: 78px 18px 20px;
+    border-radius: 28px;
+    display: block;
+  }
+
+  .lg-left-logo {
+    width: 188px;
+    left: 18px;
+  }
+
+  .lg-pill {
+    display: none;
+  }
+
+  .lg-h1 {
+    font-size: clamp(38px, 10vw, 52px);
+    line-height: 0.98;
+  }
+
+  .lg-lead {
+    font-size: 16px;
+  }
+
+  .lg-bold {
+    font-size: 18px;
+  }
+
+  .lg-group {
+    min-height: 164px;
+    border-radius: 16px;
+  }
+
+  .lg-tile {
+    top: 18px;
+    left: 14px;
+    width: 54px;
+    height: 54px;
+    border-radius: 16px;
+  }
+
+  .lg-feature-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .lg-group-title,
+  .lg-group-sub {
+    left: 84px;
+  }
+
+  .lg-group-sub {
+    top: 55px;
+    right: 14px;
+  }
+
+  .lg-chips {
+    top: 100px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 10px 16px;
+  }
+
+  .lg-chip {
+    white-space: normal;
+  }
+
+  .lg-chip + .lg-chip::before {
+    display: none;
+  }
+
+  .lg-trust {
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 12px 18px;
+    margin-top: 20px;
+  }
+
+  .lg-trust-item {
+    font-size: 14px;
+  }
+
+  .lg-card {
+    border-radius: 26px;
+    padding: 32px 18px 24px;
+    flex: none;
+  }
+
+  .lg-card-logo {
+    width: 200px;
+  }
+
+  .lg-welcome {
+    font-size: 28px;
+  }
+
+  .lg-submit {
+    font-size: 17px;
+  }
+}
