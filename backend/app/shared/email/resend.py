@@ -352,6 +352,39 @@ async def send_proposal_invite_email(
     )
 
 
+async def send_proposal_update_email(
+    *,
+    to_email: str,
+    headline: str,
+    body: str,
+    cta_label: str,
+    cta_url: str,
+    sender_name: str | None = None,
+) -> EmailDeliveryResult:
+    app_name = get_settings().app_name
+    subject = headline
+    text_content = f"{body}\n\n{cta_label}:\n{cta_url}" + _FOOTER_TEXT
+    html_content = (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+        "line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+        f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;\">{escape(headline)}</h2>"
+        f"<p style=\"margin:0 0 12px;\">{escape(body)}</p>"
+        f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(cta_url)}\" "
+        "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
+        "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
+        f"{escape(cta_label)}</a></p>"
+        + _FOOTER_HTML
+        + "</div>"
+    )
+    return await send_email_via_resend(
+        to_email=to_email,
+        subject=subject,
+        text_content=text_content,
+        html_content=html_content,
+        sender_name=sender_name or app_name,
+    )
+
+
 async def send_proposal_received_email(
     *,
     to_email: str,
@@ -359,6 +392,7 @@ async def send_proposal_received_email(
     proposer_name: str,
     request_title: str | None,
     inbox_url: str,
+    reply_to_email: str | None = None,
 ) -> EmailDeliveryResult:
     app_name = get_settings().app_name
     subject = f"New proposal from {proposer_name}"
@@ -376,7 +410,7 @@ async def send_proposal_received_email(
         f"<strong>{escape(recipient_name)}</strong>{escape(context)}.</p>"
         f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(inbox_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
-        "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">Open proposal inbox</a></p>"
+        "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">View new proposal</a></p>"
         + _FOOTER_HTML
         + "</div>"
     )
@@ -386,4 +420,5 @@ async def send_proposal_received_email(
         text_content=text_content,
         html_content=html_content,
         sender_name=recipient_name or app_name,
+        reply_to_email=reply_to_email,
     )

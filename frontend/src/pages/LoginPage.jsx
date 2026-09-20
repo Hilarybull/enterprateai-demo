@@ -114,6 +114,18 @@ export default function LoginPage() {
     }
   }, [searchParams]);
 
+  // New signups leave for their inbox (email verification) and come back to a plain
+  // /login, so a ?next= deep link would be lost. Remember it briefly in localStorage.
+  useEffect(() => {
+    const next = searchParams.get("next");
+    if (!next || !/^\/(?!\/)/.test(next)) return;
+    try {
+      localStorage.setItem("ea_post_auth_next", JSON.stringify({ path: next, at: Date.now() }));
+    } catch {
+      // Deep-link memory is best-effort only.
+    }
+  }, [searchParams]);
+
   async function tryDemo() {
     setDemoLoading(true);
     setDemoError(null);
@@ -146,8 +158,20 @@ export default function LoginPage() {
     // Only same-origin relative paths are accepted.
     const next = searchParams.get("next");
     if (next && /^\/(?!\/)/.test(next)) {
+      try { localStorage.removeItem("ea_post_auth_next"); } catch { /* ignore */ }
       navigate(next, { replace: true });
       return;
+    }
+    try {
+      const saved = JSON.parse(localStorage.getItem("ea_post_auth_next") || "null");
+      localStorage.removeItem("ea_post_auth_next");
+      const fresh = saved && Date.now() - Number(saved.at) < 2 * 24 * 60 * 60 * 1000;
+      if (fresh && typeof saved.path === "string" && /^\/(?!\/)/.test(saved.path)) {
+        navigate(saved.path, { replace: true });
+        return;
+      }
+    } catch {
+      // Fall through to the default landing page.
     }
     navigate("/dashboard", { replace: true });
   }, [token, navigate, searchParams]);

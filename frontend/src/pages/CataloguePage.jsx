@@ -334,12 +334,16 @@ export default function CataloguePage() {
     const str = String(value || "").trim();
     if (!str) return "14";
     if (str.toLowerCase() === "immediate") return "Immediate";
-    // Pure-number entries are normalised to a day count; anything else is kept as free text.
-    if (/^\d+$/.test(str)) {
-      const num = parseInt(str, 10);
+    // Payment terms is always a day count downstream (Dashboard forecasting, overdue
+    // checks), so pull the first number out of whatever was entered (form, CSV import,
+    // both) instead of keeping non-numeric text verbatim - that's what let values like
+    // "1day" or "2 Instalment" through and crashed the Dashboard's date math.
+    const match = str.match(/\d+/);
+    if (match) {
+      const num = parseInt(match[0], 10);
       return num > 0 ? String(num) : "14";
     }
-    return str;
+    return "14";
   }
 
   function formatPaymentTerms(value) {
@@ -1325,13 +1329,15 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   {!paymentTermOptions.includes(customerForm.payment_terms) && (
                     <Input
                       className="mt-2 w-full"
-                      type="text"
-                      placeholder="Enter payment terms"
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="Number of days"
                       value={customerForm.payment_terms}
                       onChange={(e) => setCustomerForm((c) => ({ ...c, payment_terms: e.target.value }))}
                     />
                   )}
-                  <div className="mt-1 text-xs text-slate-500">Choose a term or select Other to enter a custom value.</div>
+                  <div className="mt-1 text-xs text-slate-500">Choose a term or select Other to enter a custom number of days.</div>
                 </div>
               <div>
                 <div className="ea-label">Industry</div>
@@ -1546,8 +1552,10 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   {!paymentTermOptions.includes(vendorForm.payment_terms) && (
                     <Input
                       className="mt-2 w-full"
-                      type="text"
-                      placeholder="Enter payment terms"
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="Number of days"
                       value={vendorForm.payment_terms}
                       onChange={(e) => setVendorForm((v) => ({ ...v, payment_terms: e.target.value }))}
                     />

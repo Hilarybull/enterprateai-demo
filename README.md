@@ -27,7 +27,7 @@ Production-ready MVP for a business decision SaaS platform with:
 ```
 /backend
   /app
-    main.py
+    main.py![alt text](image.png)
     /core
     /modules
       /idea_validation

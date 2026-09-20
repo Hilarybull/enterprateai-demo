@@ -34,7 +34,7 @@ from app.modules.idea_validation.market_research_service import (
     flatten_fields_from_v4_payload,
 )
 from app.shared.schemas.common import WorkspaceDocument
-from app.core.supabase import sb_insert, sb_select, sb_update
+from app.core.supabase import sb_insert, sb_select, sb_update, sb_rpc
 from app.shared.llm.openai_client import get_user_plan_info, plan_uses_serp
 from app.modules.idea_validation.market_research_service import _pick_llm_caller
 
@@ -1233,16 +1233,7 @@ async def update_workspace(
     logger = logging.getLogger(__name__)
     logger.info("update_workspace start: workspace_id=%s user_id=%s", workspace_id, user_id)
 
-    merged = dict(ws.data or {})
-    data_patch = _augment_workspace_patch(data_patch or {}, existing=merged)
-    for k, v in (data_patch or {}).items():
-        # Deep-merge financials so keys written by other endpoints (e.g. rfq_requests)
-        # are never wiped by a frontend patch that doesn't include them.
-        if k == "financials" and isinstance(v, dict) and isinstance(merged.get("financials"), dict):
-            merged[k] = {**merged[k], **v}
-        else:
-            merged[k] = v
-
+    data_patch = _augment_workspace_patch(data_patch or {}, existing=dict(ws.data or {}))
     ws_name = (name and str(name).strip()) or ws.name or "Unnamed"
 
     # Fire-and-forget snapshot to MongoDB (never block the main save)
@@ -1252,20 +1243,27 @@ async def update_workspace(
     except Exception as e:
         logger.exception("snapshot scheduling failed for workspace %s: %s", workspace_id, e)
 
-    update = {"data": merged, "updated_at": now.isoformat()}
-    if name and str(name).strip():
-        update["name"] = str(name).strip()
-
+    # Previously: read ws.data, merge the patch into it in Python, then write the
+    # whole merged blob back with sb_update. That read-modify-write races — two
+    # concurrent PATCH requests (e.g. a Catalogue "add customer" and a Financials
+    # "save invoice" landing close together) each read data before either commits,
+    # so whichever commits second silently overwrites the other's change to a key
+    # it never touched (Bug: "Active Customers" showing 0 after creating a real,
+    # paying customer — the customer record was written, then wiped back out by a
+    # concurrent financials save that started its merge from a stale pre-write
+    # snapshot). merge_workspace_data() does the read+merge+write as a single
+    # atomic Postgres statement, closing that window entirely.
     try:
-        logger.info("calling sb_update for workspace %s", workspace_id)
-        await sb_update(
-            "workspaces",
-            filters=[("id", "eq", ws.id), ("user_id", "eq", ws.user_id)],
-            payload=update,
-        )
-        logger.info("sb_update completed for workspace %s", workspace_id)
+        logger.info("calling merge_workspace_data for workspace %s", workspace_id)
+        await sb_rpc("merge_workspace_data", {
+            "p_workspace_id": ws.id,
+            "p_user_id": ws.user_id,
+            "p_patch": data_patch,
+            "p_name": name and str(name).strip() or None,
+        })
+        logger.info("merge_workspace_data completed for workspace %s", workspace_id)
     except Exception as e:
-        logger.exception("sb_update failed for workspace %s: %s", workspace_id, e)
+        logger.exception("merge_workspace_data failed for workspace %s: %s", workspace_id, e)
         raise
     return await get_workspace(user_id=user_id, workspace_id=workspace_id)
 

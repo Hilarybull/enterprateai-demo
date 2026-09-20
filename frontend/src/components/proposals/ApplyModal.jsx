@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Button from "../Button";
 import Input from "../Input";
@@ -11,13 +11,22 @@ import { apiRequest, getApiBaseUrl } from "../../api/client";
 import {
   readProposalContext,
   writeProposalContext,
+  patchProposalContext,
   clearProposalContext,
   contextMatches,
 } from "../../lib/proposalContext";
 
 function errText(e) {
-  const m = e instanceof Error ? e.message : String(e || "");
-  return m.replace(/^HTTP \d+:\s*/i, "") || "Something went wrong.";
+  const raw = (e instanceof Error ? e.message : String(e || "")).replace(/^HTTP \d+:\s*/i, "");
+  if (/bearer token|not authenticated|401|unauthor/i.test(raw)) return "Please sign in to continue.";
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) return "Couldn't reach the server. Check your connection and try again.";
+  if (/^\s*5\d\d\b|internal server|schema cache|does not exist/i.test(raw)) return "Something went wrong on our side. Please try again in a moment.";
+  return raw || "Something went wrong.";
+}
+
+function looksUnauthed(e) {
+  const m = (e && e.message) || "";
+  return /^HTTP 401/i.test(m) || /bearer token|not authenticated|unauthor/i.test(m);
 }
 
 function genId() {
@@ -62,38 +71,153 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
   const canSubmit =
     hasPaidAccess(subscription?.plan_key, subscription?.status) || hasProposalGrant;
   const isUnsolicited = !request?.id;
-  const requirements = request?.requirements || [];
+  // Normalise — older requests may lack id / response_type on their items.
+  const requirements = useMemo(
+    () => (request?.requirements || []).map((r, i) => ({
+      ...r,
+      id: r.id || `req_${i}`,
+      response_type: r.response_type || "text",
+    })),
+    [request?.requirements],
+  );
 
-  // Returning from the "Use EnterprateAI" round-trip with a generated PDF?
-  const returned = useMemo(() => {
+  // Coming back to this modal after a detour — either the "Use EnterprateAI"
+  // round-trip (PDF attached) or a sign-in (form draft saved).
+  const resume = useMemo(() => {
     const ctx = readProposalContext();
-    const match = contextMatches(ctx, { requestId: request?.id || null, recipientWorkspaceId });
-    return match && ctx?.blueprintReturn?.attachment ? ctx.blueprintReturn.attachment : null;
+    if (!contextMatches(ctx, { requestId: request?.id || null, recipientWorkspaceId })) return {};
+    return {
+      attachment: ctx?.blueprintReturn?.attachment || null,
+      draft: ctx?.draft || null,
+    };
   }, [request?.id, recipientWorkspaceId]);
+  const returned = resume.attachment;
+  const savedDraft = resume.draft;
 
-  const [step, setStep] = useState(returned ? "write" : "choose");
+  const [step, setStep] = useState(returned || savedDraft ? "write" : "choose");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const fileRef = useRef(null);
 
-  const [form, setForm] = useState({
-    title: request?.title ? `Proposal: ${request.title}` : "",
-    summary: "",
-    sections: [],
-    responses: Object.fromEntries(requirements.map((r) => [r.id, ""])),
-    attachments: returned ? [returned] : [],
+  const [form, setForm] = useState(() => {
+    const base = {
+      title: request?.title ? `Proposal: ${request.title}` : "",
+      summary: "",
+      sections: [],
+      // one entry per requirement: { text, attachment }
+      responses: Object.fromEntries(requirements.map((r) => [r.id, { text: "", attachment: null }])),
+      attachments: returned ? [returned] : [],
+    };
+    if (savedDraft) {
+      return {
+        ...base,
+        title: savedDraft.title ?? base.title,
+        summary: savedDraft.summary ?? base.summary,
+        sections: Array.isArray(savedDraft.sections) ? savedDraft.sections : base.sections,
+        responses: { ...base.responses, ...(savedDraft.responses || {}) },
+        // The saved draft's attachments already include the Blueprint PDF.
+        attachments: savedDraft.attachments?.length ? savedDraft.attachments : base.attachments,
+      };
+    }
+    return base;
   });
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const setResp = (id, patch) =>
+    setForm((f) => ({ ...f, responses: { ...f.responses, [id]: { ...(f.responses[id] || { text: "", attachment: null }), ...patch } } }));
+
+  const isFileReq = (r) => r.response_type === "file" || r.response_type === "image";
+  const reqAnswered = (r) => {
+    const v = form.responses[r.id] || {};
+    return isFileReq(r) ? Boolean(v.attachment?.url) : Boolean((v.text || "").trim());
+  };
+
+  // One real hidden <input> in the DOM, retargeted per requirement — a
+  // detached createElement('input') does not fire change reliably in prod.
+  const reqFileRef = useRef(null);
+  const pendingReqRef = useRef(null);
+
+  function pickRequirementFile(r) {
+    if (!isLoggedIn) { stashDraftAndSignup(); return; }
+    pendingReqRef.current = r;
+    const el = reqFileRef.current;
+    if (!el) return;
+    el.accept = r.response_type === "image" ? "image/*" : "";
+    el.value = "";
+    el.click();
+  }
+
+  async function onRequirementFileChange(e) {
+    const file = e.target.files && e.target.files[0];
+    const r = pendingReqRef.current;
+    e.target.value = "";
+    if (!file || !r) return;
+    setError(null);
+    try {
+      const meta = await uploadOne(file);
+      setResp(r.id, { attachment: meta });
+    } catch (err) {
+      if (looksUnauthed(err)) { stashDraftAndSignup(); return; }
+      setError(errText(err));
+    }
+  }
 
   function close() {
-    clearProposalContext();
+    // Don't wipe the context here — an accidental close (X / backdrop / Cancel)
+    // must not throw away a generated Blueprint PDF or a half-written draft.
+    // It only matches this exact request/recipient, and it's cleared on submit.
     onClose();
+  }
+
+  // Keep the context's draft in step with the form so a refresh or an
+  // accidental close can restore the write step exactly as it was.
+  useEffect(() => {
+    if (step !== "write" && step !== "preview") return;
+    const t = setTimeout(() => {
+      patchProposalContext({
+        recipientWorkspaceId,
+        recipientName: recipientName || null,
+        requestId: request?.id || null,
+        requestTitle: request?.title || null,
+        requestDescription: request?.description || null,
+        requirements,
+        origin: currentPath,
+        draft: {
+          title: form.title,
+          summary: form.summary,
+          sections: form.sections,
+          responses: form.responses,
+          attachments: form.attachments,
+        },
+      });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [step, form]); // eslint-disable-line
+
+  // Save whatever's typed so the form is intact after the user signs in.
+  function stashDraftAndSignup() {
+    patchProposalContext({
+      recipientWorkspaceId,
+      recipientName: recipientName || null,
+      requestId: request?.id || null,
+      requestTitle: request?.title || null,
+      requestDescription: request?.description || null,
+      requirements,
+      origin: currentPath,
+      draft: {
+        title: form.title,
+        summary: form.summary,
+        sections: form.sections,
+        responses: form.responses,
+        attachments: form.attachments,
+      },
+    });
+    setStep("signup");
   }
 
   // ── "Use EnterprateAI" — hand off to Business Blueprints ──────────────────
   function startBlueprint() {
-    if (!isLoggedIn) { setStep("signup"); return; }
+    if (!isLoggedIn) { stashDraftAndSignup(); return; }
     if (!canSubmit) { setStep("upgrade"); return; }
     writeProposalContext({
       recipientWorkspaceId,
@@ -109,6 +233,8 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
 
   // ── AI cover letter (secondary, in-form tool) ────────────────────────────
   async function generateCoverLetter() {
+    if (!isLoggedIn) { stashDraftAndSignup(); return; }
+    if (!canSubmit) { setStep("upgrade"); return; }
     setAiBusy(true);
     setError(null);
     try {
@@ -141,12 +267,14 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
   }
 
   async function addAttachments(files) {
+    if (!isLoggedIn) { stashDraftAndSignup(); return; }
     setError(null);
     for (const file of files) {
       try {
         const meta = await uploadOne(file);
         setForm((f) => ({ ...f, attachments: [...f.attachments, meta] }));
       } catch (e) {
+        if (looksUnauthed(e)) { stashDraftAndSignup(); return; }
         setError(errText(e));
       }
     }
@@ -173,9 +301,14 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
         title: form.title.trim() || null,
         summary: form.summary.trim() || null,
         sections: cleanSections(),
-        requirement_responses: Object.entries(form.responses)
-          .filter(([, v]) => (v || "").trim())
-          .map(([requirement_id, response]) => ({ requirement_id, response: response.trim() })),
+        requirement_responses: requirements
+          .filter(reqAnswered)
+          .map((r) => {
+            const v = form.responses[r.id] || {};
+            return isFileReq(r)
+              ? { requirement_id: r.id, attachment: v.attachment }
+              : { requirement_id: r.id, response: (v.text || "").trim() };
+          }),
         attachments: form.attachments,
       };
       const proposal = await submitProposal(payload);
@@ -187,8 +320,8 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
       const code = httpStatus(e);
       const msg = errText(e);
       // Gate at submit: unauthenticated → signup, unentitled → upgrade.
-      if (code === 401 || /not authenticated|sign in/i.test(msg)) {
-        setStep("signup");
+      if (code === 401 || looksUnauthed(e)) {
+        stashDraftAndSignup();
       } else if (code === 402 || /Starter plan or above/i.test(msg)) {
         setStep("upgrade");
       } else {
@@ -199,11 +332,12 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     }
   }
 
-  const mandatoryUnanswered = requirements.some((r) => r.mandatory && !(form.responses[r.id] || "").trim());
-  const hasContent = form.summary.trim() || cleanSections().length > 0 || form.attachments.length > 0;
+  const mandatoryUnanswered = requirements.some((r) => r.mandatory && !reqAnswered(r));
+  const hasContent = form.summary.trim() || cleanSections().length > 0 || form.attachments.length > 0
+    || requirements.some(reqAnswered);
 
   function goPreview() {
-    if (mandatoryUnanswered) { setError("Answer the required questions first."); return; }
+    if (mandatoryUnanswered) { setError("Provide every required item before continuing."); return; }
     if (!hasContent) { setError("Add a cover letter, a section, or an attachment before previewing."); return; }
     setError(null);
     setStep("preview");
@@ -215,7 +349,8 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
     : `Submit a proposal${recipientName ? ` to ${recipientName}` : ""}`;
 
   return (
-    <div className="fixed inset-0 z-[130] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+    <div className="fixed inset-0 z-[130] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4">
+      {/* No backdrop-click-to-close — a stray click shouldn't drop a proposal in progress. Use the ✕. */}
       <div className="flex max-h-[94vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-slate-900 sm:rounded-2xl">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-700">
           <div>
@@ -230,9 +365,11 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {error ? <div className="mb-3"><InlineAlert kind="error" message={error} /></div> : null}
           {returned && step === "write" ? (
             <div className="mb-3"><InlineAlert kind="success" message="Your Blueprint proposal is attached. Add a short cover letter and submit." /></div>
+          ) : null}
+          {savedDraft && step === "write" && !returned ? (
+            <div className="mb-3"><InlineAlert kind="success" message="Welcome back — your proposal draft is here. Finish it and submit." /></div>
           ) : null}
 
           {step === "signup" ? (
@@ -351,20 +488,45 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
               {requirements.length ? (
                 <div className="space-y-3">
                   <div className="ea-label">Requirement responses</div>
-                  {requirements.map((r) => (
-                    <div key={r.id}>
-                      <div className="mb-1 text-xs text-slate-600 dark:text-slate-300">
-                        {r.text} {r.mandatory ? <span className="font-semibold text-rose-500">*</span> : null}
+                  <input ref={reqFileRef} type="file" className="hidden" onChange={onRequirementFileChange} />
+                  {requirements.map((r) => {
+                    const v = form.responses[r.id] || { text: "", attachment: null };
+                    const rt = r.response_type || "text";
+                    return (
+                      <div key={r.id}>
+                        <div className="mb-1 text-xs text-slate-600 dark:text-slate-300">
+                          {r.text} {r.mandatory ? <span className="font-semibold text-rose-500">*</span> : null}
+                          <span className="ml-1 text-[10px] uppercase tracking-wide text-slate-400">
+                            {rt === "file" ? "file" : rt === "image" ? "image" : rt === "link" ? "link" : rt === "number" ? "number" : rt === "paragraph" ? "" : ""}
+                          </span>
+                        </div>
+                        {isFileReq(r) ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button size="sm" variant="secondary" onClick={() => pickRequirementFile(r)}>
+                              {v.attachment ? "Replace" : rt === "image" ? "Upload image" : "Upload file"}
+                            </Button>
+                            {v.attachment ? (
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs dark:bg-slate-800">
+                                {v.attachment.filename}
+                                <button type="button" className="text-slate-400 hover:text-rose-500" onClick={() => setResp(r.id, { attachment: null })}>×</button>
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400">{r.mandatory ? "Required" : "Optional"}</span>
+                            )}
+                          </div>
+                        ) : rt === "paragraph" ? (
+                          <textarea rows={3} className="ea-input" value={v.text} onChange={(e) => setResp(r.id, { text: e.target.value })} placeholder={r.mandatory ? "Required" : "Optional"} />
+                        ) : (
+                          <Input
+                            type={rt === "link" ? "url" : rt === "number" ? "number" : "text"}
+                            value={v.text}
+                            onChange={(e) => setResp(r.id, { text: e.target.value })}
+                            placeholder={rt === "link" ? "https://…" : r.mandatory ? "Required" : "Optional"}
+                          />
+                        )}
                       </div>
-                      <textarea
-                        rows={2}
-                        className="ea-input"
-                        value={form.responses[r.id] || ""}
-                        onChange={(e) => set({ responses: { ...form.responses, [r.id]: e.target.value } })}
-                        placeholder={r.mandatory ? "Required" : "Optional"}
-                      />
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : null}
 
@@ -398,12 +560,19 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
                   <p className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">{s.content}</p>
                 </div>
               ))}
-              {requirements.filter((r) => (form.responses[r.id] || "").trim()).map((r) => (
-                <div key={r.id}>
-                  <div className="text-xs font-semibold text-slate-500">{r.text}</div>
-                  <p className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">{form.responses[r.id]}</p>
-                </div>
-              ))}
+              {requirements.filter(reqAnswered).map((r) => {
+                const v = form.responses[r.id] || {};
+                return (
+                  <div key={r.id}>
+                    <div className="text-xs font-semibold text-slate-500">{r.text}</div>
+                    {isFileReq(r) ? (
+                      <p className="text-slate-700 dark:text-slate-300">📎 {v.attachment?.filename}</p>
+                    ) : (
+                      <p className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">{v.text}</p>
+                    )}
+                  </div>
+                );
+              })}
               {form.attachments.length ? (
                 <div className="text-xs text-slate-500">{form.attachments.length} attachment{form.attachments.length === 1 ? "" : "s"}</div>
               ) : null}
@@ -426,6 +595,12 @@ export default function ApplyModal({ recipientWorkspaceId, recipientName, reques
             </div>
           ) : null}
         </div>
+
+        {error && (step === "choose" || step === "write" || step === "preview") ? (
+          <div className="border-t border-slate-200 px-5 pt-3 dark:border-slate-700">
+            <InlineAlert kind="error" message={error} />
+          </div>
+        ) : null}
 
         {step === "choose" || step === "write" || step === "preview" ? (
           <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4 dark:border-slate-700">

@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 
 from app.core.config import get_settings
-from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
+from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update, sb_rpc
 from app.modules.proposals import state_machine as sm
 from app.modules.proposals.schemas import (
     CoverLetterIn,
@@ -18,7 +18,11 @@ from app.modules.proposals.schemas import (
     ProposalReviseIn,
     ProposalSubmitIn,
 )
-from app.shared.email.resend import send_proposal_invite_email, send_proposal_received_email
+from app.shared.email.resend import (
+    send_proposal_invite_email,
+    send_proposal_received_email,
+    send_proposal_update_email,
+)
 from app.shared.llm.openai_client import get_user_plan_info, pick_llm_for_user
 
 logger = logging.getLogger(__name__)
@@ -243,6 +247,7 @@ def _request_out(row: dict) -> dict:
         "visibility": row.get("visibility") or "marketplace",
         "status": row.get("status") or "DRAFT",
         "submission_count": int(row.get("submission_count") or 0),
+        "view_count": int(row.get("view_count") or 0),
         "invited_emails": row.get("invited_emails") or [],
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -251,8 +256,12 @@ def _request_out(row: dict) -> dict:
 
 def _public_request_out(row: dict, *, is_owner: bool = False) -> dict:
     out = _request_out(row)
-    # Hide the owner's internal fields from the public view.
+    # Hide the owner's internal fields from the public view. View count is
+    # owner-only analytics — a visitor should never see how many other people
+    # have looked at this listing.
     out.pop("invited_emails", None)
+    if not is_owner:
+        out.pop("view_count", None)
     if not out.get("budget_visible"):
         out["budget_range"] = None
         out["budget_currency"] = None
@@ -277,22 +286,76 @@ async def list_requests(*, user_id: str) -> dict:
     return {"items": items, "total": len(items)}
 
 
+_REQUIREMENT_RESPONSE_TYPES = {"text", "paragraph", "link", "number", "file", "image"}
+
+
 def _normalize_requirements(reqs) -> list[dict]:
     out = []
     for r in (reqs or []):
         d = r.model_dump() if hasattr(r, "model_dump") else dict(r)
         d["id"] = d.get("id") or f"req_{uuid4().hex[:8]}"
+        rtype = str(d.get("response_type") or "text")
+        if rtype not in _REQUIREMENT_RESPONSE_TYPES:
+            rtype = "text"
         out.append({
             "id": d["id"],
             "text": d.get("text") or "",
             "mandatory": bool(d.get("mandatory")),
             "weight": int(d.get("weight") or 1),
+            "response_type": rtype,
         })
     return out
 
 
+def _shape_requirement_responses(responses, requirements) -> list[dict] | None:
+    """Store each answer with its requirement text + type so the recipient can
+    read it (and download file/image answers) without re-loading the request."""
+    if not responses:
+        return None
+    by_id = {r.get("id"): r for r in (requirements or [])}
+    out = []
+    for resp in responses:
+        d = resp.model_dump() if hasattr(resp, "model_dump") else dict(resp)
+        req = by_id.get(d.get("requirement_id")) or {}
+        out.append({
+            "requirement_id": d.get("requirement_id"),
+            "requirement_text": req.get("text") or "",
+            "response_type": req.get("response_type") or "text",
+            "response": d.get("response"),
+            "attachment": d.get("attachment"),
+        })
+    return out or None
+
+
+def _reject_past_deadline(deadline) -> None:
+    if not deadline:
+        return
+    try:
+        if date.fromisoformat(str(deadline)[:10]) < _today():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="The closing date has already passed. Choose today or a future date.",
+            )
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The closing date isn't a valid date.",
+        )
+
+
+def _requirement_answered(req: dict, resp: dict | None) -> bool:
+    """A requirement is satisfied when its response matches the declared format."""
+    if not resp:
+        return False
+    if str(req.get("response_type") or "text") in ("file", "image"):
+        att = resp.get("attachment")
+        return bool(att and att.get("url"))
+    return bool(str(resp.get("response") or "").strip())
+
+
 async def create_request(*, user_id: str, payload: ProposalRequestIn) -> dict:
     ws = await _owner_workspace(user_id)
+    _reject_past_deadline(payload.deadline)
     now = _now()
     row = {
         "id": str(uuid4()),
@@ -335,11 +398,13 @@ async def _get_own_request(user_id: str, request_id: str) -> dict:
 
 async def patch_request(*, user_id: str, request_id: str, payload: ProposalRequestPatch) -> dict:
     row = await _get_own_request(user_id, request_id)
-    if row.get("status") != "DRAFT":
+    if row.get("status") not in ("DRAFT", "PUBLISHED", "CLOSED"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only draft requests can be edited. Close the request to make changes.",
+            detail="This request can no longer be edited.",
         )
+    if payload.deadline is not None:
+        _reject_past_deadline(payload.deadline)
     updates: dict = {}
     for field in (
         "type", "title", "description", "budget_range", "budget_currency",
@@ -374,6 +439,8 @@ async def set_request_status(*, user_id: str, request_id: str, action: str) -> d
         )
     if action == "publish" and not (row.get("title") or "").strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Add a title before publishing.")
+    if action in ("publish", "reopen"):
+        _reject_past_deadline(row.get("deadline"))
     updates = {"status": target, "updated_at": _now()}
     await sb_update("proposal_requests", filters=[("id", "eq", request_id)], payload=updates)
     if action == "publish":
@@ -473,7 +540,7 @@ async def list_public_requests(*, search: str | None = None, type_filter: str | 
     return {"items": items, "total": len(items)}
 
 
-async def get_public_request(*, request_id: str, user_id: str | None) -> dict:
+async def get_public_request(*, request_id: str, user_id: str | None, viewer_key: str | None = None) -> dict:
     row = await sb_select("proposal_requests", filters=[("id", "eq", request_id)], single=True)
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
@@ -486,9 +553,55 @@ async def get_public_request(*, request_id: str, user_id: str | None) -> dict:
         is_owner = bool(owner_ws and owner_ws["id"] == row["workspace_id"])
     if row.get("status") != "PUBLISHED" and not is_owner:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+    if not is_owner and viewer_key:
+        # Count unique visitor views, never the owner's own previews of their
+        # listing, and never the same viewer twice (see record_proposal_request_view).
+        try:
+            new_count = await sb_rpc("record_proposal_request_view", {
+                "p_request_id": request_id,
+                "p_viewer_key": viewer_key,
+            })
+            if isinstance(new_count, (int, float)):
+                row["view_count"] = int(new_count)
+        except Exception as exc:
+            logger.warning("view count record failed for request %s: %s", request_id, exc)
     out = _public_request_out(row, is_owner=is_owner)
-    out["company"] = _company_public(await _workspace_row(row["workspace_id"]))
+    try:
+        out["company"] = _company_public(await _workspace_row(row["workspace_id"]))
+    except Exception as exc:  # company block is a nicety — never fail the page over it
+        logger.warning("public request company lookup failed for %s: %s", request_id, exc)
+        out["company"] = None
     return out
+
+
+async def list_request_viewers(*, user_id: str, request_id: str) -> dict:
+    """Owner-only: who viewed this request. Resolves signed-in viewers to the
+    company name on their workspace; anonymous/IP-only viewers can't be
+    identified beyond "Anonymous visitor" — that's the same honest limit as
+    the view count itself (see record_proposal_request_view)."""
+    await _get_own_request(user_id, request_id)  # raises 404 if not the owner
+    rows = await sb_select(
+        "proposal_request_views",
+        filters=[("request_id", "eq", request_id)],
+        order="first_viewed_at",
+        desc=True,
+    )
+    items = []
+    for r in (rows or []):
+        key = str(r.get("viewer_key") or "")
+        label = "Anonymous visitor"
+        if key.startswith("user:"):
+            viewer_user_id = key[len("user:"):]
+            try:
+                ws = await sb_select(
+                    "workspaces", filters=[("user_id", "eq", viewer_user_id)],
+                    order="updated_at", desc=True, limit=1, single=True,
+                )
+                label = _company_name(ws) if ws else "A registered visitor"
+            except Exception:
+                label = "A registered visitor"
+        items.append({"label": label, "viewed_at": r.get("first_viewed_at")})
+    return {"items": items, "total": len(items)}
 
 
 # ── Proposals: submission ─────────────────────────────────────────────────
@@ -516,6 +629,12 @@ def _proposal_out(row: dict, *, viewer: str) -> dict:
     }
     if viewer == "recipient":
         base["proposer_email"] = row.get("proposer_email")
+    # Surface the latest clarification question so both sides can show it prominently.
+    clar = [
+        e for e in (row.get("events") or [])
+        if e.get("status") == sm.CLARIFICATION_REQUESTED and str(e.get("reason") or "").strip()
+    ]
+    base["clarification_note"] = clar[-1].get("reason") if clar else None
     return base
 
 
@@ -544,6 +663,28 @@ async def _resolve_actor(user_id: str, proposal: dict) -> str:
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot access this proposal.")
 
 
+async def _notify_user(user_id: str | None, *, headline: str, body: str, cta_label: str, sender_name: str | None = None) -> None:
+    """Best-effort email to a proposal party — never raises."""
+    if not user_id:
+        return
+    try:
+        u = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
+        email = (u or {}).get("email")
+        if not (email and "@" in str(email)):
+            return
+        base = (get_settings().frontend_url or "").rstrip("/")
+        await send_proposal_update_email(
+            to_email=str(email),
+            headline=headline,
+            body=body,
+            cta_label=cta_label,
+            cta_url=f"{base}/financials?tab=proposals",
+            sender_name=sender_name,
+        )
+    except Exception as exc:
+        logger.warning("proposal notify email failed: %s", exc)
+
+
 async def submit_proposal(*, user_id: str, user_email: str, payload: ProposalSubmitIn) -> dict:
     # Plan gate — submitting requires a paid plan.
     if not await _can_submit_proposals(user_id):
@@ -566,19 +707,26 @@ async def submit_proposal(*, user_id: str, user_email: str, payload: ProposalSub
     if not (rprefs and rprefs.get("enabled")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This business is not accepting proposals right now.")
 
-    # Duplicate-active guard.
+    # Duplicate-active guard. A proposal the recipient has removed from their
+    # inbox no longer blocks a resubmission — they've discarded it.
     existing = await sb_select(
         "proposals",
         filters=[
             ("proposer_workspace_id", "eq", proposer_ws["id"]),
             ("recipient_workspace_id", "eq", recipient_ws["id"]),
         ],
-        columns="id,status",
+        columns="id,status,inbox_hidden",
     )
-    if any((e.get("status") in sm.ACTIVE_STATUSES) for e in (existing or [])):
+    if any(
+        (e.get("status") in sm.ACTIVE_STATUSES) and not e.get("inbox_hidden")
+        for e in (existing or [])
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="You already have an active proposal with this business.",
+            detail=(
+                "You already have an active proposal with this business. "
+                "Withdraw it from Financials → Proposals → Activity before sending a new one."
+            ),
         )
 
     request_row = None
@@ -605,6 +753,19 @@ async def submit_proposal(*, user_id: str, user_email: str, payload: ProposalSub
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This request has reached its submission limit.")
         request_title = request_row.get("title")
 
+        # Mandatory requirements must be answered in the format the recipient asked for.
+        resp_by_id = {r.requirement_id: r.model_dump() for r in (payload.requirement_responses or [])}
+        missing = [
+            req.get("text") or "a required item"
+            for req in (request_row.get("requirements") or [])
+            if req.get("mandatory") and not _requirement_answered(req, resp_by_id.get(req.get("id")))
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Complete every required item before submitting: " + "; ".join(missing),
+            )
+
     now = _now()
     proposer_name = _company_name(proposer_ws)
     recipient_name = _company_name(recipient_ws)
@@ -624,7 +785,9 @@ async def submit_proposal(*, user_id: str, user_email: str, payload: ProposalSub
         "title": (payload.title or "").strip() or None,
         "summary": payload.summary,
         "sections": [s.model_dump() for s in (payload.sections or [])] or None,
-        "requirement_responses": [r.model_dump() for r in (payload.requirement_responses or [])] or None,
+        "requirement_responses": _shape_requirement_responses(
+            payload.requirement_responses, (request_row or {}).get("requirements") or []
+        ),
         "attachments": [a.model_dump() for a in (payload.attachments or [])] or None,
         "events": [initial_event],
         "status": sm.SUBMITTED,
@@ -660,7 +823,8 @@ async def submit_proposal(*, user_id: str, user_email: str, payload: ProposalSub
                 recipient_name=recipient_name,
                 proposer_name=proposer_name,
                 request_title=request_title,
-                inbox_url=f"{base}/proposals",
+                inbox_url=f"{base}/financials?tab=proposals",
+                reply_to_email=user_email,
             )
     except Exception as exc:
         logger.warning("proposal received-email failed: %s", exc)
@@ -693,12 +857,27 @@ async def revise_proposal(*, user_id: str, proposal_id: str, payload: ProposalRe
     if payload.attachments is not None:
         updates["attachments"] = [a.model_dump() for a in payload.attachments] or None
     events = list(proposal.get("events") or [])
-    events.append({
+    rev_event = {
         "status": sm.REVISION_REQUESTED, "timestamp": now, "actor": "proposer",
         "reason": (payload.note or "Revision submitted"),
-    })
+    }
+    note_att = [a.model_dump() for a in (payload.note_attachments or [])]
+    if note_att:
+        rev_event["attachments"] = note_att
+    events.append(rev_event)
     updates["events"] = events
     await sb_update("proposals", filters=[("id", "eq", proposal_id)], payload=updates)
+    await _notify_user(
+        proposal.get("recipient_user_id"),
+        headline=f"{proposal.get('proposer_name') or 'A business'} answered your clarification request",
+        body=(
+            f"{proposal.get('proposer_name') or 'A business'} submitted a revised proposal"
+            + (f" for \"{proposal.get('request_title')}\"" if proposal.get("request_title") else "")
+            + ". Review the update and continue."
+        ),
+        cta_label="Open proposal inbox",
+        sender_name=proposal.get("proposer_name"),
+    )
     return _proposal_out({**proposal, **updates}, viewer="proposer")
 
 
@@ -788,13 +967,19 @@ async def link_proposal_to_request(*, user_id: str, proposal_id: str, request_id
 
 
 # ── Status transitions ────────────────────────────────────────────────────
-async def transition_status(*, user_id: str, proposal_id: str, target: str, reason: str | None) -> dict:
+async def transition_status(*, user_id: str, proposal_id: str, target: str, reason: str | None, attachments=None) -> dict:
     target = (target or "").strip().upper()
     if target not in sm.ALL_STATUSES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown status '{target}'.")
     proposal = await _load_proposal(proposal_id)
     actor = await _resolve_actor(user_id, proposal)
     current = proposal.get("status") or sm.SUBMITTED
+
+    if target == sm.CLARIFICATION_REQUESTED and not str(reason or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tell the proposer what you'd like them to clarify.",
+        )
 
     if not sm.can_transition(current, target, actor):
         allowed = sorted(sm.allowed_transitions(current, actor))
@@ -808,11 +993,27 @@ async def transition_status(*, user_id: str, proposal_id: str, target: str, reas
 
     now = _now()
     events = list(proposal.get("events") or [])
-    events.append({"status": target, "timestamp": now, "actor": actor, "reason": reason or None})
+    event = {"status": target, "timestamp": now, "actor": actor, "reason": reason or None}
+    att_list = [a.model_dump() if hasattr(a, "model_dump") else dict(a) for a in (attachments or [])]
+    if att_list:
+        event["attachments"] = att_list
+    events.append(event)
     updates = {"status": target, "events": events, "updated_at": now}
     if target == sm.VIEWED and not proposal.get("viewed_at"):
         updates["viewed_at"] = now
     await sb_update("proposals", filters=[("id", "eq", proposal_id)], payload=updates)
+    if target == sm.CLARIFICATION_REQUESTED:
+        await _notify_user(
+            proposal.get("proposer_user_id"),
+            headline=f"{proposal.get('recipient_name') or 'A business'} requested clarification",
+            body=(
+                f"{proposal.get('recipient_name') or 'A business'} asked for clarification"
+                + (f" on your proposal for \"{proposal.get('request_title')}\"" if proposal.get("request_title") else " on your proposal")
+                + f": {str(reason).strip()}"
+            ),
+            cta_label="Respond to the request",
+            sender_name=proposal.get("recipient_name"),
+        )
     return _proposal_out({**proposal, **updates}, viewer=actor)
 
 

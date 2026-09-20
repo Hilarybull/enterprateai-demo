@@ -23,11 +23,17 @@ import CreditConfirmModal from "../components/CreditConfirmModal";
 
 function humanizeValidationError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
-  if (msg === "NETWORK_ERROR") {
-    const base = import.meta.env.VITE_API_URL ?? import.meta.env.REACT_APP_BACKEND_URL ?? "http://localhost:8000";
-    return `Can't reach the server at ${base}. Start the backend and check your API URL.`;
+  if (e?.code === "NETWORK_ERROR" || msg === "NETWORK_ERROR") {
+    // Same dev-facing-copy-shown-to-real-users issue fixed in store/auth.js —
+    // the API base URL and "check the backend" phrasing only make sense to
+    // a developer running this locally.
+    if (import.meta.env.DEV) {
+      const base = import.meta.env.VITE_API_URL ?? import.meta.env.REACT_APP_BACKEND_URL ?? "http://localhost:8000";
+      return `Can't reach the server at ${base}. Start the backend and check your API URL.`;
+    }
+    return "We couldn't reach the server. Please check your connection and try again in a moment.";
   }
-  if (msg === "TIMEOUT") return "The server is taking too long to respond. Check the backend logs and try again.";
+  if (msg === "TIMEOUT") return "The server is taking too long to respond. Please try again in a moment.";
   if (msg.startsWith("HTTP 401:")) return "Please sign in to continue.";
   if (msg.startsWith("HTTP 403:")) {
     const detail = msg.replace(/^HTTP 403:\s*/i, "").trim();
@@ -995,6 +1001,14 @@ export default function ValidationWizardPage() {
   const serviceCurrencySymbol = useMemo(() => getCurrencySymbol(serviceCurrency), [serviceCurrency]);
   const savedProfileSnap = useRef(null);
   const profileSnapPending = useRef(false);
+  // Set as soon as the user edits any workspace-profile field. Guards against the
+  // slow /validation/{id} prefill fetch (timeoutMs up to 90s) resolving *after* the
+  // user has already started filling the form and unconditionally merging server
+  // data back over it — which is what made fields like City silently "revert":
+  // the user's click registered fine, but a few hundred ms later the in-flight
+  // prefill response landed and overwrote it with the (blank) server value, with
+  // no error or visible cause.
+  const userEditedProfileRef = useRef(false);
   const [profile, setProfile] = useState(() => ({
     company_name: "",
     logo_data_url: "",
@@ -1553,13 +1567,17 @@ export default function ValidationWizardPage() {
               core_values: Array.isArray(wp.core_values) ? wp.core_values.join(", ") : (wp.core_values || ""),
             };
             profileSnapPending.current = true;
-            setProfile((prev) => ({
-              ...prev,
-              ...wpNormalized,
-              services: Array.isArray(wp.services) && wp.services.length
-                ? wp.services
-                : prev.services,
-            }));
+            setProfile((prev) =>
+              userEditedProfileRef.current
+                ? prev
+                : {
+                    ...prev,
+                    ...wpNormalized,
+                    services: Array.isArray(wp.services) && wp.services.length
+                      ? wp.services
+                      : prev.services,
+                  }
+            );
             if (wp.company_name && !form?.context?.business_name) {
               update("context.business_name", wp.company_name);
             }
@@ -1618,13 +1636,17 @@ export default function ValidationWizardPage() {
             core_values: Array.isArray(wp.core_values) ? wp.core_values.join(", ") : (wp.core_values || ""),
           };
           profileSnapPending.current = true;
-          setProfile((prev) => ({
-            ...prev,
-            ...wpNormalized2,
-            services: Array.isArray(wp.services) && wp.services.length
-              ? wp.services
-              : prev.services,
-          }));
+          setProfile((prev) =>
+            userEditedProfileRef.current
+              ? prev
+              : {
+                  ...prev,
+                  ...wpNormalized2,
+                  services: Array.isArray(wp.services) && wp.services.length
+                    ? wp.services
+                    : prev.services,
+                }
+          );
           if (wp.company_name && !next.context.business_name) {
             next.context.business_name = wp.company_name;
           }
@@ -1741,6 +1763,7 @@ export default function ValidationWizardPage() {
   }
 
   function updateProfile(path, value) {
+    userEditedProfileRef.current = true;
     setProfile((prev) => {
       const next = structuredClone(prev);
       const keys = path.split(".");
@@ -2249,7 +2272,7 @@ export default function ValidationWizardPage() {
     if (!String(profile.company_name || "").trim()) return "Company name is required in the workspace profile.";
     if (!String(profile.business_type || "").trim()) return "Business type is required in the workspace profile.";
     if (!String(profile.primary_industry || "").trim()) return "Primary industry is required in the workspace profile.";
-    if (!String(profile.about_company || "").trim()) return "About company is required in the workspace profile.";
+    if (String(profile.about_company || "").trim().length < 10) return "About company must be at least 10 characters.";
     if (!String(profile.country || "").trim()) return "Country is required in the workspace profile.";
     if (!String(profile.city || "").trim()) return "City is required in the workspace profile.";
     if (!String(profile.email || "").trim()) return "Email is required in the workspace profile.";

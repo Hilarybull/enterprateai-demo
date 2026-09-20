@@ -9,7 +9,7 @@ export function getApiBaseUrl() {
 
 export async function apiRequest(path, method, body, options) {
   const token = localStorage.getItem("ea_token");
-  const headers = { "Content-Type": "application/json" };
+  const headers = { "Content-Type": "application/json", ...(options?.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
 
   let res;
@@ -28,8 +28,16 @@ export async function apiRequest(path, method, body, options) {
     if (e && typeof e === "object" && e.name === "AbortError") {
       throw new Error("Request timed out. Please try again.");
     }
-    // Network error (backend down, wrong port, CORS, etc.)
-    throw new Error("NETWORK_ERROR");
+    // Network error (backend down, wrong port, CORS, etc.). This used to throw a
+    // bare "NETWORK_ERROR" sentinel string that every one of the ~60 call sites
+    // across the app was expected to translate before displaying — most didn't,
+    // so the literal string "NETWORK_ERROR" routinely leaked straight into the UI
+    // (e.g. the Referrals page, the Simulation page). The message is now
+    // human-readable by default; `.code` still carries the machine-readable
+    // sentinel for the handful of callers that branch on it explicitly.
+    const err = new Error("Couldn't reach the server. Check your connection and try again.");
+    err.code = "NETWORK_ERROR";
+    throw err;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -48,7 +56,14 @@ export async function apiRequest(path, method, body, options) {
     try {
       const data = await res.json();
       if (typeof data?.detail === "string") message = data.detail;
-      else if (Array.isArray(data?.detail) && data.detail[0]?.msg) message = data.detail[0].msg;
+      else if (Array.isArray(data?.detail) && data.detail[0]?.msg) {
+        // Pydantic's msg alone ("String should have at least 10 characters") gives
+        // no clue which field failed. loc is a path like ["body","profile","about_company"] -
+        // take the last segment as the field name so the message is actually actionable.
+        const loc = Array.isArray(data.detail[0].loc) ? data.detail[0].loc : [];
+        const field = loc.length ? String(loc[loc.length - 1]).replace(/_/g, " ") : null;
+        message = field ? `${field}: ${data.detail[0].msg}` : data.detail[0].msg;
+      }
       else if (typeof data?.message === "string") message = data.message;
       else message = JSON.stringify(data);
     } catch {

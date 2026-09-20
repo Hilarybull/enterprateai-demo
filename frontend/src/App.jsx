@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { DemoTourProvider } from "./context/DemoTourContext";
 import DemoTour from "./components/DemoTour";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -16,6 +17,7 @@ import { useWorkspaceStore } from "./store/workspace";
 import Layout from "./components/Layout";
 import LandingPage from "./pages/LandingPage";
 import NewLandingPage from "./pages/NewLandingPage";
+import EssentialsPage from "./pages/EssentialsPage";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ValidationWizardPage from "./pages/ValidationWizardPage";
@@ -27,7 +29,6 @@ import RegistrationPage from "./pages/RegistrationPage";
 import CataloguePage from "./pages/CataloguePage";
 import FinancialsPage from "./pages/FinancialsPage";
 import ProposalRequestDetailPage from "./pages/ProposalRequestDetailPage";
-import ProposalRequestsPage from "./pages/ProposalRequestsPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import SharedBlueprintPage from "./pages/SharedBlueprintPage";
 import TeamPage from "./pages/TeamPage";
@@ -83,9 +84,11 @@ export default function App() {
   return (
     <DemoTourProvider>
       <ScrollToTop />
+      <ErrorBoundary>
       <Routes>
       <Route path="/" element={<PublicRoot />} />
       <Route path="/home" element={<NewLandingPage />} />
+      <Route path="/essentials" element={<EssentialsPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -121,6 +124,7 @@ export default function App() {
         <Route path="registration" element={<RequireWorkspace><RegistrationPage /></RequireWorkspace>} />
         <Route path="catalogue" element={<RequireWorkspace><CataloguePage /></RequireWorkspace>} />
         <Route path="financials" element={<RequireWorkspace><FinancialsPage /></RequireWorkspace>} />
+        <Route path="proposals" element={<Navigate to="/financials?tab=proposals" replace />} />
         <Route path="team" element={<TeamPage />} />
         <Route path="account" element={<AccountPage />} />
         <Route path="credits" element={<CreditsPage />} />
@@ -136,10 +140,11 @@ export default function App() {
         }
       />
       <Route path="/marketplace" element={<MarketplacePage />} />
-      <Route path="/marketplace/requests" element={<ProposalRequestsPage />} />
+      <Route path="/marketplace/requests" element={<Navigate to="/marketplace?tab=requests" replace />} />
       <Route path="/marketplace/request/:requestId" element={<ProposalRequestDetailPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
+    </ErrorBoundary>
     <DemoTour />
     <CookieBanner />
     </DemoTourProvider>

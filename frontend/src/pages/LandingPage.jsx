@@ -192,6 +192,11 @@ export default function LandingPage() {
   function goToFeature(path) {
     setFeaturesOpen(false);
     setArticlesOpen(false);
+    // The free essentials page is public, so it should never be sent through the login gate.
+    if (path === "/essentials") {
+      navigate(path);
+      return;
+    }
     const token = localStorage.getItem("ea_token");
     navigate(token ? path : "/login");
   }
@@ -293,6 +298,7 @@ export default function LandingPage() {
                       {
                         heading: "Operate & Manage", desc: "Create invoices, quotations, receipts, expenses, and contracts.",
                         items: [
+                          { label: "Free Business Essentials", path: "/essentials" },
                           { label: "Free Invoice Generator", path: "/financials?tab=invoices" },
                           { label: "Free Quotation Generator", path: "/financials?tab=quotes" },
                           { label: "Free Receipt Generator", path: "/financials?tab=receipts" },
@@ -417,6 +423,7 @@ export default function LandingPage() {
                   { label: "Business Plan", path: "/blueprint?doc=business_plan" },
                   { label: "Business Proposal", path: "/blueprint?doc=client_proposal" },
                   { label: "Sales Letter", path: "/blueprint?doc=sales_letter" },
+                  { label: "Free Business Essentials", path: "/essentials" },
                   { label: "Invoice Generator", path: "/financials?tab=invoices" },
                   { label: "Quotation Generator", path: "/financials?tab=quotes" },
                   { label: "Receipt Generator", path: "/financials?tab=receipts" },
@@ -588,6 +595,37 @@ export default function LandingPage() {
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* FREE ESSENTIALS */}
+      <section id="essentials" className="bg-white py-14 sm:py-16">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="flex flex-col gap-8 overflow-hidden rounded-3xl bg-gradient-to-br from-brand-900 via-brand-800 to-brand-700 p-8 text-white shadow-xl sm:p-10 lg:flex-row lg:items-center lg:justify-between">
+            <div className="max-w-xl">
+              <span className="inline-flex items-center rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wider">
+                Free essential tools
+              </span>
+              <h2 className="mt-4 text-2xl font-extrabold sm:text-3xl">Just need the basics? Start with the free essentials.</h2>
+              <p className="mt-3 text-sm leading-relaxed text-white/80 sm:text-base">
+                Create sales quotations, contracts, invoices and receipts, then reuse the same customer and pricing data
+                instead of entering it again and again.
+              </p>
+              <div className="mt-6 flex flex-wrap items-center gap-3">
+                <Link to="/essentials" className="rounded-xl bg-white px-6 py-3 text-sm font-semibold text-brand-700 shadow-lg transition hover:bg-brand-50">
+                  See the free essentials →
+                </Link>
+                <span className="text-xs text-white/70">No credit card required</span>
+              </div>
+            </div>
+            <div className="grid w-full max-w-sm grid-cols-2 gap-3 lg:w-auto">
+              {["Sales quotations", "Contracts", "Invoices", "Receipts"].map((doc) => (
+                <div key={doc} className="rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-sm font-semibold backdrop-blur-sm">
+                  {doc}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>

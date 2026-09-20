@@ -7,6 +7,7 @@ import ApplyModal from "../components/proposals/ApplyModal";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { readProposalContext } from "../lib/proposalContext";
+import { getVisitorId } from "../lib/visitorId";
 import enterprateLogo from "../logo.png";
 
 function fmtDate(v) {
@@ -83,7 +84,7 @@ export default function ProposalRequestDetailPage() {
   const [applyOpen, setApplyOpen] = useState(() => {
     // Returning from the "Use EnterprateAI" round-trip — reopen the modal.
     const ctx = readProposalContext();
-    return Boolean(ctx?.blueprintReturn?.attachment && ctx.requestId === requestId);
+    return Boolean((ctx?.blueprintReturn?.attachment || ctx?.draft) && ctx.requestId === requestId);
   });
   const [profileOpen, setProfileOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -91,11 +92,27 @@ export default function ProposalRequestDetailPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    apiRequest(`/proposals/public/requests/${requestId}`, "GET")
+    setError(null);
+    // Watchdog — never leave the page spinning if the request hangs or a
+    // backend error slips past apiRequest's own timeout.
+    const watchdog = setTimeout(() => {
+      if (!cancelled) { setError("This request is taking too long to load. Please try again shortly."); setLoading(false); }
+    }, 15000);
+    apiRequest(`/proposals/public/requests/${requestId}`, "GET", undefined, {
+      headers: { "X-Visitor-Id": getVisitorId() },
+    })
       .then((d) => { if (!cancelled) { setRequest(d); setError(null); } })
-      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message.replace(/^HTTP \d+:\s*/i, "") : "Request not found"); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .catch((e) => {
+        if (cancelled) return;
+        const m = (e instanceof Error ? e.message : "").replace(/^HTTP \d+:\s*/i, "");
+        setError(
+          /404|not found/i.test(m) ? "This request isn't available — it may have been closed or removed."
+          : /network_error|failed to fetch/i.test(m) ? "Couldn't reach the server. Check your connection and try again."
+          : m || "This request isn't available right now.",
+        );
+      })
+      .finally(() => { if (!cancelled) { clearTimeout(watchdog); setLoading(false); } });
+    return () => { cancelled = true; clearTimeout(watchdog); };
   }, [requestId]);
 
   function share() {
@@ -110,23 +127,28 @@ export default function ProposalRequestDetailPage() {
   }
 
   const deadline = fmtDate(request?.deadline);
-  const closed = request && request.status !== "PUBLISHED";
+  const deadlinePassed = (() => {
+    if (!request?.deadline) return false;
+    const d = new Date(request.deadline); const t = new Date(); t.setHours(0, 0, 0, 0);
+    return !Number.isNaN(d.getTime()) && d < t;
+  })();
+  const closed = request && (request.status !== "PUBLISHED" || deadlinePassed);
   const company = request?.company;
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fbff_0%,#f8fafc_45%,#f8fafc_100%)] dark:bg-slate-950">
       <header className="border-b border-slate-200/80 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3 sm:px-6">
+        <div className="mx-auto flex w-full max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
           <Link to="/marketplace" className="flex items-center gap-2">
             <img src={enterprateLogo} alt="EnterprateAI" className="h-6 w-auto max-w-[130px] object-contain sm:h-7" />
           </Link>
-          <Link to="/marketplace/requests" className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400">Browse marketplace</Link>
+          <Link to="/marketplace?tab=requests" className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400">Browse marketplace</Link>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-4 pb-16 pt-8 sm:px-6">
+      <main className="mx-auto w-full max-w-4xl px-4 pb-16 pt-8 sm:px-6">
         <Link
-          to="/marketplace/requests"
+          to="/marketplace?tab=requests"
           className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400"
         >
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
@@ -176,6 +198,9 @@ export default function ProposalRequestDetailPage() {
                 <span>Budget: <strong>{request.budget_currency ? `${request.budget_currency} ` : ""}{request.budget_range}</strong></span>
               ) : null}
               {request.submission_cap ? <span>Submissions accepted: {request.submission_count}/{request.submission_cap}</span> : null}
+              {request.is_owner ? (
+                <span>{request.view_count || 0} view{request.view_count === 1 ? "" : "s"}</span>
+              ) : null}
             </div>
 
             {request.description ? (
