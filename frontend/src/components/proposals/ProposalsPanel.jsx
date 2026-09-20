@@ -389,6 +389,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
   const [form, setForm] = useState(() => ({ ...EMPTY_REQUEST, ...(initial || {}), requirements: (initial?.requirements || []).map((r) => ({ ...r })) }));
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
+  const [aiNote, setAiNote] = useState(null);
   const [error, setError] = useState(null);
   const editing = !!initial?.id;
 
@@ -397,10 +398,19 @@ function RequestForm({ initial, onSaved, onCancel }) {
   async function generateDescription() {
     if (!form.title.trim()) { setError("Add a title first."); return; }
     setAiBusy(true);
+    setAiNote(null);
     try {
       const { description } = await apiRequest("/proposals/generate-description", "POST", { title: form.title.trim() });
-      if (description) set({ description });
-    } catch { /* non-blocking */ } finally { setAiBusy(false); }
+      if (description && description.trim()) {
+        set({ description });
+      } else {
+        setAiNote("Couldn't generate a description right now — write one below.");
+      }
+    } catch {
+      setAiNote("Couldn't generate a description right now — write one below.");
+    } finally {
+      setAiBusy(false);
+    }
   }
 
   async function save() {
@@ -447,6 +457,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
             </button>
           </div>
           <textarea rows={4} className="ea-input" value={form.description} onChange={(e) => set({ description: e.target.value })} placeholder="What you need, context, and how proposals will be judged." />
+          {aiNote ? <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">{aiNote}</div> : null}
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
@@ -461,7 +472,16 @@ function RequestForm({ initial, onSaved, onCancel }) {
           </div>
           <div>
             <div className="ea-label">Budget (optional)</div>
-            <Input value={form.budget_range} onChange={(e) => set({ budget_range: e.target.value })} placeholder="e.g. £10k–£20k" />
+            <div className="flex gap-2">
+              <select
+                className="ea-input w-[92px] shrink-0"
+                value={form.budget_currency || "GBP"}
+                onChange={(e) => set({ budget_currency: e.target.value })}
+              >
+                {["GBP", "USD", "EUR", "NGN", "CAD", "AUD"].map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <Input value={form.budget_range} onChange={(e) => set({ budget_range: e.target.value })} placeholder="e.g. 10k–20k" />
+            </div>
           </div>
           <div>
             <div className="ea-label">Max submissions (optional)</div>
@@ -490,6 +510,15 @@ function RequestForm({ initial, onSaved, onCancel }) {
                   onChange={(e) => set({ requirements: form.requirements.map((x, j) => j === i ? { ...x, text: e.target.value } : x) })}
                   placeholder="e.g. Minimum 3 years in B2B SaaS"
                 />
+                <label className="flex items-center gap-1 text-xs text-slate-500" title="Scoring weight used when evaluating proposals">
+                  <span className="hidden sm:inline">Weight</span>
+                  <input
+                    type="number" min="1" max="10"
+                    className="ea-input w-14 px-2"
+                    value={r.weight ?? 1}
+                    onChange={(e) => set({ requirements: form.requirements.map((x, j) => j === i ? { ...x, weight: e.target.value } : x) })}
+                  />
+                </label>
                 <label className="flex items-center gap-1 text-xs text-slate-500">
                   <input type="checkbox" checked={!!r.mandatory} onChange={(e) => set({ requirements: form.requirements.map((x, j) => j === i ? { ...x, mandatory: e.target.checked } : x) })} />
                   Required
@@ -515,7 +544,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
 }
 
 // ── Requests tab ──────────────────────────────────────────────────────────
-function RequestsTab() {
+function RequestsTab({ openNewNonce = 0 }) {
   const { requests, requestsLoading, requestsError, fetchRequests, requestAction, deleteRequest, inviteToRequest } = useProposalStore();
   const [editing, setEditing] = useState(null); // request obj or "new" or null
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -523,14 +552,25 @@ function RequestsTab() {
   const [inviteEmails, setInviteEmails] = useState("");
   const [inviteResult, setInviteResult] = useState(null);
   const [rowError, setRowError] = useState(null);
+  const [busyRow, setBusyRow] = useState(null); // { id, action }
+  const [copiedId, setCopiedId] = useState(null);
   const origin = typeof window !== "undefined" ? window.location.origin : "";
 
   useEffect(() => { fetchRequests(); }, []); // eslint-disable-line
+  useEffect(() => { if (openNewNonce > 0) setEditing("new"); }, [openNewNonce]);
 
   async function act(id, action) {
     setRowError(null);
+    setBusyRow({ id, action });
     try { await requestAction(id, action); }
     catch (e) { setRowError(errText(e)); }
+    finally { setBusyRow(null); }
+  }
+
+  function copyLink(id) {
+    navigator.clipboard?.writeText(`${origin}/marketplace/request/${id}`).catch(() => {});
+    setCopiedId(id);
+    setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1600);
   }
 
   if (editing) {
@@ -545,10 +585,7 @@ function RequestsTab() {
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-between">
-        <p className="text-sm text-slate-500">Publish a brief and receive structured proposals.</p>
-        <Button size="sm" onClick={() => setEditing("new")}>New request</Button>
-      </div>
+      <p className="text-sm text-slate-500">Publish a brief and receive structured proposals.</p>
       {rowError ? <InlineAlert kind="error" message={rowError} /> : null}
       {requestsError ? <InlineAlert kind="error" message={requestsError} /> : null}
       {requestsLoading ? (
@@ -571,27 +608,41 @@ function RequestsTab() {
                   {r.submission_cap ? ` · cap ${r.submission_cap}` : ""}
                 </div>
               </div>
-              <div className="flex shrink-0 flex-wrap gap-1.5">
-                {r.status === "DRAFT" ? (
-                  <>
-                    <Button size="sm" variant="ghost" onClick={() => setEditing(r)}>Edit</Button>
-                    <Button size="sm" onClick={() => act(r.id, "publish")}>Publish</Button>
-                  </>
-                ) : null}
-                {r.status === "PUBLISHED" ? (
-                  <>
-                    <Button size="sm" variant="ghost" onClick={() => { navigator.clipboard?.writeText(`${origin}/marketplace/request/${r.id}`); }}>Copy link</Button>
-                    <Button size="sm" variant="ghost" onClick={() => { setInviteFor(r); setInviteEmails(""); setInviteResult(null); }}>Invite</Button>
-                    <Button size="sm" variant="secondary" onClick={() => act(r.id, "close")}>Close</Button>
-                  </>
-                ) : null}
-                {r.status === "CLOSED" ? (
-                  <Button size="sm" onClick={() => act(r.id, "reopen")}>Reopen</Button>
-                ) : null}
-                {r.status !== "PUBLISHED" ? (
-                  <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(r)}>Delete</Button>
-                ) : null}
-              </div>
+              {(() => {
+                const rowBusy = busyRow?.id === r.id;
+                const spin = <Spinner size={13} />;
+                return (
+                  <div className="flex shrink-0 flex-wrap gap-1.5">
+                    {r.status === "DRAFT" ? (
+                      <>
+                        <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => setEditing(r)}>Edit</Button>
+                        <Button size="sm" disabled={rowBusy} onClick={() => act(r.id, "publish")}>
+                          {rowBusy && busyRow.action === "publish" ? spin : "Publish"}
+                        </Button>
+                      </>
+                    ) : null}
+                    {r.status === "PUBLISHED" ? (
+                      <>
+                        <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => copyLink(r.id)}>
+                          {copiedId === r.id ? "Copied ✓" : "Copy link"}
+                        </Button>
+                        <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => { setInviteFor(r); setInviteEmails(""); setInviteResult(null); }}>Invite</Button>
+                        <Button size="sm" variant="secondary" disabled={rowBusy} onClick={() => act(r.id, "close")}>
+                          {rowBusy && busyRow.action === "close" ? spin : "Close"}
+                        </Button>
+                      </>
+                    ) : null}
+                    {r.status === "CLOSED" ? (
+                      <Button size="sm" disabled={rowBusy} onClick={() => act(r.id, "reopen")}>
+                        {rowBusy && busyRow.action === "reopen" ? spin : "Reopen"}
+                      </Button>
+                    ) : null}
+                    {r.status !== "PUBLISHED" ? (
+                      <Button size="sm" variant="ghost" disabled={rowBusy} onClick={() => setConfirmDelete(r)}>Delete</Button>
+                    ) : null}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         ))
@@ -633,7 +684,12 @@ function RequestsTab() {
           message="Permanently delete this request? Submissions already received are kept."
           confirmLabel="Delete"
           danger
-          onConfirm={async () => { await deleteRequest(confirmDelete.id); setConfirmDelete(null); }}
+          onConfirm={() => {
+            const id = confirmDelete.id;
+            setConfirmDelete(null); // close immediately — deleteRequest is optimistic
+            setRowError(null);
+            deleteRequest(id).catch((e) => setRowError(errText(e)));
+          }}
           onCancel={() => setConfirmDelete(null)}
         />
       ) : null}
@@ -728,7 +784,8 @@ function SettingsTab() {
 
 // ── Panel (rendered as a tab inside Financials) ───────────────────────────
 export default function ProposalsPanel() {
-  const [tab, setTab] = useState("inbox");
+  const [tab, setTab] = useState("requests");
+  const [newReqNonce, setNewReqNonce] = useState(0);
   const inboxUnread = useProposalStore((s) => s.inboxUnread);
   const fetchInbox = useProposalStore((s) => s.fetchInbox);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -736,22 +793,27 @@ export default function ProposalsPanel() {
   useEffect(() => { fetchInbox(); }, [workspaceId]); // eslint-disable-line
 
   const options = useMemo(() => ([
+    { value: "requests", label: "Requests" },
     { value: "inbox", label: inboxUnread ? `Inbox (${inboxUnread})` : "Inbox" },
     { value: "activity", label: "Activity" },
-    { value: "requests", label: "Requests" },
     { value: "settings", label: "Settings" },
   ]), [inboxUnread]);
+
+  const startNewRequest = () => { setTab("requests"); setNewReqNonce((n) => n + 1); };
 
   return (
     <div>
       <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
         Receive structured proposals for your requests, and submit proposals to other businesses.
       </p>
-      <div className="max-w-md"><SegmentedTabs value={tab} onChange={setTab} options={options} size="sm" /></div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="max-w-md flex-1"><SegmentedTabs value={tab} onChange={setTab} options={options} size="sm" /></div>
+        <Button size="sm" onClick={startNewRequest}>New request</Button>
+      </div>
       <div className="mt-4">
+        {tab === "requests" ? <RequestsTab openNewNonce={newReqNonce} /> : null}
         {tab === "inbox" ? <InboxTab /> : null}
         {tab === "activity" ? <ActivityTab /> : null}
-        {tab === "requests" ? <RequestsTab /> : null}
         {tab === "settings" ? <SettingsTab /> : null}
       </div>
     </div>
