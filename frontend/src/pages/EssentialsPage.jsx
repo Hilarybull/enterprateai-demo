@@ -206,7 +206,7 @@ export default function EssentialsPage() {
               <h2 className="ess-h2">Use the Marketplace to be discovered</h2>
               <p className="ess-sub ess-market-sub">
                 Create your business presence, showcase what you offer and make it easier for potential customers to find
-                you—all within the same platform.
+                you, all within the same platform.
               </p>
               <Link to="/marketplace" className="ess-btn ess-btn-primary ess-btn-market">
                 Join the Marketplace

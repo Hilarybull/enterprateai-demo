@@ -11,6 +11,7 @@
 
   min-height: 100vh;
   min-height: 100dvh;
+  box-sizing: border-box;
   position: relative;
   overflow-x: hidden;
   overflow-y: auto;
@@ -753,31 +754,33 @@
   }
 
   .lg-feature-icon {
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
   }
 
   .lg-group-title {
-    top: 20px;
+    top: 19px;
     left: 80px;
-    font-size: 15px;
+    font-size: 17px;
+    line-height: 1.16;
+    font-weight: 800;
   }
 
   .lg-group-sub {
-    top: 38px;
+    top: 40px;
     left: 80px;
-    font-size: 11.5px;
+    font-size: 13px;
   }
 
   .lg-chips {
-    top: 65px;
+    top: 67px;
     left: 14px;
     right: 14px;
   }
 
   .lg-chip {
-    gap: 8px;
-    font-size: 9.4px;
+    gap: 9px;
+    font-size: 11px;
   }
 
   .lg-chip + .lg-chip::before {
@@ -786,13 +789,13 @@
   }
 
   .lg-dot {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
   }
 
   .lg-dot svg {
-    width: 11px;
-    height: 11px;
+    width: 12px;
+    height: 12px;
   }
 
   .lg-trust {
@@ -870,6 +873,66 @@
 
   .lg-secure {
     margin-top: 14px;
+  }
+}
+
+@media (max-height: 1100px) and (min-width: 1181px) {
+  .lg-page {
+    padding-top: 20px;
+    padding-bottom: 18px;
+    overflow-y: hidden;
+  }
+
+  .lg-left {
+    padding-top: 84px;
+    padding-bottom: 16px;
+  }
+
+  .lg-groups {
+    margin-top: 26px;
+    gap: 16px;
+  }
+
+  .lg-trust {
+    margin-top: 20px;
+    padding-top: 20px;
+  }
+
+  .lg-topline {
+    margin-bottom: 20px;
+  }
+
+  .lg-card {
+    padding-top: 38px;
+    padding-bottom: 26px;
+  }
+
+  .lg-form {
+    margin-top: 24px;
+  }
+
+  .lg-submit {
+    margin-top: 24px;
+  }
+
+  .lg-or {
+    margin-top: 20px;
+  }
+
+  .lg-google {
+    margin-top: 14px;
+  }
+
+  .lg-switch {
+    margin-top: 24px;
+  }
+
+  .lg-secure {
+    margin-top: 16px;
+  }
+
+  .lg-tagline {
+    bottom: 22px;
   }
 }
 
