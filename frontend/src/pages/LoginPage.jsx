@@ -1,71 +1,57 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import InlineAlert from "../components/InlineAlert";
 import { useAuthStore } from "../store/auth";
 import Spinner from "../components/Spinner";
 import GoogleSignInButton from "../components/GoogleSignInButton";
 import logoUrl from "../enterprate-logo.png";
+import authLogoUrl from "../enterprate-logo-auth.png";
 import { apiRequest } from "../api/client";
 import "./login.css";
 
-const FEATURE_GROUPS = [
+const GROUPS = [
   {
-    tone: "mint",
+    key: "ess",
     title: "Free Business Essentials",
     sub: "Everything you need to run the basics.",
-    icon: "document",
     items: ["Invoice", "Quotation", "Receipt", "Contract", "Idea Validation"],
   },
   {
-    tone: "blue",
+    key: "plan",
     title: "Business Planning & Growth Tools",
     sub: "Plan smarter and grow with clarity.",
-    icon: "chart",
     items: ["Live Business Plan Generator", "Funding Readiness", "Financial Forecasting", "Proposal Generator", "Growth Planning"],
   },
   {
-    tone: "purple",
+    key: "dec",
     title: "Business Decision Intelligence Tools",
     sub: "Simulate, assess and decide with confidence.",
-    icon: "brain",
     items: ["Viability Engine", "Survival Engine", "Stability Engine", "Growth Engine", "Scenario Simulation"],
   },
 ];
 
 const TRUST_POINTS = ["Start free", "No credit card required", "Private & secure"];
 
-function BarsIcon() {
+function GroupIcon({ kind }) {
+  if (kind === "ess") {
+    return (
+      <svg viewBox="0 0 28 28" fill="none" aria-hidden="true" className="lg-tile-icon">
+        <path d="M8.5 4.5h7.6L21 9.4V22a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 7 22V6a1.5 1.5 0 0 1 1.5-1.5Z" stroke="#fff" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M15.8 4.8V9.6h4.8M10.5 13.6h7M10.5 17.2h7M10.5 20.6h4.2" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "plan") {
+    return (
+      <svg viewBox="0 0 28 28" fill="none" aria-hidden="true" className="lg-tile-icon">
+        <rect x="5" y="15" width="4.6" height="8" rx="2.3" fill="#fff" />
+        <rect x="11.7" y="10.5" width="4.6" height="12.5" rx="2.3" fill="#fff" />
+        <rect x="18.4" y="5" width="4.6" height="18" rx="2.3" fill="#fff" />
+      </svg>
+    );
+  }
   return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="lg-pill-icon">
-      <rect x="2.4" y="10.5" width="3.6" height="7" rx="1.6" fill="currentColor" />
-      <rect x="8.2" y="6" width="3.6" height="11.5" rx="1.6" fill="currentColor" />
-      <rect x="14" y="2.2" width="3.6" height="15.3" rx="1.6" fill="currentColor" />
-    </svg>
-  );
-}
-
-function DocumentIcon() {
-  return (
-    <svg viewBox="0 0 28 28" fill="none" aria-hidden="true" className="lg-feature-icon">
-      <path d="M8.5 4.5h7.6L21 9.4V22a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 7 22V6a1.5 1.5 0 0 1 1.5-1.5Z" stroke="#fff" strokeWidth="1.8" strokeLinejoin="round" />
-      <path d="M15.8 4.8V9.6h4.8M10.5 13.6h7M10.5 17.2h7M10.5 20.6h4.2" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function ChartIcon() {
-  return (
-    <svg viewBox="0 0 28 28" fill="none" aria-hidden="true" className="lg-feature-icon">
-      <rect x="5" y="15" width="4.6" height="8" rx="2.3" fill="#fff" />
-      <rect x="11.7" y="10.5" width="4.6" height="12.5" rx="2.3" fill="#fff" />
-      <rect x="18.4" y="5" width="4.6" height="18" rx="2.3" fill="#fff" />
-    </svg>
-  );
-}
-
-function BrainIcon() {
-  return (
-    <svg viewBox="0 0 28 28" fill="none" aria-hidden="true" className="lg-feature-icon">
+    <svg viewBox="0 0 28 28" fill="none" aria-hidden="true" className="lg-tile-icon">
       <path d="M12.6 5.2a3.6 3.6 0 0 0-3.5 3 3.7 3.7 0 0 0-2.4 3.4c0 .9.3 1.7.9 2.4a3.8 3.8 0 0 0-.6 2 3.7 3.7 0 0 0 3.4 3.7 3.2 3.2 0 0 0 2.9 1.9c.5 0 .9-.1 1.3-.3V5.5a3.5 3.5 0 0 0-2-.3Z" stroke="#fff" strokeWidth="1.7" strokeLinejoin="round" />
       <path d="M15.4 5.5v16.8c.4.2.8.3 1.3.3a3.2 3.2 0 0 0 2.9-1.9 3.7 3.7 0 0 0 3.4-3.7c0-.7-.2-1.4-.6-2 .6-.7.9-1.5.9-2.4a3.7 3.7 0 0 0-2.4-3.4 3.6 3.6 0 0 0-3.5-3 3.5 3.5 0 0 0-2 .3Z" stroke="#fff" strokeWidth="1.7" strokeLinejoin="round" />
       <path d="M10.2 12.6c1 0 1.8.6 2 1.5M18 12.6c-1 0-1.8.6-2 1.5M10.4 17.2c.9-.2 1.6-.9 1.8-1.7M17.8 17.2c-.9-.2-1.6-.9-1.8-1.7" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
@@ -154,27 +140,6 @@ function GoogleG() {
   );
 }
 
-function FeatureCard({ group }) {
-  const Icon = group.icon === "chart" ? ChartIcon : group.icon === "brain" ? BrainIcon : DocumentIcon;
-  return (
-    <div className={`lg-group lg-group-${group.tone}`}>
-      <div className={`lg-tile lg-tile-${group.tone}`}>
-        <Icon />
-      </div>
-      <div className={`lg-group-title lg-group-title-${group.tone}`}>{group.title}</div>
-      <div className="lg-group-sub">{group.sub}</div>
-      <ul className="lg-chips">
-        {group.items.map((item, index) => (
-          <li key={item} className={"lg-chip" + (group.tone === "blue" && index === 0 ? " lg-chip-squeeze" : "")}>
-            <CheckDot tone={group.tone} />
-            <span>{item}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 export default function LoginPage() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
@@ -194,13 +159,53 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [forgotNotice, setForgotNotice] = useState(null);
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoError, setDemoError] = useState(null);
 
   const isSignup = mode === "signup";
-  const googleEnabled = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID || import.meta.env.REACT_APP_GOOGLE_CLIENT_ID);
 
-  useEffect(() => {
-    setMode(searchParams.get("signup") ? "signup" : "signin");
-  }, [searchParams]);
+  // The layout below is pixel-tuned to an exact design size, so on a shorter browser
+  // window it would either overflow (forcing a scrollbar) or need every offset re-tuned.
+  // Instead, scale the whole thing down to whatever vertical space is actually available,
+  // the way a print preview shrinks a page to fit - never below a floor where it'd become
+  // illegible, and re-measured on resize or when switching between sign-in/create-account
+  // (the taller create-account card needs a bit more shrinking to still fit).
+  const fitRef = useRef(null);
+  const fitNaturalHeight = useRef(0);
+  const [fitScale, setFitScale] = useState(1);
+  useLayoutEffect(() => {
+    const el = fitRef.current;
+    if (!el) return;
+    function recalc() {
+      // Below 1180px the layout switches to a normal stacked, scrolling mobile/tablet
+      // page (see login.css) - shrink-to-fit is a desktop-only affordance for the fixed
+      // two-column design, not appropriate once content is meant to scroll normally.
+      if (window.innerWidth <= 1180) {
+        setFitScale(1);
+        return;
+      }
+      const page = el.closest(".lg-page");
+      const pageStyle = page ? getComputedStyle(page) : null;
+      const vPad = pageStyle ? parseFloat(pageStyle.paddingTop) + parseFloat(pageStyle.paddingBottom) : 0;
+      const available = window.innerHeight - vPad;
+      const prevTransform = el.style.transform;
+      el.style.transform = "none";
+      const natural = el.scrollHeight;
+      el.style.transform = prevTransform;
+      fitNaturalHeight.current = natural;
+      const next = natural > 0 ? Math.min(1, available / natural) : 1;
+      setFitScale(Math.max(0.62, Number.isFinite(next) ? next : 1));
+    }
+    recalc();
+    window.addEventListener("resize", recalc);
+    const ro = new ResizeObserver(recalc);
+    ro.observe(el);
+    return () => {
+      window.removeEventListener("resize", recalc);
+      ro.disconnect();
+    };
+  }, [isSignup]);
+  const googleEnabled = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID || import.meta.env.REACT_APP_GOOGLE_CLIENT_ID);
 
   useEffect(() => {
     const refClickId = searchParams.get("ref_click");
@@ -225,6 +230,8 @@ export default function LoginPage() {
     }
   }, [searchParams]);
 
+  // New signups leave for their inbox (email verification) and come back to a plain
+  // /login, so a ?next= deep link would be lost. Remember it briefly in localStorage.
   useEffect(() => {
     const next = searchParams.get("next");
     if (!next || !/^\/(?!\/)/.test(next)) return;
@@ -235,6 +242,26 @@ export default function LoginPage() {
     }
   }, [searchParams]);
 
+  async function tryDemo() {
+    setDemoLoading(true);
+    setDemoError(null);
+    try {
+      const data = await apiRequest("/auth/demo", "POST");
+      const token = data?.access_token ?? data?.token;
+      if (!token) throw new Error("no_token");
+      localStorage.setItem("ea_token", token);
+      localStorage.setItem("ea_email", "demo");
+      sessionStorage.setItem("ea_tour_active", "1");
+      sessionStorage.setItem("ea_tour_step", "0");
+      sessionStorage.removeItem("ea_tour_done");
+      await useAuthStore.getState().hydrate();
+    } catch {
+      setDemoError("Demo account is not available right now.");
+    } finally {
+      setDemoLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!token) return;
     const pendingJoin = sessionStorage.getItem("ea_pending_join");
@@ -243,13 +270,11 @@ export default function LoginPage() {
       navigate(`/join/${pendingJoin}`, { replace: true });
       return;
     }
+    // Honour ?next= for deep-link flows (e.g. "sign in to submit a proposal").
+    // Only same-origin relative paths are accepted.
     const next = searchParams.get("next");
     if (next && /^\/(?!\/)/.test(next)) {
-      try {
-        localStorage.removeItem("ea_post_auth_next");
-      } catch {
-        // ignore
-      }
+      try { localStorage.removeItem("ea_post_auth_next"); } catch { /* ignore */ }
       navigate(next, { replace: true });
       return;
     }
@@ -285,45 +310,54 @@ export default function LoginPage() {
 
   if (verificationPending) {
     return (
-      <div className="lg-page">
-        <div className="lg-shell lg-shell-verify">
-          <div className="lg-verify-card">
-            <img src={logoUrl} alt="EnterprateAI" className="lg-card-logo lg-card-logo-verify" />
-            <div className="lg-verify-mark">
-              <svg className="h-7 w-7 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M3 8l7.89 5.26a2 2 0 0 0 2.22 0L21 8M5 19h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2z" />
-              </svg>
-            </div>
-            <h1>Check your inbox</h1>
-            <p>
-              We sent a verification link to <strong>{verificationEmail}</strong>. Click the link to activate your account.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                clearVerificationPending();
-                setMode("signin");
-              }}
-              className="lg-submit lg-submit-verify"
-            >
-              Back to Sign In
-            </button>
+      <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-slate-50 px-4">
+        <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-xl">
+          <img src={logoUrl} alt="EnterprateAI" className="mx-auto mb-6 h-7 w-auto object-contain" />
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-brand-100">
+            <svg className="h-7 w-7 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
           </div>
+          <h1 className="mt-4 text-lg font-bold text-slate-900">Check your inbox</h1>
+          <p className="mt-2 text-sm text-slate-500">
+            We sent a verification link to <strong className="text-slate-700">{verificationEmail}</strong>. Click the link to activate your account.
+          </p>
+          <p className="mt-3 text-xs text-slate-400">Didn't receive it? Check spam or junk folders.</p>
+          <button
+            type="button"
+            onClick={() => { clearVerificationPending(); setMode("signin"); }}
+            className="mt-6 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition"
+          >
+            Back to Sign In
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="lg-page">
-      <div className="lg-shell">
-        <div className="lg-shell-bg" aria-hidden="true" />
+    <div className={"lg-page" + (isSignup ? " lg-page-signup" : "") + ((error || forgotNotice) ? " lg-page-alert" : "")}>
+      <div className="lg-bg-wave" aria-hidden="true" />
 
+      <div
+        className="lg-fit-frame"
+        style={fitScale < 1 ? { height: fitNaturalHeight.current * fitScale } : undefined}
+      >
+      <div
+        ref={fitRef}
+        className="lg-fit"
+        style={fitScale < 1 ? { transform: `scale(${fitScale})`, transformOrigin: "top center" } : undefined}
+      >
+      <div className="lg-grid">
         <section className="lg-left">
           <div className="lg-left-head">
-            <img src={logoUrl} alt="EnterprateAI" className="lg-left-logo" />
+            <img src={authLogoUrl} alt="EnterprateAI" className="lg-left-logo" />
             <div className="lg-pill">
-              <BarsIcon />
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="lg-pill-icon">
+                <rect x="2.4" y="10.5" width="3.6" height="7" rx="1.6" fill="currentColor" />
+                <rect x="8.2" y="6" width="3.6" height="11.5" rx="1.6" fill="currentColor" />
+                <rect x="14" y="2.2" width="3.6" height="15.3" rx="1.6" fill="currentColor" />
+              </svg>
               <span>
                 Smarter Decisions
                 <br />
@@ -333,11 +367,12 @@ export default function LoginPage() {
           </div>
 
           <h1 className="lg-h1">
-            Build a More Resilient
+            <span className="lg-w lg-w-build">Build</span> <span className="lg-w lg-w-a">a</span>{" "}
+            <span className="lg-w lg-w-more">More</span> <span className="lg-w lg-w-resilient">Resilient</span>
             <br />
-            Business with <span className="lg-h1-accent">Intelligence.</span>
+            <span className="lg-w lg-w-business">Business</span> <span className="lg-w lg-w-with">with</span>{" "}
+            <span className="lg-w lg-w-intel lg-h1-accent">Intelligence.</span>
           </h1>
-
           <p className="lg-lead">
             Validate your idea, build your business plan, understand your risks,
             <br />
@@ -346,8 +381,22 @@ export default function LoginPage() {
           <p className="lg-bold">Get your first business insight in less than 20 minutes.</p>
 
           <div className="lg-groups">
-            {FEATURE_GROUPS.map((group) => (
-              <FeatureCard key={group.title} group={group} />
+            {GROUPS.map((g) => (
+              <div key={g.key} className={`lg-group lg-group-${g.key}`}>
+                <div className={`lg-tile lg-tile-${g.key}`}>
+                  <GroupIcon kind={g.key} />
+                </div>
+                <div className={`lg-group-title lg-group-title-${g.key}`}>{g.title}</div>
+                <div className="lg-group-sub">{g.sub}</div>
+                <ul className="lg-chips">
+                  {g.items.map((item, i) => (
+                    <li key={item} className={"lg-chip" + (g.key === "plan" && i === 0 ? " lg-chip-squeeze" : "")}>
+                      <CheckDot tone={g.key} />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
           </div>
 
@@ -370,8 +419,8 @@ export default function LoginPage() {
           </div>
 
           <div className="lg-card">
-            <img src={logoUrl} alt="EnterprateAI" className="lg-card-logo" />
-            <h2 className="lg-welcome">{isSignup ? "Create account" : "Welcome back"}</h2>
+            <img src={authLogoUrl} alt="EnterprateAI" className="lg-card-logo" />
+            <h2 className="lg-welcome">{isSignup ? "Create your account" : "Welcome back"}</h2>
             <p className="lg-signsub">{isSignup ? "Start free. No credit card required." : "Sign in to your EnterprateAI account"}</p>
 
             <form className="lg-form" onSubmit={onSubmit}>
@@ -426,7 +475,7 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     autoComplete={isSignup ? "new-password" : "current-password"}
-                    placeholder="••••••••"
+                    placeholder="••••••••••"
                   />
                   <button
                     type="button"
@@ -482,6 +531,12 @@ export default function LoginPage() {
                 {isSignup ? "Sign in" : "Create account"}
               </button>
             </p>
+            <div className="lg-demo">
+              <button type="button" onClick={tryDemo} disabled={demoLoading}>
+                {demoLoading ? "Loading demo..." : "Explore the demo"}
+              </button>
+              {demoError ? <p>{demoError}</p> : null}
+            </div>
           </div>
 
           <div className="lg-secure">
@@ -494,15 +549,17 @@ export default function LoginPage() {
               <div className="lg-secure-sub">We never share your information.</div>
             </div>
           </div>
+
+          <div className="lg-tagline" aria-hidden="true">
+            <span>From ideas</span>
+            <span>to a stronger tomorrow.</span>
+            <svg viewBox="0 0 200 14" fill="none" className="lg-tagline-line">
+              <path d="M4 10.5C48 4.4 118 2.6 196 3.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </div>
         </section>
       </div>
-
-      <div className="lg-tagline" aria-hidden="true">
-        <span>From ideas</span>
-        <span>to a stronger tomorrow.</span>
-        <svg viewBox="0 0 200 14" fill="none" className="lg-tagline-line">
-          <path d="M4 10.5C48 4.4 118 2.6 196 3.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
+      </div>
       </div>
     </div>
   );

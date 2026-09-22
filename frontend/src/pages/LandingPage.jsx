@@ -4,69 +4,6 @@ import logoUrl from "../enterprate-logo.png";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
 
-const PROBLEMS = [
-  {
-    icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15",
-    title: "Repeated work",
-    body: "You enter the same business data in multiple places like plans, invoices, and proposals, wasting time and risking inconsistencies.",
-  },
-  {
-    icon: "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6",
-    title: "Rising cost",
-    body: "Juggling multiple tools and services adds up quickly, draining resources that could be invested in growth.",
-  },
-  {
-    icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z",
-    title: "Hidden risk",
-    body: "Without clear visibility into your business operations and decisions, risks go unnoticed until it's too late.",
-  },
-];
-
-const PILLARS = [
-  { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2", label: "Plan", path: "/blueprint" },
-  { icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z", label: "Operate", path: "/catalogue" },
-  { icon: "M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z", label: "Sell", path: "/financials" },
-  { icon: "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z", label: "Decide", path: "/simulation" },
-];
-
-const FEATURES = [
-  { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2", label: "Plan", body: "Validate ideas, create business plans, and build a solid foundation for growth, all in one intelligent workspace.", path: "/blueprint" },
-  { icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z", label: "Operate", body: "Manage products, customers, vendors, and business data seamlessly with tools designed for efficiency.", path: "/catalogue" },
-  { icon: "M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z", label: "Sell", body: "Generate proposals, invoices, quotations, and marketplace listings instantly from your business data.", path: "/financials" },
-  { icon: "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z", label: "Decide", body: "Simulate scenarios, assess fragility, and make data-driven decisions with adaptive intelligence before committing resources.", path: "/simulation" },
-];
-
-const BENEFITS = [
-  { icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z", title: "Save time", body: "Input your business data once and reuse it across plans, proposals, invoices, and simulations." },
-  { icon: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z", title: "Cut cost", body: "Replace multiple expensive tools with one integrated platform designed for small business needs." },
-  { icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z", title: "Reduce risk", body: "Identify business fragility and test decisions before acting, protecting your resources and reputation." },
-  { icon: "M13 10V3L4 14h7v7l9-11h-7z", title: "Move faster", body: "Generate documents, proposals, and plans instantly with intelligent automation from your workspace." },
-  { icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z", title: "Make better decisions", body: "Simulate scenarios and assess outcomes with adaptive intelligence, choosing the best path forward." },
-  { icon: "M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z", title: "Grow with intelligence", body: "Leverage AI-powered insights and recommendations tailored to your business context and goals." },
-];
-
-const HOW_IT_WORKS = [
-  { n: "1", icon: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z", title: "Input once", body: "Add your business data, products, customers, and context into your workspace." },
-  { n: "2", icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15", title: "Generate everywhere", body: "Automatically create plans, proposals, invoices, quotations, and marketplace listings from your data." },
-  { n: "3", icon: "M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z M21 12a9 9 0 11-18 0 9 9 0 0118 0z", title: "Simulate before acting", body: "Test decisions and scenarios with adaptive intelligence before committing resources." },
-  { n: "4", icon: "M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z", title: "Grow with intelligence", body: "Receive AI-powered insights, fragility assessments, and recommendations tailored to your business." },
-];
-
-const ACTIVITIES = [
-  { icon: "M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z", label: "Validate a business idea", desc: "Test your concept with structured validation frameworks before investing time and money.", path: "/validation" },
-  { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01", label: "Create a business plan", desc: "Build comprehensive, professional business plans using your workspace data and intelligent templates.", path: "/blueprint" },
-  { icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z", label: "Generate a proposal", desc: "Create winning business proposals and sales letters automatically from your business information.", path: "/blueprint" },
-  { icon: "M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z", label: "Create invoices and quotations", desc: "Generate professional invoices and quotations instantly from your products and customer data.", path: "/financials" },
-  { icon: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z", label: "Launch to marketplace", desc: "List your services on the EnterprateAI marketplace and connect with potential clients.", path: "/marketplace" },
-  { icon: "M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z M21 12a9 9 0 11-18 0 9 9 0 0118 0z", label: "Simulate a decision", desc: "Test business decisions and scenarios with adaptive scenario intelligence before committing.", path: "/simulation" },
-  { icon: "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z", label: "Discover business risks", desc: "Assess your business fragility index and identify hidden vulnerabilities before they impact you.", path: "/simulation" },
-];
-
-const TESTIMONIALS = [
-  { quote: "I was unsure about taking on a new employee, but the scenario intelligence helped me model the hiring decision perfectly. I could see the exact impact on my cash flow before making any commitment.", name: "Victor", role: "Rhema Concept London", init: "V", color: "bg-brand-500" },
-  { quote: "Using this platform gave me the confidence to model a price increase. Seeing the simulated impact on our bottom line removed the fear of losing customers and helped us grow revenue securely.", name: "Irene A.", role: "Sombeauty London Ltd UK", init: "IA", color: "bg-accent-500" },
-  { quote: "This is like having a virtual CFO in my pocket. It gives me incredible confidence in my daily decisions and helps me run my auto business with a level of clarity I never thought possible.", name: "Gilbert C.", role: "OIC3 Auto Services Ltd UK", init: "GC", color: "bg-emerald-500" },
-];
 
 const PLANS = [
   {
@@ -93,25 +30,6 @@ const PLANS = [
   },
 ];
 
-const FAQS = [
-  { q: "Is EnterprateAI free to start?", a: "Yes. The Explorer plan is free forever with no credit card required. You get basic idea validation, a business plan, unlimited financial tools, and more, all powered by AI credits." },
-  { q: "Do I need a credit card to try EnterprateAI?", a: "No. You can start completely free on the Explorer plan with no credit card required. Upgrade to a paid plan whenever you are ready." },
-  { q: "What type of businesses can use EnterprateAI?", a: "EnterprateAI is built for UK small businesses — founders, freelancers, consultants, service providers, suppliers, agencies, and early-stage startups. If you run a small business and want to save time, reduce cost, and make better decisions, EnterprateAI is for you." },
-  { q: "Is this only for business plans?", a: "No. EnterprateAI covers the full business operating cycle — planning, operations, sales documents, marketplace listings, decision simulations, fragility analysis, and growth intelligence. Business plans are just one output." },
-  { q: "Can I create invoices and quotations?", a: "Yes. EnterprateAI generates professional invoices and quotations directly from your saved business, product, customer, and service data — no manual re-entry needed." },
-  { q: "How does decision simulation work?", a: "You input a business scenario — like a price change, new hire, or cost cut — and EnterprateAI models the likely impact across your revenue, cashflow, profitability, and risk exposure before you commit." },
-  { q: "Is my business data secure?", a: "Yes. All data is encrypted in transit (TLS 1.3) and at rest (AES-256). We are ICO Registered, GDPR compliant, and never share or sell your data. You can delete your data at any time." },
-  { q: "Can I cancel anytime?", a: "Yes. No lock-in contracts, no cancellation fees. Cancel from your account settings in 30 seconds. Your data remains accessible for 30 days after cancellation." },
-];
-
-const TRUST = [
-  { icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z", label: "Free to start" },
-  { icon: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z", label: "No credit card required" },
-  { icon: "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z", label: "GDPR compliant" },
-  { icon: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4", label: "Registered UK company" },
-  { icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z", label: "Built for small businesses" },
-];
-
 function Icon({ d, className = "h-5 w-5" }) {
   const paths = d.split(" M ").map((p, i) => (i === 0 ? p : "M " + p));
   return (
@@ -120,20 +38,6 @@ function Icon({ d, className = "h-5 w-5" }) {
     </svg>
   );
 }
-
-function FAQItem({ q, a }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="border-b border-slate-100 last:border-0">
-      <button type="button" onClick={() => setOpen(v => !v)} className="flex w-full items-start justify-between gap-4 py-4 text-left">
-        <span className="text-sm font-medium text-slate-800">{q}</span>
-        <span className={`mt-0.5 shrink-0 text-slate-400 transition-transform duration-200 text-lg leading-none ${open ? "rotate-45" : ""}`}>+</span>
-      </button>
-      {open && <p className="pb-4 text-sm leading-relaxed text-slate-500">{a}</p>}
-    </div>
-  );
-}
-
 const ROLES = ["Founder / Co-founder","Business Owner","Operations Manager","Sales / Business Development","Finance / Accounting","Marketing","Product / Tech","Investor / Advisor","Other"];
 
 export default function LandingPage() {
@@ -171,7 +75,6 @@ export default function LandingPage() {
   }
 
   const [blogCategories, setBlogCategories] = useState([]);
-  const [faqs, setFaqs] = useState(FAQS);
 
   useEffect(() => {
     function onScroll() { setScrolled(window.scrollY > 10); }
@@ -182,9 +85,6 @@ export default function LandingPage() {
   useEffect(() => {
     apiRequest("/blog/categories", "GET")
       .then((data) => { if (Array.isArray(data)) setBlogCategories(data); })
-      .catch(() => {});
-    apiRequest("/blog/faqs", "GET")
-      .then((data) => { if (Array.isArray(data) && data.length > 0) setFaqs(data); })
       .catch(() => {});
   }, []);
 
@@ -269,7 +169,7 @@ export default function LandingPage() {
 
       {/* NAV */}
       <nav className={`fixed top-0 left-0 right-0 z-50 border-b border-slate-100 bg-white/95 backdrop-blur transition-all duration-200 ${scrolled ? "shadow-sm" : ""}`}>
-        <div className={`mx-auto flex max-w-[1280px] items-center px-4 sm:px-6 transition-all duration-200 ${scrolled ? "py-2" : "py-3"}`}>
+        <div className={`mx-auto flex max-w-[1600px] items-center px-4 sm:px-6 transition-all duration-200 ${scrolled ? "py-2" : "py-3"}`}>
           <a href="#hero" className="shrink-0 mr-6"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" /></a>
           <ul className="hidden flex-1 items-center justify-center gap-3 xl:gap-4 lg:flex">
             {/* Features mega-dropdown */}
@@ -446,220 +346,352 @@ export default function LandingPage() {
       <div className="h-[61px]" />
 
       {/* HERO */}
-      <section id="hero" className="relative overflow-hidden bg-gradient-to-br from-brand-900 via-brand-700 to-brand-800 pb-20 pt-16 sm:pt-24 text-white">
-        <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <img src="/her0.png" alt="" aria-hidden="true" className="h-full w-full object-cover object-center opacity-[0.18] select-none" />
+      <section id="hero" className="relative overflow-hidden bg-gradient-to-b from-brand-50/70 via-white to-white pb-16 pt-14 sm:pb-24 sm:pt-20">
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute -right-24 top-0 h-[460px] w-[460px] rounded-full bg-gradient-to-br from-brand-200/50 to-purple-200/40 blur-3xl sm:h-[560px] sm:w-[560px]" />
+          <div className="absolute right-6 top-16 hidden h-56 w-56 opacity-50 sm:block" style={{ backgroundImage: "radial-gradient(circle, #C7D2FE 1.5px, transparent 1.5px)", backgroundSize: "16px 16px" }} />
         </div>
-        <div className="pointer-events-none absolute inset-0 bg-brand-900/40" />
-        <div className="pointer-events-none absolute inset-0 opacity-[0.08]" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "32px 32px" }} />
-        <div className="pointer-events-none absolute -right-40 -top-40 h-[600px] w-[600px] rounded-full bg-white/10 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-20 -left-20 h-[400px] w-[400px] rounded-full bg-accent-500/20 blur-3xl" />
-        <div className="relative mx-auto max-w-4xl px-4 text-center sm:px-6">
-          <h1 className="mt-5 text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl lg:text-5xl">
-            Run your small business with more clarity, less cost, and better decisions.
-          </h1>
-          <p className="mt-3 text-sm font-semibold text-white sm:text-base">Your Business Operating System</p>
-          <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-white/90 sm:text-base">
-            Input your business data once. Use it everywhere. Plan, operate, sell, simulate decisions, and grow with intelligence.
-          </p>
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <button type="button" onClick={() => goToApp()} className="w-full rounded-xl border border-white/40 bg-white/10 px-8 py-3.5 text-sm font-bold text-white transition hover:bg-white/20 active:scale-95 sm:w-auto">
-              Get Started Free
-            </button>
-            <Link to="/book-demo" className="flex w-full items-center justify-center rounded-xl bg-white px-8 py-3.5 text-sm font-semibold text-brand-700 transition hover:bg-brand-50 active:scale-95 sm:w-auto">
-              Book a Demo
-            </Link>
-          </div>
-          <p className="mt-3 text-xs text-white/80">Free to start · No credit card required · <a href="#how-it-works" className="hover:text-white">See how it works ↓</a></p>
-
-          {/* Pillar cards */}
-          <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {PILLARS.map(p => (
-              <button key={p.label} type="button" onClick={() => goToFeature(p.path)} className="flex flex-col items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-5 backdrop-blur-sm transition hover:bg-white/20 active:scale-95">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500">
-                  <Icon d={p.icon} className="h-6 w-6 text-white" />
-                </div>
-                <span className="text-sm font-bold text-white">{p.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* PROBLEM */}
-      <section className="bg-brand-50/30 py-16 sm:py-20">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6">
-          <div className="mb-10 text-center">
-            <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">The Problem</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Small businesses lack clarity</h2>
-            <p className="mt-3 mx-auto max-w-xl text-slate-500">Most small business owners face scattered information, repeated work, rising costs, and hidden risks, making it hard to make confident decisions.</p>
-          </div>
-          <div className="grid gap-5 sm:grid-cols-3">
-            {PROBLEMS.map(p => (
-              <div key={p.title} className="rounded-2xl border border-slate-200 bg-white p-6">
-                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50">
-                  <Icon d={p.icon} className="h-5 w-5 text-rose-500" />
-                </div>
-                <h3 className="font-bold text-slate-900">{p.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-slate-500">{p.body}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* FEATURES */}
-      <section id="features" className="py-16 sm:py-20">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="mb-12 text-center">
-            <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">The Solution</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">One workspace for planning, operations, visibility, and smarter decisions.</h2>
-          </div>
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {FEATURES.map(f => (
-              <div key={f.label} className="flex flex-col rounded-2xl border border-slate-200 bg-white p-6 hover:border-brand-200 hover:shadow-md transition">
-                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500">
-                  <Icon d={f.icon} className="h-6 w-6 text-white" />
-                </div>
-                <h3 className="font-bold text-slate-900">{f.label}</h3>
-                <p className="mt-2 flex-1 text-sm leading-relaxed text-slate-500">{f.body}</p>
-                <button type="button" onClick={() => goToFeature(f.path)} className="mt-4 text-left text-sm font-semibold text-brand-600 hover:text-brand-700 transition">
-                  Explore {f.label} →
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* BENEFITS */}
-      <section className="bg-brand-50/30 py-16 sm:py-20">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="mb-12 text-center">
-            <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Why It Matters</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Built to help small businesses become more resilient.</h2>
-          </div>
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {BENEFITS.map(b => (
-              <div key={b.title} className="rounded-2xl border border-slate-200 bg-white p-6 hover:border-brand-200 hover:shadow-sm transition">
-                <div className="mb-3">
-                  <Icon d={b.icon} className="h-6 w-6 text-brand-500" />
-                </div>
-                <h3 className="font-semibold text-slate-900">{b.title}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{b.body}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* HOW IT WORKS */}
-      <section id="how-it-works" className="py-16 sm:py-20">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6">
-          <div className="mb-12 text-center">
-            <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">How It Works</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Input once. Use everywhere. Decide smarter.</h2>
-          </div>
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {HOW_IT_WORKS.map(s => (
-              <div key={s.n} className="flex flex-col items-center rounded-2xl border border-slate-200 bg-white p-6 text-center">
-                <div className="mb-3">
-                  <Icon d={s.icon} className="h-6 w-6 text-slate-400" />
-                </div>
-                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white">{s.n}</div>
-                <h3 className="font-semibold text-slate-900">{s.title}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{s.body}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ACTIVITIES */}
-      <section id="activities" className="bg-brand-50/30 py-16 sm:py-20">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="mb-10 text-center">
-            <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Choose Your Starting Point</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">What do you want to do today?</h2>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {ACTIVITIES.map(a => (
-              <div key={a.label} className="flex flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="mb-3">
-                  <Icon d={a.icon} className="h-6 w-6 text-slate-400" />
-                </div>
-                <h3 className="font-semibold text-slate-900">{a.label}</h3>
-                <p className="mt-1.5 flex-1 text-sm leading-relaxed text-slate-500">{a.desc}</p>
-                <button type="button" onClick={() => goToFeature(a.path)} className="mt-5 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700">
-                  Start here →
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* FREE ESSENTIALS */}
-      <section id="essentials" className="bg-white py-14 sm:py-16">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="flex flex-col gap-8 overflow-hidden rounded-3xl bg-gradient-to-br from-brand-900 via-brand-800 to-brand-700 p-8 text-white shadow-xl sm:p-10 lg:flex-row lg:items-center lg:justify-between">
-            <div className="max-w-xl">
-              <span className="inline-flex items-center rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wider">
-                Free essential tools
-              </span>
-              <h2 className="mt-4 text-2xl font-extrabold sm:text-3xl">Just need the basics? Start with the free essentials.</h2>
-              <p className="mt-3 text-sm leading-relaxed text-white/80 sm:text-base">
-                Create sales quotations, contracts, invoices and receipts, then reuse the same customer and pricing data
-                instead of entering it again and again.
+        <div className="relative mx-auto max-w-[1600px] px-4 sm:px-6">
+          <div className="grid items-center gap-12 lg:grid-cols-[1fr_1.05fr]">
+            <div className="text-center lg:text-left">
+              <span className="text-xs font-bold uppercase tracking-widest text-brand-600">AI-Native Business Decision Intelligence</span>
+              <h1 className="mt-4 text-3xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-4xl lg:text-[2.6rem]">
+                Build a More Resilient Business with <span className="text-accent-500">Intelligence.</span>
+              </h1>
+              <p className="mt-4 text-base font-bold text-slate-800 sm:text-lg">Plan, operate, sell and grow from one intelligent business workspace.</p>
+              <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-slate-500 sm:text-base lg:mx-0">
+                EnterprateAI gives startups and small businesses practical tools to run their business, build better plans, identify risks and simulate important decisions before committing time or money.
               </p>
-              <div className="mt-6 flex flex-wrap items-center gap-3">
-                <Link to="/essentials" className="rounded-xl bg-white px-6 py-3 text-sm font-semibold text-brand-700 shadow-lg transition hover:bg-brand-50">
-                  See the free essentials →
-                </Link>
-                <span className="text-xs text-white/70">No credit card required</span>
+              <p className="mt-3 text-sm font-bold text-slate-800">Get your first business insight in less than 20 minutes.</p>
+              <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
+                <button type="button" onClick={() => goToApp()} className="w-full rounded-xl bg-brand-600 px-7 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 active:scale-95 sm:w-auto">
+                  Start Free
+                </button>
+                <a href="#how-it-works" className="flex w-full items-center justify-center gap-2 rounded-xl border border-brand-200 px-7 py-3 text-sm font-semibold text-brand-700 transition hover:bg-brand-50 sm:w-auto">
+                  <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                  See How It Works
+                </a>
+              </div>
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 lg:justify-start">
+                {["No credit card required", "Start in minutes", "Private & secure"].map((t) => (
+                  <span key={t} className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                    <svg className="h-3.5 w-3.5 shrink-0 text-brand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    {t}
+                  </span>
+                ))}
               </div>
             </div>
-            <div className="grid w-full max-w-sm grid-cols-2 gap-3 lg:w-auto">
-              {["Sales quotations", "Contracts", "Invoices", "Receipts"].map((doc) => (
-                <div key={doc} className="rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-sm font-semibold backdrop-blur-sm">
-                  {doc}
+
+            <div className="relative mx-auto w-full max-w-lg lg:max-w-none lg:pl-6 lg:pr-20">
+              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-brand-900/10">
+                <div className="flex items-center gap-1.5 border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-rose-300" /><span className="h-2.5 w-2.5 rounded-full bg-amber-300" /><span className="h-2.5 w-2.5 rounded-full bg-emerald-300" />
+                  <div className="ml-3 flex-1 rounded-md bg-white px-3 py-1 text-[10px] text-slate-300 ring-1 ring-slate-100">Search anything...</div>
                 </div>
-              ))}
+                <div className="flex">
+                  <div className="hidden w-28 shrink-0 border-r border-slate-100 bg-slate-50/60 py-3 sm:block">
+                    {["Home", "My Business", "Documents", "Planning", "Intelligence", "Marketplace"].map((n, i) => (
+                      <div key={n} className={`mx-2 mb-1 rounded-lg px-2.5 py-1.5 text-[9.5px] font-medium ${i === 0 ? "bg-brand-600 text-white" : "text-slate-500"}`}>{n}</div>
+                    ))}
+                  </div>
+                  <div className="flex-1 p-4">
+                    <p className="text-sm font-bold text-slate-900">Good morning, Jordan</p>
+                    <p className="text-[10px] text-slate-400">Here's what's happening with your business today.</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {[
+                        { t: "Idea Validation", d: "Test your insights before you invest.", c: "bg-rose-50 text-rose-500", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
+                        { t: "Business Plan", d: "Create a professional plan with AI.", c: "bg-brand-50 text-brand-600", icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+                        { t: "Scenario Simulation", d: "See possible outcomes before you decide.", c: "bg-purple-50 text-purple-500", icon: "M3 3v18h18M7 15l4-6 4 4 5-8" },
+                        { t: "Risk Signals", d: "Spot risks and opportunities early.", c: "bg-amber-50 text-amber-500", icon: "M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-8.25 3.75h.008v.008h-.008v-.008z" },
+                      ].map((c) => (
+                        <div key={c.t} className="rounded-lg border border-slate-100 p-2">
+                          <div className={`mb-1 flex h-5 w-5 items-center justify-center rounded-md ${c.c}`}>
+                            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d={c.icon} /></svg>
+                          </div>
+                          <p className="text-[9.5px] font-bold text-slate-800 leading-tight">{c.t}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="hidden w-24 shrink-0 border-l border-slate-100 p-3 sm:block">
+                    <p className="text-[9px] font-semibold text-slate-500">Business Health</p>
+                    <div className="relative mx-auto mt-2 flex h-14 w-14 items-center justify-center rounded-full" style={{ background: "conic-gradient(#22C55E 0% 78%, #E2E8F0 78% 100%)" }}>
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[11px] font-extrabold text-slate-900">78</div>
+                    </div>
+                    <p className="mt-2 text-center text-[8px] font-semibold text-emerald-600 leading-tight">Growing steadily<br />+12% this month</p>
+                  </div>
+                </div>
+                <div className="border-t border-slate-100 px-4 py-3">
+                  <p className="mb-1.5 text-[9px] font-semibold text-slate-500">Recent Activity</p>
+                  <div className="space-y-1">
+                    {["Business plan updated · 2 days ago", "Scenario simulated · 1 day ago", "Invoice created · 2 hours ago"].map((a) => (
+                      <div key={a} className="flex items-center gap-1.5 text-[9px] text-slate-400"><span className="h-1 w-1 rounded-full bg-brand-400" />{a}</div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <p className="absolute right-0 top-6 hidden w-16 -rotate-3 text-sm leading-snug text-brand-500 lg:block" style={{ fontFamily: "cursive" }}>
+                Smarter decisions. Brighter tomorrow.
+              </p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* TESTIMONIALS */}
-      <section id="testimonials" className="bg-brand-50/30 py-16 sm:py-20">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="mb-12 text-center">
-            <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">What Users Say</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Business Owners Who Stopped Guessing</h2>
+      {/* INTRO */}
+      <section className="py-14 sm:py-16">
+        <div className="mx-auto max-w-3xl px-4 text-center sm:px-6">
+          <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Everything You Need to Build and Grow a Stronger Business</h2>
+          <p className="mt-3 text-sm leading-relaxed text-slate-500 sm:text-base">Instead of stitching together multiple tools, EnterprateAI brings your essential business activities, planning and decision intelligence into one connected workspace.</p>
+        </div>
+      </section>
+
+      {/* PANEL 1 — FREE BUSINESS ESSENTIALS (green) */}
+      <section className="py-3 sm:py-4">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
+          <div className="relative grid items-center gap-8 overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-50 via-teal-50/70 to-emerald-50 p-8 sm:p-10 lg:grid-cols-2">
+            <div className="text-center lg:text-left">
+              <span className="text-xs font-bold uppercase tracking-widest text-emerald-600">Free Business Essentials</span>
+              <h3 className="mt-3 text-xl font-extrabold text-slate-900 sm:text-2xl">Run Your Business Without Paying for Multiple Apps</h3>
+              <p className="mt-3 text-sm leading-relaxed text-slate-600 sm:text-base">
+                Create the everyday documents and records your business needs — <strong className="font-bold text-slate-800">free</strong>.
+              </p>
+              <p className="mt-3 text-xs font-semibold text-slate-500 sm:text-sm">Invoice &nbsp;•&nbsp; Quotation &nbsp;•&nbsp; Receipt &nbsp;•&nbsp; Contract &nbsp;•&nbsp; Idea Validation</p>
+              <Link to="/essentials" className="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">
+                Explore Free Tools <span aria-hidden="true">→</span>
+              </Link>
+            </div>
+            <div className="relative mx-auto w-full max-w-sm lg:max-w-none">
+              <div className="aspect-[3/2] overflow-hidden rounded-2xl">
+                <img src="/panel-essentials.png" alt="Business owner working on invoices and quotations" className="h-full w-full object-cover" />
+              </div>
+              <div className="absolute -right-3 -top-5 w-40 rounded-xl border border-slate-100 bg-white p-2.5 shadow-lg sm:-right-6 sm:w-44">
+                {[
+                  { l: "Invoice", c: "bg-brand-100 text-brand-600" },
+                  { l: "Quotation", c: "bg-sky-100 text-sky-600" },
+                  { l: "Receipt", c: "bg-purple-100 text-purple-600" },
+                  { l: "Contract", c: "bg-orange-100 text-orange-600" },
+                ].map((d) => (
+                  <div key={d.l} className="mb-1.5 flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5 last:mb-0">
+                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${d.c}`}>
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    </span>
+                    <span className="text-[10.5px] font-bold text-slate-700">{d.l}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="absolute -top-9 right-6 hidden max-w-[100px] -rotate-2 text-center text-xs leading-snug text-emerald-600 sm:block" style={{ fontFamily: "cursive" }}>
+                More time for what matters
+              </p>
+            </div>
           </div>
-          <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-3">
-            {TESTIMONIALS.map((t, i) => (
-              <div key={i} className="rounded-2xl border border-slate-200 bg-white p-6">
-                <div className="mb-3 text-amber-400 text-sm">★★★★★</div>
-                <blockquote className="text-sm leading-relaxed text-slate-700 italic">"{t.quote}"</blockquote>
-                <div className="mt-5 flex items-center gap-3">
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${t.color}`}>{t.init}</div>
-                  <div><p className="text-sm font-semibold text-slate-900">{t.name}</p><p className="text-xs text-slate-400">{t.role}</p></div>
+        </div>
+      </section>
+
+      {/* PANEL 2 — BUSINESS PLANNING & GROWTH TOOLS (blue) */}
+      <section id="activities" className="py-14 sm:py-20">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
+          <div className="grid items-center gap-14 lg:grid-cols-2">
+            <div className="relative order-2 mx-auto w-full max-w-sm pb-6 lg:order-1 lg:mx-0 lg:max-w-none">
+              <p className="relative z-10 mb-3 -rotate-2 text-sm leading-snug text-brand-500 lg:mb-2" style={{ fontFamily: "cursive" }}>
+                Turn your idea into a plan
+              </p>
+              <div className="relative">
+                <div className="aspect-[3/2] overflow-hidden rounded-2xl">
+                  <img src="/panel-planning.png" alt="Two founders reviewing a business plan together" className="h-full w-full object-cover" />
                 </div>
+                <div className="absolute bottom-3 right-2 w-32 rounded-lg bg-white/95 p-2 shadow-xl ring-1 ring-black/5 backdrop-blur-sm sm:bottom-4 sm:-right-8 sm:w-36 sm:p-2.5">
+                  <p className="text-[9px] font-bold text-slate-800">Business Plan</p>
+                  <ul className="mt-1 space-y-[3px]">
+                    {["Executive Summary", "Market Analysis", "Business Model", "Financial Projections", "Risks & Mitigation", "Go To Market"].map((s) => (
+                      <li key={s} className="flex items-center gap-1 text-[7px] text-slate-500">
+                        <span className="flex h-2.5 w-2.5 shrink-0 items-center justify-center rounded-sm bg-brand-100 text-brand-600">
+                          <svg className="h-[6px] w-[6px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        </span>{s}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-1.5 border-t border-slate-100 pt-1.5">
+                    <p className="text-[7px] font-bold text-slate-600">Growth Projection</p>
+                    <div className="mt-1 flex items-end gap-[3px] h-6">
+                      {[30, 42, 38, 55, 64, 80].map((h, i) => (
+                        <div key={i} className="flex-1 rounded-t-sm bg-gradient-to-t from-brand-500 to-brand-300" style={{ height: `${h}%` }} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="order-1 text-center lg:order-2 lg:text-left">
+              <span className="text-xs font-bold uppercase tracking-widest text-brand-600">Business Planning &amp; Growth Tools</span>
+              <h3 className="mt-3 text-xl font-extrabold text-slate-900 sm:text-2xl">Turn Your Business Idea Into a Clear Plan for Growth</h3>
+              <p className="mt-3 text-sm leading-relaxed text-slate-500 sm:text-base">
+                Move from an idea or growing business to a structured plan you can actually use. Create your business plan, understand what you need to become funding-ready, prepare professional proposals and discover new commercial opportunities.
+              </p>
+              <p className="mt-3 text-xs font-semibold text-slate-500 sm:text-sm">Business Plan Generator &nbsp;•&nbsp; Funding Readiness &nbsp;•&nbsp; Proposal Generator &nbsp;•&nbsp; Marketplace</p>
+              <button type="button" onClick={() => goToFeature("/blueprint?doc=business_plan")} className="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">
+                Start Planning <span aria-hidden="true">→</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* PANEL 3 — BUSINESS DECISION INTELLIGENCE (purple) */}
+      <section id="testimonials" className="bg-purple-50/50 py-14 sm:py-20">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
+          <div className="grid items-center gap-14 lg:grid-cols-2">
+            <div className="text-center lg:text-left">
+              <span className="text-xs font-bold uppercase tracking-widest text-purple-600">Business Decision Intelligence</span>
+              <h3 className="mt-3 text-xl font-extrabold text-slate-900 sm:text-2xl">Don't Just Run Your Business. Understand What Happens Next.</h3>
+              <p className="mt-3 text-sm leading-relaxed text-slate-500 sm:text-base">
+                EnterprateAI turns your business information into forward-looking intelligence that helps you make better decisions.
+              </p>
+              <p className="mt-3 text-sm leading-relaxed text-slate-500 sm:text-base">
+                Understand where your business is vulnerable, explore different scenarios and see how important decisions could affect your business before you act.
+              </p>
+              <p className="mt-3 text-xs font-semibold text-slate-500 sm:text-sm">Live Business Plan &nbsp;•&nbsp; Scenario Simulation &nbsp;•&nbsp; Adaptive Recommendations &nbsp;•&nbsp; Fragility Index</p>
+              <button type="button" onClick={() => goToFeature("/simulation")} className="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">
+                Explore Decision Intelligence <span aria-hidden="true">→</span>
+              </button>
+            </div>
+            <div className="relative mx-auto w-full max-w-sm pt-6 lg:mx-0 lg:max-w-none">
+              <p className="absolute -top-1 right-0 hidden max-w-[110px] -rotate-2 text-right text-sm leading-snug text-purple-500 lg:block" style={{ fontFamily: "cursive" }}>
+                See what's next before you act
+              </p>
+              <div className="relative">
+                <div className="aspect-[3/2] overflow-hidden rounded-2xl">
+                  <img src="/panel-decision.png" alt="Founder reviewing scenario simulation data" className="h-full w-full object-cover" />
+                </div>
+                <div className="absolute inset-x-1.5 bottom-1.5 grid grid-cols-[1.35fr_1fr] gap-0 overflow-hidden rounded-lg bg-white/95 shadow-xl ring-1 ring-black/5 backdrop-blur-sm sm:inset-x-2.5 sm:bottom-2.5">
+                  <div className="border-r border-slate-100 p-2 sm:p-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <svg className="h-3 w-3 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18h18M7 15l4-6 4 4 5-8" /></svg>
+                      <p className="text-[9.5px] font-bold text-slate-800">Scenario Simulation</p>
+                    </div>
+                    <p className="mt-1.5 text-[7px] font-semibold text-slate-400">Select a scenario</p>
+                    <div className="mt-1 flex items-center gap-1">
+                      <div className="flex flex-1 items-center justify-between rounded-md border border-slate-200 px-1.5 py-1 text-[7.5px] font-medium text-slate-600">
+                        Increase marketing spend
+                        <svg className="h-2 w-2 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                      </div>
+                      <span className="shrink-0 rounded-md bg-brand-600 px-1.5 py-1 text-[6.5px] font-bold text-white">Run Simulation</span>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2.5 text-[6.5px] text-slate-400">
+                      <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-blue-500" />Base Case</span>
+                      <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-purple-500" />Growth Scenario</span>
+                    </div>
+                    <svg viewBox="0 0 200 60" className="mt-1 h-11 w-full" preserveAspectRatio="none">
+                      <defs>
+                        <linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#8B5CF6" stopOpacity="0.28" />
+                          <stop offset="100%" stopColor="#8B5CF6" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      {[12, 24, 36, 48].map((y) => (<line key={y} x1="0" x2="200" y1={y} y2={y} stroke="#EEF2FF" strokeWidth="1" />))}
+                      <polygon points="8,50 55,34 100,37 150,15 192,9 192,58 8,58" fill="url(#growthFill)" />
+                      <polyline points="8,50 55,42 100,44 150,32 192,27" fill="none" stroke="#3B82F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <polyline points="8,50 55,34 100,37 150,15 192,9" fill="none" stroke="#8B5CF6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      {[[8, 50], [55, 34], [100, 37], [150, 15], [192, 9]].map(([x, y]) => (<circle key={x} cx={x} cy={y} r="2.2" fill="#8B5CF6" />))}
+                    </svg>
+                    <div className="mt-0.5 flex justify-between text-[6.5px] text-slate-300"><span>Year 1</span><span>Year 2</span><span>Year 3</span></div>
+                  </div>
+                  <div className="flex flex-col divide-y divide-slate-100">
+                    <div className="p-2 text-center sm:p-2.5">
+                      <p className="text-[7.5px] font-bold text-slate-500">Fragility Index</p>
+                      <div className="relative mx-auto mt-1 h-9 w-9">
+                        <svg viewBox="0 0 36 36" className="h-9 w-9 -rotate-90">
+                          <circle cx="18" cy="18" r="15" fill="none" stroke="#E2E8F0" strokeWidth="4" pathLength="100" />
+                          <circle cx="18" cy="18" r="15" fill="none" stroke="#22C55E" strokeWidth="4" strokeDasharray="28 100" strokeLinecap="round" pathLength="100" />
+                        </svg>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+                          <span className="text-[10px] font-extrabold text-slate-900">28</span>
+                          <span className="text-[5.5px] font-bold text-emerald-600">Low</span>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-[6.5px] text-slate-400 leading-tight">Resilient in most scenarios</p>
+                    </div>
+                    <div className="p-2 sm:p-2.5">
+                      <p className="text-[7.5px] font-bold text-slate-500">Top Recommendations</p>
+                      <ul className="mt-1 space-y-1">
+                        {[
+                          { t: "Diversify revenue streams", c: "bg-orange-500" },
+                          { t: "Build a cash buffer", c: "bg-emerald-500" },
+                          { t: "Monitor key cost drivers", c: "bg-blue-500" },
+                        ].map((r, i) => (
+                          <li key={r.t} className="flex items-start gap-1 text-[7px] text-slate-500 leading-tight">
+                            <span className={`mt-[1px] flex h-2.5 w-2.5 shrink-0 items-center justify-center rounded-full text-[5.5px] font-bold text-white ${r.c}`}>{i + 1}</span>{r.t}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* HOW IT WORKS — 3 simple steps */}
+      <section id="how-it-works" className="bg-white py-16 sm:py-20">
+        <div className="mx-auto max-w-[1400px] px-4 sm:px-6">
+          <h2 className="mb-10 text-center text-2xl font-extrabold text-slate-900 sm:text-3xl">From Idea to Better Decisions in Three Simple Steps</h2>
+          <div className="grid gap-6 sm:grid-cols-3">
+            {[
+              { n: "1", title: "Create Your Business Workspace", body: "Tell EnterprateAI about your business or idea.", c: "bg-brand-600" },
+              { n: "2", title: "Use the Tools You Need", body: "Validate an idea, create invoices, build your business plan, prepare for funding or find opportunities.", c: "bg-brand-600" },
+              { n: "3", title: "Let EnterprateAI Build Intelligence Around Your Business", body: "See risks, simulations, recommendations and insights based on your own business information.", c: "bg-purple-600" },
+            ].map((s, i, arr) => (
+              <div key={s.n} className="relative rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="flex items-center gap-2.5">
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white ${s.c}`}>{s.n}</div>
+                  <h3 className="text-sm font-bold text-slate-900 leading-snug">{s.title}</h3>
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-slate-500">{s.body}</p>
+                {i < arr.length - 1 && (
+                  <span className="pointer-events-none absolute -right-3 top-1/2 hidden -translate-y-1/2 text-slate-300 sm:block">
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 12h14" /></svg>
+                  </span>
+                )}
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* MISSION */}
+      {/* PERSONAS */}
       <section className="bg-brand-50/30 py-16 sm:py-20">
-        <div className="mx-auto max-w-3xl px-4 text-center sm:px-6">
-          <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Our Mission</span>
-          <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Helping more small businesses survive, grow, and make better decisions.</h2>
-          <p className="mt-5 text-slate-600">Too many small businesses fail not because of poor ideas, but because of poor information, scattered tools, and uninformed decisions.</p>
-          <p className="mt-3 text-slate-600">EnterprateAI exists to change that. We provide UK entrepreneurs with an intelligent workspace that brings clarity to complexity, reduces operational costs, and empowers better decision-making through adaptive intelligence.</p>
-          <p className="mt-3 text-slate-600">We believe that every small business deserves access to the same quality of business intelligence and decision support that larger enterprises enjoy, without the enterprise price tag.</p>
+        <div className="mx-auto max-w-[1400px] px-4 sm:px-6">
+          <h2 className="mb-10 text-center text-2xl font-extrabold text-slate-900 sm:text-3xl">Built for Ambitious Founders and Business Owners</h2>
+          <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-stretch sm:justify-center">
+            {[
+              {
+                title: "For Startups", to: "/validation", c: "bg-brand-100 text-brand-600",
+                body: "Validate your idea, create your business plan, prepare for funding and start building with confidence.",
+                icon: "M13 10V3L4 14h7v7l9-11h-7z",
+              },
+              {
+                title: "For Small Businesses", to: "/essentials", c: "bg-purple-100 text-purple-600",
+                body: "Manage your business while using your data to understand risks, test decisions and identify opportunities for growth.",
+                icon: "M3 9l1-5h16l1 5M4 9v10a1 1 0 001 1h4a1 1 0 001-1v-4h4v4a1 1 0 001 1h4a1 1 0 001-1V9M4 9h16",
+              },
+            ].map((p) => (
+              <div key={p.title} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+                <div className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full ${p.c}`}>
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d={p.icon} /></svg>
+                </div>
+                <h3 className="mt-4 text-base font-bold text-slate-900">{p.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-slate-500">{p.body}</p>
+                <button type="button" onClick={() => goToFeature(p.to)} className="mt-5 inline-flex items-center gap-1.5 rounded-xl border border-brand-200 px-5 py-2.5 text-sm font-semibold text-brand-700 transition hover:bg-brand-50">
+                  {p.title} <span aria-hidden="true">→</span>
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="mt-8 -rotate-1 text-center text-sm text-brand-600" style={{ fontFamily: "cursive" }}>
+            Stronger businesses together tomorrow
+          </p>
         </div>
       </section>
 
@@ -676,7 +708,7 @@ export default function LandingPage() {
               </button>
             </div>
           </div>
-          <div className="mx-auto grid max-w-3xl gap-5 sm:grid-cols-2 sm:items-stretch">
+          <div className="mx-auto grid max-w-5xl gap-5 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch">
             {PLANS.map(plan => (
               <div key={plan.name} className={`relative flex flex-col rounded-2xl border bg-white p-6 ${plan.highlight ? "border-brand-400 ring-2 ring-brand-200 shadow-xl shadow-brand-100" : "border-slate-200"}`}>
                 {plan.badge && <div className="absolute left-1/2 -top-3.5 -translate-x-1/2 rounded-full bg-brand-600 px-3 py-1 text-xs font-bold text-white">{plan.badge}</div>}
@@ -707,83 +739,77 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* TRUST ROW */}
-      <section className="pb-16 sm:pb-20">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            {TRUST.map(t => (
-              <div key={t.label} className="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white p-5 text-center">
-                <Icon d={t.icon} className="h-7 w-7 text-brand-500" />
-                <span className="text-xs font-medium text-slate-600">{t.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* FINAL CTA */}
-      <section className="bg-brand-600 py-20 text-white">
-        <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
-          <h2 className="text-2xl font-extrabold sm:text-3xl lg:text-4xl">Start building a clearer, stronger business today.</h2>
-          <p className="mt-4 text-base text-white/80">Input your business data once. Use it to plan, operate, sell, simulate, and grow with intelligence.</p>
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <button type="button" onClick={() => goToApp()} className="w-full rounded-xl border border-white/40 bg-white/10 px-10 py-4 text-base font-semibold text-white transition hover:bg-white/20 active:scale-95 sm:w-auto">
-              Get Started Free
-            </button>
-            <Link to="/book-demo" className="flex w-full items-center justify-center rounded-xl bg-white px-10 py-4 text-base font-semibold text-brand-700 transition hover:bg-brand-50 active:scale-95 sm:w-auto">
-              Book a Demo
-            </Link>
-          </div>
-          <p className="mt-4 text-sm text-white/70">Free to start. No credit card required.</p>
-        </div>
-      </section>
-
-      {/* FAQ — at the footer */}
-      <section id="faq" className="bg-white py-16 sm:py-20">
-        <div className="mx-auto max-w-2xl px-4 sm:px-6">
-          <div className="mb-10 text-center">
-            <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Common Questions</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Everything you need to know</h2>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white px-4 sm:px-6">
-            {faqs.map(f => <FAQItem key={f.question || f.q} q={f.question || f.q} a={f.answer || f.a} />)}
+      <section className="py-4 sm:py-6">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
+          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-600 via-brand-600 to-purple-600 px-6 py-10 text-white sm:px-12 sm:py-14">
+            <div className="pointer-events-none absolute inset-0 opacity-[0.08]" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "28px 28px" }} />
+            <div className="relative flex flex-col items-center gap-8 text-center lg:flex-row lg:items-center lg:justify-between lg:text-left">
+              <div className="max-w-xl">
+                <h2 className="text-2xl font-extrabold sm:text-3xl">Build a More Resilient Business Today.</h2>
+                <p className="mt-3 text-sm leading-relaxed text-white/85 sm:text-base">
+                  Start with the business tools you need now. As your business develops, EnterprateAI gives you the intelligence to understand it more deeply, test important decisions and grow with greater clarity.
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-col items-center gap-3 sm:flex-row">
+                <button type="button" onClick={() => goToApp()} className="w-full rounded-xl bg-white px-8 py-3.5 text-sm font-semibold text-brand-700 shadow-lg transition hover:bg-brand-50 active:scale-95 sm:w-auto">
+                  Start Free
+                </button>
+                <Link to="/book-demo" className="flex w-full items-center justify-center rounded-xl border border-white/40 px-8 py-3.5 text-sm font-semibold text-white transition hover:bg-white/10 active:scale-95 sm:w-auto">
+                  Book a Demo
+                </Link>
+              </div>
+            </div>
+            <p className="absolute right-8 top-6 hidden -rotate-2 text-right text-sm leading-snug text-white/70 lg:block" style={{ fontFamily: "cursive" }}>
+              Ideas today.<br />A stronger tomorrow.
+            </p>
           </div>
         </div>
       </section>
 
       {/* FOOTER */}
-      <footer className="bg-slate-900 py-12">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="grid gap-10 sm:grid-cols-4">
+      <footer className="bg-white py-12 border-t border-slate-100">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
+          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
             <div>
               <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto" />
-              <p className="mt-4 text-sm leading-relaxed text-slate-400">The intelligent business decision engine for UK entrepreneurs. Navigate complexity with clarity and confidence.</p>
+              <p className="mt-3 max-w-[220px] text-sm leading-relaxed text-slate-500">AI-native Business Decision Intelligence for ambitious founders and businesses.</p>
             </div>
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-400">Legal &amp; Compliance</h4>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Product</h4>
               <ul className="mt-4 space-y-2">
-                <li><Link to="/legal/privacy" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> Privacy Policy</Link></li>
-                <li><Link to="/legal/terms" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> Terms of Service</Link></li>
-                <li><a href="https://ico.org.uk" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> ICO Website</a></li>
+                <li><a href="#hero" className="text-sm text-slate-500 hover:text-brand-600 transition">Features</a></li>
+                <li><a href="#pricing" className="text-sm text-slate-500 hover:text-brand-600 transition">Pricing</a></li>
+                <li><button type="button" onClick={() => goToFeature("/financials")} className="text-sm text-slate-500 hover:text-brand-600 transition">Integrations</button></li>
               </ul>
             </div>
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-400">Quick Links</h4>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Solutions</h4>
               <ul className="mt-4 space-y-2">
-                <li><a href="#faq" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> FAQ</a></li>
-                <li><Link to="/research" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> R&amp;D</Link></li>
-                <li><Link to="/blog" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> Articles</Link></li>
+                <li><a href="#activities" className="text-sm text-slate-500 hover:text-brand-600 transition">For Startups</a></li>
+                <li><Link to="/essentials" className="text-sm text-slate-500 hover:text-brand-600 transition">For Small Businesses</Link></li>
+                <li><a href="#how-it-works" className="text-sm text-slate-500 hover:text-brand-600 transition">For Growth</a></li>
               </ul>
             </div>
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-400">Contact Us</h4>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Resources</h4>
               <ul className="mt-4 space-y-2">
-                <li><a href="mailto:support@enterpate.ai" className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition"><Icon d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" className="h-3.5 w-3.5 shrink-0 text-slate-500" /> support@enterpate.ai</a></li>
+                <li><Link to="/blog" className="text-sm text-slate-500 hover:text-brand-600 transition">Blog</Link></li>
+                <li><Link to="/research" className="text-sm text-slate-500 hover:text-brand-600 transition">Guides</Link></li>
+                <li><a href="mailto:support@enterpate.ai" className="text-sm text-slate-500 hover:text-brand-600 transition">Help Centre</a></li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Company</h4>
+              <ul className="mt-4 space-y-2">
+                <li><Link to="/legal/privacy" className="text-sm text-slate-500 hover:text-brand-600 transition">Privacy Policy</Link></li>
+                <li><Link to="/legal/terms" className="text-sm text-slate-500 hover:text-brand-600 transition">Terms of Service</Link></li>
+                <li><a href="mailto:support@enterpate.ai" className="text-sm text-slate-500 hover:text-brand-600 transition">Contact</a></li>
               </ul>
             </div>
           </div>
-          <div className="mt-10 border-t border-slate-800 pt-6">
-            <p className="text-center text-xs text-slate-500">© {new Date().getFullYear()} Enterprate Limited. All rights reserved. Registered in England &amp; Wales.</p>
+          <div className="mt-10 border-t border-slate-100 pt-6 text-right">
+            <p className="text-xs text-slate-400">© {new Date().getFullYear()} EnterprateAI. All rights reserved.</p>
           </div>
         </div>
       </footer>

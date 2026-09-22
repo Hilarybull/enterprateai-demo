@@ -6,7 +6,6 @@ import logoUrl from "../enterprate-logo.png";
 import { useWorkspaceStore } from "../store/workspace";
 import BusinessAssistant from "./BusinessAssistant";
 import InviteModal from "./InviteModal";
-import OnboardingModal, { hasSeenOnboarding } from "./OnboardingModal";
 import WorkspacePrompt from "./WorkspacePrompt";
 import { ToastContainer } from "./Toast";
 import { WorkspaceProfilePanel } from "./WorkspaceProfileCard";
@@ -290,7 +289,6 @@ export default function Layout() {
   const [search, setSearch] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [onboardingOpen, setOnboardingOpen] = useState(true);
   const [theme, setTheme] = useState(() => localStorage.getItem("ea_theme") || "system");
   const profileRef = useRef(null);
   const notifRef = useRef(null);
@@ -300,6 +298,15 @@ export default function Layout() {
   const [notifications, setNotifications] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifToasts, setNotifToasts] = useState([]);
+  useEffect(() => {
+    function onToast(e) {
+      const { kind, title, message } = e.detail || {};
+      if (!message) return;
+      setNotifToasts((t) => [...t, { id: `${Date.now()}-${Math.random()}`, kind, title, message }]);
+    }
+    window.addEventListener("ea:toast", onToast);
+    return () => window.removeEventListener("ea:toast", onToast);
+  }, []);
   const dismissedNotifIds = useRef(new Set(JSON.parse(localStorage.getItem("ea_notif_dismissed") || "[]")));
   const seenNotifIds = useRef(new Set(JSON.parse(localStorage.getItem("ea_notif_seen") || "[]")));
   const [helpOpen, setHelpOpen] = useState(false);
@@ -362,10 +369,6 @@ export default function Layout() {
     ? (memberWorkspaceName || "Shared workspace")
     : (workspaceCompanyName || workspaceName || "My workspace");
   const email = useAuthStore((s) => s.email);
-
-  useEffect(() => {
-    if (email && hasSeenOnboarding(email)) setOnboardingOpen(false);
-  }, [email]);
 
   useEffect(() => {
     if (!workspaceSwitcherOpen) return;
@@ -803,17 +806,7 @@ export default function Layout() {
           <SidebarLink
             key={item.to}
             item={item}
-            onClick={(e) => {
-              const allowWithoutWorkspace = item.public && (item.to === "/marketplace" || item.to === "/referrals");
-              if (!workspaceId && !allowWithoutWorkspace) {
-                e.preventDefault();
-                setWorkspaceGateReturn(item.to);
-                setWorkspaceGateOpen(true);
-                setMobileOpen(false);
-                return;
-              }
-              setMobileOpen(false);
-            }}
+            onClick={() => setMobileOpen(false)}
             forceInactive={item.to === "/validation" && isCreateWorkspaceRoute}
             locked={item.locked}
             tourActive={
@@ -1547,9 +1540,6 @@ export default function Layout() {
           ctaTo={`/validation?from=module&return=${encodeURIComponent(workspaceGateReturn || "/dashboard")}`}
           onClose={() => setWorkspaceGateOpen(false)}
         />
-      )}
-      {onboardingOpen && !workspaceId && !demoTour?.active && (
-        <OnboardingModal onDismiss={() => setOnboardingOpen(false)} userId={email} />
       )}
       <ToastContainer toasts={notifToasts} onClose={(id) => setNotifToasts((t) => t.filter((x) => x.id !== id))} />
     </div>

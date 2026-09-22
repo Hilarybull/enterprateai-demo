@@ -4,7 +4,6 @@ import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
-import WorkspacePrompt from "../components/WorkspacePrompt";
 import Spinner from "../components/Spinner";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
@@ -37,7 +36,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [comingSoonFeature, setComingSoonFeature] = useState(null);
-  const [workspaceGateOpen, setWorkspaceGateOpen] = useState(false);
   const [livePlanSummary, setLivePlanSummary] = useState(null);
 
   function openComingSoon(feature) {
@@ -232,20 +230,20 @@ export default function DashboardPage() {
     </div>
   );
 
-  // 4 action cards shared between onboarded and non-onboarded views
+  // 3 action cards shared between onboarded and non-onboarded views
   const actionCards = (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {[
         {
-          title: "Create My Business Plan",
-          description: "Build a detailed, fundable business plan.",
-          cta: "Start Planning",
-          href: "/blueprint",
+          title: "Essentials",
+          description: "Create invoices, quotations, receipts and contracts.",
+          cta: "Open Essentials",
+          href: "/financials",
           icon: (
             <svg className="h-7 w-7 text-slate-700 dark:text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="4" y="2" width="13" height="18" rx="2" />
-              <path d="M8 7h6M8 11h6M8 15h4" />
-              <path d="M15 2v4h4" />
+              <path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" />
+              <path d="M15 2v5h5" />
+              <path d="M8 13h8M8 17h5" />
             </svg>
           ),
         },
@@ -277,20 +275,6 @@ export default function DashboardPage() {
             </svg>
           ),
         },
-        {
-          title: "Marketplace",
-          description: "Discover tools, templates, and services to grow your business.",
-          cta: "Browse Marketplace",
-          href: "/marketplace",
-          icon: (
-            <svg className="h-7 w-7 text-slate-700 dark:text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 9l1-5h16l1 5" />
-              <path d="M3 9a2 2 0 0 0 2 2 2 2 0 0 0 2-2 2 2 0 0 0 2 2 2 2 0 0 0 2-2 2 2 0 0 0 2 2 2 2 0 0 0 2-2" />
-              <path d="M5 11v9h14v-9" />
-              <path d="M10 15h4" />
-            </svg>
-          ),
-        },
       ].map((card) => (
         <div
           key={card.title}
@@ -303,9 +287,7 @@ export default function DashboardPage() {
           <div className="mt-1 flex-1 text-sm text-slate-500 dark:text-slate-400">{card.description}</div>
           <button
             type="button"
-            onClick={() => {
-              if (!workspaceId) { setWorkspaceGateOpen(true); } else { navigate(card.href); }
-            }}
+            onClick={() => navigate(card.href)}
             className="mt-4 w-full rounded-xl border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             {card.cta}
@@ -321,17 +303,6 @@ export default function DashboardPage() {
       {actionCards}
 
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
-
-      {workspaceGateOpen ? (
-        <WorkspacePrompt
-          modal
-          title="Create your workspace first"
-          subtitle="You need a workspace before you can use this feature."
-          ctaLabel="Set up workspace"
-          ctaTo="/validation?from=module&return=/dashboard"
-          onClose={() => setWorkspaceGateOpen(false)}
-        />
-      ) : null}
 
       <div>
         <div className="mb-3 mt-2 text-sm font-semibold text-slate-700 dark:text-slate-300">

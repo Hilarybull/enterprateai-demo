@@ -25,6 +25,17 @@ import { getProductCostOfSales, getProductSalesPrice } from "../lib/financialInt
 
 const OTHER_PRODUCT_ID = "__other__";
 
+// Amount actually received on an invoice, in the invoice's own currency. Recorded payments win,
+// then a partial paid_amount, otherwise a paid/delivered invoice is treated as fully received.
+function receivedOfInvoice(i) {
+  if (Array.isArray(i?.payments) && i.payments.length > 0) {
+    return i.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  }
+  return i?.payment_type === "partial" && i?.paid_amount != null
+    ? Number(i.paid_amount)
+    : Number(i?.total_amount || i?.subtotal_amount || 0);
+}
+
 function MultiProductDropdown({ products, selectedIds, onChange, placeholder = "Select products / services", disabled = false }) {
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -602,12 +613,30 @@ export default function FinancialsPage() {
       + partialInvs.reduce((s, i) => s + toWs(Math.max(0, Number(i.total_amount || 0) - receivedAmt(i)), i.currency), 0);
 
     const pendingPay = unpaidExps.reduce((s, e) => s + toWs(e.price || e.total_amount || 0, e.currency), 0);
+    const recDeliveredTotal = deliveredInvs.reduce((s, i) => s + toWs(i.total_amount || i.subtotal_amount || 0, i.currency), 0);
+    const recPartialTotal = partialInvs.reduce((s, i) => s + toWs(Math.max(0, Number(i.total_amount || 0) - receivedAmt(i)), i.currency), 0);
+    const revenuePaidTotal = revenueInvs.reduce((s, i) => s + toWs(i.total_amount || i.subtotal_amount || 0, i.currency), 0);
 
     // Revenue (full accrual) = full invoice amounts for paid + delivered
     const totalRevenue = revenueInvs.reduce((s, i) => s + toWs(i.total_amount || i.subtotal_amount || 0, i.currency), 0)
       + deliveredInvs.reduce((s, i) => s + toWs(i.total_amount || i.subtotal_amount || 0, i.currency), 0);
 
     // MRR = current calendar month's received revenue only; zero if nothing received this month
+    const currentMonthKey = (() => {
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth()).padStart(2, "0")}`;
+    })();
+    function sameMonth(record) {
+      const d = new Date(record?.paid_at || record?.issued_at || record?.created_at || record?.updated_at || "");
+      if (!Number.isFinite(d.getTime())) return false;
+      return `${d.getFullYear()}-${String(d.getMonth()).padStart(2, "0")}` === currentMonthKey;
+    }
+    function recordDate(record) {
+      return record?.paid_at || record?.issued_at || record?.created_at || record?.updated_at || null;
+    }
+    function sortByRecent(a, b) {
+      return new Date(recordDate(b) || 0) - new Date(recordDate(a) || 0);
+    }
     function currentMonthRev(items) {
       const now = new Date();
       const curKey = `${now.getFullYear()}-${String(now.getMonth()).padStart(2, "0")}`;
@@ -620,7 +649,84 @@ export default function FinancialsPage() {
     }
     const monthlyRev = currentMonthRev(revenueInvs);
     const arr = Number((monthlyRev * 12).toFixed(2));
-    return { totalRevenue, pendingRec, pendingPay, monthlyRev, overdueInvCount, cashBalance, arr, paidCoS };
+    const currentMonthPaidInvoices = revenueInvs.filter((i) => sameMonth(i)).sort(sortByRecent);
+    const revenueAccrualInvoices = [...revenueInvs, ...deliveredInvs].sort(sortByRecent);
+    const receivableInvoices = [
+      ...deliveredInvs,
+      ...partialInvs.map((i) => ({
+        ...i,
+        _remaining_balance: Math.max(0, Number(i.total_amount || 0) - receivedAmt(i)),
+      })),
+    ].sort(sortByRecent);
+    const costOfSalesInvoices = revenueInvs
+      .filter((i) => Number(i.cost_of_sales || 0) > 0)
+      .sort(sortByRecent);
+    const cashLedgerItems = [
+      ...revenueInvs.map((i) => ({
+        id: `cash-in-${i.id}`,
+        kind: "cash-in",
+        direction: "in",
+        customer_name: i.customer_name,
+        product_name: i.product_name,
+        product_names: i.product_names,
+        issued_at: recordDate(i),
+        total_amount: toWs(receivedAmt(i), i.currency),
+        currency: currency || "GBP",
+        status: "received",
+      })),
+      ...paidExps.map((e) => ({
+        id: `cash-out-expense-${e.id}`,
+        kind: "cash-out-expense",
+        direction: "out",
+        vendor_name: e.vendor_name || e.counterparty_name,
+        description: e.description || e.expense_type || e.item || "Expense",
+        issued_at: recordDate(e),
+        total_amount: toWs(e.price || e.total_amount || 0, e.currency),
+        currency: currency || "GBP",
+        status: "paid",
+      })),
+      ...revenueInvs.flatMap((i) => {
+        const total = Number(i.total_amount || i.subtotal_amount || 0);
+        const received = receivedAmt(i);
+        const cos = Number(i.cost_of_sales || 0);
+        const ratio = total > 0 ? received / total : 1;
+        const amount = toWs(cos * ratio, i.currency);
+        if (!amount) return [];
+        return [{
+          id: `cash-out-cos-${i.id}`,
+          kind: "cash-out-cos",
+          direction: "out",
+          customer_name: i.customer_name,
+          product_name: i.product_name,
+          product_names: i.product_names,
+          description: "Cost of sales",
+          issued_at: recordDate(i),
+          total_amount: amount,
+          currency: currency || "GBP",
+          status: "allocated",
+        }];
+      }),
+    ].sort(sortByRecent);
+    return {
+      totalRevenue,
+      pendingRec,
+      pendingPay,
+      monthlyRev,
+      overdueInvCount,
+      cashBalance,
+      arr,
+      paidCoS,
+      paidRevenue,
+      paidExpTotal,
+      recDeliveredTotal,
+      recPartialTotal,
+      revenuePaidTotal,
+      currentMonthPaidInvoices,
+      revenueAccrualInvoices,
+      receivableInvoices,
+      costOfSalesInvoices,
+      cashLedgerItems,
+    };
   }, [activeInvoices, activeExpenses, fxRates, currency]);
 
   const financialReportRows = useMemo(() => {
@@ -704,23 +810,25 @@ export default function FinancialsPage() {
 
   const overviewDrillItems = useMemo(() => {
     switch (overviewDrill?.type) {
-      case "invoices-active":
       case "invoices-paid":
         return activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid");
+      case "kpi-arr":
+      case "kpi-mrr":
+      case "kpi-revenue":
+      case "kpi-cos":
+        return Array.isArray(overviewDrill?.items) ? overviewDrill.items : [];
+      case "cash-balance":
+        return Array.isArray(overviewDrill?.items) ? overviewDrill.items : [];
       case "invoices-unpaid":
         return activeInvoices.filter((i) => {
           const s = String(i.status || "").toLowerCase();
           if (s === "delivered") return true;
-          if (s === "paid") {
-            const paid = i.payments?.length > 0
-              ? i.payments.reduce((a, p) => a + Number(p.amount), 0)
-              : (i.payment_type === "partial" ? Number(i.paid_amount || 0) : Number(i.total_amount || 0));
-            return paid < Number(i.total_amount || 0);
-          }
+          if (s === "paid") return receivedOfInvoice(i) < Number(i.total_amount || 0);
           return false;
         });
       case "invoices-overdue":
-        return activeInvoices.filter((i) => String(i.status || "").toLowerCase() !== "paid" && i.due_date && new Date(i.due_date) < new Date());
+        // Same rule as the tile count: delivered (unpaid) invoices whose due date has passed.
+        return activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" && i.due_date && new Date(i.due_date) < new Date());
       case "invoices-pending":
         return activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "pending");
       case "invoices-draft":
@@ -2470,12 +2578,12 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
         {/* KPI tiles */}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-9">
           {[
-            { label: "Annual Recurring Revenue", value: formatMoney(overviewKpis.arr), sub: "annualised from current revenue", tone: "slate", type: "invoices-paid", wide: true, items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
-            { label: "Revenue", value: formatMoney(overviewKpis.totalRevenue), sub: "paid + delivered (accrual)", tone: "emerald", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
-            { label: "Monthly run rate", value: formatMoney(overviewKpis.monthlyRev), sub: "from paid invoices", tone: "emerald", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
-            { label: "Cash", value: formatMoney(overviewKpis.cashBalance), sub: "paid in − paid out", tone: overviewKpis.cashBalance >= 0 ? "emerald" : "rose", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
-            { label: "Cost of Sales", value: formatMoney(overviewKpis.paidCoS), sub: "from paid invoices", tone: overviewKpis.paidCoS > 0 ? "amber" : "slate", type: "invoices-paid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid") },
-            { label: "Receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered").length} delivered · ${activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial").length} partial`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate", type: "invoices-unpaid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" || (String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial")) },
+            { label: "Annual Recurring Revenue", value: formatMoney(overviewKpis.arr), sub: "annualised from current month run rate", tone: "slate", type: "kpi-arr", wide: true, items: overviewKpis.currentMonthPaidInvoices },
+            { label: "Revenue", value: formatMoney(overviewKpis.totalRevenue), sub: "paid + delivered (accrual)", tone: "emerald", type: "kpi-revenue", items: overviewKpis.revenueAccrualInvoices },
+            { label: "Monthly run rate", value: formatMoney(overviewKpis.monthlyRev), sub: "from paid invoices this month", tone: "emerald", type: "kpi-mrr", items: overviewKpis.currentMonthPaidInvoices },
+            { label: "Cash", value: formatMoney(overviewKpis.cashBalance), sub: "paid in − paid out − cost of sales", tone: overviewKpis.cashBalance >= 0 ? "emerald" : "rose", type: "cash-balance", items: overviewKpis.cashLedgerItems },
+            { label: "Cost of Sales", value: formatMoney(overviewKpis.paidCoS), sub: "from paid invoices", tone: overviewKpis.paidCoS > 0 ? "amber" : "slate", type: "kpi-cos", items: overviewKpis.costOfSalesInvoices },
+            { label: "Receivables", value: formatMoney(overviewKpis.pendingRec), sub: `${activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered").length} delivered · ${activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "paid" && receivedOfInvoice(i) < Number(i.total_amount || 0)).length} partial`, tone: overviewKpis.pendingRec > 0 ? "amber" : "slate", type: "invoices-unpaid", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" || (String(i.status || "").toLowerCase() === "paid" && i.payment_type === "partial")) },
             { label: "Pending payables", value: formatMoney(overviewKpis.pendingPay), sub: `${expensePendingCount} unpaid expense${expensePendingCount !== 1 ? "s" : ""}`, tone: overviewKpis.pendingPay > 0 ? "rose" : "slate", type: "expenses-unpaid", items: activeExpenses.filter((e) => String(e.status || "").toLowerCase() !== "paid") },
             { label: "Overdue invoices", value: overviewKpis.overdueInvCount, sub: overviewKpis.overdueInvCount > 0 ? "require immediate action" : "all within terms", tone: overviewKpis.overdueInvCount > 0 ? "rose" : "emerald", type: "invoices-overdue", items: activeInvoices.filter((i) => String(i.status || "").toLowerCase() === "delivered" && i.due_date && new Date(i.due_date) < new Date()) },
           ].map((kpi) => {
@@ -2507,43 +2615,108 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
               </button>
             </div>
+            {(() => {
+              const k = overviewKpis;
+              const calc = {
+                "kpi-arr": `Monthly run rate ${formatMoney(k.monthlyRev)} × 12 months = ${formatMoney(k.arr)}`,
+                "kpi-revenue": `Paid invoices ${formatMoney(k.revenuePaidTotal)} + delivered, not yet paid ${formatMoney(k.recDeliveredTotal)} = ${formatMoney(k.totalRevenue)}`,
+                "kpi-mrr": `Cash received this month from paid invoices = ${formatMoney(k.monthlyRev)}`,
+                "cash-balance": `Cash in ${formatMoney(k.paidRevenue)} − expenses paid ${formatMoney(k.paidExpTotal)} − cost of sales ${formatMoney(k.paidCoS)} = ${formatMoney(k.cashBalance)}`,
+                "kpi-cos": `Cost of sales on paid invoices, in proportion to the amount received = ${formatMoney(k.paidCoS)}`,
+                "invoices-unpaid": `Delivered invoices ${formatMoney(k.recDeliveredTotal)} + balance still owed on part-paid invoices ${formatMoney(k.recPartialTotal)} = ${formatMoney(k.pendingRec)}`,
+                "expenses-unpaid": `Total of unpaid expenses = ${formatMoney(k.pendingPay)}`,
+                "invoices-overdue": `Delivered invoices past their due date = ${k.overdueInvCount}`,
+              }[overviewDrill.type];
+              return calc ? (
+                <div className="mb-3 rounded-xl bg-slate-50 px-3 py-2 text-[12px] tabular-nums text-slate-600">{calc}</div>
+              ) : null;
+            })()}
             {overviewDrillItems.length === 0 ? (
               <p className="text-[13px] text-slate-400 italic">No records found.</p>
             ) : (
               <div className="divide-y divide-slate-100 max-h-64 overflow-auto">
                 {overviewDrillItems.map((item) => {
+                  const isCashDrill = overviewDrill.type === "cash-balance";
+                  const cashDirection = isCashDrill ? String(item.direction || item.kind || "").toLowerCase() : "";
+                  const isCashOut = isCashDrill && cashDirection.includes("out");
+                  const isCashIn = isCashDrill && cashDirection.includes("in");
                   const isExp = overviewDrill.type.startsWith("expenses");
                   const isContract = overviewDrill.type.startsWith("contracts");
                   const isQuote = overviewDrill.type.startsWith("quotes");
-                  const name = isExp
-                    ? (item.vendor_name || item.counterparty_name || item.description || "Expense")
-                    : isContract
-                      ? (item.counterparty_name || item.title || "Contract")
-                      : isQuote
-                        ? (item.customer_name || "Quote")
-                        : (item.customer_name || "Invoice");
-                  const detail = isExp
-                    ? (item.description || item.expense_type || "")
-                    : isContract
-                      ? (item.contract_type || "")
-                      : (item.product_names?.join(", ") || item.product_name || "");
-                  const date = item.due_date
-                    ? `Due ${new Date(item.due_date).toLocaleDateString()}`
-                    : item.issued_at
-                      ? new Date(item.issued_at).toLocaleDateString()
-                      : "";
-                  const isPartialInv = !isExp && !isContract && !isQuote && item.status === "paid" && item.payment_type === "partial" && item.paid_amount != null;
-                  const isReceivablesDrill = overviewDrill.type === "invoices-unpaid";
-                  const amount = isPartialInv
-                    ? isReceivablesDrill
-                      ? Math.max(0, Number(item.total_amount || 0) - Number(item.paid_amount))
-                      : Number(item.paid_amount)
-                    : Number(item.total_amount || item.price || item.subtotal_amount || 0);
-                  const partialSub = isPartialInv
-                    ? isReceivablesDrill
-                      ? `${formatMoney(item.paid_amount, item.currency)} paid`
-                      : `${formatMoney(Math.max(0, Number(item.total_amount || 0) - Number(item.paid_amount)), item.currency)} remaining`
-                    : null;
+                  const name = isCashDrill
+                    ? (isCashOut
+                      ? (item.vendor_name || item.counterparty_name || item.description || "Cash outflow")
+                      : (item.customer_name || item.product_name || item.description || "Cash inflow"))
+                    : isExp
+                      ? (item.vendor_name || item.counterparty_name || item.description || "Expense")
+                      : isContract
+                        ? (item.counterparty_name || item.title || "Contract")
+                        : isQuote
+                          ? (item.customer_name || "Quote")
+                          : (item.customer_name || "Invoice");
+                  const detail = isCashDrill
+                    ? (item.description || item.product_names?.join(", ") || item.product_name || (isCashOut ? "Cash outflow" : "Cash inflow"))
+                    : isExp
+                      ? (item.description || item.expense_type || "")
+                      : isContract
+                        ? (item.contract_type || "")
+                        : (item.product_names?.join(", ") || item.product_name || "");
+                  const date = isCashDrill
+                    ? (item.issued_at
+                      ? `Recorded ${new Date(item.issued_at).toLocaleDateString()}`
+                      : item.due_date
+                        ? `Due ${new Date(item.due_date).toLocaleDateString()}`
+                        : "")
+                    : item.due_date
+                      ? `Due ${new Date(item.due_date).toLocaleDateString()}`
+                      : item.issued_at
+                        ? new Date(item.issued_at).toLocaleDateString()
+                        : "";
+                  const dType = overviewDrill.type;
+                  const isInvoiceRow = !isCashDrill && !isExp && !isContract && !isQuote;
+                  const invTotal = Number(item.total_amount || item.subtotal_amount || 0);
+                  const invReceived = isInvoiceRow ? receivedOfInvoice(item) : 0;
+                  const isPartialInv = isInvoiceRow && item.status === "paid" && invReceived < invTotal;
+                  const isReceivablesDrill = dType === "invoices-unpaid";
+                  // Each expanded row shows the figure that actually feeds the tile it belongs to
+                  // (received cash for run rate / ARR, cost of sales for the CoS tile, the
+                  // outstanding balance for receivables), not always the invoice total.
+                  const amount = isCashDrill
+                    ? Number(item.total_amount || item.price || item.subtotal_amount || 0) * (isCashOut ? -1 : 1)
+                    : dType === "kpi-arr" || dType === "kpi-mrr"
+                      ? invReceived
+                      : dType === "kpi-cos"
+                        ? Number(item.cost_of_sales || 0) * (invTotal > 0 ? invReceived / invTotal : 1)
+                        : isReceivablesDrill
+                          ? Math.max(0, invTotal - (item.status === "paid" ? invReceived : 0))
+                          : Number(item.total_amount || item.price || item.subtotal_amount || 0);
+                  const partialSub = isCashDrill
+                    ? null
+                    : dType === "kpi-cos"
+                      ? `on a ${formatMoney(invTotal, item.currency)} invoice`
+                      : isPartialInv
+                        ? isReceivablesDrill
+                          ? `${formatMoney(invReceived, item.currency)} paid of ${formatMoney(invTotal, item.currency)}`
+                          : dType === "kpi-arr" || dType === "kpi-mrr"
+                            ? `${formatMoney(invReceived, item.currency)} received of ${formatMoney(invTotal, item.currency)}`
+                            : `${formatMoney(Math.max(0, invTotal - invReceived), item.currency)} remaining`
+                        : null;
+                  const statusText = isCashDrill
+                    ? (isCashOut ? "cash out" : "cash in")
+                    : isPartialInv
+                      ? "partial"
+                      : item.status || "—";
+                  const statusTone = isCashDrill
+                    ? (isCashOut ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700")
+                    : isPartialInv
+                      ? "bg-violet-50 text-violet-700"
+                      : item.status === "paid" || item.status === "signed"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : item.status === "delivered"
+                          ? "bg-blue-50 text-blue-700"
+                          : item.status === "pending"
+                            ? "bg-amber-50 text-amber-700"
+                            : "bg-slate-100 text-slate-500";
                   return (
                     <div key={item.id} className="flex items-center justify-between gap-4 py-2.5">
                       <div className="min-w-0">
@@ -2551,7 +2724,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                         <div className="text-[11px] text-slate-400">{[detail, date, partialSub].filter(Boolean).join(" · ")}</div>
                       </div>
                       <div className="shrink-0 flex flex-col items-end gap-0.5">
-                        <span className="text-sm font-semibold text-slate-800">{formatMoney(amount, item.currency)}</span>
+                        <span className="text-sm font-semibold text-slate-800">{isCashDrill ? formatMoney(amount) : formatMoney(amount, item.currency)}</span>
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${isPartialInv ? "bg-violet-50 text-violet-700" : item.status === "paid" || item.status === "signed" ? "bg-emerald-50 text-emerald-700" : item.status === "delivered" ? "bg-blue-50 text-blue-700" : item.status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
                           {isPartialInv ? "partial" : item.status || "—"}
                         </span>

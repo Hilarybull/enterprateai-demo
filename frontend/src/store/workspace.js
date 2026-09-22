@@ -1,5 +1,44 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { apiRequest } from "../api/client";
+
+// Dedupes concurrent callers (e.g. React StrictMode's double effect invocation, or two
+// gated pages mounting close together) so a workspace-less user never ends up with two
+// silently-created workspaces from one navigation.
+let ensureInFlight = null;
+
+// Creates a default workspace for the current user if they don't have one yet, and makes
+// it the active workspace. Used to let feature pages (Catalogue, Financials, Simulation,
+// etc.) work immediately without forcing a "set up your workspace" step first - the first
+// save just needs somewhere to land.
+export async function ensureWorkspaceId() {
+  const state = useWorkspaceStore.getState();
+  if (state.workspaceId) return state.workspaceId;
+  if (ensureInFlight) return ensureInFlight;
+  ensureInFlight = apiRequest("/validation/me", "PATCH", { name: "My workspace", data: {} })
+    .then((ws) => {
+      useWorkspaceStore.getState().setWorkspaceId(ws.id);
+      useWorkspaceStore.getState().setWorkspaceName(ws.name || "My workspace");
+      try {
+        window.dispatchEvent(
+          new CustomEvent("ea:toast", {
+            detail: {
+              kind: "info",
+              title: "Workspace created",
+              message: "We set up a workspace so this is saved. Rename it anytime from the sidebar.",
+            },
+          })
+        );
+      } catch {
+        // Toast is a nicety, never block on it.
+      }
+      return ws.id;
+    })
+    .finally(() => {
+      ensureInFlight = null;
+    });
+  return ensureInFlight;
+}
 
 export const useWorkspaceStore = create(
   persist(
