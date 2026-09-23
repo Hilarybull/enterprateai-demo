@@ -89,7 +89,7 @@
 .lg-grid {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 875fr) minmax(0, 492fr);
+  grid-template-columns: minmax(0, 1fr) clamp(430px, 32vw, 492px);
   column-gap: 26px;
   align-items: start;
   width: 100%;
@@ -102,30 +102,28 @@
   position: relative;
   width: 100%;
   max-width: 875px;
-  height: 1038px;
+  height: auto;
   border: 1px solid rgba(255, 255, 255, 0.85);
   border-radius: 34px;
   background: linear-gradient(180deg, #f7f8fd 0%, #f6f9fe 45%, #fafbff 100%);
   box-shadow: 0 22px 64px -18px rgba(102, 124, 224, 0.16);
-  padding: 118px 0 0 56px;
+  padding: 48px 24px 40px 56px;
 }
 .lg-left-head {
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 110px;
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 32px;
   pointer-events: none;
 }
 .lg-left-logo {
-  position: absolute;
-  top: 26px;
-  left: 60px;
   width: 286px;
   height: auto;
 }
 .lg-pill {
-  position: absolute;
-  top: 32px;
-  right: 47px;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -148,11 +146,11 @@
 }
 
 .lg-h1 {
-  max-width: 620px;
-  font-size: clamp(42px, 3.4vw, 66px);
-  line-height: 0.96;
-  font-weight: 700;
-  letter-spacing: -0.037em;
+  max-width: 740px;
+  font-size: clamp(42px, 4vw, 60px);
+  line-height: 1.02;
+  font-weight: 800;
+  letter-spacing: -0.03em;
   white-space: normal;
   color: var(--lg-ink);
 }
@@ -167,7 +165,7 @@
   color: var(--lg-red);
 }
 .lg-lead {
-  max-width: 560px;
+  max-width: 610px;
   white-space: normal;
   margin-top: 16px;
   font-size: clamp(17px, 1.45vw, 22.55px);
@@ -175,7 +173,7 @@
   font-weight: 400;
   letter-spacing: -0.006em;
   color: var(--lg-muted);
-  text-align: justify;
+  text-align: left;
   text-wrap: pretty;
 }
 .lg-bold {
@@ -190,34 +188,36 @@
 
 /* Feature groups */
 .lg-groups {
-  position: absolute;
-  top: 389px;
-  left: 22px;
-  right: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 32px;
 }
 .lg-group {
   position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 24px;
   border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.7);
 }
-.lg-group + .lg-group {
-  margin-top: 16px;
-}
 .lg-group-ess {
-  height: 156px;
   background: linear-gradient(100deg, #ebf9f3 0%, #eef8f7 60%, #eff8f8 100%);
 }
 .lg-group-plan {
-  height: 159px;
   background: linear-gradient(100deg, #ecf3fe 0%, #edf4fe 100%);
 }
 .lg-group-dec {
-  height: 161px;
   background: linear-gradient(100deg, #f1effc 0%, #f3f1fe 100%);
 }
+.lg-group-body {
+  flex: 1;
+  min-width: 0;
+}
 .lg-tile {
-  position: absolute;
-  left: 20px;
+  position: static;
+  flex: none;
   width: 60px;
   height: 60px;
   border-radius: 17px;
@@ -231,23 +231,18 @@
   height: 34px;
 }
 .lg-tile-ess {
-  top: 23px;
   background: linear-gradient(140deg, #2fd3a8 0%, #00b98f 100%);
   box-shadow: 0 10px 20px -8px rgba(0, 170, 130, 0.45);
 }
 .lg-tile-plan {
-  top: 27px;
   background: linear-gradient(140deg, #6b97ff 0%, #3a72fb 100%);
 }
 .lg-tile-dec {
-  top: 29px;
   background: linear-gradient(140deg, #a56cf7 0%, #7a3cff 100%);
   box-shadow: 0 10px 20px -8px rgba(122, 60, 255, 0.4);
 }
 .lg-group-title {
-  position: absolute;
-  left: 109px;
-  top: 32px;
+  position: static;
   font-size: 20.5px;
   line-height: 26px;
   font-weight: 700;
@@ -257,75 +252,65 @@
 .lg-group-title-plan { color: #1b45d6; }
 .lg-group-title-dec { color: #4b21d4; }
 .lg-group-sub {
-  position: absolute;
-  left: 109px;
-  top: 58px;
+  position: static;
+  margin-top: 4px;
   font-size: 16.3px;
   line-height: 22px;
   font-weight: 400;
   color: #66708d;
 }
 .lg-chips {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 24px;
+  position: static;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  width: auto;
+  height: auto;
+  margin-top: 14px;
 }
-.lg-group-ess .lg-chips { top: 106px; }
-.lg-group-plan .lg-chips { top: 109px; }
-.lg-group-dec .lg-chips { top: 112px; }
-.lg-chips .lg-chip { position: absolute; top: 0; }
-.lg-group-ess .lg-chip:nth-child(1) { left: 26px; }
-.lg-group-ess .lg-chip:nth-child(2) { left: 169px; }
-.lg-group-ess .lg-chip:nth-child(3) { left: 332px; }
-.lg-group-ess .lg-chip:nth-child(4) { left: 477px; }
-.lg-group-ess .lg-chip:nth-child(5) { left: 633px; }
-.lg-group-plan .lg-chip:nth-child(1) { left: 20px; }
-.lg-group-plan .lg-chip:nth-child(2) { left: 204px; }
-.lg-group-plan .lg-chip:nth-child(3) { left: 354px; }
-.lg-group-plan .lg-chip:nth-child(4) { left: 524px; }
-.lg-group-plan .lg-chip:nth-child(5) { left: 691px; }
-.lg-group-dec .lg-chip:nth-child(1) { left: 20px; }
-.lg-group-dec .lg-chip:nth-child(2) { left: 181px; }
-.lg-group-dec .lg-chip:nth-child(3) { left: 341px; }
-.lg-group-dec .lg-chip:nth-child(4) { left: 503px; }
-.lg-group-dec .lg-chip:nth-child(5) { left: 664px; }
+.lg-chips .lg-chip {
+  position: relative;
+  top: auto;
+}
 .lg-chip {
   display: flex;
   align-items: center;
-  gap: 17px;
+  gap: 10px;
+  padding: 0 18px;
   white-space: nowrap;
   font-size: 14.8px;
   font-weight: 400;
   color: #566080;
 }
+.lg-chip:first-child {
+  padding-left: 0;
+}
 .lg-chip + .lg-chip::before {
   content: "";
   position: absolute;
-  left: -29px;
+  left: 0;
   top: 50%;
   width: 1px;
-  height: 30px;
+  height: 22px;
   transform: translateY(-50%);
   background: #dde3ef;
 }
 .lg-group-plan .lg-chip {
-  gap: 9px;
-  font-size: 11.8px;
+  gap: 3px;
+  padding: 0 3px;
+  font-size: 10px;
   letter-spacing: -0.02em;
 }
-.lg-group-plan .lg-chip-squeeze {
-  letter-spacing: -0.095em;
-}
-.lg-group-plan .lg-chip + .lg-chip::before {
-  left: -14px;
+.lg-group-plan .lg-chip:first-child {
+  padding-left: 0;
 }
 .lg-group-dec .lg-chip {
-  gap: 11px;
-  font-size: 13.2px;
+  gap: 4px;
+  padding: 0 5px;
+  font-size: 11.5px;
 }
-.lg-group-dec .lg-chip + .lg-chip::before {
-  left: -17px;
+.lg-group-dec .lg-chip:first-child {
+  padding-left: 0;
 }
 .lg-dot {
   flex: none;
@@ -345,11 +330,13 @@
 .lg-dot-dec { background: #7c44f5; }
 
 .lg-trust {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 950px;
-  height: 84px;
+  position: relative;
+  margin-top: 32px;
+  padding-top: 26px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px 40px;
 }
 .lg-trust::before {
   content: "";
@@ -361,8 +348,6 @@
   background: #e0e3ea;
 }
 .lg-trust-item {
-  position: absolute;
-  top: 26px;
   display: flex;
   align-items: center;
   gap: 15px;
@@ -370,9 +355,6 @@
   font-size: 14.9px;
   color: #5c5f82;
 }
-.lg-trust-item:nth-child(1) { left: 126px; }
-.lg-trust-item:nth-child(2) { left: 298px; }
-.lg-trust-item:nth-child(3) { left: 564px; }
 .lg-ring-check {
   width: 26px;
   height: 26px;
@@ -385,6 +367,7 @@
   width: 100%;
   max-width: 492px;
   min-width: 0;
+  padding-bottom: 90px;
 }
 .lg-topline {
   display: flex;
@@ -406,8 +389,7 @@
 }
 .lg-card {
   position: relative;
-  min-height: 770px;
-  padding: 56px 41px 16px;
+  padding: 56px 41px 32px;
   border: 1px solid rgba(255, 255, 255, 0.9);
   border-radius: 34px;
   background: #fefefe;
@@ -706,9 +688,8 @@
    along with everything else instead of it overlapping the trust row underneath. */
 .lg-tagline {
   position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 18px;
+  right: 10px;
+  bottom: 6px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -737,7 +718,7 @@
     padding: 18px 20px 8px;
   }
   .lg-grid {
-    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    grid-template-columns: minmax(0, 1fr) clamp(400px, 34vw, 492px);
     column-gap: 12px;
   }
   .lg-left {
@@ -767,12 +748,13 @@
     line-height: 13px;
   }
   .lg-h1 {
-    max-width: 490px;
-    font-size: clamp(33px, 2.2vw, 50px);
-    line-height: 0.98;
+    max-width: 720px;
+    font-size: clamp(40px, 4vw, 58px);
+    line-height: 1.02;
+    letter-spacing: -0.03em;
   }
   .lg-lead {
-    max-width: 500px;
+    max-width: 610px;
     font-size: 16px;
   }
   .lg-bold {
@@ -787,55 +769,50 @@
     gap: 12px;
     margin-top: 20px;
   }
+  .lg-group {
+    gap: 14px;
+    padding: 16px;
+  }
   .lg-group-ess,
   .lg-group-plan,
   .lg-group-dec {
-    height: auto;
-    min-height: 104px;
-    padding: 16px 16px 16px 86px;
+    min-height: 96px;
+  }
+  .lg-tile {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+  }
+  .lg-tile-icon {
+    width: 26px;
+    height: 26px;
   }
   .lg-group-title {
-    position: static;
-    left: auto;
-    top: auto;
     font-size: 14px;
     line-height: 18px;
   }
   .lg-group-sub {
-    position: static;
-    left: auto;
-    top: auto;
     margin-top: 3px;
     font-size: 11px;
     line-height: 15px;
   }
-  .lg-chips,
-  .lg-group-ess .lg-chips,
-  .lg-group-plan .lg-chips,
-  .lg-group-dec .lg-chips {
-    position: static;
-    display: flex;
-    flex-wrap: wrap;
-    width: auto;
-    height: auto;
-    margin-top: 12px;
-    gap: 8px 16px;
+  .lg-chips {
+    margin-top: 10px;
   }
-  .lg-chips .lg-chip,
-  .lg-group-ess .lg-chip,
-  .lg-group-plan .lg-chip,
+  .lg-chip {
+    font-size: 14px;
+    padding: 0 10px;
+    gap: 6px;
+  }
   .lg-group-dec .lg-chip {
-    position: static;
-    left: auto;
-    top: auto;
-    white-space: normal;
-    font-size: 11px;
-    gap: 8px;
+    font-size: clamp(11.5px, calc(3.5px + 0.625vw), 12.5px);
+    padding: 0 5px;
+    gap: 4px;
   }
-  .lg-chip + .lg-chip::before,
-  .lg-group-plan .lg-chip + .lg-chip::before,
-  .lg-group-dec .lg-chip + .lg-chip::before {
-    content: none;
+  .lg-group-plan .lg-chip {
+    font-size: clamp(10px, calc(2px + 0.625vw), 11px);
+    padding: 0 3px;
+    gap: 3px;
   }
   .lg-trust {
     position: static;
@@ -859,8 +836,7 @@
     gap: 10px;
   }
   .lg-card {
-    min-height: 500px;
-    padding: 22px 22px 8px;
+    padding: 22px 22px 32px;
   }
   .lg-card-logo {
     width: 200px;
@@ -897,15 +873,18 @@
   }
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1279px) {
   .lg-page {
     padding: 18px 20px 8px;
   }
   .lg-grid {
-    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    grid-template-columns: minmax(0, 1fr) minmax(400px, 440px);
     column-gap: 12px;
     width: 100%;
     max-width: 100%;
+  }
+  .lg-right {
+    max-width: 440px;
   }
   .lg-left {
     height: auto;
@@ -935,8 +914,9 @@
   }
   .lg-h1 {
     max-width: 500px;
-    font-size: clamp(34px, 2.5vw, 52px);
-    line-height: 0.98;
+    font-size: clamp(38px, 3.2vw, 54px);
+    line-height: 1.02;
+    letter-spacing: -0.03em;
     white-space: normal;
   }
   .lg-lead {
@@ -956,24 +936,29 @@
     gap: 14px;
     margin-top: 22px;
   }
+  .lg-group {
+    gap: 16px;
+    padding: 20px 18px;
+  }
   .lg-group-ess,
   .lg-group-plan,
   .lg-group-dec {
-    height: auto;
     min-height: 118px;
-    padding: 20px 18px 20px 92px;
+  }
+  .lg-tile {
+    width: 52px;
+    height: 52px;
+    border-radius: 15px;
+  }
+  .lg-tile-icon {
+    width: 28px;
+    height: 28px;
   }
   .lg-group-title {
-    position: static;
-    left: auto;
-    top: auto;
     font-size: 16px;
     line-height: 20px;
   }
   .lg-group-sub {
-    position: static;
-    left: auto;
-    top: auto;
     margin-top: 4px;
     font-size: 13px;
     line-height: 17px;
@@ -982,24 +967,20 @@
   .lg-group-ess .lg-chips,
   .lg-group-plan .lg-chips,
   .lg-group-dec .lg-chips {
-    position: static;
-    display: flex;
     flex-wrap: wrap;
-    width: auto;
-    height: auto;
     margin-top: 14px;
-    gap: 8px 18px;
+    row-gap: 8px;
+    column-gap: 16px;
   }
-  .lg-chips .lg-chip,
-  .lg-group-ess .lg-chip,
+  .lg-chip,
   .lg-group-plan .lg-chip,
   .lg-group-dec .lg-chip {
-    position: static;
-    left: auto;
-    top: auto;
     white-space: normal;
-    font-size: 12px;
-    gap: 9px;
+    font-size: 13px;
+    padding: 0;
+  }
+  .lg-chip:first-child {
+    padding-left: 0;
   }
   .lg-chip + .lg-chip::before,
   .lg-group-plan .lg-chip + .lg-chip::before,
@@ -1025,8 +1006,7 @@
     font-size: 12px;
   }
   .lg-card {
-    min-height: 720px;
-    padding: 34px 22px 12px;
+    padding: 34px 22px 32px;
   }
   .lg-card-logo {
     width: 216px;
@@ -1079,7 +1059,7 @@
    on screen. Its desktop version is built entirely from pixel-absolute offsets tuned to
    an exact 1452x1083 design, which can't reflow, so every one of those children gets a
    normal-flow override here rather than just being hidden. */
-@media (max-width: 1024px) {
+@media (max-width: 1023px) {
   .lg-page {
     padding: 20px 18px 20px;
   }
@@ -1099,9 +1079,10 @@
   }
   .lg-right {
     order: -1;
-    max-width: 520px;
+    max-width: 460px;
     width: 100%;
     margin: 0 auto;
+    padding-bottom: 0;
   }
   .lg-left {
     order: 1;
@@ -1186,6 +1167,8 @@
     margin-top: 22px;
   }
   .lg-group {
+    flex-direction: column;
+    gap: 0;
     height: auto;
     padding: 18px;
   }
@@ -1233,9 +1216,21 @@
     top: auto;
     white-space: normal;
   }
-  .lg-chip,
-  .lg-group-plan .lg-chip,
+  .lg-chip {
+    padding: 0;
+    gap: 17px;
+    font-size: 13px;
+    letter-spacing: normal;
+  }
+  .lg-group-plan .lg-chip {
+    padding: 0;
+    gap: 9px;
+    font-size: 13px;
+    letter-spacing: normal;
+  }
   .lg-group-dec .lg-chip {
+    padding: 0;
+    gap: 11px;
     font-size: 13px;
     letter-spacing: normal;
   }
@@ -1274,9 +1269,6 @@
   .lg-grid {
     grid-template-columns: minmax(0, 1fr);
     row-gap: 0;
-  }
-  .lg-right {
-    max-width: 100%;
   }
   .lg-left {
     display: none;

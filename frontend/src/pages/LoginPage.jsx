@@ -332,9 +332,7 @@ export default function LoginPage() {
             <span className="lg-w lg-w-intel lg-h1-accent">Intelligence.</span>
           </h1>
           <p className="lg-lead">
-            Validate your idea, build your business plan, understand your risks,
-            <br />
-            and simulate decisions before you act, all from one business workspace.
+            Validate your idea, build your business plan, understand your risks, and simulate decisions before you act, all from one business workspace.
           </p>
           <p className="lg-bold">Get your first business insight in less than 20 minutes.</p>
 
@@ -344,16 +342,18 @@ export default function LoginPage() {
                 <div className={`lg-tile lg-tile-${g.key}`}>
                   <GroupIcon kind={g.key} />
                 </div>
-                <div className={`lg-group-title lg-group-title-${g.key}`}>{g.title}</div>
-                <div className="lg-group-sub">{g.sub}</div>
-                <ul className="lg-chips">
-                  {g.items.map((item, i) => (
-                    <li key={item} className={"lg-chip" + (g.key === "plan" && i === 0 ? " lg-chip-squeeze" : "")}>
-                      <CheckDot tone={g.key} />
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
+                <div className="lg-group-body">
+                  <div className={`lg-group-title lg-group-title-${g.key}`}>{g.title}</div>
+                  <div className="lg-group-sub">{g.sub}</div>
+                  <ul className="lg-chips">
+                    {g.items.map((item) => (
+                      <li key={item} className="lg-chip">
+                        <CheckDot tone={g.key} />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             ))}
           </div>
