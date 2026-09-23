@@ -76,9 +76,14 @@
 .lg-fit-frame {
   position: relative;
   overflow: hidden;
+  display: flex;
+  justify-content: center;
 }
 .lg-fit {
   width: 100%;
+  max-width: 1452px;
+  flex: none;
+  margin: 0 auto;
 }
 
 .lg-grid {
@@ -87,11 +92,16 @@
   grid-template-columns: minmax(0, 875fr) minmax(0, 492fr);
   column-gap: 26px;
   align-items: start;
+  width: 100%;
+  max-width: 1452px;
+  margin: 0 auto;
 }
 
 /* ───────── Left panel ───────── */
 .lg-left {
   position: relative;
+  width: 100%;
+  max-width: 875px;
   height: 1038px;
   border: 1px solid rgba(255, 255, 255, 0.85);
   border-radius: 34px;
@@ -138,11 +148,12 @@
 }
 
 .lg-h1 {
-  font-size: 66px;
-  line-height: 62px;
+  max-width: 620px;
+  font-size: clamp(42px, 3.4vw, 66px);
+  line-height: 0.96;
   font-weight: 700;
   letter-spacing: -0.037em;
-  white-space: nowrap;
+  white-space: normal;
   color: var(--lg-ink);
 }
 .lg-w-build { letter-spacing: -0.038em; }
@@ -156,18 +167,22 @@
   color: var(--lg-red);
 }
 .lg-lead {
-  white-space: nowrap;
+  max-width: 560px;
+  white-space: normal;
   margin-top: 16px;
-  font-size: 22.55px;
-  line-height: 34px;
+  font-size: clamp(17px, 1.45vw, 22.55px);
+  line-height: 1.45;
   font-weight: 400;
   letter-spacing: -0.006em;
   color: var(--lg-muted);
+  text-align: justify;
+  text-wrap: pretty;
 }
 .lg-bold {
+  max-width: 520px;
   margin-top: 13px;
-  font-size: 22.6px;
-  line-height: 30px;
+  font-size: clamp(17px, 1.5vw, 22.6px);
+  line-height: 1.35;
   font-weight: 700;
   letter-spacing: -0.008em;
   color: var(--lg-navy);
@@ -367,6 +382,8 @@
 /* ───────── Right column ───────── */
 .lg-right {
   position: relative;
+  width: 100%;
+  max-width: 492px;
   min-width: 0;
 }
 .lg-topline {
@@ -375,7 +392,7 @@
   align-items: center;
   gap: 21px;
   height: 20px;
-  margin: 28px 38px 48px 0;
+  margin: 20px 38px 28px 0;
   font-size: 14.3px;
   color: #5b6076;
 }
@@ -715,43 +732,414 @@
   color: #8f95e0;
 }
 
+@media (max-width: 1440px) {
+  .lg-page {
+    padding: 18px 20px 8px;
+  }
+  .lg-grid {
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    column-gap: 12px;
+  }
+  .lg-left {
+    height: auto;
+    padding: 36px 26px 30px 28px;
+  }
+  .lg-left-head {
+    position: static;
+    height: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .lg-left-logo {
+    position: static;
+    width: 210px;
+  }
+  .lg-pill {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 8px 16px 8px 15px;
+    font-size: 9.5px;
+    line-height: 13px;
+  }
+  .lg-h1 {
+    max-width: 490px;
+    font-size: clamp(33px, 2.2vw, 50px);
+    line-height: 0.98;
+  }
+  .lg-lead {
+    max-width: 500px;
+    font-size: 16px;
+  }
+  .lg-bold {
+    max-width: 470px;
+    font-size: 16px;
+    line-height: 1.22;
+  }
+  .lg-groups {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .lg-group-ess,
+  .lg-group-plan,
+  .lg-group-dec {
+    height: auto;
+    min-height: 104px;
+    padding: 16px 16px 16px 86px;
+  }
+  .lg-group-title {
+    position: static;
+    left: auto;
+    top: auto;
+    font-size: 14px;
+    line-height: 18px;
+  }
+  .lg-group-sub {
+    position: static;
+    left: auto;
+    top: auto;
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: 15px;
+  }
+  .lg-chips,
+  .lg-group-ess .lg-chips,
+  .lg-group-plan .lg-chips,
+  .lg-group-dec .lg-chips {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    width: auto;
+    height: auto;
+    margin-top: 12px;
+    gap: 8px 16px;
+  }
+  .lg-chips .lg-chip,
+  .lg-group-ess .lg-chip,
+  .lg-group-plan .lg-chip,
+  .lg-group-dec .lg-chip {
+    position: static;
+    left: auto;
+    top: auto;
+    white-space: normal;
+    font-size: 11px;
+    gap: 8px;
+  }
+  .lg-chip + .lg-chip::before,
+  .lg-group-plan .lg-chip + .lg-chip::before,
+  .lg-group-dec .lg-chip + .lg-chip::before {
+    content: none;
+  }
+  .lg-trust {
+    position: static;
+    height: auto;
+    margin-top: 22px;
+    padding-top: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 10px 24px;
+  }
+  .lg-trust::before {
+    left: 0;
+    right: 0;
+  }
+  .lg-trust-item {
+    position: static;
+  }
+  .lg-topline {
+    margin: 8px 18px 12px 0;
+    gap: 10px;
+  }
+  .lg-card {
+    min-height: 500px;
+    padding: 22px 22px 8px;
+  }
+  .lg-card-logo {
+    width: 200px;
+  }
+  .lg-welcome {
+    margin-top: 12px;
+    font-size: 27px;
+    line-height: 33px;
+  }
+  .lg-signsub {
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .lg-form {
+    margin-top: 20px;
+  }
+  .lg-field + .lg-field {
+    margin-top: 16px;
+  }
+  .lg-submit {
+    height: 52px;
+    margin-top: 22px;
+    font-size: 18px;
+  }
+  .lg-google {
+    height: 52px;
+    margin-top: 16px;
+  }
+  .lg-switch {
+    margin-top: 20px;
+  }
+  .lg-secure {
+    margin-top: 14px;
+  }
+}
+
+@media (max-width: 1280px) {
+  .lg-page {
+    padding: 18px 20px 8px;
+  }
+  .lg-grid {
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    column-gap: 12px;
+    width: 100%;
+    max-width: 100%;
+  }
+  .lg-left {
+    height: auto;
+    padding: 40px 28px 32px 30px;
+  }
+  .lg-left-head {
+    position: static;
+    height: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .lg-left-logo {
+    position: static;
+    width: 210px;
+  }
+  .lg-pill {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 9px 18px;
+    font-size: 10px;
+    line-height: 14px;
+  }
+  .lg-h1 {
+    max-width: 500px;
+    font-size: clamp(34px, 2.5vw, 52px);
+    line-height: 0.98;
+    white-space: normal;
+  }
+  .lg-lead {
+    max-width: 520px;
+    font-size: 17px;
+    line-height: 1.35;
+  }
+  .lg-bold {
+    max-width: 480px;
+    font-size: 17px;
+    line-height: 1.25;
+  }
+  .lg-groups {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 22px;
+  }
+  .lg-group-ess,
+  .lg-group-plan,
+  .lg-group-dec {
+    height: auto;
+    min-height: 118px;
+    padding: 20px 18px 20px 92px;
+  }
+  .lg-group-title {
+    position: static;
+    left: auto;
+    top: auto;
+    font-size: 16px;
+    line-height: 20px;
+  }
+  .lg-group-sub {
+    position: static;
+    left: auto;
+    top: auto;
+    margin-top: 4px;
+    font-size: 13px;
+    line-height: 17px;
+  }
+  .lg-chips,
+  .lg-group-ess .lg-chips,
+  .lg-group-plan .lg-chips,
+  .lg-group-dec .lg-chips {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    width: auto;
+    height: auto;
+    margin-top: 14px;
+    gap: 8px 18px;
+  }
+  .lg-chips .lg-chip,
+  .lg-group-ess .lg-chip,
+  .lg-group-plan .lg-chip,
+  .lg-group-dec .lg-chip {
+    position: static;
+    left: auto;
+    top: auto;
+    white-space: normal;
+    font-size: 12px;
+    gap: 9px;
+  }
+  .lg-chip + .lg-chip::before,
+  .lg-group-plan .lg-chip + .lg-chip::before,
+  .lg-group-dec .lg-chip + .lg-chip::before {
+    content: none;
+  }
+  .lg-trust {
+    position: static;
+    height: auto;
+    margin-top: 24px;
+    padding-top: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 12px 28px;
+  }
+  .lg-trust::before {
+    left: 0;
+    right: 0;
+  }
+  .lg-trust-item {
+    position: static;
+    font-size: 12px;
+  }
+  .lg-card {
+    min-height: 720px;
+    padding: 34px 22px 12px;
+  }
+  .lg-card-logo {
+    width: 216px;
+  }
+  .lg-welcome {
+    margin-top: 18px;
+    font-size: 30px;
+    line-height: 36px;
+  }
+  .lg-signsub {
+    font-size: 15px;
+    line-height: 22px;
+  }
+  .lg-form {
+    margin-top: 22px;
+  }
+  .lg-field + .lg-field {
+    margin-top: 18px;
+  }
+  .lg-input-wrap {
+    height: 46px;
+  }
+  .lg-input {
+    height: 46px;
+    font-size: 15px;
+  }
+  .lg-submit {
+    height: 50px;
+    margin-top: 22px;
+    font-size: 18px;
+  }
+  .lg-or {
+    margin-top: 20px;
+  }
+  .lg-google {
+    height: 52px;
+    margin-top: 16px;
+  }
+  .lg-switch {
+    margin-top: 22px;
+  }
+  .lg-secure {
+    margin-top: 18px;
+  }
+}
+
 /* ───────── Responsive ─────────
    Below 1180px there isn't room for the two-column layout, so the marketing panel
    (.lg-left) stacks above the sign-in card instead of sitting beside it - but it stays
    on screen. Its desktop version is built entirely from pixel-absolute offsets tuned to
    an exact 1452x1083 design, which can't reflow, so every one of those children gets a
    normal-flow override here rather than just being hidden. */
-@media (max-width: 1180px) {
+@media (max-width: 1024px) {
   .lg-page {
-    padding: 20px 18px 28px;
+    padding: 20px 18px 20px;
+  }
+  .lg-fit-frame {
+    height: auto !important;
+  }
+  .lg-fit {
+    width: 100%;
+    max-width: 100%;
+    transform: none !important;
   }
   .lg-grid {
     grid-template-columns: minmax(0, 1fr);
-    row-gap: 28px;
+    row-gap: 18px;
+    width: 100%;
+    max-width: 100%;
   }
   .lg-right {
-    max-width: 500px;
+    order: -1;
+    max-width: 520px;
     width: 100%;
     margin: 0 auto;
   }
+  .lg-left {
+    order: 1;
+    height: auto;
+    max-width: 640px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 28px 24px 0;
+  }
   .lg-topline {
-    margin: 4px 6px 22px 0;
+    margin: 0 0 20px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    text-align: right;
   }
   .lg-card {
     height: auto;
     padding: 44px 26px 36px;
+    width: 100%;
+    max-width: 100%;
   }
   .lg-tagline {
     display: none;
   }
-
-  /* Marketing panel: switch every absolutely-positioned piece to normal flow. */
-  .lg-left {
-    height: auto;
-    max-width: 620px;
-    width: 100%;
-    margin: 0 auto;
-    padding: 28px 24px;
+  .lg-input-wrap {
+    height: 48px;
+  }
+  .lg-input {
+    height: 48px;
+    font-size: 16px;
+  }
+  .lg-submit {
+    height: 50px;
+    font-size: 18px;
+  }
+  .lg-google {
+    height: 50px;
   }
   .lg-left-head {
     position: static;
@@ -770,9 +1158,6 @@
   .lg-pill {
     position: static;
     width: auto;
-    /* Desktop only ever had left padding (padding: 0 0 0 19px) - the fixed 194px width
-       supplied the space on the right. Now that width is auto, that space has to come
-       from real padding instead, or the text runs right up to the rounded edge. */
     padding: 0 20px 0 19px;
   }
   .lg-h1 {
@@ -839,8 +1224,14 @@
     gap: 10px 18px;
     margin-top: 14px;
   }
-  .lg-chips .lg-chip {
+  .lg-chips .lg-chip,
+  .lg-group-ess .lg-chip,
+  .lg-group-plan .lg-chip,
+  .lg-group-dec .lg-chip {
     position: static;
+    left: auto;
+    top: auto;
+    white-space: normal;
   }
   .lg-chip,
   .lg-group-plan .lg-chip,
@@ -870,6 +1261,77 @@
   }
   .lg-trust-item {
     position: static;
+  }
+}
+
+@media (max-width: 768px) {
+  .lg-bg-wave {
+    display: none;
+  }
+  .lg-page {
+    padding: 16px 16px 24px;
+  }
+  .lg-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0;
+  }
+  .lg-right {
+    max-width: 100%;
+  }
+  .lg-left {
+    display: none;
+  }
+  .lg-topline {
+    margin: 0 0 12px;
+    font-size: 13px;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px 12px;
+  }
+  .lg-topline button {
+    font-size: 14px;
+  }
+  .lg-card {
+    border-radius: 24px;
+    padding: 28px 16px 24px;
+  }
+  .lg-card-logo {
+    width: 200px;
+  }
+  .lg-welcome {
+    font-size: 30px;
+    line-height: 36px;
+  }
+  .lg-signsub {
+    font-size: 15px;
+    line-height: 22px;
+  }
+  .lg-form {
+    margin-top: 28px;
+  }
+  .lg-field + .lg-field {
+    margin-top: 18px;
+  }
+  .lg-input {
+    min-height: 44px;
+    height: 48px;
+    font-size: 16px;
+    padding-left: 50px;
+  }
+  .lg-submit {
+    min-height: 48px;
+    height: 52px;
+    font-size: 18px;
+  }
+  .lg-google {
+    height: 52px;
+  }
+  .lg-google-face {
+    font-size: 16px;
+  }
+  .lg-switch {
+    margin-top: 24px;
+    font-size: 14px;
   }
 }
 

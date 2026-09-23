@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import InlineAlert from "../components/InlineAlert";
 import { useAuthStore } from "../store/auth";
@@ -170,41 +170,6 @@ export default function LoginPage() {
   // the way a print preview shrinks a page to fit - never below a floor where it'd become
   // illegible, and re-measured on resize or when switching between sign-in/create-account
   // (the taller create-account card needs a bit more shrinking to still fit).
-  const fitRef = useRef(null);
-  const fitNaturalHeight = useRef(0);
-  const [fitScale, setFitScale] = useState(1);
-  useLayoutEffect(() => {
-    const el = fitRef.current;
-    if (!el) return;
-    function recalc() {
-      // Below 1180px the layout switches to a normal stacked, scrolling mobile/tablet
-      // page (see login.css) - shrink-to-fit is a desktop-only affordance for the fixed
-      // two-column design, not appropriate once content is meant to scroll normally.
-      if (window.innerWidth <= 1180) {
-        setFitScale(1);
-        return;
-      }
-      const page = el.closest(".lg-page");
-      const pageStyle = page ? getComputedStyle(page) : null;
-      const vPad = pageStyle ? parseFloat(pageStyle.paddingTop) + parseFloat(pageStyle.paddingBottom) : 0;
-      const available = window.innerHeight - vPad;
-      const prevTransform = el.style.transform;
-      el.style.transform = "none";
-      const natural = el.scrollHeight;
-      el.style.transform = prevTransform;
-      fitNaturalHeight.current = natural;
-      const next = natural > 0 ? Math.min(1, available / natural) : 1;
-      setFitScale(Math.max(0.62, Number.isFinite(next) ? next : 1));
-    }
-    recalc();
-    window.addEventListener("resize", recalc);
-    const ro = new ResizeObserver(recalc);
-    ro.observe(el);
-    return () => {
-      window.removeEventListener("resize", recalc);
-      ro.disconnect();
-    };
-  }, [isSignup]);
   const googleEnabled = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID || import.meta.env.REACT_APP_GOOGLE_CLIENT_ID);
 
   useEffect(() => {
@@ -339,15 +304,8 @@ export default function LoginPage() {
     <div className={"lg-page" + (isSignup ? " lg-page-signup" : "") + ((error || forgotNotice) ? " lg-page-alert" : "")}>
       <div className="lg-bg-wave" aria-hidden="true" />
 
-      <div
-        className="lg-fit-frame"
-        style={fitScale < 1 ? { height: fitNaturalHeight.current * fitScale } : undefined}
-      >
-      <div
-        ref={fitRef}
-        className="lg-fit"
-        style={fitScale < 1 ? { transform: `scale(${fitScale})`, transformOrigin: "top center" } : undefined}
-      >
+      <div className="lg-fit-frame">
+      <div className="lg-fit">
       <div className="lg-grid">
         <section className="lg-left">
           <div className="lg-left-head">
