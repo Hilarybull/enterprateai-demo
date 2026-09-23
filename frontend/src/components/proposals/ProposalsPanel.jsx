@@ -12,6 +12,7 @@ import { useProposalStore, PROPOSAL_ACTIVE_STATUSES } from "../../store/proposal
 import { useWorkspaceStore } from "../../store/workspace";
 import { useAuthStore } from "../../store/auth";
 import { apiRequest, getApiBaseUrl } from "../../api/client";
+import { hasPaidAccess } from "../../lib/plans";
 
 // ── Status presentation ────────────────────────────────────────────────────
 const STATUS_TONE = {
@@ -702,12 +703,20 @@ const EMPTY_REQUEST = {
 function RequestForm({ initial, onSaved, onCancel }) {
   const createRequest = useProposalStore((s) => s.createRequest);
   const updateRequest = useProposalStore((s) => s.updateRequest);
+  const subscription = useAuthStore((s) => s.subscription);
+  const platformGrants = useAuthStore((s) => s.platformGrants);
   const [form, setForm] = useState(() => ({ ...EMPTY_REQUEST, ...(initial || {}), requirements: (initial?.requirements || []).map((r) => ({ ...r })) }));
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiNote, setAiNote] = useState(null);
   const [error, setError] = useState(null);
   const editing = !!initial?.id;
+
+  // Posting a request requires a paid plan (Starter and above) — mirrors the
+  // backend gate in create_request. Editing an already-existing request
+  // (created before a downgrade, say) is still allowed; only new ones are blocked.
+  const hasProposalGrant = (platformGrants || []).some((g) => g.module_key === "blueprint");
+  const canCreateRequest = editing || hasPaidAccess(subscription?.plan_key, subscription?.status) || hasProposalGrant;
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
@@ -730,6 +739,7 @@ function RequestForm({ initial, onSaved, onCancel }) {
   }
 
   async function save() {
+    if (!canCreateRequest) { setError("Posting a request requires a Starter plan or above."); return; }
     if (!form.title.trim()) { setError("Give the request a title."); return; }
     const cap = form.submission_cap ? Number(form.submission_cap) : null;
     if (cap !== null && (!Number.isFinite(cap) || cap < 1)) {
@@ -768,6 +778,24 @@ function RequestForm({ initial, onSaved, onCancel }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (!canCreateRequest) {
+    return (
+      <SectionCard title="New proposal request">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center dark:border-amber-900/40 dark:bg-amber-950/20">
+          <div className="text-sm font-semibold text-amber-800 dark:text-amber-300">Posting a request requires a paid plan</div>
+          <div className="mt-3 flex items-center justify-center gap-3">
+            <Link to="/pricing" className="inline-flex items-center justify-center rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-700">
+              Upgrade to Starter →
+            </Link>
+            {onCancel ? (
+              <button type="button" onClick={onCancel} className="text-xs font-medium text-slate-500 hover:underline">Cancel</button>
+            ) : null}
+          </div>
+        </div>
+      </SectionCard>
+    );
   }
 
   return (

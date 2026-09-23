@@ -95,13 +95,16 @@ class RFQSubmitRequest(BaseModel):
 class RFQOut(BaseModel):
     id: str
     workspace_id: str
-    customer_name: str
-    customer_email: str
-    items: list[dict]
+    customer_name: str | None = None
+    customer_email: str | None = None
+    items: list[dict] = []
     message: str | None = None
     status: str
     created_at: str
     quote_id: str | None = None
+    # True when the requester identity and quotation content have been
+    # withheld because the receiving workspace is on the free plan.
+    locked: bool = False
 
 
 class RFQListResponse(BaseModel):

@@ -3904,34 +3904,39 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                         <div key={rfq.id} className="rounded-xl border border-slate-200 bg-white p-3">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              {isExplorer ? (
+                              {rfq.locked ? (
                                 <>
                                   <div className="flex items-center gap-2">
                                     <div className="text-sm font-semibold text-slate-400 select-none blur-sm pointer-events-none">Customer Name</div>
                                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Upgrade to view</span>
                                   </div>
                                   <div className="text-xs text-slate-300 select-none blur-sm pointer-events-none">customer@email.com</div>
+                                  <div className="mt-1 text-xs text-slate-300 italic select-none blur-sm pointer-events-none">"Quotation request details are hidden"</div>
+                                  <div className="mt-1.5 flex flex-wrap gap-1 select-none blur-sm pointer-events-none">
+                                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">Item ×1</span>
+                                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">Item ×2</span>
+                                  </div>
                                 </>
                               ) : (
                                 <>
                                   <div className="text-sm font-semibold text-slate-900">{rfq.customer_name}</div>
                                   <div className="text-xs text-slate-500">{rfq.customer_email}</div>
+                                  {rfq.message && <div className="mt-1 text-xs text-slate-500 italic line-clamp-2">"{rfq.message}"</div>}
+                                  <div className="mt-1.5 flex flex-wrap gap-1">
+                                    {(rfq.items || []).map((item, i) => (
+                                      <span key={i} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
+                                        {item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}
+                                      </span>
+                                    ))}
+                                  </div>
                                 </>
                               )}
-                              {rfq.message && <div className="mt-1 text-xs text-slate-500 italic line-clamp-2">"{rfq.message}"</div>}
-                              <div className="mt-1.5 flex flex-wrap gap-1">
-                                {(rfq.items || []).map((item, i) => (
-                                  <span key={i} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
-                                    {item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}
-                                  </span>
-                                ))}
-                              </div>
                               {customerResponse && (
                                 <div className="mt-1 text-[10px] text-slate-500">Customer: <span className={customerResponse === "accepted" ? "text-emerald-600 font-semibold" : "text-rose-600 font-semibold"}>{customerResponse}</span></div>
                               )}
                               <div className="mt-1 text-[10px] text-slate-400">{rfq.created_at ? new Date(rfq.created_at).toLocaleDateString() : ""}</div>
                             </div>
-                            {isExplorer ? (
+                            {rfq.locked ? (
                               <button
                                 type="button"
                                 onClick={() => setError("Upgrade to Starter or above to review and send quotations to customers.")}

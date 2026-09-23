@@ -750,6 +750,7 @@ export default function Layout() {
     if (path.startsWith("/registration")) return "registration";
     if (path.startsWith("/integrations")) return "integrations";
     if (path.startsWith("/reports")) return "reports";
+    if (path.startsWith("/business-plan") || path.startsWith("/live-plan")) return "live_plan";
     return null;
   }, [location.pathname]);
 

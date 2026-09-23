@@ -7,7 +7,8 @@ import zipfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
-from app.modules.credits.service import credit_guard
+from app.core.supabase import sb_select
+from app.modules.credits.service import credit_guard, normalise_plan_key
 from app.core.config import get_settings
 from app.shared.auth.deps import get_current_user
 from app.modules.live_plan.schemas import (
@@ -47,7 +48,48 @@ from app.modules.live_plan.service import (
     upsert_kpi,
 )
 
-router = APIRouter(prefix="/businesses/{business_id}/live-plan", tags=["live-plan"])
+LIVE_PLAN_MIN_PLAN = "decision_engine"
+PLAN_ORDER = ("explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os")
+PLAN_RANK = {plan: index for index, plan in enumerate(PLAN_ORDER)}
+
+
+def _meets_min_plan(plan_key: str | None, minimum_plan: str = LIVE_PLAN_MIN_PLAN) -> bool:
+    plan = normalise_plan_key(plan_key)
+    return PLAN_RANK.get(plan, 0) >= PLAN_RANK.get(minimum_plan, 0)
+
+
+async def _user_meets_live_plan_plan(user_id: str) -> bool:
+    try:
+        grants = await sb_select(
+            "user_platform_grants",
+            filters=[("user_id", "eq", user_id), ("module_key", "eq", "live_plan")],
+            columns="id,module_key,feature_key",
+        )
+        if grants:
+            return True
+    except Exception:
+        pass
+    try:
+        sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+    except Exception:
+        return False
+    if not sub:
+        return False
+    if str(sub.get("status") or "").lower() in {"expired", "cancelled", "canceled"}:
+        return False
+    return _meets_min_plan(sub.get("plan_key"))
+
+
+async def _require_live_plan_access(user=Depends(get_current_user)) -> None:
+    if not await _user_meets_live_plan_plan(user["id"]):
+        raise HTTPException(status_code=403, detail="Live Plan Intelligence is available on the Decision Engine plan and above.")
+
+
+router = APIRouter(
+    prefix="/businesses/{business_id}/live-plan",
+    tags=["live-plan"],
+    dependencies=[Depends(_require_live_plan_access)],
+)
 
 
 @router.post("", response_model=LivePlanResponse)

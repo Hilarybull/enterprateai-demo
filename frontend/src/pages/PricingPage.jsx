@@ -691,7 +691,7 @@ export default function PricingPage() {
           );
         })()}
 
-        <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 mx-auto max-w-2xl sm:max-w-none">
+        <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 mx-auto max-w-2xl sm:max-w-none">
           {PLANS.map((plan) => (
             <PlanCard
               key={plan.key}

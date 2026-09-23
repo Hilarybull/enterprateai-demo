@@ -101,7 +101,9 @@ def _company_public(ws: dict | None) -> dict | None:
 
 
 async def _can_submit_proposals(user_id: str) -> bool:
-    """Submitting a proposal requires a paid plan (Starter and above)."""
+    """Posting a proposal request or submitting a proposal both require a
+    paid plan (Starter and above). Only receiving/reviewing what comes in
+    is free."""
     plan_key, plan_status = await get_user_plan_info(user_id)
     plan_key = _LEGACY_PLAN_KEYS.get(plan_key, plan_key)
     if plan_status in {"grandfathered"}:
@@ -354,6 +356,11 @@ def _requirement_answered(req: dict, resp: dict | None) -> bool:
 
 
 async def create_request(*, user_id: str, payload: ProposalRequestIn) -> dict:
+    if not await _can_submit_proposals(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Posting a proposal request requires a Starter plan or above.",
+        )
     ws = await _owner_workspace(user_id)
     _reject_past_deadline(payload.deadline)
     now = _now()

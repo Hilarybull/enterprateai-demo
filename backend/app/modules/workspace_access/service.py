@@ -8,7 +8,45 @@ from fastapi import HTTPException
 
 from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.core.config import get_settings
+from app.modules.credits.service import normalise_plan_key
 from app.shared.email.resend import send_workspace_invitation_email_with_link
+
+# Invited (non-owner) seats allowed per plan, on top of the workspace owner.
+# Explorer gets none - "1 user" on Starter and "3 users included" on Decision
+# Engine mean that many ADDITIONAL invited members, not total headcount.
+PLAN_MEMBER_LIMIT = {
+    "explorer": 0,
+    "starter_insight": 1,
+    "decision_engine": 3,
+    "growth_navigator": 10,
+    "strategic_business_os": 25,
+}
+
+
+async def _owner_member_limit(owner_user_id: str) -> int:
+    try:
+        sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", owner_user_id)], single=True)
+    except Exception:
+        sub = None
+    if not sub:
+        return PLAN_MEMBER_LIMIT["explorer"]
+    if str(sub.get("status") or "").lower() == "grandfathered":
+        return PLAN_MEMBER_LIMIT["strategic_business_os"]
+    plan = normalise_plan_key(sub.get("plan_key"))
+    return PLAN_MEMBER_LIMIT.get(plan, PLAN_MEMBER_LIMIT["explorer"])
+
+
+async def _require_seat_available(workspace_id: str, owner_user_id: str) -> None:
+    limit = await _owner_member_limit(owner_user_id)
+    current = await sb_select("workspace_members", filters=[("workspace_id", "eq", workspace_id)])
+    if len(current or []) >= limit:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This plan doesn't allow more invited members. Upgrade to invite more people, "
+                "or remove an existing member first."
+            ),
+        )
 
 
 def _normalize_expiry_days(expires_in_days: int | None) -> int:
@@ -38,6 +76,7 @@ async def create_invitation(
     permissions: Dict[str, Any],
     expires_in_days: int = 7,
 ) -> Dict[str, Any]:
+    await _require_seat_available(workspace_id, invited_by_user_id)
     expires_in_days = _normalize_expiry_days(expires_in_days)
     normalized_email = email.strip().lower() if email else None
     token = secrets.token_urlsafe(32)
@@ -250,8 +289,8 @@ async def accept_invitation(token: str, user_id: str, user_email: str | None = N
             raise HTTPException(status_code=410, detail="This invitation has expired.")
 
     # Prevent owner from joining their own workspace as a member
-    owner_ws = await sb_select("workspaces", filters=[("id", "eq", inv["workspace_id"]), ("user_id", "eq", user_id)], single=True)
-    if owner_ws:
+    ws = await sb_select("workspaces", filters=[("id", "eq", inv["workspace_id"])], single=True)
+    if ws and ws.get("user_id") == user_id:
         raise HTTPException(status_code=400, detail="You already own this workspace.")
 
     existing = await sb_select(
@@ -259,6 +298,10 @@ async def accept_invitation(token: str, user_id: str, user_email: str | None = N
         filters=[("workspace_id", "eq", inv["workspace_id"]), ("user_id", "eq", user_id)],
         single=True,
     )
+    # Only a brand-new membership consumes a seat - re-accepting an invite
+    # that updates an existing membership's permissions doesn't.
+    if not existing and ws:
+        await _require_seat_available(inv["workspace_id"], ws["user_id"])
     now = datetime.now(timezone.utc).isoformat()
 
     if existing:

@@ -7,13 +7,36 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 
 from app.modules.idea_validation.service import get_user_workspace, get_workspace
+from app.modules.credits.service import normalise_plan_key
 from app.core.supabase import sb_select, sb_update, sb_upsert
+
+_PLAN_ORDER = ("explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os")
+_PLAN_RANK = {plan: index for index, plan in enumerate(_PLAN_ORDER)}
 
 
 async def _load_workspace(user_id: str, workspace_id: str | None):
     if workspace_id:
         return await get_workspace(user_id=user_id, workspace_id=workspace_id)
     return await get_user_workspace(user_id=user_id)
+
+
+async def _user_has_paid_plan(user_id: str) -> bool:
+    """RFQ requester identity and quotation content are withheld from the free
+    (Explorer) plan - a business can see that a request came in, but must
+    upgrade to see who sent it or what they asked for."""
+    try:
+        sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
+    except Exception:
+        return False
+    if not sub:
+        return False
+    sub_status = str(sub.get("status") or "").lower()
+    if sub_status == "grandfathered":
+        return True
+    if sub_status in {"trial", "expired"}:
+        return False
+    plan = normalise_plan_key(sub.get("plan_key"))
+    return _PLAN_RANK.get(plan, 0) >= _PLAN_RANK.get("starter_insight", 1)
 
 
 def _build_listing_item(ws: dict) -> dict | None:
@@ -366,6 +389,18 @@ async def list_rfqs(*, user_id: str, workspace_id: str | None = None) -> dict:
     _, data = _ws_fields(ws)
     financials = data.get("financials") or {}
     items = list(financials.get("rfq_requests") or [])
+    if not await _user_has_paid_plan(user_id):
+        items = [
+            {
+                **item,
+                "customer_name": None,
+                "customer_email": None,
+                "items": [],
+                "message": None,
+                "locked": True,
+            }
+            for item in items
+        ]
     return {"items": items, "total": len(items)}
 
 
@@ -377,6 +412,11 @@ async def approve_rfq(
     validity_days: int = 30,
     item_prices: list[dict] | None = None,
 ) -> dict:
+    if not await _user_has_paid_plan(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Upgrade to Starter or above to review and send quotations to customers.",
+        )
     ws = await _load_workspace(user_id, workspace_id)
     if not ws:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")

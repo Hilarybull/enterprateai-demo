@@ -17,7 +17,7 @@ const PLANS = [
     name: "Starter", tier: "Insight", monthly: 19, annual: 15.83, annualSaving: 38, free: false,
     desc: "For solo founders and new service businesses that want more planning, proposals, simulations, and intelligence",
     ctaLabel: "Get Started - 500 credits/mo",
-    features: ["Everything on the Explorer Plan", "Comprehensive Idea Validation", "AI Business Proposals Generator", "AI Sales Letters Generator", "Manage, Receive and Request for Proposals, Quotations", "2 Scenario simulations", "Fragility Index", "Adaptive Scenario Intelligence", "Marketplace listings"],
+    features: ["Everything on the Explorer Plan", "Comprehensive Idea Validation", "AI Business Proposals Generator", "AI Sales Letters Generator", "Manage, Receive and Request for Proposals, Quotations", "4 Scenario simulations", "Fragility Index", "Adaptive Scenario Intelligence", "Multiple marketplace listings"],
     highlight: true, badge: "Best Value",
   },
   {
