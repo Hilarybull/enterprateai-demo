@@ -8,14 +8,16 @@ import { useAuthStore } from "../store/auth";
 const PLANS = [
   {
     name: "Explorer", monthly: 0, annual: 0, free: true,
-    desc: "For testing the platform and starting simple",
-    features: ["No credit card required", "Basic idea validation", "Business plan access", "Invoices and quotations", "Marketplace listing", "Basic business workspace"],
+    creditsCaption: "50 Credits",
+    desc: "For Exploring",
+    features: ["Basic Idea Validation", "AI Business Plan Generator", "Invoices, Receipts, Contracts, Expense Tracker", "Receive and Request for Quotations", "Products, Customers, Vendors", "Business Registration Guide, Verification", "1 Marketplace listing"],
     highlight: false,
   },
   {
     name: "Starter", tier: "Insight", monthly: 19, annual: 15.83, annualSaving: 38, free: false,
     desc: "For solo founders and new service businesses that want more planning, proposals, simulations, and intelligence",
-    features: ["Idea validations", "Business plans", "Business proposals", "Sales letters", "Scenario simulation", "Fragility Index", "Adaptive Scenario Intelligence", "Unlimited products, customers & vendors", "Unlimited invoices & quotations", "1 marketplace listing", "1 user"],
+    ctaLabel: "Get Started - 500 credits/mo",
+    features: ["Everything on the Explorer Plan", "Comprehensive Idea Validation", "AI Business Proposals Generator", "AI Sales Letters Generator", "Manage, Receive and Request for Proposals, Quotations", "2 Scenario simulations", "Fragility Index", "Adaptive Scenario Intelligence", "Marketplace listings"],
     highlight: true, badge: "Best Value",
   },
   {
@@ -25,7 +27,8 @@ const PLANS = [
     annualSaving: 118,
     free: false,
     desc: "For teams that need deeper AI support, live-plan intelligence, and multi-user decision making",
-    features: ["2,000 monthly credits", "Business plans", "Business proposals", "Sales letters", "Live plan refreshes", "Scenario intelligence", "Fragility Index", "Adaptive Scenario Intelligence", "Unlimited products, customers & vendors", "Unlimited invoices & quotations", "3 users included"],
+    ctaLabel: "Get Started - 2000 credits/mo",
+    features: ["Everything on the Starter Plan", "3rd Party Integrations", "Live Business Plan Intelligence", "Multiple Scenario Simulations"],
     highlight: false,
   },
 ];
@@ -124,7 +127,7 @@ export default function LandingPage() {
       return;
     }
     const token = localStorage.getItem("ea_token");
-    navigate(token ? path : "/login");
+    navigate(token ? path : `/login?next=${encodeURIComponent(path)}`);
   }
 
   // Generic CTA — go to dashboard if logged in (non-demo), signup otherwise
@@ -489,9 +492,9 @@ export default function LandingPage() {
                 Create the everyday documents and records your business needs, <strong className="font-bold text-slate-800">free</strong>.
               </p>
               <p className="mt-2 text-xs font-semibold text-slate-500 sm:text-sm">Invoice &nbsp;•&nbsp; Quotation &nbsp;•&nbsp; Receipt &nbsp;•&nbsp; Contract &nbsp;•&nbsp; Idea Validation</p>
-              <Link to="/essentials" className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-[#1F5BFF] px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1747CC]">
+              <button type="button" onClick={() => goToFeature("/financials")} className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-[#1F5BFF] px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1747CC]">
                 Explore Free Tools <span aria-hidden="true">→</span>
-              </Link>
+              </button>
             </div>
             <div className="relative mx-auto w-full max-w-sm pt-20 lg:max-w-none">
               <Annotation className="absolute left-2 top-0" color="text-brand-500" rotate="-rotate-2" arrow="down">
@@ -756,10 +759,10 @@ export default function LandingPage() {
                     <><span className="text-4xl font-extrabold text-slate-900">£{annualBilling ? plan.annual : plan.monthly}</span><span className="text-sm text-slate-400">/mo</span></>
                   )}
                 </div>
-                <p className="mt-1 text-center text-xs text-slate-400">{plan.free ? "Free forever" : annualBilling ? `Billed annually (save £${plan.annualSaving}/yr)` : "Billed monthly"}</p>
+                <p className="mt-1 text-center text-xs text-slate-400">{plan.free ? plan.creditsCaption : annualBilling ? `Billed annually (save £${plan.annualSaving}/yr)` : "Billed monthly"}</p>
                 {plan.desc && <p className="mt-3 text-center text-xs text-slate-500">{plan.desc}</p>}
                 <button type="button" onClick={() => goToApp()} className={`mt-5 w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.free ? "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
-                  {plan.free ? "Start Free" : `Get Started - £${plan.monthly}/month`}
+                  {plan.free ? "Start Free" : plan.ctaLabel}
                 </button>
                 <ul className="mt-5 flex-1 space-y-2.5">
                   {plan.features.map(f => (
@@ -831,7 +834,7 @@ export default function LandingPage() {
             <div>
               <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Resources</h4>
               <ul className="mt-4 space-y-2">
-                <li><Link to="/blog" className="text-sm text-slate-500 hover:text-brand-600 transition">Blog</Link></li>
+                <li><Link to="/blog" className="text-sm text-slate-500 hover:text-brand-600 transition">Articles</Link></li>
                 <li><Link to="/research" className="text-sm text-slate-500 hover:text-brand-600 transition">Guides</Link></li>
                 <li><a href="mailto:support@enterpate.ai" className="text-sm text-slate-500 hover:text-brand-600 transition">Help Centre</a></li>
               </ul>

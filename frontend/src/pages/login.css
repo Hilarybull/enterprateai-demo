@@ -263,6 +263,7 @@
   position: static;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   flex-wrap: nowrap;
   width: auto;
   height: auto;
@@ -967,6 +968,7 @@
   .lg-group-ess .lg-chips,
   .lg-group-plan .lg-chips,
   .lg-group-dec .lg-chips {
+    justify-content: flex-start;
     flex-wrap: wrap;
     margin-top: 14px;
     row-gap: 8px;
