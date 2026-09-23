@@ -247,6 +247,7 @@ export default function FinancialsPage() {
     issued_at: new Date().toISOString().slice(0, 10),
     due_date: "",
     vat_rate: "",
+    discount: "",
     payment_terms_note: "",
     notes: "",
   });
@@ -260,6 +261,7 @@ export default function FinancialsPage() {
     issued_at: new Date().toISOString().slice(0, 10),
     due_date: "",
     vat_rate: "",
+    discount: "",
   });
   const [invoiceListPage, setInvoiceListPage] = useState(0);
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState("all");
@@ -1211,7 +1213,8 @@ export default function FinancialsPage() {
     </tbody>
   </table>
   <div class="card">
-    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatCurrency(Number(invoice?.subtotal_amount || 0), invoice?.currency || currency)}</span></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Subtotal</span><span>${formatCurrency(items.reduce((sum, item) => sum + Number(item?.unit_price || 0) * Number(item?.quantity || 0), 0), invoice?.currency || currency)}</span></div>
+    ${Number(invoice?.discount_amount) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Discount (${invoice.discount_rate || 0}%)</span><span>-${formatCurrency(Number(invoice.discount_amount), invoice?.currency || currency)}</span></div>` : ""}
     ${Number(invoice?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${invoice.vat_rate}%)</span><span>${formatCurrency(Number(invoice?.vat_amount || 0), invoice?.currency || currency)}</span></div>` : ""}
     <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatCurrency(grandTotal, invoice?.currency || currency)}</strong></div>
   </div>
@@ -1223,7 +1226,7 @@ export default function FinancialsPage() {
 
   function buildQuoteHtml(quote, customer, product) {
     const subtotal = Number(quote?.subtotal_amount || 0);
-    const grandTotal = getDocumentGrandTotal(quote);
+    const grandTotal = quote?.total_amount != null ? Number(quote.total_amount) : getDocumentGrandTotal(quote);
     const items = Array.isArray(quote?.items) && quote.items.length
       ? quote.items
       : [{
@@ -1294,7 +1297,9 @@ export default function FinancialsPage() {
     </tbody>
   </table>
   <div class="card">
-    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Total</span><span>${formatCurrency(Number(quote?.subtotal_amount || 0), quote?.currency || currency)}</span></div>
+    <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Subtotal</span><span>${formatCurrency(Number(quote?.subtotal_amount || 0), quote?.currency || currency)}</span></div>
+    ${Number(quote?.cost_of_sales) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Cost of sales</span><span>${formatCurrency(Number(quote.cost_of_sales), quote?.currency || currency)}</span></div>` : ""}
+    ${Number(quote?.discount_amount) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">Discount (${quote.discount_rate || 0}%)</span><span>-${formatCurrency(Number(quote.discount_amount), quote?.currency || currency)}</span></div>` : ""}
     ${Number(quote?.vat_rate) > 0 ? `<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px;"><span class="muted">VAT (${quote.vat_rate}%)</span><span>${formatCurrency(Number(quote?.vat_amount || 0), quote?.currency || currency)}</span></div>` : ""}
     <div style="display:flex; justify-content:space-between; gap:12px; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:6px;"><span>Grand Total</span><strong>${formatCurrency(grandTotal, quote?.currency || currency)}</strong></div>
   </div>
@@ -1748,7 +1753,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", quotation_id: "", currency: currency || "GBP", product_ids: [], items: [], extra_items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "", payment_terms_note: "", notes: "" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", quotation_id: "", currency: currency || "GBP", product_ids: [], items: [], extra_items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "", discount: "", payment_terms_note: "", notes: "" });
     setEditingInvoiceId(null);
     setPreviewInvoiceId(null);
     setInvoiceFormError(null);
@@ -1756,7 +1761,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   }
 
   function resetQuoteForm() {
-    setQuoteForm({ quotation_id: "", customer_id: "", product_ids: [], items: [], extra_items: [], validity_days: "30", issued_at: todayInputValue(), due_date: "", vat_rate: "" });
+    setQuoteForm({ quotation_id: "", customer_id: "", product_ids: [], items: [], extra_items: [], validity_days: "30", issued_at: todayInputValue(), due_date: "", vat_rate: "", discount: "" });
     setEditingQuoteId(null);
   }
 
@@ -1853,8 +1858,11 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       setInvoiceFormError("Enter a name for the custom product or service.");
       return;
     }
-    const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const rawSubtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
+    const discountRate = Number(invoiceForm.discount || 0);
+    const discountAmount = Number((rawSubtotal * discountRate / 100).toFixed(2));
+    const subtotal = Number(Math.max(0, rawSubtotal - discountAmount).toFixed(2));
     const vatRate = Number(invoiceForm.vat_rate || 0);
     const vatAmount = Number((subtotal * vatRate / 100).toFixed(2));
     const grandTotal = Number((subtotal + vatAmount).toFixed(2));
@@ -1892,6 +1900,8 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       unit_price: lineItems.length === 1 ? Number(Number(lineItems[0]?.unit_price || 0).toFixed(2)) : null,
       unit_cost_of_sales: lineItems.length === 1 ? Number(Number(lineItems[0]?.unit_cost_of_sales || 0).toFixed(2)) : null,
       subtotal_amount: subtotal,
+      discount_rate: discountRate,
+      discount_amount: discountAmount,
       cost_of_sales: totalCostOfSales,
       vat_rate: vatRate,
       vat_amount: vatAmount,
@@ -1947,7 +1957,10 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     }
     const subtotal = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
     const totalCostOfSales = Number(lineItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
-    const preTaxTotal = Number((subtotal + totalCostOfSales).toFixed(2));
+    const quoteDiscountRate = Number(quoteForm.discount || 0);
+    const quoteDiscountBase = Number((subtotal + totalCostOfSales).toFixed(2));
+    const quoteDiscountAmount = Number((quoteDiscountBase * quoteDiscountRate / 100).toFixed(2));
+    const preTaxTotal = Number(Math.max(0, quoteDiscountBase - quoteDiscountAmount).toFixed(2));
     const quoteVatRateSave = Number(quoteForm.vat_rate || 0);
     const quoteVatAmountSave = Number((preTaxTotal * quoteVatRateSave / 100).toFixed(2));
     const grandTotal = Number((preTaxTotal + quoteVatAmountSave).toFixed(2));
@@ -1968,6 +1981,8 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       unit_price: lineItems.length === 1 ? Number(Number(lineItems[0]?.unit_price || 0).toFixed(2)) : null,
       unit_cost_of_sales: lineItems.length === 1 ? Number(Number(lineItems[0]?.unit_cost_of_sales || 0).toFixed(2)) : null,
       subtotal_amount: subtotal,
+      discount_rate: quoteDiscountRate,
+      discount_amount: quoteDiscountAmount,
       cost_of_sales: totalCostOfSales,
       vat_rate: quoteVatRateSave,
       vat_amount: quoteVatAmountSave,
@@ -2492,12 +2507,14 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
   const invoiceSubtotal = Number(allInvoiceItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceCostOfSalesTotal = Number(allInvoiceItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const invoiceVatRate = Number(invoiceForm.vat_rate || 0);
-  const invoicePreTaxTotal = invoiceSubtotal;
+  const invoiceDiscountRate = Number(invoiceForm.discount || 0);
+  const invoiceDiscount = Number((invoiceSubtotal * invoiceDiscountRate / 100).toFixed(2));
+  const invoicePreTaxTotal = Number(Math.max(0, invoiceSubtotal - invoiceDiscount).toFixed(2));
   const invoiceVatAmount = Number((invoicePreTaxTotal * invoiceVatRate / 100).toFixed(2));
   const invoiceGrandTotal = Number((invoicePreTaxTotal + invoiceVatAmount).toFixed(2));
   const linkedContract = invoiceForm.contract_id ? activeContracts.find((c) => c.id === invoiceForm.contract_id) : null;
   const contractInvoiceLimit = linkedContract ? contractRemaining(linkedContract, editingInvoiceId) : null;
-  const invoiceExceedsContractPrice = Boolean(linkedContract && contractInvoiceLimit && invoiceSubtotal > contractInvoiceLimit.price + 0.001);
+  const invoiceExceedsContractPrice = Boolean(linkedContract && contractInvoiceLimit && invoicePreTaxTotal > contractInvoiceLimit.price + 0.001);
   const invoiceExceedsContractCost = Boolean(linkedContract && contractInvoiceLimit && invoiceCostOfSalesTotal > contractInvoiceLimit.cost_of_sales + 0.001);
   const invoiceExceedsContractTotal = Boolean(linkedContract && contractInvoiceLimit && invoiceGrandTotal > contractInvoiceLimit.total + 0.001);
   const invoiceContractWarning = useMemo(() => {
@@ -2531,7 +2548,10 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
   const quoteSubtotal = Number(allQuoteItems.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const quoteCostOfSalesTotal = Number(allQuoteItems.reduce((sum, item) => sum + (Number(item.unit_cost_of_sales || 0) * Number(item.quantity || 0)), 0).toFixed(2));
   const quoteVatRate = Number(quoteForm.vat_rate || 0);
-  const quotePreTaxTotal = Number((quoteSubtotal + quoteCostOfSalesTotal).toFixed(2));
+  const quoteDiscountRate = Number(quoteForm.discount || 0);
+  const quoteDiscountBase = Number((quoteSubtotal + quoteCostOfSalesTotal).toFixed(2));
+  const quoteDiscount = Number((quoteDiscountBase * quoteDiscountRate / 100).toFixed(2));
+  const quotePreTaxTotal = Number(Math.max(0, quoteDiscountBase - quoteDiscount).toFixed(2));
   const quoteVatAmount = Number((quotePreTaxTotal * quoteVatRate / 100).toFixed(2));
   const quoteGrandTotal = Number((quotePreTaxTotal + quoteVatAmount).toFixed(2));
   const previewInvoice = activeInvoices.find((inv) => inv.id === previewInvoiceId) || null;
@@ -3161,17 +3181,32 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <Input type="date" value={invoiceForm.due_date} onChange={(e) => setInvoiceForm((f) => ({ ...f, due_date: e.target.value }))} />
               </div>
             </div>
-            <div>
-              <div className="ea-label">VAT / Tax rate (%)</div>
-              <Input
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                placeholder="e.g. 20"
-                value={invoiceForm.vat_rate}
-                onChange={(e) => setInvoiceForm((f) => ({ ...f, vat_rate: e.target.value }))}
-              />
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+              <div>
+                <div className="ea-label">VAT / Tax rate (%)</div>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  placeholder="e.g. 20"
+                  value={invoiceForm.vat_rate}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, vat_rate: e.target.value }))}
+                />
+              </div>
+              <div>
+                <div className="ea-label">Discount (%) (optional)</div>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  placeholder="e.g. 10"
+                  value={invoiceForm.discount}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, discount: e.target.value }))}
+                />
+                <div className="mt-1 text-[11px] text-slate-400">Applied before VAT.</div>
+              </div>
             </div>
             <div>
               <div className="ea-label">Payment terms note (optional)</div>
@@ -3194,6 +3229,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             </div>
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
               <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(invoiceSubtotal, invoiceForm.currency)}</span></div>
+              {invoiceDiscount > 0 && <div className="flex justify-between text-rose-600"><span>Discount ({invoiceDiscountRate}%)</span><span>−{formatMoney(invoiceDiscount, invoiceForm.currency)}</span></div>}
               {invoiceVatAmount > 0 && <div className="flex justify-between"><span>VAT ({invoiceVatRate}%)</span><span>{formatMoney(invoiceVatAmount, invoiceForm.currency)}</span></div>}
               <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(invoiceGrandTotal, invoiceForm.currency)}</span></div>
             </div>
@@ -3362,6 +3398,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                     issued_at: inv.issued_at || "",
                                     due_date: inv.due_date || "",
                                     vat_rate: inv.vat_rate != null ? String(inv.vat_rate) : "",
+                                    discount: inv.discount_rate ? String(inv.discount_rate) : "",
                                     payment_terms_note: inv.payment_terms_note || "",
                                     notes: inv.notes || "",
                                   });
@@ -3628,17 +3665,32 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
                 Add item
               </button>
-            <div>
-              <div className="ea-label">VAT / Tax rate (%)</div>
-              <Input
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                placeholder="e.g. 20"
-                value={quoteForm.vat_rate}
-                onChange={(e) => setQuoteForm((f) => ({ ...f, vat_rate: e.target.value }))}
-              />
+            <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+              <div>
+                <div className="ea-label">VAT / Tax rate (%)</div>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  placeholder="e.g. 20"
+                  value={quoteForm.vat_rate}
+                  onChange={(e) => setQuoteForm((f) => ({ ...f, vat_rate: e.target.value }))}
+                />
+              </div>
+              <div>
+                <div className="ea-label">Discount (%) (optional)</div>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  placeholder="e.g. 10"
+                  value={quoteForm.discount}
+                  onChange={(e) => setQuoteForm((f) => ({ ...f, discount: e.target.value }))}
+                />
+                <div className="mt-1 text-[11px] text-slate-400">Applied before VAT.</div>
+              </div>
             </div>
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
@@ -3662,6 +3714,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
               <div className="flex justify-between"><span>Subtotal</span><span>{formatMoney(quoteSubtotal)}</span></div>
               {quoteCostOfSalesTotal > 0 && <div className="flex justify-between"><span>Cost of sales</span><span>{formatMoney(quoteCostOfSalesTotal)}</span></div>}
+              {quoteDiscount > 0 && <div className="flex justify-between text-rose-600"><span>Discount ({quoteDiscountRate}%)</span><span>−{formatMoney(quoteDiscount)}</span></div>}
               {quoteVatAmount > 0 && <div className="flex justify-between"><span>VAT ({quoteVatRate}%)</span><span>{formatMoney(quoteVatAmount)}</span></div>}
               <div className="flex justify-between font-semibold text-slate-900 border-t border-slate-200 pt-1 mt-1"><span>Grand Total</span><span>{formatMoney(quoteGrandTotal)}</span></div>
             </div>
@@ -3757,7 +3810,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                           </div>
                           <ActionMenu
                             items={addFinancialShareAction([
-                              { label: "Edit", onClick: () => { setEditingQuoteId(quote.id); setQuoteForm({ quotation_id: quote.quotation_id || "", customer_id: quote.customer_name || quote.customer_id, product_ids: Array.isArray(quote.product_ids) && quote.product_ids.length ? quote.product_ids : quote.product_id ? [quote.product_id] : [], items: normalizeRecordItems(quote), validity_days: String(quote.validity_days || "30"), issued_at: quote.issued_at || "", due_date: quote.due_date || "" }); } },
+                              { label: "Edit", onClick: () => { setEditingQuoteId(quote.id); setQuoteForm({ quotation_id: quote.quotation_id || "", customer_id: quote.customer_name || quote.customer_id, product_ids: Array.isArray(quote.product_ids) && quote.product_ids.length ? quote.product_ids : quote.product_id ? [quote.product_id] : [], items: normalizeRecordItems(quote), validity_days: String(quote.validity_days || "30"), issued_at: quote.issued_at || "", due_date: quote.due_date || "", vat_rate: quote.vat_rate != null ? String(quote.vat_rate) : "", discount: quote.discount_rate ? String(quote.discount_rate) : "" }); } },
                               { label: quote.status === "sent" ? "Mark draft" : "Mark sent", onClick: () => updateStatus("quote", quote.id, quote.status === "sent" ? "draft" : "sent") },
                               { label: quote.status === "accepted" ? "Mark draft" : "Mark accepted", onClick: () => updateStatus("quote", quote.id, quote.status === "accepted" ? "draft" : "accepted") },
                               { label: "View quotation", onClick: () => setPreviewQuoteId(quote.id) },
@@ -4287,7 +4340,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
             </div>
             <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
               <div>
-                <div className="ea-label">Discount</div>
+                <div className="ea-label">Discount amount</div>
                 <Input
                   type="number"
                   min="0"
@@ -5538,6 +5591,12 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                       <span className="text-slate-500">Total</span>
                       <span className="text-slate-700">{formatCurrency(preVatTotal, previewInvoice?.currency || currency)}</span>
                     </div>
+                    {Number(previewInvoice.discount_amount) > 0 && (
+                    <div className="flex justify-end gap-6">
+                      <span className="text-rose-600">Discount ({previewInvoice.discount_rate || 0}%)</span>
+                      <span className="text-rose-600">−{formatCurrency(Number(previewInvoice.discount_amount), previewInvoice?.currency || currency)}</span>
+                    </div>
+                    )}
                     {Number(previewInvoice.vat_rate) > 0 && (
                     <div className="flex justify-end gap-6">
                       <span className="text-slate-500">VAT ({Number(previewInvoice.vat_rate)}%)</span>
@@ -5666,13 +5725,25 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 const qItems = Array.isArray(previewQuote.items) && previewQuote.items.length ? previewQuote.items : [{ unit_price: previewQuote.unit_price, unit_cost_of_sales: previewQuote.unit_cost_of_sales, quantity: previewQuote.quantity }];
                 const qPreVatTotal = qItems.reduce((s, it) => s + Number(it.unit_price || 0) * Number(it.quantity || 0), 0);
                 const qVatAmt = Number(previewQuote.vat_amount || 0);
-                const qGrandTotal = getDocumentGrandTotal(previewQuote);
+                const qGrandTotal = previewQuote.total_amount != null ? Number(previewQuote.total_amount) : getDocumentGrandTotal(previewQuote);
                 return (
                   <div className="mt-4 border-t border-slate-200 pt-3 flex flex-col items-end gap-1.5 text-sm">
                     <div className="flex justify-end gap-6">
                       <span className="text-slate-500">Total</span>
                       <span className="text-slate-700">{formatMoney(qPreVatTotal)}</span>
                     </div>
+                    {Number(previewQuote.cost_of_sales) > 0 && (
+                    <div className="flex justify-end gap-6">
+                      <span className="text-slate-500">Cost of sales</span>
+                      <span className="text-slate-700">{formatMoney(Number(previewQuote.cost_of_sales))}</span>
+                    </div>
+                    )}
+                    {Number(previewQuote.discount_amount) > 0 && (
+                    <div className="flex justify-end gap-6">
+                      <span className="text-rose-600">Discount ({previewQuote.discount_rate || 0}%)</span>
+                      <span className="text-rose-600">−{formatMoney(Number(previewQuote.discount_amount))}</span>
+                    </div>
+                    )}
                     {Number(previewQuote.vat_rate) > 0 && (
                     <div className="flex justify-end gap-6">
                       <span className="text-slate-500">VAT ({Number(previewQuote.vat_rate)}%)</span>
