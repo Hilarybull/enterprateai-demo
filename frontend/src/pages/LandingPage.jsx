@@ -38,6 +38,32 @@ function Icon({ d, className = "h-5 w-5" }) {
     </svg>
   );
 }
+
+// Handwritten annotation with a curved arrow, matching the mockup's hand-drawn callouts.
+// Hidden below 768px (fully removed from layout, not just visually) so it can never
+// overlap or clip on tablet/mobile. Parents must allow overflow: visible since these
+// are meant to sit outside the card/photo they point at.
+function Annotation({ children, className = "", color = "text-brand-500", rotate = "-rotate-6", arrow = "down", showFrom = "md" }) {
+  const arrows = {
+    down: "M6 3c1 12 4 20 11 25m0 0-7-1m7 1-2-7",
+    downLeft: "M26 3c-4 11-12 19-21 23m0 0 7 1m-7-1 2-6",
+    up: "M6 29c1-12 4-20 11-25m0 0-7 1m7-1-2 7",
+    upLeft: "M26 29c-4-11-12-19-21-23m0 0 7-1m-7 1 2 6",
+    left: "M29 16c-12 1-20 4-25 11m0 0 1-7m-1 7 7 2",
+    leftUp: "M29 6c-12 1-21 5-25 13m0 0 2-7m-2 7 7 1",
+  };
+  const visibility = showFrom === "lg" ? "hidden lg:block" : "hidden md:block";
+  return (
+    <div className={`pointer-events-none ${visibility} ${className}`} aria-hidden="true">
+      <p className={`${rotate} whitespace-nowrap leading-snug ${color}`} style={{ fontFamily: "'Caveat', cursive", fontWeight: 600, fontSize: "24px" }}>
+        {children}
+      </p>
+      <svg className={`h-10 w-10 ${color}`} viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d={arrows[arrow]} />
+      </svg>
+    </div>
+  );
+}
 const ROLES = ["Founder / Co-founder","Business Owner","Operations Manager","Sales / Business Development","Finance / Accounting","Marketing","Product / Tech","Investor / Advisor","Other"];
 
 export default function LandingPage() {
@@ -171,7 +197,7 @@ export default function LandingPage() {
       <nav className={`fixed top-0 left-0 right-0 z-50 border-b border-slate-100 bg-white/95 backdrop-blur transition-all duration-200 ${scrolled ? "shadow-sm" : ""}`}>
         <div className={`mx-auto flex max-w-[1600px] items-center px-4 sm:px-6 transition-all duration-200 ${scrolled ? "py-2" : "py-3"}`}>
           <a href="#hero" className="shrink-0 mr-6"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" /></a>
-          <ul className="hidden flex-1 items-center justify-center gap-3 xl:gap-4 lg:flex">
+          <ul className="hidden flex-1 items-center justify-center gap-3 xl:gap-4 xl:flex">
             {/* Features mega-dropdown */}
             <li ref={featuresRef} className="relative">
               <button
@@ -292,12 +318,12 @@ export default function LandingPage() {
             </li>
           </ul>
           <div className="flex shrink-0 items-center gap-3 ml-6">
-            <Link to="/login" className="hidden whitespace-nowrap text-sm font-medium text-slate-600 hover:text-slate-900 lg:block">Sign in</Link>
-            <Link to="/book-demo" className="hidden whitespace-nowrap rounded-xl border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600 transition hover:bg-brand-50 lg:block">Book a Demo</Link>
-            <button type="button" onClick={() => goToApp()} className="hidden whitespace-nowrap rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 lg:block">
+            <Link to="/login" className="hidden whitespace-nowrap text-sm font-medium text-slate-600 hover:text-slate-900 xl:block">Sign in</Link>
+            <Link to="/book-demo" className="hidden whitespace-nowrap rounded-xl border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600 transition hover:bg-brand-50 xl:block">Book a Demo</Link>
+            <button type="button" onClick={() => goToApp()} className="hidden whitespace-nowrap rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 xl:block">
               Get Started Free
             </button>
-            <button type="button" onClick={() => setMobileMenuOpen(v => !v)} className="ml-1 flex h-9 w-9 flex-col items-center justify-center gap-1.5 lg:hidden" aria-label="Menu">
+            <button type="button" onClick={() => setMobileMenuOpen(v => !v)} className="ml-1 flex h-9 w-9 flex-col items-center justify-center gap-1.5 xl:hidden" aria-label="Menu">
               <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "translate-y-2 rotate-45" : ""}`} />
               <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "opacity-0" : ""}`} />
               <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "-translate-y-2 -rotate-45" : ""}`} />
@@ -305,7 +331,7 @@ export default function LandingPage() {
           </div>
         </div>
         {mobileMenuOpen && (
-          <div className="border-t border-slate-100 bg-white px-4 pb-4 lg:hidden">
+          <div className="border-t border-slate-100 bg-white px-4 pb-4 xl:hidden">
             <ul className="mt-3 flex flex-col gap-3">
               {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"]].map(([href, label]) => (
                 <li key={href}><a href={href} onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">{label}</a></li>
@@ -346,33 +372,33 @@ export default function LandingPage() {
       <div className="h-[61px]" />
 
       {/* HERO */}
-      <section id="hero" className="relative overflow-hidden bg-gradient-to-b from-brand-50/70 via-white to-white pb-16 pt-14 sm:pb-24 sm:pt-20">
+      <section id="hero" className="relative overflow-hidden bg-gradient-to-b from-brand-50/70 via-white to-white pb-6 pt-6 sm:pb-8 sm:pt-8">
         <div className="pointer-events-none absolute inset-0">
-          <div className="absolute -right-24 top-0 h-[460px] w-[460px] rounded-full bg-gradient-to-br from-brand-200/50 to-purple-200/40 blur-3xl sm:h-[560px] sm:w-[560px]" />
-          <div className="absolute right-6 top-16 hidden h-56 w-56 opacity-50 sm:block" style={{ backgroundImage: "radial-gradient(circle, #C7D2FE 1.5px, transparent 1.5px)", backgroundSize: "16px 16px" }} />
+          <div className="absolute -right-16 top-0 h-[520px] w-[520px] rounded-full bg-gradient-to-br from-purple-300/60 to-brand-300/50 blur-2xl sm:h-[620px] sm:w-[620px]" />
+          <div className="absolute right-10 top-14 hidden h-64 w-64 opacity-80 sm:block" style={{ backgroundImage: "radial-gradient(circle, #A5B4FC 2px, transparent 2px)", backgroundSize: "18px 18px" }} />
         </div>
         <div className="relative mx-auto max-w-[1600px] px-4 sm:px-6">
-          <div className="grid items-center gap-12 lg:grid-cols-[1fr_1.05fr]">
+          <div className="grid items-center gap-8 lg:grid-cols-[1.15fr_1fr]">
             <div className="text-center lg:text-left">
               <span className="text-xs font-bold uppercase tracking-widest text-brand-600">AI-Native Business Decision Intelligence</span>
-              <h1 className="mt-4 text-3xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-4xl lg:text-[2.6rem]">
-                Build a More Resilient Business with <span className="text-accent-500">Intelligence.</span>
+              <h1 className="mt-3 text-3xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-4xl lg:text-[2.35rem]">
+                Build a More Resilient<br />Business with <span className="bg-gradient-to-r from-accent-500 to-purple-600 bg-clip-text text-transparent">Intelligence.</span>
               </h1>
-              <p className="mt-4 text-base font-bold text-slate-800 sm:text-lg">Plan, operate, sell and grow from one intelligent business workspace.</p>
-              <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-slate-500 sm:text-base lg:mx-0">
+              <p className="mt-2 text-base font-bold text-slate-800 sm:text-lg">Plan, operate, sell and grow from one intelligent business workspace.</p>
+              <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-slate-500 sm:text-base lg:mx-0">
                 EnterprateAI gives startups and small businesses practical tools to run their business, build better plans, identify risks and simulate important decisions before committing time or money.
               </p>
-              <p className="mt-3 text-sm font-bold text-slate-800">Get your first business insight in less than 20 minutes.</p>
-              <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
-                <button type="button" onClick={() => goToApp()} className="w-full rounded-xl bg-brand-600 px-7 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 active:scale-95 sm:w-auto">
+              <p className="mt-2 text-sm font-bold text-slate-800">Get your first business insight in less than 20 minutes.</p>
+              <div className="mt-4 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
+                <button type="button" onClick={() => goToApp()} className="w-full rounded-lg bg-[#1F5BFF] px-7 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1747CC] active:scale-95 sm:w-auto">
                   Start Free
                 </button>
-                <a href="#how-it-works" className="flex w-full items-center justify-center gap-2 rounded-xl border border-brand-200 px-7 py-3 text-sm font-semibold text-brand-700 transition hover:bg-brand-50 sm:w-auto">
+                <a href="#how-it-works" className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#1F5BFF] bg-white px-7 py-3 text-sm font-semibold text-[#1F5BFF] transition hover:bg-blue-50 sm:w-auto">
                   <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
                   See How It Works
                 </a>
               </div>
-              <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 lg:justify-start">
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 lg:justify-start">
                 {["No credit card required", "Start in minutes", "Private & secure"].map((t) => (
                   <span key={t} className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
                     <svg className="h-3.5 w-3.5 shrink-0 text-brand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
@@ -382,125 +408,131 @@ export default function LandingPage() {
               </div>
             </div>
 
-            <div className="relative mx-auto w-full max-w-lg lg:max-w-none lg:pl-6 lg:pr-20">
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-brand-900/10">
-                <div className="flex items-center gap-1.5 border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+            <div className="relative mx-auto flex w-full max-w-lg items-center gap-3 lg:max-w-none lg:pl-6">
+              <div className="flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-brand-900/10">
+                <div className="flex items-center gap-1.5 border-b border-slate-100 bg-slate-50 px-4 py-2">
                   <span className="h-2.5 w-2.5 rounded-full bg-rose-300" /><span className="h-2.5 w-2.5 rounded-full bg-amber-300" /><span className="h-2.5 w-2.5 rounded-full bg-emerald-300" />
-                  <div className="ml-3 flex-1 rounded-md bg-white px-3 py-1 text-[10px] text-slate-300 ring-1 ring-slate-100">Search anything...</div>
+                  <div className="ml-2 flex-1 rounded-md bg-white px-3 py-1 text-[11px] text-slate-300 ring-1 ring-slate-100">Search anything...</div>
                 </div>
                 <div className="flex">
-                  <div className="hidden w-28 shrink-0 border-r border-slate-100 bg-slate-50/60 py-3 sm:block">
+                  <div className="hidden w-28 shrink-0 border-r border-slate-100 bg-slate-50/60 py-2.5 xl:block">
                     {["Home", "My Business", "Documents", "Planning", "Intelligence", "Marketplace"].map((n, i) => (
-                      <div key={n} className={`mx-2 mb-1 rounded-lg px-2.5 py-1.5 text-[9.5px] font-medium ${i === 0 ? "bg-brand-600 text-white" : "text-slate-500"}`}>{n}</div>
+                      <div key={n} className={`mx-2 mb-1 whitespace-nowrap rounded-md px-2.5 py-1.5 text-[10.5px] font-medium ${i === 0 ? "bg-brand-600 text-white" : "text-slate-500"}`}>{n}</div>
                     ))}
                   </div>
-                  <div className="flex-1 p-4">
+                  <div className="flex-1 p-3">
                     <p className="text-sm font-bold text-slate-900">Good morning, Jordan</p>
-                    <p className="text-[10px] text-slate-400">Here's what's happening with your business today.</p>
-                    <div className="mt-3 grid grid-cols-2 gap-2">
+                    <p className="text-[11px] text-slate-400">Here's what's happening today.</p>
+                    <div className="mt-2.5 grid grid-cols-2 gap-2">
                       {[
-                        { t: "Idea Validation", d: "Test your insights before you invest.", c: "bg-rose-50 text-rose-500", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
-                        { t: "Business Plan", d: "Create a professional plan with AI.", c: "bg-brand-50 text-brand-600", icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
-                        { t: "Scenario Simulation", d: "See possible outcomes before you decide.", c: "bg-purple-50 text-purple-500", icon: "M3 3v18h18M7 15l4-6 4 4 5-8" },
-                        { t: "Risk Signals", d: "Spot risks and opportunities early.", c: "bg-amber-50 text-amber-500", icon: "M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-8.25 3.75h.008v.008h-.008v-.008z" },
+                        { t: "Idea Validation", d: "Test insights before you invest.", c: "bg-rose-50 text-rose-500", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
+                        { t: "Business Plan", d: "Create a plan with AI.", c: "bg-brand-50 text-brand-600", icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+                        { t: "Scenario Sim.", d: "See outcomes before you decide.", c: "bg-purple-50 text-purple-500", icon: "M3 3v18h18M7 15l4-6 4 4 5-8" },
+                        { t: "Risk Signals", d: "Spot risks early.", c: "bg-amber-50 text-amber-500", icon: "M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-8.25 3.75h.008v.008h-.008v-.008z" },
                       ].map((c) => (
-                        <div key={c.t} className="rounded-lg border border-slate-100 p-2">
-                          <div className={`mb-1 flex h-5 w-5 items-center justify-center rounded-md ${c.c}`}>
+                        <div key={c.t} className="rounded-md border border-slate-100 p-2">
+                          <div className={`mb-1 flex h-5 w-5 items-center justify-center rounded ${c.c}`}>
                             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d={c.icon} /></svg>
                           </div>
-                          <p className="text-[9.5px] font-bold text-slate-800 leading-tight">{c.t}</p>
+                          <p className="text-[11px] font-bold text-slate-800 leading-tight">{c.t}</p>
+                          <p className="mt-0.5 text-[11px] leading-tight text-slate-400">{c.d}</p>
+                          <svg className="mt-0.5 h-2.5 w-2.5 text-brand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
                         </div>
                       ))}
                     </div>
                   </div>
-                  <div className="hidden w-24 shrink-0 border-l border-slate-100 p-3 sm:block">
-                    <p className="text-[9px] font-semibold text-slate-500">Business Health</p>
+                  <div className="hidden w-24 shrink-0 border-l border-slate-100 p-2.5 xl:block">
+                    <p className="text-[10.5px] font-semibold text-slate-500">Business Health</p>
                     <div className="relative mx-auto mt-2 flex h-14 w-14 items-center justify-center rounded-full" style={{ background: "conic-gradient(#22C55E 0% 78%, #E2E8F0 78% 100%)" }}>
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[11px] font-extrabold text-slate-900">78</div>
                     </div>
-                    <p className="mt-2 text-center text-[8px] font-semibold text-emerald-600 leading-tight">Growing steadily<br />+12% this month</p>
+                    <p className="mt-2 text-center text-[10px] font-semibold text-emerald-600 leading-tight">Growing steadily<br />+12% this month</p>
                   </div>
                 </div>
-                <div className="border-t border-slate-100 px-4 py-3">
-                  <p className="mb-1.5 text-[9px] font-semibold text-slate-500">Recent Activity</p>
+                <div className="border-t border-slate-100 px-4 py-2">
+                  <p className="mb-1 text-[10.5px] font-semibold text-slate-500">Recent Activity</p>
                   <div className="space-y-1">
-                    {["Business plan updated · 2 days ago", "Scenario simulated · 1 day ago", "Invoice created · 2 hours ago"].map((a) => (
-                      <div key={a} className="flex items-center gap-1.5 text-[9px] text-slate-400"><span className="h-1 w-1 rounded-full bg-brand-400" />{a}</div>
+                    {[
+                      { a: "Business plan updated · 2 days ago", c: "bg-brand-400" },
+                      { a: "Scenario simulated · 1 day ago", c: "bg-emerald-400" },
+                      { a: "Invoice created · 2 hours ago", c: "bg-purple-400" },
+                    ].map((r) => (
+                      <div key={r.a} className="flex items-center gap-1.5 text-[10.5px] text-slate-400"><span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.c}`} />{r.a}</div>
                     ))}
                   </div>
                 </div>
               </div>
-              <p className="absolute right-0 top-6 hidden w-16 -rotate-3 text-sm leading-snug text-brand-500 lg:block" style={{ fontFamily: "cursive" }}>
-                Smarter decisions. Brighter tomorrow.
-              </p>
+              <Annotation className="w-28 shrink-0 text-left" color="text-brand-500" rotate="-rotate-3" arrow="left" showFrom="lg">
+                Smarter<br />decisions.<br />Brighter<br />tomorrow.
+              </Annotation>
             </div>
           </div>
         </div>
       </section>
 
       {/* INTRO */}
-      <section className="py-14 sm:py-16">
+      <section className="py-6 sm:py-8">
         <div className="mx-auto max-w-3xl px-4 text-center sm:px-6">
           <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Everything You Need to Build and Grow a Stronger Business</h2>
-          <p className="mt-3 text-sm leading-relaxed text-slate-500 sm:text-base">Instead of stitching together multiple tools, EnterprateAI brings your essential business activities, planning and decision intelligence into one connected workspace.</p>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500 sm:text-base">Instead of stitching together multiple tools, EnterprateAI brings your essential business activities, planning and decision intelligence into one connected workspace.</p>
         </div>
       </section>
 
       {/* PANEL 1 — FREE BUSINESS ESSENTIALS (green) */}
-      <section className="py-3 sm:py-4">
+      <section className="py-2 sm:py-3">
         <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
-          <div className="relative grid items-center gap-8 overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-50 via-teal-50/70 to-emerald-50 p-8 sm:p-10 lg:grid-cols-2">
+          <div className="relative grid items-center gap-6 rounded-[20px] bg-gradient-to-br from-emerald-50 via-teal-50/70 to-emerald-50 p-5 sm:p-6 lg:grid-cols-[40%_35%_25%]">
             <div className="text-center lg:text-left">
               <span className="text-xs font-bold uppercase tracking-widest text-emerald-600">Free Business Essentials</span>
-              <h3 className="mt-3 text-xl font-extrabold text-slate-900 sm:text-2xl">Run Your Business Without Paying for Multiple Apps</h3>
-              <p className="mt-3 text-sm leading-relaxed text-slate-600 sm:text-base">
-                Create the everyday documents and records your business needs — <strong className="font-bold text-slate-800">free</strong>.
+              <h3 className="mt-2 text-xl font-extrabold text-slate-900 sm:text-2xl">Run Your Business Without<br />Paying for Multiple Apps</h3>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600 sm:text-base">
+                Create the everyday documents and records your business needs, <strong className="font-bold text-slate-800">free</strong>.
               </p>
-              <p className="mt-3 text-xs font-semibold text-slate-500 sm:text-sm">Invoice &nbsp;•&nbsp; Quotation &nbsp;•&nbsp; Receipt &nbsp;•&nbsp; Contract &nbsp;•&nbsp; Idea Validation</p>
-              <Link to="/essentials" className="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">
+              <p className="mt-2 text-xs font-semibold text-slate-500 sm:text-sm">Invoice &nbsp;•&nbsp; Quotation &nbsp;•&nbsp; Receipt &nbsp;•&nbsp; Contract &nbsp;•&nbsp; Idea Validation</p>
+              <Link to="/essentials" className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-[#1F5BFF] px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1747CC]">
                 Explore Free Tools <span aria-hidden="true">→</span>
               </Link>
             </div>
-            <div className="relative mx-auto w-full max-w-sm lg:max-w-none">
-              <div className="aspect-[3/2] overflow-hidden rounded-2xl">
+            <div className="relative mx-auto w-full max-w-sm pt-20 lg:max-w-none">
+              <Annotation className="absolute left-2 top-0" color="text-brand-500" rotate="-rotate-2" arrow="down">
+                More time for<br />what matters
+              </Annotation>
+              <div className="aspect-[4/3] overflow-hidden rounded-2xl">
                 <img src="/panel-essentials.png" alt="Business owner working on invoices and quotations" className="h-full w-full object-cover" />
               </div>
-              <div className="absolute -right-3 -top-5 w-40 rounded-xl border border-slate-100 bg-white p-2.5 shadow-lg sm:-right-6 sm:w-44">
-                {[
-                  { l: "Invoice", c: "bg-brand-100 text-brand-600" },
-                  { l: "Quotation", c: "bg-sky-100 text-sky-600" },
-                  { l: "Receipt", c: "bg-purple-100 text-purple-600" },
-                  { l: "Contract", c: "bg-orange-100 text-orange-600" },
-                ].map((d) => (
-                  <div key={d.l} className="mb-1.5 flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5 last:mb-0">
-                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${d.c}`}>
-                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                    </span>
-                    <span className="text-[10.5px] font-bold text-slate-700">{d.l}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="absolute -top-9 right-6 hidden max-w-[100px] -rotate-2 text-center text-xs leading-snug text-emerald-600 sm:block" style={{ fontFamily: "cursive" }}>
-                More time for what matters
-              </p>
+            </div>
+            <div className="flex w-full flex-col justify-center gap-2 pr-1 lg:pr-6">
+              {[
+                { l: "Invoice", c: "bg-emerald-100 text-emerald-600" },
+                { l: "Quotation", c: "bg-sky-100 text-sky-600" },
+                { l: "Receipt", c: "bg-purple-100 text-purple-600" },
+                { l: "Contract", c: "bg-orange-100 text-orange-600" },
+              ].map((d) => (
+                <div key={d.l} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2 shadow-sm">
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded ${d.c}`}>
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  </span>
+                  <span className="text-[11px] font-bold text-slate-700">{d.l}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
       </section>
 
       {/* PANEL 2 — BUSINESS PLANNING & GROWTH TOOLS (blue) */}
-      <section id="activities" className="py-14 sm:py-20">
+      <section id="activities" className="py-2 sm:py-3">
         <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
-          <div className="grid items-center gap-14 lg:grid-cols-2">
-            <div className="relative order-2 mx-auto w-full max-w-sm pb-6 lg:order-1 lg:mx-0 lg:max-w-none">
-              <p className="relative z-10 mb-3 -rotate-2 text-sm leading-snug text-brand-500 lg:mb-2" style={{ fontFamily: "cursive" }}>
-                Turn your idea into a plan
-              </p>
+          <div className="grid items-center gap-10 rounded-[20px] bg-gradient-to-br from-sky-50 via-blue-50/70 to-sky-50 p-4 sm:p-5 lg:grid-cols-2">
+            <div className="relative order-2 mx-auto w-full max-w-sm pb-3 lg:order-1 lg:mx-0 lg:max-w-none">
+              <Annotation className="relative z-10 mb-1" color="text-brand-500" rotate="-rotate-2" arrow="downLeft" showFrom="lg">
+                Turn<br />your idea<br />into a plan
+              </Annotation>
               <div className="relative">
-                <div className="aspect-[3/2] overflow-hidden rounded-2xl">
+                <div className="aspect-[16/10] overflow-hidden rounded-2xl">
                   <img src="/panel-planning.png" alt="Two founders reviewing a business plan together" className="h-full w-full object-cover" />
                 </div>
-                <div className="absolute bottom-3 right-2 w-32 rounded-lg bg-white/95 p-2 shadow-xl ring-1 ring-black/5 backdrop-blur-sm sm:bottom-4 sm:-right-8 sm:w-36 sm:p-2.5">
+                <div className="absolute bottom-3 right-2 w-32 rounded-lg bg-white/95 p-2 shadow-xl ring-1 ring-black/5 backdrop-blur-sm sm:bottom-4 sm:right-2 sm:w-36 sm:p-2.5">
                   <p className="text-[9px] font-bold text-slate-800">Business Plan</p>
                   <ul className="mt-1 space-y-[3px]">
                     {["Executive Summary", "Market Analysis", "Business Model", "Financial Projections", "Risks & Mitigation", "Go To Market"].map((s) => (
@@ -524,12 +556,12 @@ export default function LandingPage() {
             </div>
             <div className="order-1 text-center lg:order-2 lg:text-left">
               <span className="text-xs font-bold uppercase tracking-widest text-brand-600">Business Planning &amp; Growth Tools</span>
-              <h3 className="mt-3 text-xl font-extrabold text-slate-900 sm:text-2xl">Turn Your Business Idea Into a Clear Plan for Growth</h3>
-              <p className="mt-3 text-sm leading-relaxed text-slate-500 sm:text-base">
+              <h3 className="mt-2 text-xl font-extrabold text-slate-900 sm:text-2xl">Turn Your Business Idea<br />Into a Clear Plan for Growth</h3>
+              <p className="mt-2 text-sm leading-relaxed text-slate-500 sm:text-base">
                 Move from an idea or growing business to a structured plan you can actually use. Create your business plan, understand what you need to become funding-ready, prepare professional proposals and discover new commercial opportunities.
               </p>
-              <p className="mt-3 text-xs font-semibold text-slate-500 sm:text-sm">Business Plan Generator &nbsp;•&nbsp; Funding Readiness &nbsp;•&nbsp; Proposal Generator &nbsp;•&nbsp; Marketplace</p>
-              <button type="button" onClick={() => goToFeature("/blueprint?doc=business_plan")} className="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">
+              <p className="mt-2 text-xs font-semibold text-slate-500 sm:text-sm">Business Plan Generator &nbsp;•&nbsp; Funding Readiness &nbsp;•&nbsp; Proposal Generator &nbsp;•&nbsp; Marketplace</p>
+              <button type="button" onClick={() => goToFeature("/blueprint?doc=business_plan")} className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-[#1F5BFF] px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1747CC]">
                 Start Planning <span aria-hidden="true">→</span>
               </button>
             </div>
@@ -538,95 +570,95 @@ export default function LandingPage() {
       </section>
 
       {/* PANEL 3 — BUSINESS DECISION INTELLIGENCE (purple) */}
-      <section id="testimonials" className="bg-purple-50/50 py-14 sm:py-20">
+      <section id="testimonials" className="py-2 sm:py-3">
         <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
-          <div className="grid items-center gap-14 lg:grid-cols-2">
+          <div className="grid items-center gap-6 rounded-[20px] bg-gradient-to-br from-purple-50 via-violet-50/70 to-purple-50 p-4 sm:p-5 lg:grid-cols-2 xl:grid-cols-[36%_38%_26%]">
             <div className="text-center lg:text-left">
               <span className="text-xs font-bold uppercase tracking-widest text-purple-600">Business Decision Intelligence</span>
-              <h3 className="mt-3 text-xl font-extrabold text-slate-900 sm:text-2xl">Don't Just Run Your Business. Understand What Happens Next.</h3>
-              <p className="mt-3 text-sm leading-relaxed text-slate-500 sm:text-base">
+              <h3 className="mt-2 text-xl font-extrabold text-slate-900 sm:text-2xl">Don't Just Run Your Business.<br />Understand What Happens Next.</h3>
+              <p className="mt-2 text-sm leading-relaxed text-slate-500 sm:text-base">
                 EnterprateAI turns your business information into forward-looking intelligence that helps you make better decisions.
               </p>
-              <p className="mt-3 text-sm leading-relaxed text-slate-500 sm:text-base">
+              <p className="mt-2 text-sm leading-relaxed text-slate-500 sm:text-base">
                 Understand where your business is vulnerable, explore different scenarios and see how important decisions could affect your business before you act.
               </p>
-              <p className="mt-3 text-xs font-semibold text-slate-500 sm:text-sm">Live Business Plan &nbsp;•&nbsp; Scenario Simulation &nbsp;•&nbsp; Adaptive Recommendations &nbsp;•&nbsp; Fragility Index</p>
-              <button type="button" onClick={() => goToFeature("/simulation")} className="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">
+              <p className="mt-2 text-xs font-semibold text-slate-500 sm:text-sm">Live Business Plan &nbsp;•&nbsp; Scenario Simulation &nbsp;•&nbsp; Adaptive Recommendations &nbsp;•&nbsp; Fragility Index</p>
+              <button type="button" onClick={() => goToFeature("/simulation")} className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-[#1F5BFF] px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1747CC]">
                 Explore Decision Intelligence <span aria-hidden="true">→</span>
               </button>
             </div>
-            <div className="relative mx-auto w-full max-w-sm pt-6 lg:mx-0 lg:max-w-none">
-              <p className="absolute -top-1 right-0 hidden max-w-[110px] -rotate-2 text-right text-sm leading-snug text-purple-500 lg:block" style={{ fontFamily: "cursive" }}>
-                See what's next before you act
-              </p>
-              <div className="relative">
-                <div className="aspect-[3/2] overflow-hidden rounded-2xl">
-                  <img src="/panel-decision.png" alt="Founder reviewing scenario simulation data" className="h-full w-full object-cover" />
+
+            <div className="mx-auto w-full max-w-sm overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-black/5 lg:mx-0 lg:max-w-none">
+              <div className="p-3">
+                <div className="flex items-center gap-1.5">
+                  <svg className="h-3.5 w-3.5 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18h18M7 15l4-6 4 4 5-8" /></svg>
+                  <p className="text-[11px] font-bold text-slate-800">Scenario Simulation</p>
                 </div>
-                <div className="absolute inset-x-1.5 bottom-1.5 grid grid-cols-[1.35fr_1fr] gap-0 overflow-hidden rounded-lg bg-white/95 shadow-xl ring-1 ring-black/5 backdrop-blur-sm sm:inset-x-2.5 sm:bottom-2.5">
-                  <div className="border-r border-slate-100 p-2 sm:p-2.5">
-                    <div className="flex items-center gap-1.5">
-                      <svg className="h-3 w-3 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18h18M7 15l4-6 4 4 5-8" /></svg>
-                      <p className="text-[9.5px] font-bold text-slate-800">Scenario Simulation</p>
-                    </div>
-                    <p className="mt-1.5 text-[7px] font-semibold text-slate-400">Select a scenario</p>
-                    <div className="mt-1 flex items-center gap-1">
-                      <div className="flex flex-1 items-center justify-between rounded-md border border-slate-200 px-1.5 py-1 text-[7.5px] font-medium text-slate-600">
-                        Increase marketing spend
-                        <svg className="h-2 w-2 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-                      </div>
-                      <span className="shrink-0 rounded-md bg-brand-600 px-1.5 py-1 text-[6.5px] font-bold text-white">Run Simulation</span>
-                    </div>
-                    <div className="mt-1.5 flex items-center gap-2.5 text-[6.5px] text-slate-400">
-                      <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-blue-500" />Base Case</span>
-                      <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-purple-500" />Growth Scenario</span>
-                    </div>
-                    <svg viewBox="0 0 200 60" className="mt-1 h-11 w-full" preserveAspectRatio="none">
-                      <defs>
-                        <linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#8B5CF6" stopOpacity="0.28" />
-                          <stop offset="100%" stopColor="#8B5CF6" stopOpacity="0" />
-                        </linearGradient>
-                      </defs>
-                      {[12, 24, 36, 48].map((y) => (<line key={y} x1="0" x2="200" y1={y} y2={y} stroke="#EEF2FF" strokeWidth="1" />))}
-                      <polygon points="8,50 55,34 100,37 150,15 192,9 192,58 8,58" fill="url(#growthFill)" />
-                      <polyline points="8,50 55,42 100,44 150,32 192,27" fill="none" stroke="#3B82F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      <polyline points="8,50 55,34 100,37 150,15 192,9" fill="none" stroke="#8B5CF6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      {[[8, 50], [55, 34], [100, 37], [150, 15], [192, 9]].map(([x, y]) => (<circle key={x} cx={x} cy={y} r="2.2" fill="#8B5CF6" />))}
+                <p className="mt-2 text-[10px] font-semibold text-slate-400">Select a scenario</p>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <div className="flex flex-1 items-center justify-between rounded-md border border-slate-200 px-2 py-1.5 text-[10.5px] font-medium text-slate-600">
+                    Increase marketing spend
+                    <svg className="h-2.5 w-2.5 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                  </div>
+                  <span className="shrink-0 rounded-md bg-brand-600 px-2 py-1.5 text-[9.5px] font-bold text-white">Run Simulation</span>
+                </div>
+                <div className="mt-2 flex items-center gap-3 text-[9.5px] text-slate-400">
+                  <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-blue-500" />Base Case</span>
+                  <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-purple-500" />Growth Scenario</span>
+                </div>
+                <svg viewBox="0 0 200 60" className="mt-1.5 h-14 w-full" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#8B5CF6" stopOpacity="0.28" />
+                      <stop offset="100%" stopColor="#8B5CF6" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                  {[12, 24, 36, 48].map((y) => (<line key={y} x1="0" x2="200" y1={y} y2={y} stroke="#EEF2FF" strokeWidth="1" />))}
+                  <polygon points="8,50 55,34 100,37 150,15 192,9 192,58 8,58" fill="url(#growthFill)" />
+                  <polyline points="8,50 55,42 100,44 150,32 192,27" fill="none" stroke="#3B82F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <polyline points="8,50 55,34 100,37 150,15 192,9" fill="none" stroke="#8B5CF6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  {[[8, 50], [55, 34], [100, 37], [150, 15], [192, 9]].map(([x, y]) => (<circle key={x} cx={x} cy={y} r="2.2" fill="#8B5CF6" />))}
+                </svg>
+                <div className="mt-0.5 flex justify-between text-[9.5px] text-slate-300"><span>Year 1</span><span>Year 2</span><span>Year 3</span></div>
+              </div>
+              <div className="grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100">
+                <div className="p-3 text-center">
+                  <p className="text-[10.5px] font-bold text-slate-500">Fragility Index</p>
+                  <div className="relative mx-auto mt-1.5 h-12 w-12">
+                    <svg viewBox="0 0 36 36" className="h-12 w-12 -rotate-90">
+                      <circle cx="18" cy="18" r="15" fill="none" stroke="#E2E8F0" strokeWidth="4" pathLength="100" />
+                      <circle cx="18" cy="18" r="15" fill="none" stroke="#22C55E" strokeWidth="4" strokeDasharray="28 100" strokeLinecap="round" pathLength="100" />
                     </svg>
-                    <div className="mt-0.5 flex justify-between text-[6.5px] text-slate-300"><span>Year 1</span><span>Year 2</span><span>Year 3</span></div>
-                  </div>
-                  <div className="flex flex-col divide-y divide-slate-100">
-                    <div className="p-2 text-center sm:p-2.5">
-                      <p className="text-[7.5px] font-bold text-slate-500">Fragility Index</p>
-                      <div className="relative mx-auto mt-1 h-9 w-9">
-                        <svg viewBox="0 0 36 36" className="h-9 w-9 -rotate-90">
-                          <circle cx="18" cy="18" r="15" fill="none" stroke="#E2E8F0" strokeWidth="4" pathLength="100" />
-                          <circle cx="18" cy="18" r="15" fill="none" stroke="#22C55E" strokeWidth="4" strokeDasharray="28 100" strokeLinecap="round" pathLength="100" />
-                        </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
-                          <span className="text-[10px] font-extrabold text-slate-900">28</span>
-                          <span className="text-[5.5px] font-bold text-emerald-600">Low</span>
-                        </div>
-                      </div>
-                      <p className="mt-1 text-[6.5px] text-slate-400 leading-tight">Resilient in most scenarios</p>
-                    </div>
-                    <div className="p-2 sm:p-2.5">
-                      <p className="text-[7.5px] font-bold text-slate-500">Top Recommendations</p>
-                      <ul className="mt-1 space-y-1">
-                        {[
-                          { t: "Diversify revenue streams", c: "bg-orange-500" },
-                          { t: "Build a cash buffer", c: "bg-emerald-500" },
-                          { t: "Monitor key cost drivers", c: "bg-blue-500" },
-                        ].map((r, i) => (
-                          <li key={r.t} className="flex items-start gap-1 text-[7px] text-slate-500 leading-tight">
-                            <span className={`mt-[1px] flex h-2.5 w-2.5 shrink-0 items-center justify-center rounded-full text-[5.5px] font-bold text-white ${r.c}`}>{i + 1}</span>{r.t}
-                          </li>
-                        ))}
-                      </ul>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+                      <span className="text-sm font-extrabold text-slate-900">28</span>
+                      <span className="text-[8px] font-bold text-emerald-600">Low</span>
                     </div>
                   </div>
+                  <p className="mt-1 text-[9px] text-slate-400 leading-tight">Resilient in most scenarios</p>
                 </div>
+                <div className="p-3">
+                  <p className="text-[10.5px] font-bold text-slate-500">Top Recommendations</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {[
+                      { t: "Diversify revenue streams", c: "bg-orange-500" },
+                      { t: "Build a cash buffer", c: "bg-emerald-500" },
+                      { t: "Monitor key cost drivers", c: "bg-blue-500" },
+                    ].map((r, i) => (
+                      <li key={r.t} className="flex items-start gap-1 text-[9.5px] text-slate-500 leading-tight">
+                        <span className={`mt-[1px] flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-white ${r.c}`}>{i + 1}</span>{r.t}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div className="relative mx-auto hidden w-full max-w-sm pt-14 xl:mx-0 xl:block xl:max-w-none">
+              <Annotation className="absolute right-2 top-0 text-right" color="text-purple-500" rotate="-rotate-2" arrow="down" showFrom="xl">
+                See what's next<br />before you act
+              </Annotation>
+              <div className="aspect-[4/3] overflow-hidden rounded-2xl">
+                <img src="/panel-decision.png" alt="Founder reviewing scenario simulation data" className="h-full w-full object-cover" />
               </div>
             </div>
           </div>
@@ -634,24 +666,24 @@ export default function LandingPage() {
       </section>
 
       {/* HOW IT WORKS — 3 simple steps */}
-      <section id="how-it-works" className="bg-white py-16 sm:py-20">
+      <section id="how-it-works" className="bg-white py-6 sm:py-8">
         <div className="mx-auto max-w-[1400px] px-4 sm:px-6">
-          <h2 className="mb-10 text-center text-2xl font-extrabold text-slate-900 sm:text-3xl">From Idea to Better Decisions in Three Simple Steps</h2>
+          <h2 className="mb-4 text-center text-2xl font-extrabold text-slate-900 sm:text-3xl">From Idea to Better Decisions in Three Simple Steps</h2>
           <div className="grid gap-6 sm:grid-cols-3">
             {[
               { n: "1", title: "Create Your Business Workspace", body: "Tell EnterprateAI about your business or idea.", c: "bg-brand-600" },
               { n: "2", title: "Use the Tools You Need", body: "Validate an idea, create invoices, build your business plan, prepare for funding or find opportunities.", c: "bg-brand-600" },
               { n: "3", title: "Let EnterprateAI Build Intelligence Around Your Business", body: "See risks, simulations, recommendations and insights based on your own business information.", c: "bg-purple-600" },
             ].map((s, i, arr) => (
-              <div key={s.n} className="relative rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="flex items-center gap-2.5">
-                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white ${s.c}`}>{s.n}</div>
+              <div key={s.n} className="relative flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white ${s.c}`}>{s.n}</div>
+                <div>
                   <h3 className="text-sm font-bold text-slate-900 leading-snug">{s.title}</h3>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-500">{s.body}</p>
                 </div>
-                <p className="mt-3 text-xs leading-relaxed text-slate-500">{s.body}</p>
                 {i < arr.length - 1 && (
-                  <span className="pointer-events-none absolute -right-3 top-1/2 hidden -translate-y-1/2 text-slate-300 sm:block">
-                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 12h14" /></svg>
+                  <span className="pointer-events-none absolute -right-4 top-1/2 hidden -translate-y-1/2 text-slate-500 sm:block">
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 12h14" /></svg>
                   </span>
                 )}
               </div>
@@ -661,10 +693,10 @@ export default function LandingPage() {
       </section>
 
       {/* PERSONAS */}
-      <section className="bg-brand-50/30 py-16 sm:py-20">
+      <section className="bg-brand-50/30 py-6 sm:py-8">
         <div className="mx-auto max-w-[1400px] px-4 sm:px-6">
-          <h2 className="mb-10 text-center text-2xl font-extrabold text-slate-900 sm:text-3xl">Built for Ambitious Founders and Business Owners</h2>
-          <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-stretch sm:justify-center">
+          <h2 className="mb-4 text-center text-2xl font-extrabold text-slate-900 sm:text-3xl">Built for Ambitious Founders and Business Owners</h2>
+          <div className="grid items-center gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_150px] lg:gap-6">
             {[
               {
                 title: "For Startups", to: "/validation", c: "bg-brand-100 text-brand-600",
@@ -677,21 +709,23 @@ export default function LandingPage() {
                 icon: "M3 9l1-5h16l1 5M4 9v10a1 1 0 001 1h4a1 1 0 001-1v-4h4v4a1 1 0 001 1h4a1 1 0 001-1V9M4 9h16",
               },
             ].map((p) => (
-              <div key={p.title} className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-                <div className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full ${p.c}`}>
-                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d={p.icon} /></svg>
+              <div key={p.title} className="flex flex-col items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-center shadow-sm sm:flex-row sm:items-start sm:text-left">
+                <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full ${p.c}`}>
+                  <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d={p.icon} /></svg>
                 </div>
-                <h3 className="mt-4 text-base font-bold text-slate-900">{p.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-slate-500">{p.body}</p>
-                <button type="button" onClick={() => goToFeature(p.to)} className="mt-5 inline-flex items-center gap-1.5 rounded-xl border border-brand-200 px-5 py-2.5 text-sm font-semibold text-brand-700 transition hover:bg-brand-50">
-                  {p.title} <span aria-hidden="true">→</span>
-                </button>
+                <div className="flex-1">
+                  <h3 className="text-base font-bold text-slate-900">{p.title}</h3>
+                  <p className="mt-1 text-sm leading-relaxed text-slate-500">{p.body}</p>
+                  <button type="button" onClick={() => goToFeature(p.to)} className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[#1F5BFF] bg-white px-5 py-2.5 text-sm font-semibold text-[#1F5BFF] transition hover:bg-blue-50">
+                    {p.title} <span aria-hidden="true">→</span>
+                  </button>
+                </div>
               </div>
             ))}
+            <Annotation className="self-center text-right" color="text-brand-600" rotate="-rotate-1" arrow="left" showFrom="lg">
+              Stronger<br />businesses<br />together<br />tomorrow
+            </Annotation>
           </div>
-          <p className="mt-8 -rotate-1 text-center text-sm text-brand-600" style={{ fontFamily: "cursive" }}>
-            Stronger businesses together tomorrow
-          </p>
         </div>
       </section>
 
@@ -708,7 +742,7 @@ export default function LandingPage() {
               </button>
             </div>
           </div>
-          <div className="mx-auto grid max-w-5xl gap-5 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch">
+          <div className="mx-auto grid max-w-5xl gap-5 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch [&>*:last-child]:sm:col-span-2 [&>*:last-child]:sm:mx-auto [&>*:last-child]:sm:w-full [&>*:last-child]:sm:max-w-sm [&>*:last-child]:lg:col-span-1 [&>*:last-child]:lg:mx-0 [&>*:last-child]:lg:max-w-none">
             {PLANS.map(plan => (
               <div key={plan.name} className={`relative flex flex-col rounded-2xl border bg-white p-6 ${plan.highlight ? "border-brand-400 ring-2 ring-brand-200 shadow-xl shadow-brand-100" : "border-slate-200"}`}>
                 {plan.badge && <div className="absolute left-1/2 -top-3.5 -translate-x-1/2 rounded-full bg-brand-600 px-3 py-1 text-xs font-bold text-white">{plan.badge}</div>}
@@ -742,35 +776,38 @@ export default function LandingPage() {
       {/* FINAL CTA */}
       <section className="py-4 sm:py-6">
         <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
-          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-600 via-brand-600 to-purple-600 px-6 py-10 text-white sm:px-12 sm:py-14">
+          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-600 via-brand-600 to-purple-600 px-6 py-6 text-white sm:px-12 sm:py-8">
             <div className="pointer-events-none absolute inset-0 opacity-[0.08]" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "28px 28px" }} />
-            <div className="relative flex flex-col items-center gap-8 text-center lg:flex-row lg:items-center lg:justify-between lg:text-left">
+            <div className="relative flex flex-col items-center gap-6 text-center lg:flex-row lg:items-center lg:justify-between lg:text-left">
               <div className="max-w-xl">
                 <h2 className="text-2xl font-extrabold sm:text-3xl">Build a More Resilient Business Today.</h2>
                 <p className="mt-3 text-sm leading-relaxed text-white/85 sm:text-base">
                   Start with the business tools you need now. As your business develops, EnterprateAI gives you the intelligence to understand it more deeply, test important decisions and grow with greater clarity.
                 </p>
               </div>
-              <div className="flex shrink-0 flex-col items-center gap-3 sm:flex-row">
-                <button type="button" onClick={() => goToApp()} className="w-full rounded-xl bg-white px-8 py-3.5 text-sm font-semibold text-brand-700 shadow-lg transition hover:bg-brand-50 active:scale-95 sm:w-auto">
-                  Start Free
-                </button>
-                <Link to="/book-demo" className="flex w-full items-center justify-center rounded-xl border border-white/40 px-8 py-3.5 text-sm font-semibold text-white transition hover:bg-white/10 active:scale-95 sm:w-auto">
-                  Book a Demo
-                </Link>
+              <div className="flex shrink-0 items-center gap-5">
+                <div className="flex shrink-0 flex-col items-center gap-3 sm:flex-row">
+                  <button type="button" onClick={() => goToApp()} className="w-full rounded-lg bg-white px-8 py-3.5 text-sm font-semibold text-[#1F5BFF] shadow-lg transition hover:bg-blue-50 active:scale-95 sm:w-auto">
+                    Start Free
+                  </button>
+                  <Link to="/book-demo" className="flex w-full items-center justify-center rounded-lg border border-white px-8 py-3.5 text-sm font-semibold text-white transition hover:bg-white/10 active:scale-95 sm:w-auto">
+                    Book a Demo
+                  </Link>
+                </div>
+                <Annotation className="shrink-0" color="text-white/80" rotate="-rotate-2" arrow="left">
+                  Ideas today.<br />A stronger tomorrow.
+                </Annotation>
               </div>
             </div>
-            <p className="absolute right-8 top-6 hidden -rotate-2 text-right text-sm leading-snug text-white/70 lg:block" style={{ fontFamily: "cursive" }}>
-              Ideas today.<br />A stronger tomorrow.
-            </p>
           </div>
         </div>
       </section>
 
       {/* FOOTER */}
-      <footer className="bg-white py-12 border-t border-slate-100">
+      <footer className="bg-white py-8 border-t border-slate-100">
         <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
-          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+          <div className="grid flex-1 gap-8 sm:grid-cols-2 lg:grid-cols-5">
             <div>
               <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto" />
               <p className="mt-3 max-w-[220px] text-sm leading-relaxed text-slate-500">AI-native Business Decision Intelligence for ambitious founders and businesses.</p>
@@ -808,8 +845,7 @@ export default function LandingPage() {
               </ul>
             </div>
           </div>
-          <div className="mt-10 border-t border-slate-100 pt-6 text-right">
-            <p className="text-xs text-slate-400">© {new Date().getFullYear()} EnterprateAI. All rights reserved.</p>
+          <p className="shrink-0 text-xs text-slate-400 lg:pb-1">© {new Date().getFullYear()} EnterprateAI. All rights reserved.</p>
           </div>
         </div>
       </footer>

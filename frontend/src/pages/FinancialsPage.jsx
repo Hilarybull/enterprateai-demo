@@ -239,6 +239,7 @@ export default function FinancialsPage() {
     invoice_id: "",
     customer_id: "",
     contract_id: "",
+    quotation_id: "",
     currency: currency || "GBP",
     product_ids: [],
     items: [],
@@ -554,6 +555,18 @@ export default function FinancialsPage() {
   const activeQuotes = useMemo(() => quotes.filter((q) => !q.archived), [quotes]);
   const activeExpenses = useMemo(() => expenses.filter((e) => !e.archived), [expenses]);
   const activeContracts = useMemo(() => contracts.filter((c) => !c.archived), [contracts]);
+  // Customer suggestions for the "financial-customers" datalist: catalogue customers plus anyone
+  // already used as a customer on an invoice, quotation, sales contract, or manual receipt - so
+  // typing an invoice for someone who was only ever added via a quote (say) still autocompletes.
+  const knownCustomerNames = useMemo(() => {
+    const names = new Set();
+    activeCustomers.forEach((c) => { if (c.name) names.add(c.name); });
+    activeInvoices.forEach((i) => { if (i.customer_name) names.add(i.customer_name); });
+    activeQuotes.forEach((q) => { if (q.customer_name) names.add(q.customer_name); });
+    activeContracts.forEach((c) => { if (c.contract_type === "sales" && c.counterparty_name) names.add(c.counterparty_name); });
+    manualReceipts.forEach((r) => { if (r.customer_name) names.add(r.customer_name); });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [activeCustomers, activeInvoices, activeQuotes, activeContracts, manualReceipts]);
   const archivedInvoices = useMemo(() => invoices.filter((i) => i.archived), [invoices]);
   const archivedQuotes = useMemo(() => quotes.filter((q) => q.archived), [quotes]);
   const archivedExpenses = useMemo(() => expenses.filter((e) => e.archived), [expenses]);
@@ -1735,7 +1748,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   }
 
   function resetInvoiceForm() {
-    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", currency: currency || "GBP", product_ids: [], items: [], extra_items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "", payment_terms_note: "", notes: "" });
+    setInvoiceForm({ invoice_id: "", customer_id: "", contract_id: "", quotation_id: "", currency: currency || "GBP", product_ids: [], items: [], extra_items: [], issued_at: todayInputValue(), due_date: "", vat_rate: "", payment_terms_note: "", notes: "" });
     setEditingInvoiceId(null);
     setPreviewInvoiceId(null);
     setInvoiceFormError(null);
@@ -1890,6 +1903,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       payment_terms_note: String(invoiceForm.payment_terms_note || "").trim() || null,
       notes: String(invoiceForm.notes || "").trim() || null,
       contract_id: invoiceForm.contract_id || null,
+      quotation_id: invoiceForm.quotation_id || null,
       updated_at: new Date().toISOString()
     };
     if (editingInvoiceId) {
@@ -2455,6 +2469,19 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
     });
   }, [availableSalesContracts, invoiceForm.customer_id]); // eslint-disable-line
 
+  const customerSalesQuotes = useMemo(() => {
+    if (!invoiceForm.customer_id) return [];
+    const customer = resolveCustomer(invoiceForm.customer_id);
+    return activeQuotes.filter((q) => {
+      if (customer) return q.customer_id === customer.id || q.customer_name === customer.name;
+      const typed = String(invoiceForm.customer_id).trim().toLowerCase();
+      return (
+        String(q.customer_name || "").toLowerCase() === typed ||
+        String(q.customer_id || "").toLowerCase() === typed
+      );
+    });
+  }, [activeQuotes, invoiceForm.customer_id]); // eslint-disable-line
+
   const requiresCatalogue = !activeProducts.length || !activeCustomers.length || !activeVendors.length;
   const invoicePreviewItems = syncProductLineItems(invoiceForm.product_ids, Array.isArray(invoiceForm.items) ? invoiceForm.items : []);
   const invoiceExtraItems = (Array.isArray(invoiceForm.extra_items) ? invoiceForm.extra_items : []).map((i) => ({
@@ -2521,8 +2548,8 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
   return (
     <div>
       <datalist id="financial-customers">
-        {activeCustomers.map((c) => (
-          <option key={c.id} value={c.name} />
+        {knownCustomerNames.map((name) => (
+          <option key={name} value={name} />
         ))}
       </datalist>
       <datalist id="financial-products">
@@ -2860,9 +2887,9 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <div className="ea-label">Customer *</div>
                 <Input
                   list="financial-customers"
-                  placeholder={activeCustomers.length ? "Select or type customer" : "Type customer"}
+                  placeholder={knownCustomerNames.length ? "Select or type customer" : "Type customer"}
                   value={invoiceForm.customer_id}
-                  onChange={(e) => setInvoiceForm((f) => ({ ...f, customer_id: e.target.value, contract_id: "" }))}
+                  onChange={(e) => setInvoiceForm((f) => ({ ...f, customer_id: e.target.value, contract_id: "", quotation_id: "" }))}
                 />
               </div>
               <div>
@@ -2927,6 +2954,53 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                       {customerSalesContracts.map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.counterparty_name || "Unnamed"} — {formatMoney(contractRemaining(c, editingInvoiceId).total)} remaining{c.end_date ? ` (ends ${new Date(c.end_date).toLocaleDateString()})` : ""}
+                          </option>
+                        ))}
+                    </select>
+                    <svg
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                </div>
+              )}
+              {customerSalesQuotes.length > 0 && (
+                <div>
+                  <div className="ea-label">Link to quotation (optional)</div>
+                  <div className="relative">
+                    <select
+                      className={`w-full appearance-none rounded-xl border border-slate-200 bg-white pl-3.5 pr-10 py-2.5 text-sm outline-none ring-brand-200 focus:ring-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${invoiceForm.quotation_id ? "text-slate-900 dark:text-slate-100" : "text-slate-400 dark:text-slate-500"}`}
+                      value={invoiceForm.quotation_id}
+                      onChange={(e) => {
+                        const quoteId = e.target.value;
+                        if (!quoteId) {
+                          setInvoiceForm((f) => ({ ...f, quotation_id: "" }));
+                          return;
+                        }
+                        const quote = activeQuotes.find((q) => q.id === quoteId);
+                        if (!quote) {
+                          setInvoiceForm((f) => ({ ...f, quotation_id: quoteId }));
+                          return;
+                        }
+                        const productIds = Array.isArray(quote.product_ids) && quote.product_ids.length
+                          ? quote.product_ids
+                          : quote.product_id ? [quote.product_id] : [];
+                        setInvoiceForm((f) => ({
+                          ...f,
+                          quotation_id: quoteId,
+                          customer_id: quote.customer_name || quote.customer_id || f.customer_id,
+                          product_ids: productIds.length && !f.product_ids?.length ? productIds : f.product_ids,
+                          items: productIds.length && !f.items?.length ? normalizeRecordItems(quote) : f.items,
+                        }));
+                      }}
+                    >
+                      <option value="">Select quotation</option>
+                      {customerSalesQuotes.map((q) => (
+                          <option key={q.id} value={q.id}>
+                            {q.quotation_id || `QUO-${q.id.substring(0, 8).toUpperCase()}`} — {q.customer_name || "Unnamed"}{q.issued_at ? ` (${new Date(q.issued_at).toLocaleDateString()})` : ""}
                           </option>
                         ))}
                     </select>
@@ -3280,6 +3354,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                                     invoice_id: inv.invoice_id || "",
                                     customer_id: inv.customer_name || inv.customer_id,
                                     contract_id: inv.contract_id || "",
+                                    quotation_id: inv.quotation_id || "",
                                     currency: String(inv.currency || currency || "GBP").toUpperCase(),
                                     product_ids: resolvedProductIds,
                                     items: resolvedItems,
@@ -3421,7 +3496,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                 <div className="ea-label">Customer *</div>
                 <Input
                   list="financial-customers"
-                  placeholder={activeCustomers.length ? "Select or type customer" : "Type customer"}
+                  placeholder={knownCustomerNames.length ? "Select or type customer" : "Type customer"}
                   value={quoteForm.customer_id}
                   onChange={(e) => setQuoteForm((f) => ({ ...f, customer_id: e.target.value }))}
                 />
