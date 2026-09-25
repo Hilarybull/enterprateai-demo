@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
@@ -16,6 +16,8 @@ from app.modules.plans.schemas import (
 from app.shared.auth.deps import get_current_user
 from app.modules.credits.service import provision_plan_credits, reset_monthly_credits
 from app.modules.referral import service as ref_svc
+from app.modules.plans.access import resolve_subscription
+from app.modules.addons import service as addon_svc
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +25,6 @@ router = APIRouter(prefix="/plans", tags=["plans"])
 
 TRIAL_DAYS = 14
 
-# Users created before this date are grandfathered — no plan-based access restrictions.
-GRANDFATHERED_BEFORE = datetime(2026, 5, 7, 0, 0, 0, tzinfo=timezone.utc)
 
 # Maps (plan_key, billing_period) → settings attribute name
 _PRICE_ATTR = {
@@ -78,6 +78,60 @@ def _frontend_url() -> str:
     return str(url).rstrip("/")
 
 
+# ── Subscription credit provisioning (idempotent) ────────────────────────────
+# Credits for a new subscription can be granted from two places: the eager
+# /activate-subscription call made by the success page, and the Stripe webhook
+# (checkout.session.completed). Whichever arrives first grants; the other is a
+# no-op. Each grant is tagged with the Stripe subscription id in the ledger
+# description so the check survives restarts, and the per-subscription lock
+# closes the race when both arrive at the same moment (single uvicorn worker).
+
+_credit_locks: dict[str, asyncio.Lock] = {}
+
+
+def _subscription_credit_reason(plan_key: str, subscription_id: str) -> str:
+    return f"{plan_key} subscription credit allocation [{subscription_id}]"
+
+
+async def _provision_subscription_credits_once(user_id: str, plan_key: str, subscription_id: str | None) -> bool:
+    """Grant the plan's credits for this Stripe subscription exactly once.
+    Returns True if credits were granted by this call."""
+    if not subscription_id:
+        # Nothing to key idempotency on — fall back to a plain grant.
+        await provision_plan_credits(user_id, plan_key, reason=f"{plan_key} subscription credit allocation")
+        return True
+
+    lock = _credit_locks.setdefault(subscription_id, asyncio.Lock())
+    async with lock:
+        reason = _subscription_credit_reason(plan_key, subscription_id)
+        existing = await sb_select(
+            "credit_transactions",
+            filters=[("user_id", "eq", user_id), ("description", "eq", reason)],
+            columns="id",
+            limit=1,
+        )
+        if existing:
+            return False
+        await provision_plan_credits(user_id, plan_key, reason=reason)
+        return True
+
+
+def _cancel_superseded_subscription(previous: dict | None, new_subscription_id: str | None) -> None:
+    """When a user changes plan, Checkout creates a brand-new Stripe
+    subscription. Cancel the one it replaces so they aren't billed for both.
+    prorate=True credits the unused time to the customer's balance, which
+    Stripe applies to the new subscription's next invoice (same customer)."""
+    old_id = (previous or {}).get("stripe_subscription_id")
+    if not old_id or not new_subscription_id or old_id == new_subscription_id:
+        return
+    try:
+        _stripe_client().subscriptions.cancel(old_id, {"prorate": True})
+        logger.info("Cancelled superseded subscription %s (replaced by %s)", old_id, new_subscription_id)
+    except Exception as e:
+        # Already cancelled, or Stripe unreachable — log for manual follow-up.
+        logger.error("Failed to cancel superseded subscription %s: %s", old_id, e)
+
+
 # ── Add-on catalogue ─────────────────────────────────────────────────────────
 
 ADDONS = [
@@ -118,18 +172,99 @@ async def addon_checkout(
         raise HTTPException(status_code=503, detail=f"Add-on '{addon['label']}' is not yet available for purchase.")
 
     base = _frontend_url()
-    session = client.checkout.sessions.create({
+    session_params: dict = {
         "mode": addon["mode"],
         "line_items": [{"price": price_id, "quantity": 1}],
-        "customer_email": user["email"],
         "metadata": {
             "user_id": user["id"],
             "addon_key": addon_key,
         },
-        "success_url": f"{base}/pricing/success?addon={addon_key}",
+        "success_url": f"{base}/pricing/success?addon={addon_key}&session_id={{CHECKOUT_SESSION_ID}}",
         "cancel_url": f"{base}/pricing",
-    })
+    }
+    current = await sb_select("user_subscriptions", filters=[("user_id", "eq", user["id"])], single=True) or {}
+    if current.get("stripe_customer_id"):
+        session_params["customer"] = current["stripe_customer_id"]
+    else:
+        session_params["customer_email"] = user["email"]
+    session = client.checkout.sessions.create(session_params)
     return {"checkout_url": session.url}
+
+
+def _obj_get(obj, key: str, default=None):
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _period_iso(stripe_sub) -> tuple[str | None, str | None]:
+    """Subscription period as ISO strings. Newer Stripe API versions moved the
+    period onto the subscription items, so fall back to the first item."""
+    ps = _obj_get(stripe_sub, "current_period_start")
+    pe = _obj_get(stripe_sub, "current_period_end")
+    if not (ps and pe):
+        items = _obj_get(_obj_get(stripe_sub, "items"), "data") or []
+        if items:
+            ps = ps or _obj_get(items[0], "current_period_start")
+            pe = pe or _obj_get(items[0], "current_period_end")
+
+    def to_iso(t):
+        return datetime.fromtimestamp(t, tz=timezone.utc).isoformat() if t else None
+
+    return to_iso(ps), to_iso(pe)
+
+
+async def _fulfil_addon_session(session) -> dict:
+    """Deliver a paid add-on Checkout session. Safe to call more than once."""
+    meta = _obj_get(session, "metadata") or {}
+    user_id = meta.get("user_id")
+    addon_key = meta.get("addon_key")
+    session_id = _obj_get(session, "id")
+    if not (user_id and addon_key and session_id):
+        raise ValueError("Add-on session missing metadata")
+    if _obj_get(session, "payment_status") not in ("paid", "no_payment_required"):
+        raise HTTPException(status_code=402, detail="Payment for this add-on has not completed yet.")
+
+    sub_id = _obj_get(session, "subscription")
+    if sub_id and not isinstance(sub_id, str):
+        sub_id = _obj_get(sub_id, "id")
+    period_start = period_end = None
+    if sub_id:
+        try:
+            period_start, period_end = _period_iso(_stripe_client().subscriptions.retrieve(sub_id))
+        except Exception as e:
+            logger.error("Add-on %s: could not read subscription period: %s", sub_id, e)
+    return await addon_svc.fulfil_addon(
+        user_id=user_id,
+        addon_key=addon_key,
+        session_id=session_id,
+        subscription_id=sub_id,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+
+@router.post("/addons/activate")
+async def activate_addon(payload: dict, user=Depends(get_current_user)):
+    """Called by the success page right after an add-on Checkout, so the
+    purchase is delivered even if the webhook is slow. Idempotent."""
+    session_id = payload.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required.")
+    try:
+        session = _stripe_client().checkout.sessions.retrieve(session_id)
+    except Exception as e:
+        logger.error("activate_addon: retrieve session failed: %s", e)
+        raise HTTPException(status_code=400, detail="Could not verify checkout session with Stripe.")
+    meta = _obj_get(session, "metadata") or {}
+    if str(meta.get("user_id") or "") != str(user["id"]):
+        raise HTTPException(status_code=403, detail="This payment belongs to a different account.")
+    if not meta.get("addon_key"):
+        raise HTTPException(status_code=400, detail="Not an add-on purchase.")
+    result = await _fulfil_addon_session(session)
+    return {"activated": True, "addon_key": meta["addon_key"], "already_fulfilled": bool(result.get("already_fulfilled"))}
 
 
 # ── Public: subscribe interest capture ───────────────────────────────────────
@@ -247,6 +382,7 @@ async def activate_subscription(
     plan_key: str | None = None
     billing_period: str = "monthly"
     customer_id: str | None = None
+    owner_id: str | None = None
 
     if subscription_id:
         try:
@@ -255,6 +391,7 @@ async def activate_subscription(
             plan_key = meta.get("plan_key")
             billing_period = meta.get("billing_period", "monthly")
             customer_id = getattr(stripe_sub, "customer", None)
+            owner_id = meta.get("user_id")
         except Exception as e:
             logger.error("activate_subscription: retrieve sub failed: %s", e)
             raise HTTPException(status_code=400, detail="Could not verify subscription with Stripe.")
@@ -266,6 +403,7 @@ async def activate_subscription(
             plan_key = meta.get("plan_key")
             billing_period = meta.get("billing_period", "monthly")
             customer_id = getattr(session, "customer", None)
+            owner_id = meta.get("user_id")
             sub_id = getattr(session, "subscription", None)
             if sub_id:
                 stripe_sub = client.subscriptions.retrieve(sub_id)
@@ -278,6 +416,22 @@ async def activate_subscription(
 
     if not stripe_sub:
         raise HTTPException(status_code=400, detail="Subscription not found.")
+
+    # The session/subscription must have been created for this user.
+    if str(owner_id or "") != str(user["id"]):
+        raise HTTPException(status_code=403, detail="This payment belongs to a different account.")
+
+    # Stripe's subscription can briefly still read "incomplete" right after the
+    # payment succeeds; retry a few times before treating it as not active.
+    for attempt in range(3):
+        if getattr(stripe_sub, "status", None) in ("active", "trialing"):
+            break
+        await asyncio.sleep(0.75 * (attempt + 1))
+        try:
+            stripe_sub = client.subscriptions.retrieve(subscription_id)
+        except Exception as e:
+            logger.error("activate_subscription: re-retrieve sub failed: %s", e)
+            break
 
     sub_status = getattr(stripe_sub, "status", None)
     if sub_status not in ("active", "trialing"):
@@ -292,6 +446,7 @@ async def activate_subscription(
     period_start = datetime.fromtimestamp(ps, tz=timezone.utc).isoformat() if ps else now.isoformat()
     period_end = datetime.fromtimestamp(pe, tz=timezone.utc).isoformat() if pe else (now + timedelta(days=30 if billing_period == "monthly" else 365)).isoformat()
 
+    previous = await sb_select("user_subscriptions", filters=[("user_id", "eq", user["id"])], single=True)
     await sb_upsert(
         "user_subscriptions",
         payload={
@@ -307,7 +462,25 @@ async def activate_subscription(
         },
         on_conflict="user_id",
     )
-    return {"activated": True, "plan_key": plan_key, "billing_period": billing_period, "period_end": period_end}
+    _cancel_superseded_subscription(previous, subscription_id)
+
+    # Grant the plan's credits here too, so a paying user is credited even if
+    # the Stripe webhook is slow or not configured. Idempotent with the webhook.
+    credits_granted = False
+    try:
+        credits_granted = await _provision_subscription_credits_once(user["id"], plan_key, subscription_id)
+        if credits_granted:
+            logger.info("Provisioned credits for user %s plan %s on activate-subscription", user["id"], plan_key)
+    except Exception as e:
+        logger.error("Failed to provision credits on activate-subscription for user %s: %s", user["id"], e)
+
+    return {
+        "activated": True,
+        "plan_key": plan_key,
+        "billing_period": billing_period,
+        "period_end": period_end,
+        "credits_granted": credits_granted,
+    }
 
 
 # ── Authenticated: Stripe checkout ───────────────────────────────────────────
@@ -321,10 +494,18 @@ async def create_checkout_session(
     price_id = _get_price_id(payload.plan_key, payload.billing_period)
     base = _frontend_url()
 
+    current = await sb_select("user_subscriptions", filters=[("user_id", "eq", user["id"])], single=True) or {}
+    if (
+        current.get("status") == "active"
+        and current.get("stripe_subscription_id")
+        and current.get("plan_key") == payload.plan_key
+        and current.get("billing_period") == payload.billing_period
+    ):
+        raise HTTPException(status_code=409, detail="You're already on this plan.")
+
     session_params: dict = {
         "mode": "subscription",
         "line_items": [{"price": price_id, "quantity": 1}],
-        "customer_email": user["email"],
         "metadata": {
             "user_id": user["id"],
             "plan_key": payload.plan_key,
@@ -334,6 +515,12 @@ async def create_checkout_session(
         "cancel_url": f"{base}/pricing",
         "allow_promotion_codes": True,
     }
+    # Reuse the Stripe customer on plan changes so the proration credit from
+    # the cancelled old subscription lands on the same customer balance.
+    if current.get("stripe_customer_id"):
+        session_params["customer"] = current["stripe_customer_id"]
+    else:
+        session_params["customer_email"] = user["email"]
     if payload.promo_code:
         try:
             codes = client.promotion_codes.list({"code": payload.promo_code, "active": True, "limit": 1})
@@ -428,16 +615,18 @@ async def stripe_webhook(request: Request):
     payload_bytes = await request.body()
     sig_header = request.headers.get("stripe-signature", "")
 
-    if settings.stripe_webhook_secret:
-        try:
-            event = stripe.Webhook.construct_event(
-                payload_bytes, sig_header, settings.stripe_webhook_secret
-            )
-        except stripe.SignatureVerificationError:
-            raise HTTPException(status_code=400, detail="Invalid webhook signature")
-    else:
-        # Dev mode: accept unsigned events
-        event = json.loads(payload_bytes)
+    # Never accept unsigned events: an unsigned checkout.session.completed would
+    # let anyone grant themselves a paid plan and credits. For local testing,
+    # `stripe listen --forward-to .../plans/webhook` prints a whsec_ secret.
+    if not settings.stripe_webhook_secret:
+        logger.error("Stripe webhook received but STRIPE_WEBHOOK_SECRET is not set — rejecting.")
+        raise HTTPException(status_code=503, detail="Webhook not configured")
+    try:
+        event = stripe.Webhook.construct_event(
+            payload_bytes, sig_header, settings.stripe_webhook_secret
+        )
+    except (stripe.SignatureVerificationError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     etype = event.get("type") if isinstance(event, dict) else event.type
 
@@ -448,7 +637,14 @@ async def stripe_webhook(request: Request):
         plan_key = meta.get("plan_key")
         billing_period = meta.get("billing_period", "monthly")
 
-        if user_id and plan_key:
+        if user_id and meta.get("addon_key"):
+            try:
+                await _fulfil_addon_session(session)
+                logger.info("Fulfilled add-on %s for user %s", meta.get("addon_key"), user_id)
+            except Exception as e:
+                logger.error("Failed to fulfil add-on %s for user %s: %s", meta.get("addon_key"), user_id, e)
+
+        elif user_id and plan_key:
             sub_id = session.get("subscription") if isinstance(session, dict) else session.subscription
             customer_id = session.get("customer") if isinstance(session, dict) else session.customer
             now = datetime.now(timezone.utc)
@@ -467,6 +663,7 @@ async def stripe_webhook(request: Request):
                         period_end = datetime.fromtimestamp(pe, tz=timezone.utc).isoformat()
                 except Exception:
                     pass
+            previous = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
             await sb_upsert(
                 "user_subscriptions",
                 payload={
@@ -482,10 +679,11 @@ async def stripe_webhook(request: Request):
                 },
                 on_conflict="user_id",
             )
+            _cancel_superseded_subscription(previous, sub_id)
             # Issue initial credits for new subscription
             try:
-                await provision_plan_credits(user_id, plan_key, reason=f"{plan_key} initial subscription credit allocation")
-                logger.info("Provisioned credits for user %s plan %s on checkout", user_id, plan_key)
+                if await _provision_subscription_credits_once(user_id, plan_key, sub_id):
+                    logger.info("Provisioned credits for user %s plan %s on checkout", user_id, plan_key)
             except Exception as e:
                 logger.error("Failed to provision credits on checkout for user %s: %s", user_id, e)
 
@@ -513,8 +711,22 @@ async def stripe_webhook(request: Request):
         customer_id = invoice.get("customer") if isinstance(invoice, dict) else getattr(invoice, "customer", None)
         billing_reason = invoice.get("billing_reason") if isinstance(invoice, dict) else getattr(invoice, "billing_reason", None)
         # Only reset on renewal invoices, not the initial subscription invoice (that's handled in checkout.session.completed)
-        if billing_reason == "subscription_cycle" and customer_id:
+        inv_sub_id = _obj_get(invoice, "subscription") or _obj_get(
+            _obj_get(_obj_get(invoice, "parent"), "subscription_details"), "subscription"
+        )
+        if billing_reason == "subscription_cycle" and inv_sub_id and await addon_svc.is_addon_subscription(inv_sub_id):
+            # Recurring add-on renewed: open a new period (resets boost allowance).
+            try:
+                period_start, period_end = _period_iso(_stripe_client().subscriptions.retrieve(inv_sub_id))
+                await addon_svc.renew_addon_subscription(inv_sub_id, period_start, period_end)
+                logger.info("Renewed add-on subscription %s", inv_sub_id)
+            except Exception as e:
+                logger.error("Failed to renew add-on subscription %s: %s", inv_sub_id, e)
+        elif billing_reason == "subscription_cycle" and customer_id:
             sub_row = await sb_select("user_subscriptions", filters=[("stripe_customer_id", "eq", customer_id)], single=True)
+            # Only the plan subscription's own renewal resets plan credits.
+            if inv_sub_id and sub_row and sub_row.get("stripe_subscription_id") and sub_row["stripe_subscription_id"] != inv_sub_id:
+                sub_row = None
             if sub_row and sub_row.get("user_id") and sub_row.get("plan_key"):
                 user_id = sub_row["user_id"]
                 plan_key = sub_row["plan_key"]
@@ -550,6 +762,11 @@ async def stripe_webhook(request: Request):
         customer_id = sub_obj.get("customer") if isinstance(sub_obj, dict) else getattr(sub_obj, "customer", None)
         meta = sub_obj.get("metadata", {}) if isinstance(sub_obj, dict) else getattr(sub_obj, "metadata", {})
 
+        if await addon_svc.is_addon_subscription(sub_id):
+            if etype == "customer.subscription.deleted" or new_status in ("canceled", "unpaid", "incomplete_expired"):
+                await addon_svc.cancel_addon_subscription(sub_id)
+            return {"received": True}
+
         rows = await sb_select(
             "user_subscriptions",
             filters=[("stripe_subscription_id", "eq", sub_id)],
@@ -575,8 +792,13 @@ async def stripe_webhook(request: Request):
                 payload=updates,
                 filters=[("stripe_subscription_id", "eq", sub_id)],
             )
-        elif new_status == "active" and meta.get("user_id"):
-            # New subscription activated via embedded card form — upsert the row
+        elif new_status == "active" and meta.get("user_id") and not (
+            (await sb_select("user_subscriptions", filters=[("user_id", "eq", meta["user_id"])], single=True) or {}).get("stripe_subscription_id")
+        ):
+            # Subscription activated before any row was written (e.g. legacy
+            # embedded card flow). Skip if the user already has a subscription
+            # row — otherwise an event for an old, superseded subscription
+            # would overwrite their current plan.
             billing_period = meta.get("billing_period", "monthly")
             now = datetime.now(timezone.utc)
             # Use Stripe's actual billing period timestamps from the subscription event object
@@ -607,48 +829,4 @@ async def stripe_webhook(request: Request):
 
 @router.get("/my", response_model=SubscriptionOut)
 async def get_my_subscription(user=Depends(get_current_user)) -> SubscriptionOut:
-    try:
-        sub = await sb_select(
-            "user_subscriptions",
-            filters=[("user_id", "eq", user["id"])],
-            single=True,
-        )
-    except Exception:
-        sub = None
-
-    if sub and sub.get("status") in ("active", "trial"):
-        return SubscriptionOut(
-            plan_key=sub["plan_key"],
-            billing_period=sub.get("billing_period") or "monthly",
-            status=sub["status"],
-            current_period_start=sub.get("current_period_start"),
-            current_period_end=sub.get("current_period_end"),
-            trial_started_at=sub.get("trial_started_at"),
-            stripe_subscription_id=sub.get("stripe_subscription_id"),
-        )
-
-    # No active paid subscription → check user creation date
-    user_row = await sb_select("users", filters=[("id", "eq", user["id"])], single=True)
-    created_at_str = (user_row or {}).get("created_at")
-    if created_at_str:
-        try:
-            created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
-
-            # Grandfathered: signed up before restrictions were introduced
-            if created_at < GRANDFATHERED_BEFORE:
-                return SubscriptionOut(
-                    plan_key="free_trial",
-                    billing_period="monthly",
-                    status="grandfathered",
-                    trial_started_at=created_at_str,
-                )
-
-        except Exception:
-            pass
-
-    # No paid plan → permanent free Explorer plan
-    return SubscriptionOut(
-        plan_key="explorer",
-        billing_period="monthly",
-        status="active",
-    )
+    return await resolve_subscription(user["id"])

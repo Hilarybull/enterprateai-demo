@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { DemoTourProvider } from "./context/DemoTourContext";
 import DemoTour from "./components/DemoTour";
+import { apiRequest } from "./api/client";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -16,6 +17,7 @@ import { useWorkspaceStore } from "./store/workspace";
 import Layout from "./components/Layout";
 import LandingPage from "./pages/LandingPage";
 import NewLandingPage from "./pages/NewLandingPage";
+import EssentialsPage from "./pages/EssentialsPage";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ValidationWizardPage from "./pages/ValidationWizardPage";
@@ -78,6 +80,21 @@ export default function App() {
   useEffect(() => {
     if (!authHydrated) return;
     resetForUser(email);
+    // Re-populate workspaceId immediately after clearing it so nav gate
+    // doesn't fire on a refresh before any workspace-backed page loads.
+    if (email) {
+      apiRequest("/workspace/profile", "GET")
+        .then((data) => {
+          if (data?.workspace_id) {
+            useWorkspaceStore.getState().setWorkspaceId(data.workspace_id);
+            if (data.profile?.company_name) {
+              useWorkspaceStore.getState().setWorkspaceName(data.profile.company_name);
+              useWorkspaceStore.getState().setWorkspaceCompanyName(data.profile.company_name);
+            }
+          }
+        })
+        .catch(() => {});
+    }
   }, [authHydrated, email, resetForUser]);
 
   return (
@@ -86,6 +103,7 @@ export default function App() {
       <Routes>
       <Route path="/" element={<PublicRoot />} />
       <Route path="/home" element={<NewLandingPage />} />
+      <Route path="/essentials" element={<EssentialsPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />

@@ -13,11 +13,12 @@ export const PLANS = [
     features: [
       "50 one-time credits",
       "Basic Idea Validation",
-      "Business Plan",
-      "Unlimited products, customers & vendors",
-      "Unlimited invoices & quotations",
-      "Business Registration Guide",
-      "1 marketplace listing",
+      "AI Business Plan Generator",
+      "Invoices, Receipts, Contracts, Expense Tracker",
+      "Receive and Request for Quotations",
+      "Products, Customers, Vendors",
+      "Business Registration Guide, Verification",
+      "1 Marketplace listing",
     ],
   },
   {
@@ -33,14 +34,15 @@ export const PLANS = [
     ctaStyle: "outline",
     features: [
       "500 monthly credits",
-      "Basic & Comprehensive Idea Validation",
-      "Business Blueprints & Proposals",
-      "Scenario Simulation",
-      "Unlimited products, customers & vendors",
-      "Unlimited invoices & quotations",
+      "Everything on the Explorer Plan",
+      "Comprehensive Idea Validation",
+      "AI Business Proposals Generator",
+      "AI Sales Letters Generator",
+      "Manage, Receive and Request for Proposals, Quotations",
+      "4 Scenario simulations",
       "Fragility Index",
       "Adaptive Scenario Intelligence",
-      "1 marketplace listing",
+      "Multiple marketplace listings",
       "1 user",
     ],
   },
@@ -57,16 +59,10 @@ export const PLANS = [
     ctaStyle: "solid",
     features: [
       "2,000 monthly credits",
-      "Unlimited business plans",
-      "Business proposals & sales letters",
-      "Live plan intelligence",
-      "Unlimited invoices & quotations",
-      "Scenario intelligence",
-      "Fragility Index",
-      "Adaptive Scenario Intelligence",
-      "RFQ automation workflow",
-      "Marketplace boosts",
-      "Integrations access",
+      "Everything on the Starter Plan",
+      "3rd Party Integrations",
+      "Live Business Plan Intelligence",
+      "Multiple Scenario Simulations",
       "3 users included",
     ],
   },
@@ -147,7 +143,7 @@ export const MODULE_MIN_PLAN = {
 
 // Scenario templates available for manual runs on the Starter plan.
 // All other paid plans get every template.
-export const STARTER_ALLOWED_SCENARIOS = ["tmpl_client_loss", "tmpl_payment_delay"];
+export const STARTER_ALLOWED_SCENARIOS = ["tmpl_client_loss", "tmpl_payment_delay", "tmpl_revenue_drop", "tmpl_cost_increase"];
 
 /**
  * Returns true if the plan can run this scenario template manually.

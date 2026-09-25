@@ -85,6 +85,14 @@ async def sb_select(
                 q = q.in_(col, value)
             elif op == "cs":
                 q = q.contains(col, value)
+            elif op == "gt":
+                q = q.gt(col, value)
+            elif op == "gte":
+                q = q.gte(col, value)
+            elif op == "lt":
+                q = q.lt(col, value)
+            elif op == "lte":
+                q = q.lte(col, value)
         if order:
             q = q.order(order, desc=desc)
         if limit:

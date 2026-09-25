@@ -1,24 +1,11 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { loadStripe } from "@stripe/stripe-js";
-import {
-  Elements,
-  CardNumberElement,
-  CardExpiryElement,
-  CardCvcElement,
-  useStripe,
-  useElements,
-} from "@stripe/react-stripe-js";
 import { PLANS, BILLING, formatPrice, planLabel, normalisePlanKey } from "../lib/plans";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import logoUrl from "../enterprate-logo.png";
 
 const SUPPORT_EMAIL = "support@enterprate.ai";
-
-// Initialise Stripe once; gracefully null if key not set
-const STRIPE_PK = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
-const stripePromise = STRIPE_PK ? loadStripe(STRIPE_PK) : null;
 
 // ── Card brand logos ──────────────────────────────────────────────────────────
 
@@ -63,6 +50,15 @@ function MastercardLogo({ active }) {
   );
 }
 
+function StripeBadge({ className = "" }) {
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 dark:text-slate-500 ${className}`}>
+      Powered by
+      <span className="font-bold tracking-tight text-[#635bff]">Stripe</span>
+    </span>
+  );
+}
+
 function VerveLogo({ active }) {
   return (
     <div
@@ -83,276 +79,8 @@ function VerveLogo({ active }) {
   );
 }
 
-// ── Stripe inline card form (must be inside <Elements>) ───────────────────────
-
-const ELEM_STYLE = {
-  style: {
-    base: {
-      fontSize: "14px",
-      fontFamily:
-        "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-      color: "#0f172a",
-      fontSmoothing: "antialiased",
-      "::placeholder": { color: "#94a3b8" },
-    },
-    invalid: { color: "#ef4444", iconColor: "#ef4444" },
-  },
-};
-
-function StripeCardForm({ plan, billing, onSwitchToBank, onNetworkError }) {
-  const stripe = useStripe();
-  const elements = useElements();
-  const [brand, setBrand] = useState("unknown");
-  const [isVerve, setIsVerve] = useState(false);
-  const [nameOnCard, setNameOnCard] = useState("");
-  const [promoCode, setPromoCode] = useState("");
-  const [promoApplied, setPromoApplied] = useState(null); // { pct, amt } | null
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [elemReady, setElemReady] = useState(false);
-
-  // If the card element hasn't signalled ready within 5s, it likely has a network issue
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (!elemReady) onNetworkError?.();
-    }, 5000);
-    return () => clearTimeout(t);
-  }, [elemReady, onNetworkError]);
-
-  const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
-  const priceLabel =
-    billing === BILLING.annual ? `£${plan.annualTotal}/yr` : `£${price}/mo`;
-
-  const effectiveBrand = isVerve ? "verve" : brand;
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!stripe || !elements) return;
-    setLoading(true);
-    setError("");
-
-    try {
-      const res = await apiRequest(
-        "/plans/create-subscription",
-        "POST",
-        { plan_key: plan.key, billing_period: billing, promo_code: promoCode.trim() || undefined }
-      );
-      if (res.discount_pct || res.discount_amt) {
-        setPromoApplied({ pct: res.discount_pct, amt: res.discount_amt });
-      }
-
-      const cardElement = elements.getElement(CardNumberElement);
-      const { error: confirmError } = await stripe.confirmCardPayment(
-        res.client_secret,
-        {
-          payment_method: {
-            card: cardElement,
-            billing_details: nameOnCard ? { name: nameOnCard } : undefined,
-          },
-        }
-      );
-
-      if (confirmError) {
-        setError(
-          confirmError.message ??
-            "Payment failed. Please check your card details."
-        );
-      } else {
-        // Eagerly activate the subscription in our DB without waiting for the webhook
-        try {
-          await apiRequest("/plans/activate-subscription", "POST", { subscription_id: res.subscription_id });
-        } catch (_) {
-          // Non-fatal — webhook will handle it if this fails
-        }
-        window.location.href = "/pricing/success";
-      }
-    } catch (err) {
-      const msg = (err instanceof Error ? err.message : String(err)).replace(
-        /^HTTP \d+:\s*/,
-        ""
-      );
-      if (msg.includes("503") || msg.includes("not configured")) {
-        setError(
-          "Card payments are being set up. Please use bank transfer for now."
-        );
-      } else {
-        setError(msg || "Payment failed. Please try again.");
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-3 pt-1">
-      {/* Brand logos + Verve toggle */}
-      <div className="flex items-center gap-1.5">
-        <VisaLogo active={effectiveBrand === "visa"} />
-        <MastercardLogo active={effectiveBrand === "mastercard"} />
-        <VerveLogo active={isVerve} />
-        <button
-          type="button"
-          onClick={() => setIsVerve((v) => !v)}
-          className={`ml-auto rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
-            isVerve
-              ? "border-[#007B41] bg-[#007B41]/10 text-[#007B41]"
-              : "border-slate-200 text-slate-400 hover:border-[#007B41]/40 hover:text-[#007B41]"
-          }`}
-        >
-          {isVerve ? "✕ Not Verve" : "Verve card?"}
-        </button>
-      </div>
-
-      {isVerve ? (
-        /* Verve path */
-        <div className="rounded-lg border border-[#007B41]/20 bg-[#007B41]/5 p-3 space-y-2.5">
-          <p className="text-[12px] text-slate-600 dark:text-slate-400 leading-relaxed">
-            Verve cards work via bank transfer — we'll send you payment details
-            and confirm your plan instantly once received.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              setIsVerve(false);
-              if (onSwitchToBank) onSwitchToBank();
-            }}
-            className="w-full rounded-xl border-2 border-[#007B41] py-2 text-sm font-semibold text-[#007B41] hover:bg-[#007B41] hover:text-white transition"
-          >
-            Switch to Bank Transfer
-          </button>
-        </div>
-      ) : (
-        <>
-          {/* Card number */}
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Card Number
-            </label>
-            <div className="rounded-lg border border-slate-200 bg-white px-3 py-[10px] transition focus-within:border-brand-400 focus-within:ring-1 focus-within:ring-brand-200 dark:border-slate-700 dark:bg-slate-800">
-              <CardNumberElement
-                options={ELEM_STYLE}
-                onReady={() => setElemReady(true)}
-                onChange={(e) => {
-                  if (e.error?.type === "network_error" || e.error?.code === "NETWORK_ERROR") {
-                    onNetworkError?.();
-                    return;
-                  }
-                  setBrand(e.brand);
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Expiry + CVV */}
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                Expiry
-              </label>
-              <div className="rounded-lg border border-slate-200 bg-white px-3 py-[10px] transition focus-within:border-brand-400 focus-within:ring-1 focus-within:ring-brand-200 dark:border-slate-700 dark:bg-slate-800">
-                <CardExpiryElement options={ELEM_STYLE} />
-              </div>
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                CVV
-              </label>
-              <div className="rounded-lg border border-slate-200 bg-white px-3 py-[10px] transition focus-within:border-brand-400 focus-within:ring-1 focus-within:ring-brand-200 dark:border-slate-700 dark:bg-slate-800">
-                <CardCvcElement options={ELEM_STYLE} />
-              </div>
-            </div>
-          </div>
-
-          {/* Name on card */}
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Name on Card
-            </label>
-            <input
-              type="text"
-              placeholder="John Doe"
-              value={nameOnCard}
-              onChange={(e) => setNameOnCard(e.target.value)}
-              className="ea-input"
-            />
-          </div>
-
-          {/* Promo code */}
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Promo Code <span className="normal-case font-normal text-slate-400">(optional)</span>
-            </label>
-            <input
-              type="text"
-              placeholder="Enter code"
-              value={promoCode}
-              onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoApplied(null); }}
-              className="ea-input font-mono tracking-widest"
-            />
-            {promoApplied && (
-              <p className="mt-1 text-[11px] font-semibold text-emerald-600">
-                {promoApplied.pct ? `${promoApplied.pct}% discount applied` : promoApplied.amt ? `£${(promoApplied.amt / 100).toFixed(2)} off applied` : "Promo code applied"}
-              </p>
-            )}
-          </div>
-
-          {error && (
-            <p className="rounded-lg bg-rose-50 px-3 py-2 text-[12px] text-rose-700 dark:bg-rose-900/20 dark:text-rose-400">
-              {error}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading || !stripe}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-60"
-          >
-            {loading ? (
-              <>
-                <svg
-                  className="h-4 w-4 animate-spin"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z"
-                  />
-                </svg>
-                Processing…
-              </>
-            ) : (
-              <>
-                <svg
-                  className="h-4 w-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <rect x="3" y="11" width="18" height="11" rx="2" />
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                </svg>
-                Pay {priceLabel}
-              </>
-            )}
-          </button>
-        </>
-      )}
-    </form>
-  );
-}
-
-// ── Checkout redirect fallback (when Stripe PK not set) ───────────────────────
+// ── Checkout — redirects to Stripe's own hosted Checkout page ─────────────────
+// Card details are entered on checkout.stripe.com, never on this site.
 
 function CheckoutFallback({ plan, billing }) {
   const [loading, setLoading] = useState(false);
@@ -369,13 +97,13 @@ function CheckoutFallback({ plan, billing }) {
       if (res?.checkout_url) {
         window.location.href = res.checkout_url;
       } else {
-        setError("Could not start checkout. Try another payment method.");
+        setError(`Could not start checkout. Please try again or contact ${SUPPORT_EMAIL}.`);
       }
     } catch (e) {
       const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
       setError(
         msg.includes("503") || msg.includes("not configured")
-          ? "Card payments are being set up. Please use bank transfer for now."
+          ? `Card payments are being set up for this plan. Contact ${SUPPORT_EMAIL} to subscribe.`
           : (e instanceof Error ? e.message : String(e)).replace(/^HTTP \d+:\s*/, "") ||
             "Something went wrong."
       );
@@ -426,71 +154,49 @@ function CheckoutFallback({ plan, billing }) {
 
 // ── Check icon ────────────────────────────────────────────────────────────────
 
-function CheckIcon() {
+function CheckIcon({ tone = "slate" }) {
+  const toneClass = {
+    slate: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
+    brand: "bg-brand-100 text-brand-600 dark:bg-brand-900/40 dark:text-brand-400",
+    violet: "bg-violet-100 text-violet-600 dark:bg-violet-900/40 dark:text-violet-400",
+  }[tone];
   return (
-    <svg
-      className="h-4 w-4 shrink-0 text-emerald-500"
-      viewBox="0 0 20 20"
-      fill="currentColor"
-    >
-      <path
-        fillRule="evenodd"
-        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-        clipRule="evenodd"
-      />
-    </svg>
+    <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${toneClass}`}>
+      <svg className="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor">
+        <path
+          fillRule="evenodd"
+          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+          clipRule="evenodd"
+        />
+      </svg>
+    </span>
   );
 }
+
+// Per-tier visual identity — Explorer reads as neutral/free, Starter as the
+// brand accent, Decision Engine as the premium "most popular" tier with its
+// own richer accent so the three cards read as a progression, not three
+// identical boxes with different numbers.
+const PLAN_ACCENT = {
+  explorer: { tone: "slate", ring: "", top: "" },
+  starter_insight: { tone: "brand", ring: "", top: "" },
+  decision_engine: {
+    tone: "violet",
+    ring: "ring-2 ring-violet-200 border-violet-300 dark:ring-violet-900/50 dark:border-violet-700",
+    top: "bg-gradient-to-r from-brand-600 to-violet-600",
+  },
+};
 
 // ── Payment options modal ─────────────────────────────────────────────────────
 
 function PaymentModal({ plan, billing, onClose }) {
-  const [method, setMethod] = useState(null); // null | 'card' | 'paypal' | 'bank'
-  const [elementsAvailable, setElementsAvailable] = useState(true);
-  const [bankEmail, setBankEmail] = useState("");
-  const [bankSent, setBankSent] = useState(false);
-  const [bankSending, setBankSending] = useState(false);
+  const [method, setMethod] = useState(null); // null | 'card'
 
   const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
   const billingLabel =
     billing === BILLING.annual
       ? `£${plan.annualTotal}/yr (£${price}/mo, billed annually)`
       : `£${price}/mo (billed monthly)`;
-
-  function handlePayPal() {
-    const subject = encodeURIComponent(
-      `PayPal Payment – ${plan.label} (${billing})`
-    );
-    const body = encodeURIComponent(
-      `Hi,\n\nI'd like to subscribe to the ${plan.label} plan.\n\nBilling: ${billingLabel}\n\nPlease send me your PayPal details to complete payment.\n\nMy email: `
-    );
-    window.open(
-      `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`,
-      "_blank"
-    );
-  }
-
-  async function handleBankSubmit(e) {
-    e.preventDefault();
-    if (!bankEmail.trim()) return;
-    setBankSending(true);
-    try {
-      await apiRequest("/plans/waitlist", "POST", {
-        email: bankEmail.trim(),
-        plan_key: plan.key,
-        billing_period: billing,
-      });
-    } catch {
-      // Non-fatal
-    } finally {
-      setBankSent(true);
-      setBankSending(false);
-    }
-  }
-
-  function switchToBank() {
-    setMethod("bank");
-  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -527,6 +233,19 @@ function PaymentModal({ plan, billing, onClose }) {
         </div>
 
         <div className="p-5 space-y-3">
+          <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] leading-relaxed text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+            <svg className="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 9v4M12 17h.01" />
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+            </svg>
+            <span>
+              This is a recurring subscription. Your card is saved and billed{" "}
+              <strong>{billing === BILLING.annual ? "annually" : "every month"}</strong> automatically until you
+              cancel. If a renewal payment fails, your plan will be downgraded and paid features will stop
+              working.
+            </span>
+          </div>
+
           <p className="text-[13px] font-medium text-slate-500 dark:text-slate-400">
             Choose a payment method
           </p>
@@ -564,6 +283,7 @@ function PaymentModal({ plan, billing, onClose }) {
                 <div className="text-[12px] text-slate-500 dark:text-slate-400">
                   Visa · Mastercard · Verve
                 </div>
+                <StripeBadge className="mt-1" />
               </div>
               <svg
                 className={
@@ -580,206 +300,38 @@ function PaymentModal({ plan, billing, onClose }) {
             </button>
             {method === "card" && (
               <div className="border-t border-slate-100 px-4 pb-4 pt-3 dark:border-slate-700">
-                {stripePromise && elementsAvailable ? (
-                  <Elements stripe={stripePromise}>
-                    <StripeCardForm
-                      plan={plan}
-                      billing={billing}
-                      onSwitchToBank={switchToBank}
-                      onNetworkError={() => setElementsAvailable(false)}
-                    />
-                  </Elements>
-                ) : (
-                  <CheckoutFallback plan={plan} billing={billing} />
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* ── PayPal ── */}
-          <div
-            className={
-              "rounded-xl border transition " +
-              (method === "paypal"
-                ? "border-[#0070BA]/40 bg-[#f0f7ff] dark:border-[#0070BA]/30 dark:bg-[#0070BA]/10"
-                : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:border-slate-600")
-            }
-          >
-            <button
-              type="button"
-              className="flex w-full items-center gap-3 p-4 text-left"
-              onClick={() => setMethod(method === "paypal" ? null : "paypal")}
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M7 3h7.5C17 3 19 4.8 19 7.2c0 3.3-2.3 5.3-5.5 5.3H11l-1 5H7L7 3Z"
-                    fill="#003087"
-                  />
-                  <path
-                    d="M9 6h5.5C17 6 18.5 7.5 18.5 9.5c0 2.8-1.8 4.5-4.5 4.5H11l-.8 4.5H8L9 6Z"
-                    fill="#009CDE"
-                  />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  PayPal
-                </div>
-                <div className="text-[12px] text-slate-500 dark:text-slate-400">
-                  Pay with your PayPal account
-                </div>
-              </div>
-              <svg
-                className={
-                  "h-4 w-4 shrink-0 text-slate-400 transition-transform " +
-                  (method === "paypal" ? "rotate-180" : "")
-                }
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-            {method === "paypal" && (
-              <div className="border-t border-slate-100 px-4 pb-4 pt-3 dark:border-slate-700">
-                <p className="mb-3 text-[13px] text-slate-500 dark:text-slate-400">
-                  Click below and we'll send you a PayPal payment request for
-                  the exact amount.
-                </p>
-                <button
-                  type="button"
-                  onClick={handlePayPal}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0070BA] py-2.5 text-sm font-semibold text-white transition hover:bg-[#005ea6]"
-                >
-                  Request PayPal invoice
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* ── Bank Transfer ── */}
-          <div
-            className={
-              "rounded-xl border transition " +
-              (method === "bank"
-                ? "border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-900/10"
-                : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:border-slate-600")
-            }
-          >
-            <button
-              type="button"
-              className="flex w-full items-center gap-3 p-4 text-left"
-              onClick={() => setMethod(method === "bank" ? null : "bank")}
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-                <svg
-                  className="h-5 w-5 text-slate-700 dark:text-slate-300"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                >
-                  <path d="M3 9l9-6 9 6" />
-                  <path d="M5 9v9M19 9v9M3 18h18" />
-                  <path d="M9 9v9M15 9v9" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Bank Transfer
-                </div>
-                <div className="text-[12px] text-slate-500 dark:text-slate-400">
-                  BACS · Faster Payments · Also for Verve
-                </div>
-              </div>
-              <svg
-                className={
-                  "h-4 w-4 shrink-0 text-slate-400 transition-transform " +
-                  (method === "bank" ? "rotate-180" : "")
-                }
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-            {method === "bank" && (
-              <div className="border-t border-slate-100 px-4 pb-4 pt-3 dark:border-slate-700">
-                {bankSent ? (
-                  <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2.5 dark:bg-emerald-900/20">
-                    <svg
-                      className="h-4 w-4 shrink-0 text-emerald-600"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                    <p className="text-[13px] font-medium text-emerald-700 dark:text-emerald-400">
-                      Request received! We'll email bank details and an invoice
-                      shortly.
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <p className="mb-3 text-[13px] text-slate-500 dark:text-slate-400">
-                      Enter your email and we'll send bank details + an invoice
-                      for{" "}
-                      <strong className="text-slate-700 dark:text-slate-300">
-                        {billingLabel}
-                      </strong>
-                      .
-                    </p>
-                    <form onSubmit={handleBankSubmit} className="space-y-2">
-                      <input
-                        type="email"
-                        required
-                        placeholder="your@email.com"
-                        value={bankEmail}
-                        onChange={(e) => setBankEmail(e.target.value)}
-                        className="ea-input"
-                      />
-                      <button
-                        type="submit"
-                        disabled={bankSending}
-                        className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
-                      >
-                        {bankSending ? "Sending…" : "Request invoice"}
-                      </button>
-                    </form>
-                  </>
-                )}
+                <CheckoutFallback plan={plan} billing={billing} />
               </div>
             )}
           </div>
         </div>
 
-        <div className="flex items-center justify-center gap-1.5 border-t border-slate-100 px-5 py-3 text-[12px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
-          <svg
-            className="h-3.5 w-3.5"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <rect x="3" y="11" width="18" height="11" rx="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-          Secure · Cancel anytime · Questions?{" "}
-          <a
-            href={`mailto:${SUPPORT_EMAIL}`}
-            className="font-medium text-brand-600 hover:underline dark:text-brand-400"
-          >
-            {SUPPORT_EMAIL}
-          </a>
+        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 border-t border-slate-100 px-5 py-3 text-center text-[12px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+            <svg
+              className="h-3.5 w-3.5 shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <rect x="3" y="11" width="18" height="11" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            Payments secured by <span className="font-bold tracking-tight text-[#635bff]">Stripe</span>
+          </span>
+          <span className="hidden sm:inline text-slate-300 dark:text-slate-600">·</span>
+          <span className="whitespace-nowrap">Cancel anytime</span>
+          <span className="hidden sm:inline text-slate-300 dark:text-slate-600">·</span>
+          <span className="inline-flex items-center gap-1 whitespace-nowrap">
+            Questions?
+            <a
+              href={`mailto:${SUPPORT_EMAIL}`}
+              className="font-medium text-brand-600 hover:underline dark:text-brand-400"
+            >
+              {SUPPORT_EMAIL}
+            </a>
+          </span>
         </div>
       </div>
     </div>
@@ -878,24 +430,31 @@ function PlanCard({ plan, billing, onAction, currentPlanKey }) {
   const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
   const isFree = plan.monthlyPrice === 0;
   const isCurrent = plan.key === currentPlanKey;
+  const accent = PLAN_ACCENT[plan.key] || PLAN_ACCENT.explorer;
 
   return (
     <div
       className={
-        "relative flex flex-col rounded-2xl border bg-white p-5 shadow-sm transition dark:bg-slate-900 " +
+        "relative flex flex-col overflow-hidden rounded-2xl border bg-white transition duration-200 dark:bg-slate-900 " +
         (isPopular
-          ? "border-brand-400 shadow-lg ring-2 ring-brand-200 dark:border-brand-500 dark:ring-brand-800"
-          : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700")
+          ? `${accent.ring} shadow-xl scale-[1.02]`
+          : "border-slate-200 shadow-sm hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:hover:border-slate-700")
       }
     >
+      {/* Tier identity bar — a plain colored strip communicates the tier at a
+          glance before you've even read the name, and gives the popular plan
+          a visual "premium" cue instead of just a badge floating on white. */}
+      <div className={`h-1.5 w-full ${accent.top || "bg-slate-100 dark:bg-slate-800"}`} />
+
       {isPopular && (
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-          <span className="inline-flex items-center rounded-full bg-brand-600 px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-white shadow">
+        <div className="absolute right-4 top-4">
+          <span className="inline-flex items-center rounded-full bg-gradient-to-r from-brand-600 to-violet-600 px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-white shadow">
             {plan.badge}
           </span>
         </div>
       )}
 
+      <div className="p-5">
       <div className="mb-5">
         <div className="flex items-center gap-2">
           <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
@@ -941,7 +500,7 @@ function PlanCard({ plan, billing, onAction, currentPlanKey }) {
       <ul className="mb-8 flex-1 space-y-2.5">
         {plan.features.map((f) => (
           <li key={f} className="flex items-start gap-2.5">
-            <CheckIcon />
+            <CheckIcon tone={accent.tone} />
             <span className="text-[13px] text-slate-600 dark:text-slate-300">
               {f}
             </span>
@@ -969,6 +528,7 @@ function PlanCard({ plan, billing, onAction, currentPlanKey }) {
           {plan.cta}
         </button>
       )}
+      </div>
     </div>
   );
 }
@@ -988,6 +548,13 @@ export default function PricingPage() {
   const subscription = useAuthStore((s) => s.subscription);
   const [billing, setBilling] = useState(BILLING.monthly);
   const [activeModal, setActiveModal] = useState(null);
+
+  // Deep link from the marketplace "Get featured" button.
+  useEffect(() => {
+    if (window.location.hash !== "#addons") return;
+    const t = setTimeout(() => document.getElementById("addons")?.scrollIntoView({ behavior: "smooth" }), 150);
+    return () => clearTimeout(t);
+  }, []);
 
   const currentPlanKey = normalisePlanKey(subscription?.plan_key ?? "explorer");
 
@@ -1131,7 +698,7 @@ export default function PricingPage() {
           );
         })()}
 
-        <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 mx-auto max-w-2xl sm:max-w-none">
+        <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 mx-auto max-w-2xl sm:max-w-none">
           {PLANS.map((plan) => (
             <PlanCard
               key={plan.key}
@@ -1154,7 +721,8 @@ export default function PricingPage() {
             <rect x="3" y="11" width="18" height="11" rx="2" />
             <path d="M7 11V7a5 5 0 0 1 10 0v4" />
           </svg>
-          Visa · Mastercard · Verve · PayPal · Bank Transfer · Cancel anytime
+          Visa · Mastercard · Verve · Cancel anytime · Payments by{" "}
+          <span className="font-bold tracking-tight text-[#635bff]">Stripe</span>
         </div>
 
         <div className="mt-12 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
@@ -1222,7 +790,7 @@ export default function PricingPage() {
         </div>
 
         {/* ── Marketplace Add-ons ── */}
-        <div className="mt-12 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+        <div id="addons" className="mt-12 scroll-mt-20 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-1 flex items-center gap-2">
             <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
               Add-ons
@@ -1243,9 +811,9 @@ export default function PricingPage() {
               </h3>
               <div className="grid gap-4 sm:grid-cols-3">
                 {[
-                  { key: "addon_featured_1",  label: "Extra Featured Listing",   price: "£15/mo", desc: "1 additional featured slot, billed monthly." },
-                  { key: "addon_featured_5",  label: "5 Listing Boosts",         price: "£49/mo", desc: "5 featured boosts per month, billed monthly." },
-                  { key: "addon_featured_20", label: "20 Listing Boosts",        price: "£149/mo", desc: "20 featured boosts per month, billed monthly." },
+                  { key: "addon_featured_1",  label: "Extra Featured Listing",   price: "£15/mo", desc: "Your listing stays featured at the top of the marketplace, billed monthly." },
+                  { key: "addon_featured_5",  label: "5 Listing Boosts",         price: "£49/mo", desc: "5 boosts per month, each featuring your listing for 24 hours. Billed monthly." },
+                  { key: "addon_featured_20", label: "20 Listing Boosts",        price: "£149/mo", desc: "20 boosts per month, each featuring your listing for 24 hours. Billed monthly." },
                 ].map((addon) => (
                   <AddonCard key={addon.key} addon={addon} mode="subscription" token={token} />
                 ))}
@@ -1259,9 +827,9 @@ export default function PricingPage() {
               </h3>
               <div className="grid gap-4 sm:grid-cols-3">
                 {[
-                  { key: "addon_rfq_20",  label: "20 RFQ Credits",  price: "£10",  desc: "Respond to 20 buyer RFQ requests. One-time purchase." },
-                  { key: "addon_rfq_50",  label: "50 RFQ Credits",  price: "£20",  desc: "Respond to 50 buyer RFQ requests. Best value." },
-                  { key: "addon_rfq_100", label: "100 RFQ Credits", price: "£35",  desc: "Respond to 100 buyer requests. Maximum pack." },
+                  { key: "addon_rfq_20",  label: "20 RFQ Credits",  price: "£10",  desc: "Adds 20 credits: reply to 20 buyer RFQs (1 credit each). One-time purchase." },
+                  { key: "addon_rfq_50",  label: "50 RFQ Credits",  price: "£20",  desc: "Adds 50 credits: reply to 50 buyer RFQs (1 credit each). Best value." },
+                  { key: "addon_rfq_100", label: "100 RFQ Credits", price: "£35",  desc: "Adds 100 credits: reply to 100 buyer RFQs (1 credit each). Maximum pack." },
                 ].map((addon) => (
                   <AddonCard key={addon.key} addon={addon} mode="payment" token={token} />
                 ))}

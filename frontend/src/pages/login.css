@@ -1,0 +1,1356 @@
+/* Sign in / create account page. All selectors are prefixed .lg- so nothing here
+   leaks into the rest of the app. Geometry is tuned to a 1452 x 1083 reference. */
+
+.lg-page {
+  --lg-ink: #06081a;
+  --lg-navy: #0a0b2c;
+  --lg-red: #f3043f;
+  --lg-blue: #1b60fb;
+  --lg-link: #1a21c6;
+  --lg-muted: #5f6685;
+  --lg-font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  /* clip, not hidden: setting overflow-x without overflow-y makes the browser compute
+     the unset axis as "auto" too (per the CSS overflow spec), which turned this page
+     into its own independent vertical scroll container stacked next to the real page
+     scrollbar - the two scrollbars seen side by side. clip doesn't trigger that. */
+  overflow-x: clip;
+  padding: 27px 31px 18px 28px;
+  font-family: var(--lg-font);
+  color: var(--lg-ink);
+  background: linear-gradient(135deg, #eceffe 0%, #e8f0fb 52%, #f0efff 100%);
+  -webkit-font-smoothing: antialiased;
+}
+
+.lg-page *,
+.lg-page *::before,
+.lg-page *::after {
+  box-sizing: border-box;
+}
+
+.lg-page :where(h1, h2, p, ul) {
+  margin: 0;
+  padding: 0;
+}
+.lg-page :where(ul) {
+  list-style: none;
+}
+.lg-page :where(button) {
+  font-family: inherit;
+  cursor: pointer;
+}
+.lg-page :where(a) {
+  text-decoration: none;
+}
+
+.lg-bg-wave {
+  /* Fixed to the viewport, not absolute within the page: this is purely decorative (a soft
+     glow behind the bottom-left corner) and was never meant to add scrollable height. As an
+     absolutely-positioned child sized in %, it scaled off .lg-page's height - and .lg-page's
+     height tracks the viewport (min-height: 100dvh), so a taller viewport made the blob
+     taller, which pushed its bottom further down, which grew the page's own scrollable
+     height, which let the viewport read "taller" again next layout: a runaway loop that
+     added hundreds of px of blank scrollable space below the real content. Fixed positioning
+     anchors it to the viewport corner and takes it out of document flow entirely, so it can
+     never affect scroll height. */
+  position: fixed;
+  left: 38%;
+  right: -10%;
+  bottom: -22vh;
+  height: 46vh;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 60% 70% at 62% 78%, rgba(206, 200, 250, 0.42), transparent 70%),
+    radial-gradient(ellipse 52% 60% at 88% 92%, rgba(190, 210, 250, 0.4), transparent 72%);
+}
+
+/* Two layers, not one: the outer frame claims the shrunk-to-fit layout height (so the
+   page itself doesn't scroll), while the inner layer is transform-scaled at its natural,
+   unconstrained size. Putting both the explicit height and the transform on the same
+   element would shrink the coordinate space that absolutely-positioned children (like
+   .lg-tagline's `bottom: 41px`) measure against, misplacing them - splitting the two
+   concerns keeps every fixed-px offset inside correct at any scale. */
+.lg-fit-frame {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+}
+.lg-fit {
+  width: 100%;
+  max-width: 1452px;
+  flex: none;
+  margin: 0 auto;
+}
+
+.lg-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(430px, 32vw, 492px);
+  column-gap: 26px;
+  align-items: start;
+  width: 100%;
+  max-width: 1452px;
+  margin: 0 auto;
+}
+
+/* ───────── Left panel ───────── */
+.lg-left {
+  position: relative;
+  width: 100%;
+  max-width: 875px;
+  height: auto;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  border-radius: 34px;
+  background: linear-gradient(180deg, #f7f8fd 0%, #f6f9fe 45%, #fafbff 100%);
+  box-shadow: 0 22px 64px -18px rgba(102, 124, 224, 0.16);
+  padding: 48px 24px 40px 56px;
+}
+.lg-left-head {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 32px;
+  pointer-events: none;
+}
+.lg-left-logo {
+  width: 286px;
+  height: auto;
+}
+.lg-pill {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 194px;
+  height: 47px;
+  padding: 0 0 0 19px;
+  border-radius: 999px;
+  background: #ebeefd;
+  color: #3f4675;
+  font-size: 12.5px;
+  line-height: 18px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.lg-pill-icon {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  color: #2530d0;
+}
+
+.lg-h1 {
+  max-width: 740px;
+  font-size: clamp(42px, 4vw, 60px);
+  line-height: 1.02;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  white-space: normal;
+  color: var(--lg-ink);
+}
+.lg-w-build { letter-spacing: -0.038em; }
+.lg-w-a { letter-spacing: -0.035em; }
+.lg-w-more { letter-spacing: -0.018em; }
+.lg-w-resilient { letter-spacing: -0.038em; }
+.lg-w-business { letter-spacing: -0.071em; }
+.lg-w-with { letter-spacing: -0.043em; }
+.lg-w-intel { letter-spacing: -0.062em; }
+.lg-h1-accent {
+  color: var(--lg-red);
+}
+.lg-lead {
+  max-width: 610px;
+  white-space: normal;
+  margin-top: 16px;
+  font-size: clamp(17px, 1.45vw, 22.55px);
+  line-height: 1.45;
+  font-weight: 400;
+  letter-spacing: -0.006em;
+  color: var(--lg-muted);
+  text-align: left;
+  text-wrap: pretty;
+}
+.lg-bold {
+  max-width: 520px;
+  margin-top: 13px;
+  font-size: clamp(17px, 1.5vw, 22.6px);
+  line-height: 1.35;
+  font-weight: 700;
+  letter-spacing: -0.008em;
+  color: var(--lg-navy);
+}
+
+/* Feature groups */
+.lg-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 32px;
+}
+.lg-group {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 24px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+}
+.lg-group-ess {
+  background: linear-gradient(100deg, #ebf9f3 0%, #eef8f7 60%, #eff8f8 100%);
+}
+.lg-group-plan {
+  background: linear-gradient(100deg, #ecf3fe 0%, #edf4fe 100%);
+}
+.lg-group-dec {
+  background: linear-gradient(100deg, #f1effc 0%, #f3f1fe 100%);
+}
+.lg-group-body {
+  flex: 1;
+  min-width: 0;
+}
+.lg-tile {
+  position: static;
+  flex: none;
+  width: 60px;
+  height: 60px;
+  border-radius: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 20px -8px rgba(30, 80, 200, 0.35);
+}
+.lg-tile-icon {
+  width: 34px;
+  height: 34px;
+}
+.lg-tile-ess {
+  background: linear-gradient(140deg, #2fd3a8 0%, #00b98f 100%);
+  box-shadow: 0 10px 20px -8px rgba(0, 170, 130, 0.45);
+}
+.lg-tile-plan {
+  background: linear-gradient(140deg, #6b97ff 0%, #3a72fb 100%);
+}
+.lg-tile-dec {
+  background: linear-gradient(140deg, #a56cf7 0%, #7a3cff 100%);
+  box-shadow: 0 10px 20px -8px rgba(122, 60, 255, 0.4);
+}
+.lg-group-title {
+  position: static;
+  font-size: 20.5px;
+  line-height: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.lg-group-title-ess { color: #0c6b55; }
+.lg-group-title-plan { color: #1b45d6; }
+.lg-group-title-dec { color: #4b21d4; }
+.lg-group-sub {
+  position: static;
+  margin-top: 4px;
+  font-size: 16.3px;
+  line-height: 22px;
+  font-weight: 400;
+  color: #66708d;
+}
+.lg-chips {
+  position: static;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  width: auto;
+  height: auto;
+  margin-top: 14px;
+}
+.lg-chips .lg-chip {
+  position: relative;
+  top: auto;
+}
+.lg-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px;
+  white-space: nowrap;
+  font-size: 14.8px;
+  font-weight: 400;
+  color: #566080;
+}
+.lg-chip:first-child {
+  padding-left: 0;
+}
+.lg-chip + .lg-chip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 1px;
+  height: 22px;
+  transform: translateY(-50%);
+  background: #dde3ef;
+}
+.lg-group-plan .lg-chip {
+  gap: 3px;
+  padding: 0 3px;
+  font-size: 10px;
+  letter-spacing: -0.02em;
+}
+.lg-group-plan .lg-chip:first-child {
+  padding-left: 0;
+}
+.lg-group-dec .lg-chip {
+  gap: 4px;
+  padding: 0 5px;
+  font-size: 11.5px;
+}
+.lg-group-dec .lg-chip:first-child {
+  padding-left: 0;
+}
+.lg-dot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+.lg-dot svg {
+  width: 15px;
+  height: 15px;
+}
+.lg-dot-ess { background: #0f9c80; }
+.lg-dot-plan { background: #1f66f5; }
+.lg-dot-dec { background: #7c44f5; }
+
+.lg-trust {
+  position: relative;
+  margin-top: 32px;
+  padding-top: 26px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px 40px;
+}
+.lg-trust::before {
+  content: "";
+  position: absolute;
+  left: 29px;
+  right: 30px;
+  top: 0;
+  height: 1px;
+  background: #e0e3ea;
+}
+.lg-trust-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  white-space: nowrap;
+  font-size: 14.9px;
+  color: #5c5f82;
+}
+.lg-ring-check {
+  width: 26px;
+  height: 26px;
+  color: #1b1fc4;
+}
+
+/* ───────── Right column ───────── */
+.lg-right {
+  position: relative;
+  width: 100%;
+  max-width: 492px;
+  min-width: 0;
+  padding-bottom: 90px;
+}
+.lg-topline {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 21px;
+  height: 20px;
+  margin: 20px 38px 28px 0;
+  font-size: 14.3px;
+  color: #5b6076;
+}
+.lg-topline button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 15.4px;
+  font-weight: 700;
+  color: var(--lg-link);
+}
+.lg-card {
+  position: relative;
+  padding: 56px 41px 32px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 34px;
+  background: #fefefe;
+  box-shadow: 0 28px 70px -22px rgba(74, 96, 200, 0.2);
+}
+.lg-card-logo {
+  display: block;
+  width: 278px;
+  height: auto;
+  margin: -2px auto 0;
+}
+.lg-welcome {
+  margin-top: 24px;
+  text-align: center;
+  font-size: 35px;
+  line-height: 42px;
+  font-weight: 800;
+  letter-spacing: -0.042em;
+  color: #000;
+}
+.lg-signsub {
+  margin-top: 9px;
+  text-align: center;
+  font-size: 17.7px;
+  line-height: 24px;
+  color: #62667f;
+}
+.lg-form {
+  margin-top: 42px;
+}
+.lg-field + .lg-field {
+  margin-top: 28px;
+}
+.lg-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.lg-label {
+  display: block;
+  margin-bottom: 9px;
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 500;
+  color: #22263f;
+}
+.lg-label-row .lg-label {
+  margin-bottom: 9px;
+}
+.lg-forgot {
+  margin-bottom: 9px;
+  font-size: 15.4px;
+  line-height: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--lg-link);
+}
+.lg-forgot:hover,
+.lg-topline button:hover,
+.lg-switch button:hover {
+  text-decoration: underline;
+}
+.lg-input-wrap {
+  position: relative;
+  height: 51px;
+}
+.lg-field-icon {
+  position: absolute;
+  left: 19px;
+  top: 50%;
+  width: 19px;
+  height: 15px;
+  transform: translateY(-50%);
+  color: #7c84a3;
+  pointer-events: none;
+}
+.lg-field-icon-lock {
+  width: 17px;
+  height: 21px;
+}
+.lg-input {
+  width: 100%;
+  height: 51px;
+  padding: 0 44px 0 55px;
+  border: 1px solid #e6e7ea;
+  border-radius: 10px;
+  background: #fff;
+  font: 400 16.5px/1 var(--lg-font);
+  color: #1a1d3a;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lg-input::placeholder {
+  color: #8f94a8;
+  opacity: 1;
+}
+.lg-input-password::placeholder {
+  font-size: 13px;
+  letter-spacing: 2.6px;
+  color: #838aa8;
+}
+.lg-input:focus {
+  border-color: #6f8df5;
+  box-shadow: 0 0 0 3px rgba(31, 96, 251, 0.14);
+}
+.lg-eye {
+  position: absolute;
+  right: 6px;
+  top: 0;
+  height: 100%;
+  width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  color: #a4a9be;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.lg-input-wrap:hover .lg-eye,
+.lg-input-wrap:focus-within .lg-eye {
+  opacity: 1;
+}
+.lg-eye:hover {
+  color: #6b7292;
+}
+.lg-eye-icon {
+  width: 18px;
+  height: 18px;
+}
+.lg-error {
+  margin-top: 16px;
+}
+.lg-error-switch {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--lg-link);
+}
+.lg-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 13px;
+  width: 100%;
+  height: 58px;
+  margin-top: 31px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--lg-blue);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+  box-shadow: 0 8px 18px -12px rgba(27, 96, 251, 0.55);
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+.lg-submit:hover:not(:disabled) {
+  background: #1454e0;
+  transform: translateY(-1px);
+}
+.lg-submit:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.lg-btn-arrow {
+  width: 22px;
+  height: 22px;
+}
+.lg-or {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  margin-top: 25px;
+  font-size: 14.5px;
+  color: #646a84;
+}
+.lg-or::before,
+.lg-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #e3e8f3;
+}
+.lg-or span {
+  padding: 0 21px;
+}
+.lg-google {
+  position: relative;
+  height: 58px;
+  margin-top: 21px;
+}
+.lg-google-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  border: 1px solid #e6e6ee;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 6px 16px -10px rgba(60, 80, 160, 0.3);
+  font-size: 17.5px;
+  font-weight: 500;
+  letter-spacing: -0.012em;
+  color: #0a0a1f;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.lg-google:hover .lg-google-face {
+  border-color: #cfd6ea;
+  box-shadow: 0 8px 20px -10px rgba(60, 80, 160, 0.4);
+}
+.lg-google-g {
+  width: 24px;
+  height: 24px;
+}
+.lg-google-hit {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.01;
+  border-radius: 12px;
+}
+.lg-google-hit > div {
+  transform: scale(1, 1.5);
+  transform-origin: top center;
+}
+.lg-switch {
+  margin-top: 43px;
+  text-align: center;
+  font-size: 15.5px;
+  line-height: 22px;
+  color: #6c6f84;
+}
+.lg-switch button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--lg-link);
+}
+.lg-demo {
+  margin-top: 10px;
+  text-align: center;
+}
+.lg-demo button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  color: #8a90aa;
+}
+.lg-demo button:hover:not(:disabled) {
+  color: var(--lg-link);
+  text-decoration: underline;
+}
+.lg-demo p {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #e11d48;
+}
+.lg-secure {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  margin-top: 26px;
+  color: #1b1fc4;
+}
+.lg-secure > div {
+  font-size: 14.2px;
+  line-height: 17px;
+  color: #565b71;
+}
+.lg-secure-icon {
+  width: 22px;
+  height: 26px;
+}
+.lg-secure-sub {
+  font-size: 13.4px;
+  color: #6d7285;
+}
+
+/* Handwritten tagline. Anchored to .lg-right (top: 100%) rather than a fixed page-bottom
+   offset, so it always sits just below the card stack no matter how tall that stack gets -
+   an inline error/forgot-password alert, or the taller signup form, simply push it down
+   along with everything else instead of it overlapping the trust row underneath. */
+.lg-tagline {
+  position: absolute;
+  right: 10px;
+  bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  transform: rotate(-7deg);
+  transform-origin: right top;
+  font-family: "Caveat", "Segoe Script", cursive;
+  font-size: 23px;
+  line-height: 25px;
+  font-weight: 500;
+  color: #5058c8;
+  pointer-events: none;
+}
+.lg-tagline span:first-child {
+  align-self: flex-start;
+  margin-left: 8px;
+}
+.lg-tagline-line {
+  width: 176px;
+  height: 12px;
+  margin-top: 2px;
+  color: #8f95e0;
+}
+
+@media (max-width: 1440px) {
+  .lg-page {
+    padding: 18px 20px 8px;
+  }
+  .lg-grid {
+    grid-template-columns: minmax(0, 1fr) clamp(400px, 34vw, 492px);
+    column-gap: 12px;
+  }
+  .lg-left {
+    height: auto;
+    padding: 36px 26px 30px 28px;
+  }
+  .lg-left-head {
+    position: static;
+    height: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .lg-left-logo {
+    position: static;
+    width: 210px;
+  }
+  .lg-pill {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 8px 16px 8px 15px;
+    font-size: 9.5px;
+    line-height: 13px;
+  }
+  .lg-h1 {
+    max-width: 720px;
+    font-size: clamp(40px, 4vw, 58px);
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+  }
+  .lg-lead {
+    max-width: 610px;
+    font-size: 16px;
+  }
+  .lg-bold {
+    max-width: 470px;
+    font-size: 16px;
+    line-height: 1.22;
+  }
+  .lg-groups {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .lg-group {
+    gap: 14px;
+    padding: 16px;
+  }
+  .lg-group-ess,
+  .lg-group-plan,
+  .lg-group-dec {
+    min-height: 96px;
+  }
+  .lg-tile {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+  }
+  .lg-tile-icon {
+    width: 26px;
+    height: 26px;
+  }
+  .lg-group-title {
+    font-size: 14px;
+    line-height: 18px;
+  }
+  .lg-group-sub {
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: 15px;
+  }
+  .lg-chips {
+    margin-top: 10px;
+  }
+  .lg-chip {
+    font-size: 14px;
+    padding: 0 10px;
+    gap: 6px;
+  }
+  .lg-group-dec .lg-chip {
+    font-size: clamp(11.5px, calc(3.5px + 0.625vw), 12.5px);
+    padding: 0 5px;
+    gap: 4px;
+  }
+  .lg-group-plan .lg-chip {
+    font-size: clamp(10px, calc(2px + 0.625vw), 11px);
+    padding: 0 3px;
+    gap: 3px;
+  }
+  .lg-trust {
+    position: static;
+    height: auto;
+    margin-top: 22px;
+    padding-top: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 10px 24px;
+  }
+  .lg-trust::before {
+    left: 0;
+    right: 0;
+  }
+  .lg-trust-item {
+    position: static;
+  }
+  .lg-topline {
+    margin: 8px 18px 12px 0;
+    gap: 10px;
+  }
+  .lg-card {
+    padding: 22px 22px 32px;
+  }
+  .lg-card-logo {
+    width: 200px;
+  }
+  .lg-welcome {
+    margin-top: 12px;
+    font-size: 27px;
+    line-height: 33px;
+  }
+  .lg-signsub {
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .lg-form {
+    margin-top: 20px;
+  }
+  .lg-field + .lg-field {
+    margin-top: 16px;
+  }
+  .lg-submit {
+    height: 52px;
+    margin-top: 22px;
+    font-size: 18px;
+  }
+  .lg-google {
+    height: 52px;
+    margin-top: 16px;
+  }
+  .lg-switch {
+    margin-top: 20px;
+  }
+  .lg-secure {
+    margin-top: 14px;
+  }
+}
+
+@media (max-width: 1279px) {
+  .lg-page {
+    padding: 18px 20px 8px;
+  }
+  .lg-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(400px, 440px);
+    column-gap: 12px;
+    width: 100%;
+    max-width: 100%;
+  }
+  .lg-right {
+    max-width: 440px;
+  }
+  .lg-left {
+    height: auto;
+    padding: 40px 28px 32px 30px;
+  }
+  .lg-left-head {
+    position: static;
+    height: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .lg-left-logo {
+    position: static;
+    width: 210px;
+  }
+  .lg-pill {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 9px 18px;
+    font-size: 10px;
+    line-height: 14px;
+  }
+  .lg-h1 {
+    max-width: 500px;
+    font-size: clamp(38px, 3.2vw, 54px);
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+    white-space: normal;
+  }
+  .lg-lead {
+    max-width: 520px;
+    font-size: 17px;
+    line-height: 1.35;
+  }
+  .lg-bold {
+    max-width: 480px;
+    font-size: 17px;
+    line-height: 1.25;
+  }
+  .lg-groups {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 22px;
+  }
+  .lg-group {
+    gap: 16px;
+    padding: 20px 18px;
+  }
+  .lg-group-ess,
+  .lg-group-plan,
+  .lg-group-dec {
+    min-height: 118px;
+  }
+  .lg-tile {
+    width: 52px;
+    height: 52px;
+    border-radius: 15px;
+  }
+  .lg-tile-icon {
+    width: 28px;
+    height: 28px;
+  }
+  .lg-group-title {
+    font-size: 16px;
+    line-height: 20px;
+  }
+  .lg-group-sub {
+    margin-top: 4px;
+    font-size: 13px;
+    line-height: 17px;
+  }
+  .lg-chips,
+  .lg-group-ess .lg-chips,
+  .lg-group-plan .lg-chips,
+  .lg-group-dec .lg-chips {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    row-gap: 8px;
+    column-gap: 16px;
+  }
+  .lg-chip,
+  .lg-group-plan .lg-chip,
+  .lg-group-dec .lg-chip {
+    white-space: normal;
+    font-size: 13px;
+    padding: 0;
+  }
+  .lg-chip:first-child {
+    padding-left: 0;
+  }
+  .lg-chip + .lg-chip::before,
+  .lg-group-plan .lg-chip + .lg-chip::before,
+  .lg-group-dec .lg-chip + .lg-chip::before {
+    content: none;
+  }
+  .lg-trust {
+    position: static;
+    height: auto;
+    margin-top: 24px;
+    padding-top: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 12px 28px;
+  }
+  .lg-trust::before {
+    left: 0;
+    right: 0;
+  }
+  .lg-trust-item {
+    position: static;
+    font-size: 12px;
+  }
+  .lg-card {
+    padding: 34px 22px 32px;
+  }
+  .lg-card-logo {
+    width: 216px;
+  }
+  .lg-welcome {
+    margin-top: 18px;
+    font-size: 30px;
+    line-height: 36px;
+  }
+  .lg-signsub {
+    font-size: 15px;
+    line-height: 22px;
+  }
+  .lg-form {
+    margin-top: 22px;
+  }
+  .lg-field + .lg-field {
+    margin-top: 18px;
+  }
+  .lg-input-wrap {
+    height: 46px;
+  }
+  .lg-input {
+    height: 46px;
+    font-size: 15px;
+  }
+  .lg-submit {
+    height: 50px;
+    margin-top: 22px;
+    font-size: 18px;
+  }
+  .lg-or {
+    margin-top: 20px;
+  }
+  .lg-google {
+    height: 52px;
+    margin-top: 16px;
+  }
+  .lg-switch {
+    margin-top: 22px;
+  }
+  .lg-secure {
+    margin-top: 18px;
+  }
+}
+
+/* ───────── Responsive ─────────
+   Below 1180px there isn't room for the two-column layout, so the marketing panel
+   (.lg-left) stacks above the sign-in card instead of sitting beside it - but it stays
+   on screen. Its desktop version is built entirely from pixel-absolute offsets tuned to
+   an exact 1452x1083 design, which can't reflow, so every one of those children gets a
+   normal-flow override here rather than just being hidden. */
+@media (max-width: 1023px) {
+  .lg-page {
+    padding: 20px 18px 20px;
+  }
+  .lg-fit-frame {
+    height: auto !important;
+  }
+  .lg-fit {
+    width: 100%;
+    max-width: 100%;
+    transform: none !important;
+  }
+  .lg-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 18px;
+    width: 100%;
+    max-width: 100%;
+  }
+  .lg-right {
+    order: -1;
+    max-width: 460px;
+    width: 100%;
+    margin: 0 auto;
+    padding-bottom: 0;
+  }
+  .lg-left {
+    order: 1;
+    height: auto;
+    max-width: 640px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 28px 24px 0;
+  }
+  .lg-topline {
+    margin: 0 0 20px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    text-align: right;
+  }
+  .lg-card {
+    height: auto;
+    padding: 44px 26px 36px;
+    width: 100%;
+    max-width: 100%;
+  }
+  .lg-tagline {
+    display: none;
+  }
+  .lg-input-wrap {
+    height: 48px;
+  }
+  .lg-input {
+    height: 48px;
+    font-size: 16px;
+  }
+  .lg-submit {
+    height: 50px;
+    font-size: 18px;
+  }
+  .lg-google {
+    height: 50px;
+  }
+  .lg-left-head {
+    position: static;
+    height: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .lg-left-logo {
+    position: static;
+    width: 200px;
+  }
+  .lg-pill {
+    position: static;
+    width: auto;
+    padding: 0 20px 0 19px;
+  }
+  .lg-h1 {
+    font-size: clamp(32px, 6vw, 46px);
+    line-height: 1.08;
+    white-space: normal;
+  }
+  .lg-w-build, .lg-w-a, .lg-w-more, .lg-w-resilient, .lg-w-business, .lg-w-with, .lg-w-intel {
+    letter-spacing: -0.02em;
+  }
+  .lg-lead {
+    white-space: normal;
+    font-size: 16px;
+    line-height: 24px;
+  }
+  .lg-bold {
+    font-size: 16px;
+    line-height: 22px;
+  }
+
+  .lg-groups {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 22px;
+  }
+  .lg-group {
+    flex-direction: column;
+    gap: 0;
+    height: auto;
+    padding: 18px;
+  }
+  .lg-tile {
+    position: static;
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    margin-bottom: 12px;
+  }
+  .lg-tile-icon {
+    width: 26px;
+    height: 26px;
+  }
+  .lg-group-title {
+    position: static;
+    font-size: 17px;
+    line-height: 22px;
+  }
+  .lg-group-sub {
+    position: static;
+    margin-top: 4px;
+    font-size: 14px;
+    line-height: 19px;
+  }
+  .lg-chips,
+  .lg-group-ess .lg-chips,
+  .lg-group-plan .lg-chips,
+  .lg-group-dec .lg-chips {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    width: auto;
+    height: auto;
+    gap: 10px 18px;
+    margin-top: 14px;
+  }
+  .lg-chips .lg-chip,
+  .lg-group-ess .lg-chip,
+  .lg-group-plan .lg-chip,
+  .lg-group-dec .lg-chip {
+    position: static;
+    left: auto;
+    top: auto;
+    white-space: normal;
+  }
+  .lg-chip {
+    padding: 0;
+    gap: 17px;
+    font-size: 13px;
+    letter-spacing: normal;
+  }
+  .lg-group-plan .lg-chip {
+    padding: 0;
+    gap: 9px;
+    font-size: 13px;
+    letter-spacing: normal;
+  }
+  .lg-group-dec .lg-chip {
+    padding: 0;
+    gap: 11px;
+    font-size: 13px;
+    letter-spacing: normal;
+  }
+  .lg-chip + .lg-chip::before,
+  .lg-group-plan .lg-chip + .lg-chip::before,
+  .lg-group-dec .lg-chip + .lg-chip::before {
+    content: none;
+  }
+
+  .lg-trust {
+    position: static;
+    height: auto;
+    margin-top: 24px;
+    padding-top: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px 28px;
+  }
+  .lg-trust::before {
+    left: 0;
+    right: 0;
+  }
+  .lg-trust-item {
+    position: static;
+  }
+}
+
+@media (max-width: 768px) {
+  .lg-bg-wave {
+    display: none;
+  }
+  .lg-page {
+    padding: 16px 16px 24px;
+  }
+  .lg-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0;
+  }
+  .lg-left {
+    display: none;
+  }
+  .lg-topline {
+    margin: 0 0 12px;
+    font-size: 13px;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px 12px;
+  }
+  .lg-topline button {
+    font-size: 14px;
+  }
+  .lg-card {
+    border-radius: 24px;
+    padding: 28px 16px 24px;
+  }
+  .lg-card-logo {
+    width: 200px;
+  }
+  .lg-welcome {
+    font-size: 30px;
+    line-height: 36px;
+  }
+  .lg-signsub {
+    font-size: 15px;
+    line-height: 22px;
+  }
+  .lg-form {
+    margin-top: 28px;
+  }
+  .lg-field + .lg-field {
+    margin-top: 18px;
+  }
+  .lg-input {
+    min-height: 44px;
+    height: 48px;
+    font-size: 16px;
+    padding-left: 50px;
+  }
+  .lg-submit {
+    min-height: 48px;
+    height: 52px;
+    font-size: 18px;
+  }
+  .lg-google {
+    height: 52px;
+  }
+  .lg-google-face {
+    font-size: 16px;
+  }
+  .lg-switch {
+    margin-top: 24px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .lg-welcome {
+    font-size: 30px;
+    line-height: 36px;
+  }
+  .lg-card {
+    border-radius: 26px;
+    padding: 34px 20px 30px;
+  }
+  .lg-card-logo {
+    width: 200px;
+  }
+  .lg-submit {
+    font-size: 18px;
+  }
+  .lg-input {
+    padding-left: 50px;
+  }
+  .lg-left-logo {
+    width: 172px;
+  }
+  .lg-h1 {
+    font-size: clamp(26px, 8vw, 34px);
+  }
+}

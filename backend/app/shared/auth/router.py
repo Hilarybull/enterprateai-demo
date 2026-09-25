@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.core.config import get_settings
-from app.core.supabase import sb_insert, sb_select, sb_update
+from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.shared.auth.google import verify_google_id_token
 from app.shared.auth.schemas import ChangePasswordRequest, ForgotPasswordRequest, GoogleAuthRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserPublic
 from app.shared.auth.security import create_access_token, hash_password, verify_password
@@ -91,15 +91,64 @@ async def register(payload: RegisterRequest) -> UserPublic:
     existing = await sb_select("users", filters=[("email", "eq", payload.email.lower())], single=True)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    verification_token = secrets.token_urlsafe(32)
     user_doc = {
         "id": payload.email.lower(),
         "email": payload.email.lower(),
         "password_hash": hash_password(payload.password),
         "name": payload.full_name,
+        "email_verified": False,
+        "email_verification_token": verification_token,
     }
     await sb_insert("users", user_doc)
     await _resolve_referral_attribution(user_doc["id"], payload.ref_click_id, payload.ref_code)
-    return UserPublic(id=user_doc["id"], email=user_doc["email"], email_verification_sent=False)
+    # A failed send isn't fatal: the user can request a new link from the
+    # "check your inbox" screen or when they try to sign in.
+    await _send_verification(user_doc["email"], verification_token, payload.full_name)
+    return UserPublic(id=user_doc["id"], email=user_doc["email"], email_verification_sent=True)
+
+
+def _verify_url(token: str) -> str:
+    # frontend_url may alias CORS_ORIGINS, which can be a comma-separated list
+    frontend = get_settings().frontend_url
+    if isinstance(frontend, list):
+        frontend = frontend[0]
+    base = str(frontend).split(",")[0].strip().rstrip("/")
+    return f"{base}/verify-email?token={token}"
+
+
+async def _send_verification(email: str, token: str, name: str | None) -> bool:
+    try:
+        await send_email_verification_email(to_email=email, verify_url=_verify_url(token), name=name)
+        return True
+    except Exception as e:
+        logger.warning("Verification email send failed for %s: %s", email, e)
+        return False
+
+
+# email → last resend time; stops the endpoint being used to spam an inbox.
+_last_verification_resend: dict[str, datetime] = {}
+_RESEND_COOLDOWN = timedelta(seconds=60)
+
+
+@router.post("/resend-verification")
+async def resend_verification(payload: ForgotPasswordRequest) -> dict:
+    """Send a fresh verification link. Always returns the same response so it
+    can't be used to discover which emails have accounts."""
+    email = payload.email.lower()
+    now = datetime.now(timezone.utc)
+    last = _last_verification_resend.get(email)
+    if last and now - last < _RESEND_COOLDOWN:
+        return {"sent": True}
+    _last_verification_resend[email] = now
+
+    user = await sb_select("users", filters=[("id", "eq", email)], single=True)
+    if user and user.get("email_verified") is False:
+        token = user.get("email_verification_token") or secrets.token_urlsafe(32)
+        if token != user.get("email_verification_token"):
+            await sb_update("users", filters=[("id", "eq", email)], payload={"email_verification_token": token})
+        await _send_verification(email, token, user.get("name"))
+    return {"sent": True}
 
 
 @router.get("/verify-email")
@@ -155,6 +204,7 @@ async def _ensure_demo_user(*, email: str, password: str) -> dict:
         "email": email,
         "password_hash": password_hash,
         "is_blocked": False,
+        "email_verified": True,
     }
     if user:
         await sb_update("users", filters=[("id", "eq", email)], payload=record)
@@ -170,20 +220,49 @@ async def _ensure_demo_user(*, email: str, password: str) -> dict:
     return record
 
 
+_DEMO_MODULE_KEYS = [
+    "dashboard", "validation", "blueprint", "simulation",
+    "catalogue", "financials", "integrations", "registration",
+]
+
+
 async def _ensure_demo_workspace(user_id: str) -> None:
-    # Grant a full Starter subscription so demo user sees all features unlocked
+    # Unlock every module for the demo account through user_platform_grants (a
+    # feature-visibility override), NOT a user_subscriptions row. That table is
+    # what Stripe writes and the credit system treats as the real plan, so a
+    # fake Starter row was an unpaid upgrade plus its monthly credit allocation.
     try:
+        # Remove the fake subscription earlier versions created: never billed
+        # through Stripe and set to run until 2099.
         existing_sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
-        if not existing_sub:
-            far_future = "2099-12-31T23:59:59+00:00"
-            await sb_insert("user_subscriptions", {
-                "user_id": user_id,
-                "plan_key": "starter_insight",
-                "status": "active",
-                "current_period_end": far_future,
-            })
+        if (
+            existing_sub
+            and not existing_sub.get("stripe_subscription_id")
+            and str(existing_sub.get("current_period_end") or "").startswith("2099")
+        ):
+            await sb_delete("user_subscriptions", filters=[("user_id", "eq", user_id)])
     except Exception:
         pass
+
+    try:
+        existing_rows = await sb_select(
+            "user_platform_grants",
+            filters=[("user_id", "eq", user_id)],
+            columns="module_key,feature_key",
+        )
+    except Exception:
+        existing_rows = []
+    existing_keys = {r["module_key"] for r in (existing_rows or []) if not r.get("feature_key")}
+    docs = [
+        {"id": str(uuid4()), "user_id": user_id, "module_key": module_key, "feature_key": ""}
+        for module_key in _DEMO_MODULE_KEYS
+        if module_key not in existing_keys
+    ]
+    if docs:
+        try:
+            await sb_insert("user_platform_grants", docs)
+        except Exception:
+            pass
 
     demo_data = {
         "workspace_profile": {
@@ -321,13 +400,14 @@ async def google_auth(payload: GoogleAuthRequest) -> TokenResponse:
                 "google_sub": identity.sub,
                 "name": identity.name,
                 "picture": identity.picture,
+                "email_verified": True,
             },
         )
     else:
         await sb_update(
             "users",
             filters=[("id", "eq", identity.email)],
-            payload={"auth_provider": existing.get("auth_provider") or "google", "google_sub": identity.sub, "name": identity.name, "picture": identity.picture},
+            payload={"auth_provider": existing.get("auth_provider") or "google", "google_sub": identity.sub, "name": identity.name, "picture": identity.picture, "email_verified": True, "email_verification_token": None},
         )
 
     if is_new_user:

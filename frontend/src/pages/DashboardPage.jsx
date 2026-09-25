@@ -4,7 +4,6 @@ import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
-import WorkspacePrompt from "../components/WorkspacePrompt";
 import Spinner from "../components/Spinner";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
@@ -14,6 +13,7 @@ import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
+import { planRank } from "../lib/plans";
 
 const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
 
@@ -26,11 +26,15 @@ export default function DashboardPage() {
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
   const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
   const email = useAuthStore((s) => s.email);
+  const subscription = useAuthStore((s) => s.subscription);
+  // Live Business Plan is a Decision Engine+ feature — the dashboard shouldn't
+  // fetch or render it for lower-plan accounts.
+  const hasLivePlanAccess = subscription?.status === "grandfathered"
+    || planRank(subscription?.plan_key) >= planRank("decision_engine");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [comingSoonFeature, setComingSoonFeature] = useState(null);
-  const [workspaceGateOpen, setWorkspaceGateOpen] = useState(false);
   const [livePlanSummary, setLivePlanSummary] = useState(null);
   const [fxRates, setFxRates] = useState({});
 
@@ -89,20 +93,24 @@ export default function DashboardPage() {
           }
         } catch {}
 
-        // Load live plan assumptions quietly
-        try {
-          const lp = await apiRequest(`/businesses/${workspaceId}/live-plan`, "GET");
-          if (!alive) return;
-          const rawA = Array.isArray(lp?.plan?.assumptions) ? lp.plan.assumptions : [];
-          if (rawA.length) {
-            const map = {};
-            for (const a of rawA) {
-              try { map[a.metric_code] = JSON.parse(a.assumption_value_json); }
-              catch { map[a.metric_code] = a.assumption_value_json; }
+        // Load live plan assumptions quietly — Decision Engine+ only.
+        if (hasLivePlanAccess) {
+          try {
+            const lp = await apiRequest(`/businesses/${workspaceId}/live-plan`, "GET");
+            if (!alive) return;
+            const rawA = Array.isArray(lp?.plan?.assumptions) ? lp.plan.assumptions : [];
+            if (rawA.length) {
+              const map = {};
+              for (const a of rawA) {
+                try { map[a.metric_code] = JSON.parse(a.assumption_value_json); }
+                catch { map[a.metric_code] = a.assumption_value_json; }
+              }
+              setLivePlanSummary(map);
             }
-            setLivePlanSummary(map);
-          }
-        } catch { /* no live plan yet */ }
+          } catch { /* no live plan yet */ }
+        } else {
+          setLivePlanSummary(null);
+        }
       } catch (e) {
         if (!alive) return;
         setError(e instanceof Error ? e.message : "Failed to load dashboard data.");
@@ -112,7 +120,7 @@ export default function DashboardPage() {
     }
     load();
     return () => { alive = false; };
-  }, [workspaceId, workspaceDataRefreshTrigger]);
+  }, [workspaceId, workspaceDataRefreshTrigger, hasLivePlanAccess]);
 
   const metrics = useMemo(
     () => buildFinancialIntelligence({
@@ -287,20 +295,20 @@ export default function DashboardPage() {
     </div>
   );
 
-  // 4 action cards shared between onboarded and non-onboarded views
+  // 3 action cards shared between onboarded and non-onboarded views
   const actionCards = (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {[
         {
-          title: "Create My Business Plan",
-          description: "Build a detailed, fundable business plan.",
-          cta: "Start Planning",
-          href: "/blueprint",
+          title: "Essentials",
+          description: "Create invoices, quotations, receipts and contracts.",
+          cta: "Open Essentials",
+          href: "/operations",
           icon: (
             <svg className="h-7 w-7 text-slate-700 dark:text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="4" y="2" width="13" height="18" rx="2" />
-              <path d="M8 7h6M8 11h6M8 15h4" />
-              <path d="M15 2v4h4" />
+              <path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" />
+              <path d="M15 2v5h5" />
+              <path d="M8 13h8M8 17h5" />
             </svg>
           ),
         },
@@ -332,20 +340,6 @@ export default function DashboardPage() {
             </svg>
           ),
         },
-        {
-          title: "Marketplace",
-          description: "Discover tools, templates, and services to grow your business.",
-          cta: "Browse Marketplace",
-          href: "/marketplace",
-          icon: (
-            <svg className="h-7 w-7 text-slate-700 dark:text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 9l1-5h16l1 5" />
-              <path d="M3 9a2 2 0 0 0 2 2 2 2 0 0 0 2-2 2 2 0 0 0 2 2 2 2 0 0 0 2-2 2 2 0 0 0 2 2 2 2 0 0 0 2-2" />
-              <path d="M5 11v9h14v-9" />
-              <path d="M10 15h4" />
-            </svg>
-          ),
-        },
       ].map((card) => (
         <div
           key={card.title}
@@ -358,9 +352,7 @@ export default function DashboardPage() {
           <div className="mt-1 flex-1 text-sm text-slate-500 dark:text-slate-400">{card.description}</div>
           <button
             type="button"
-            onClick={() => {
-              if (!workspaceId) { setWorkspaceGateOpen(true); } else { navigate(card.href); }
-            }}
+            onClick={() => navigate(card.href)}
             className="mt-4 w-full rounded-xl border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             {card.cta}
@@ -377,16 +369,6 @@ export default function DashboardPage() {
 
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
 
-      {workspaceGateOpen ? (
-        <WorkspacePrompt
-          modal
-          title="Create your workspace first"
-          subtitle="You need a workspace before you can use this feature."
-          ctaLabel="Set up workspace"
-          ctaTo="/validation?from=module&return=/dashboard"
-          onClose={() => setWorkspaceGateOpen(false)}
-        />
-      ) : null}
 
       <div>
         <div className="mb-3 mt-2 text-sm font-semibold text-slate-700 dark:text-slate-300">

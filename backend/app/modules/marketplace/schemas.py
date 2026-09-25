@@ -49,6 +49,7 @@ class MarketplaceListingItem(BaseModel):
     updated_at: str
     avg_rating: float | None = None
     rating_count: int = 0
+    is_featured: bool = False
 
 
 class MarketplaceListResponse(BaseModel):
@@ -101,11 +102,13 @@ class RFQOut(BaseModel):
     status: str
     created_at: str
     quote_id: str | None = None
+    locked: bool = False
 
 
 class RFQListResponse(BaseModel):
     items: list[RFQOut]
     total: int
+    locked: bool = False
 
 
 class RFQApproveRequest(BaseModel):

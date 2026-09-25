@@ -141,6 +141,17 @@ function CompanyAvatar({ listing, size = "md" }) {
 
 // ─── filter chip ──────────────────────────────────────────────────────────────
 
+function FeaturedBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-lg bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 2l2.9 6.9 7.1.6-5.4 4.7 1.6 7L12 17.8 5.8 21.2l1.6-7L2 9.5l7.1-.6L12 2z" />
+      </svg>
+      Featured
+    </span>
+  );
+}
+
 function FilterChip({ label, active, onClick }) {
   return (
     <button onClick={onClick}
@@ -387,6 +398,7 @@ function ProductCard({ product, onOpen, onRequestQuote, onCompanyClick, isOwn })
       <div className="flex flex-1 flex-col p-4 gap-3">
         {/* Category + name */}
         <div>
+          {listing.is_featured && <div className="mb-1.5"><FeaturedBadge /></div>}
           {service.service_category && (
             <span className={`mb-1.5 inline-block rounded-lg px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${categoryColor(service.service_category)}`}>
               {fmt(service.service_category)}
@@ -466,9 +478,10 @@ function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick, onAppl
   const openForProposals = !!listing.open_for_proposals;
   return (
     <article onClick={() => onClick(listing)}
-      className="ea-card ea-card-hover group flex cursor-pointer flex-col overflow-hidden">
+      className={`ea-card ea-card-hover group flex cursor-pointer flex-col overflow-hidden ${listing.is_featured ? "ring-2 ring-amber-300 dark:ring-amber-700" : ""}`}>
       <div className={`h-1.5 w-full bg-gradient-to-r ${grad} opacity-80`} />
       <div className="flex flex-1 flex-col p-5">
+        {listing.is_featured && <div className="mb-3"><FeaturedBadge /></div>}
         {/* Open for Proposals badge */}
         {openForProposals && (
           <div className="mb-3 flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 dark:border-emerald-800 dark:bg-emerald-900/20">
@@ -1651,7 +1664,7 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
             </div>
             <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Sign up for free first</h2>
             <p className="mt-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
-              Create a free EnterprateAI account to get started. Once you're in, you can explore the platform and upgrade when you're ready to submit proposals.
+              Create a free EnterprateAI account to get started. It only takes a minute.
             </p>
             <div className="mt-6 flex flex-col gap-2.5">
               <button onClick={() => { onClose(); navigate(`/login?signup=1&next=/marketplace/request/${request?.id || ""}`); }}
@@ -1761,6 +1774,7 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
 
             <div className="px-6 py-4 space-y-3">
               <button type="button" onClick={() => {
+                if (!isLoggedIn) { setStep("signup"); return; }
                 if (!isPaid) { setStep("upgrade"); return; }
                 try {
                   sessionStorage.setItem("ea_proposal_ctx", JSON.stringify({
@@ -1801,7 +1815,7 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
                     {!isPaid && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-700 dark:text-slate-400">Preview</span>}
                   </div>
                   <div className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">
-                    {isPaid ? "Attach a PDF or Word doc and write your own cover letter." : "Write your proposal — upgrade to submit it to the business."}
+                    {isPaid ? "Attach a PDF or Word doc and write your own cover letter." : "Write your proposal and submit it to the business."}
                   </div>
                 </div>
               </button>
@@ -2418,6 +2432,8 @@ export default function MarketplacePage() {
   const [error, setError] = useState(null);
 
   const [myStatus, setMyStatus] = useState(null);
+  const [featured, setFeatured] = useState(null);
+  const [boosting, setBoosting] = useState(false);
   const [profileViews, setProfileViews] = useState(null);
   const [viewsLoading, setViewsLoading] = useState(false);
   const [showViews, setShowViews] = useState(false);
@@ -2539,6 +2555,27 @@ export default function MarketplacePage() {
   }, [isLoggedIn, workspaceId]);
 
   useEffect(() => {
+    if (!isLoggedIn || !myStatus?.is_published) { setFeatured(null); return; }
+    let alive = true;
+    apiRequest("/addons/featured", "GET").then((res) => { if (alive) setFeatured(res); }).catch(() => {});
+    return () => { alive = false; };
+  }, [isLoggedIn, myStatus?.is_published]);
+
+  async function boostListing() {
+    if (!featured?.boosts_remaining) { navigate("/pricing#addons"); return; }
+    setBoosting(true);
+    try {
+      const res = await apiRequest("/addons/boost", "POST", {});
+      setFeatured(res);
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      alert(e instanceof Error ? e.message.replace(/^HTTP \d+:\s*/, "") : "Could not boost your listing.");
+    } finally {
+      setBoosting(false);
+    }
+  }
+
+  useEffect(() => {
     if (!isLoggedIn || !myStatus?.is_published) return;
     let alive = true;
     setViewsLoading(true);
@@ -2607,6 +2644,8 @@ export default function MarketplacePage() {
     else if (sortBy === "reviews") deduped.sort((a, b) => (b.listing.rating_count ?? 0) - (a.listing.rating_count ?? 0));
     else if (sortBy === "az")  deduped.sort((a, b) => (a.service.service_name || "").localeCompare(b.service.service_name || ""));
     // default "az": listings are shown alphabetically by service name
+    // Featured listings always lead; order within each group is kept.
+    deduped.sort((a, b) => Number(!!b.listing.is_featured) - Number(!!a.listing.is_featured));
     return deduped;
   }, [listings, debouncedSearch, filterCategory, sortBy]);
 
@@ -2657,6 +2696,21 @@ export default function MarketplacePage() {
                     <span>{myStatus?.is_published ? "Unlist Business" : "List My Business"}</span>
                   </span>
                 </button>
+                {myStatus?.is_published && featured && (
+                  <button type="button" onClick={boostListing} disabled={boosting || featured.has_featured_slot}
+                    title={featured.boost_until ? `Featured until ${new Date(featured.boost_until).toLocaleString()}` : `Each boost features your listing for ${featured.boost_hours || 24} hours`}
+                    className="hidden rounded-xl border border-amber-300 bg-amber-50 px-3 py-1.5 text-[12px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:cursor-default disabled:opacity-80 sm:block dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                    {featured.has_featured_slot
+                      ? "★ Featured"
+                      : boosting
+                        ? "Boosting…"
+                        : featured.boosts_remaining > 0
+                          ? `${featured.is_featured ? "★ Featured · extend" : "Boost listing"} (${featured.boosts_remaining} left)`
+                          : featured.is_featured
+                            ? `★ Featured until ${new Date(featured.boost_until).toLocaleDateString()}`
+                            : "Get featured"}
+                  </button>
+                )}
                 <button onClick={() => navigate("/dashboard")}
                   className="rounded-xl border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
                   Dashboard →

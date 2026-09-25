@@ -5,6 +5,16 @@ import { planLabel, getPlan, normalisePlanKey } from "../lib/plans";
 import { apiRequest } from "../api/client";
 import logoUrl from "../enterprate-logo.png";
 
+// What each add-on delivers, shown after purchase.
+const ADDON_DELIVERED = {
+  addon_featured_1: { title: "Featured listing", body: "Your marketplace listing is now featured at the top of search results for as long as the add-on is active." },
+  addon_featured_5: { title: "5 listing boosts / month", body: "You have 5 boosts this month. Each one features your listing for 24 hours. Use them from the Marketplace page." },
+  addon_featured_20: { title: "20 listing boosts / month", body: "You have 20 boosts this month. Each one features your listing for 24 hours. Use them from the Marketplace page." },
+  addon_rfq_20: { title: "20 RFQ credits", body: "20 credits were added to your balance. Each RFQ reply uses 1 credit." },
+  addon_rfq_50: { title: "50 RFQ credits", body: "50 credits were added to your balance. Each RFQ reply uses 1 credit." },
+  addon_rfq_100: { title: "100 RFQ credits", body: "100 credits were added to your balance. Each RFQ reply uses 1 credit." },
+};
+
 function fmtDate(iso) {
   if (!iso) return null;
   const d = new Date(iso);
@@ -16,27 +26,58 @@ export default function PricingSuccessPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const refreshSubscription = useAuthStore((s) => s.refreshSubscription);
+  const setCreditInfo = useAuthStore((s) => s.setCreditInfo);
   const [sub, setSub] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [activationFailed, setActivationFailed] = useState(false);
   const sessionId = params.get("session_id");
+  const subscriptionId = params.get("subscription_id");
+  const addonKey = params.get("addon");
+  const addon = addonKey ? ADDON_DELIVERED[addonKey] : null;
 
   useEffect(() => {
     async function load() {
-      // Eagerly activate the subscription without waiting for the Stripe webhook,
-      // which may be slow or misconfigured and leave the user stuck on trial status.
-      if (sessionId) {
+      // Eagerly activate the subscription (and grant the plan's credits) without
+      // waiting for the Stripe webhook, which may be slow or not configured.
+      // The backend retries briefly and is idempotent with the webhook.
+      let ok = true;
+      if (addonKey && sessionId) {
+        // Add-on purchase: deliver it now (idempotent with the webhook).
+        try {
+          await apiRequest("/plans/addons/activate", "POST", { session_id: sessionId });
+        } catch (_) {
+          ok = false;
+        }
+      } else if (sessionId) {
         try {
           await apiRequest("/plans/activate-subscription", "POST", { session_id: sessionId });
         } catch (_) {
-          // Non-fatal — fall through and refresh anyway
+          ok = false;
+        }
+      } else if (subscriptionId) {
+        try {
+          await apiRequest("/plans/activate-subscription", "POST", { subscription_id: subscriptionId });
+        } catch (_) {
+          ok = false;
         }
       }
       const updated = await refreshSubscription();
       setSub(updated);
+      try {
+        const credits = await apiRequest("/credits/balance", "GET");
+        if (credits != null) setCreditInfo(credits);
+      } catch (_) {
+        // Non-fatal — the dashboard refetches the balance on load.
+      }
+      // Only flag failure if the plan genuinely never activated — refreshSubscription
+      // reflects the current truth, so a prior attempt failing doesn't matter if a
+      // second one (or the backend's own internal retry) already got there.
+      const stillOnFreePlan = !updated || ["free_trial", "explorer"].includes(updated.plan_key);
+      setActivationFailed(addonKey ? !ok : !ok && stillOnFreePlan && (sessionId || subscriptionId));
       setLoading(false);
     }
     load();
-  }, [refreshSubscription, sessionId]);
+  }, [refreshSubscription, setCreditInfo, sessionId, subscriptionId, addonKey]);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 dark:bg-slate-950">
@@ -49,7 +90,7 @@ export default function PricingSuccessPage() {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
             </svg>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Confirming your subscription…</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">{addonKey ? "Confirming your purchase…" : "Confirming your subscription…"}</p>
           </div>
         ) : (
           <>
@@ -63,7 +104,19 @@ export default function PricingSuccessPage() {
               You're all set!
             </h1>
 
-            {sub && !["free_trial", "explorer"].includes(sub.plan_key) ? (
+            {addonKey && !activationFailed ? (
+              <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-4 text-left dark:border-slate-800 dark:bg-slate-800/50">
+                <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">{addon?.title || "Add-on"} is active</div>
+                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{addon?.body || "Your purchase has been added to your account."}</p>
+              </div>
+            ) : addonKey ? (
+              <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                Your payment went through, but we couldn't confirm the add-on with Stripe just yet.
+                It usually appears within a few minutes. If it doesn't, contact {" "}
+                <a href="mailto:support@enterprate.ai" className="font-medium underline">support@enterprate.ai</a>{" "}
+                with this reference.
+              </p>
+            ) : sub && !["free_trial", "explorer"].includes(sub.plan_key) ? (
               <>
                 <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                   Your <strong className="text-slate-800 dark:text-slate-200">{planLabel(sub.plan_key, sub.status)}</strong> plan is now active.
@@ -102,25 +155,33 @@ export default function PricingSuccessPage() {
                   );
                 })()}
               </>
+            ) : activationFailed ? (
+              <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                Your card was charged successfully, but we couldn't confirm the plan upgrade with Stripe just yet.
+                This usually resolves on its own within a few minutes. If your plan and credits still
+                haven't updated after that, contact {" "}
+                <a href="mailto:support@enterprate.ai" className="font-medium underline">support@enterprate.ai</a>{" "}
+                with this reference so we can activate it manually.
+              </p>
             ) : (
               <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                 Your payment was processed successfully. Your plan will be activated shortly.
               </p>
             )}
 
-            {sessionId && (
+            {(sessionId || subscriptionId) && (
               <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
-                Reference: {sessionId.slice(-12)}
+                Reference: {(sessionId || subscriptionId).slice(-12)}
               </p>
             )}
 
             <div className="mt-6 space-y-3">
               <button
                 type="button"
-                onClick={() => navigate("/dashboard")}
+                onClick={() => navigate(addonKey?.startsWith("addon_featured") ? "/marketplace" : "/dashboard")}
                 className="w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition"
               >
-                Go to dashboard
+                {addonKey?.startsWith("addon_featured") ? "Go to marketplace" : "Go to dashboard"}
               </button>
               <button
                 type="button"

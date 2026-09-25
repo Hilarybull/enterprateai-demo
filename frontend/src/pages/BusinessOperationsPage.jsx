@@ -443,6 +443,19 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
   );
 }
 
+// Readable message from an RFQ API error (credit and plan errors carry a JSON detail).
+function rfqErrorMessage(e, fallback) {
+  const raw = e instanceof Error ? e.message : String(e || "");
+  const m = raw.match(/^HTTP (\d+):\s*(.*)$/s);
+  if (!m) return raw || fallback;
+  try {
+    const d = JSON.parse(m[2])?.detail;
+    if (d?.error === "INSUFFICIENT_CREDITS") return "Not enough credits. Replying to an RFQ costs 1 credit. Buy an RFQ credit pack on the pricing page.";
+    if (d?.message) return d.message;
+  } catch { /* plain-text detail */ }
+  return m[2] || fallback;
+}
+
 function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
   const [prices, setPrices] = useState(() => (rfq.items || []).map(item => ({ ...item, unit_price: "" })));
   const [validityDays, setValidityDays] = useState("30");
@@ -464,7 +477,7 @@ function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
       });
       onDone && onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to respond to RFQ.");
+      setError(rfqErrorMessage(e, "Failed to respond to RFQ."));
       setSubmitting(false);
     }
   }
@@ -528,7 +541,8 @@ function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
           </div>
           {error && <p className="text-[12px] text-red-500">{error}</p>}
         </div>
-        <div className="flex justify-end gap-3 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
+        <div className="flex items-center justify-end gap-3 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
+          <span className="mr-auto text-[11px] text-slate-400">Sending a quote uses 1 credit.</span>
           <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">Cancel</button>
           <button disabled={submitting} onClick={handleRespond}
             className="rounded-xl bg-brand-600 px-4 py-2 text-[13px] font-bold text-white hover:bg-brand-700 disabled:opacity-50">
@@ -1881,6 +1895,11 @@ export default function BusinessOperationsPage() {
   async function persist(next) {
     if (!workspaceId) return;
     await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: next } });
+    refreshWorkspace();
+  }
+
+  // Reload workspace data after a server-side change (e.g. an RFQ reply).
+  function refreshWorkspace() {
     invalidateWorkspaceCache();
     useWorkspaceStore.getState().clearWsDoc();
     window.dispatchEvent(new CustomEvent("ea:workspace:refresh"));
@@ -2503,11 +2522,30 @@ export default function BusinessOperationsPage() {
                   emptyText="No quotations yet"
                 />
                 {/* Inbound RFQs — buyers who requested a quote from us via Marketplace */}
+                {rfqRequests.some(r => r.locked) && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+                    <p className="text-[13px] text-amber-800 dark:text-amber-300">
+                      <strong>{rfqRequests.filter(r => r.locked).length} buyer request{rfqRequests.filter(r => r.locked).length === 1 ? "" : "s"}</strong> waiting.
+                      Upgrade to a paid plan to see who sent them and respond with a quote.
+                    </p>
+                    <button type="button" onClick={() => navigate("/pricing")}
+                      className="rounded-xl bg-amber-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-amber-700">
+                      Upgrade to view
+                    </button>
+                  </div>
+                )}
                 <TableSection
                   title="Inbound RFQs"
                   searchPlaceholder="Search inbound requests..."
                   cols={["From", "Items", "Message", "Status", "Received", "Action"]}
-                  rows={[...rfqRequests].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(r => ({
+                  rows={[...rfqRequests].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(r => r.locked ? ({
+                    From: <span className="select-none blur-[4px]" aria-label="Locked">Hidden Buyer Ltd</span>,
+                    Items: <span className="select-none blur-[4px]" aria-hidden="true">{(r.items || []).length || 1}× requested items</span>,
+                    Message: <span className="select-none blur-[4px]" aria-hidden="true">Request details hidden</span>,
+                    Status: <StatusPill status={r.status === "approved" ? "Responded" : r.status === "rejected" ? "Declined" : "Pending"} />,
+                    Received: fmtDate(r.created_at),
+                    Action: <button type="button" onClick={() => navigate("/pricing")} className="text-[12px] font-semibold text-amber-700 hover:underline dark:text-amber-400">Upgrade</button>,
+                  }) : ({
                     From: r.customer_name || r.customer_email || "—",
                     Items: Array.isArray(r.items) ? r.items.map(i => `${i.quantity || 1}× ${i.name}`).join(", ") : "—",
                     Message: r.message || "—",
@@ -2516,7 +2554,10 @@ export default function BusinessOperationsPage() {
                     Action: <ActionMenu items={[
                       ...(r.status === "pending" ? [
                         { label: "Respond with Quote", onClick: () => setRfqRespondTarget(r) },
-                        { label: "Decline", onClick: async () => { await apiRequest(`/marketplace/rfq/${r.id}/reject`, "POST"); persist(null); } },
+                        { label: "Decline", onClick: async () => {
+                          try { await apiRequest(`/marketplace/rfq/${r.id}/reject`, "POST"); refreshWorkspace(); }
+                          catch (e) { alert(rfqErrorMessage(e, "Could not decline this RFQ.")); }
+                        } },
                       ] : []),
                       ...(r.quote_id ? [{ label: "View Quote", onClick: () => { const q = quotes.find(q => q.id === r.quote_id); if (q) openView("quote", q); } }] : []),
                     ]} />,
@@ -3221,7 +3262,7 @@ export default function BusinessOperationsPage() {
           rfq={rfqRespondTarget}
           wsCurrency={wsCurrency}
           onClose={() => setRfqRespondTarget(null)}
-          onDone={() => { setRfqRespondTarget(null); persist(null); }}
+          onDone={() => { setRfqRespondTarget(null); refreshWorkspace(); }}
         />
       )}
 

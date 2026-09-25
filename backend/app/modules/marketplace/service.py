@@ -12,6 +12,9 @@ from fastapi import HTTPException, status
 from app.modules.idea_validation.service import get_user_workspace, get_workspace
 from app.core.supabase import sb_select, sb_update, sb_upsert
 from app.shared.email.resend import send_email_via_resend
+from app.modules.addons.service import featured_workspace_ids, redact_rfqs, require_rfq_access
+from app.modules.credits.service import credit_guard
+from app.modules.plans.access import has_paid_access
 
 
 def _build_quotation_pdf(quote: dict, company_name: str, currency_symbol: str = "£") -> bytes:
@@ -156,6 +159,10 @@ def _ws_fields(ws) -> tuple[str, dict]:
     return str(ws.id), ws.data or {}
 
 
+def _ws_owner(ws) -> str:
+    return str(ws.get("user_id", "") if isinstance(ws, dict) else getattr(ws, "user_id", ""))
+
+
 async def _attach_ratings(items: list[dict]) -> None:
     """Fetch rating aggregates for a list of items and mutate them in place."""
     if not items:
@@ -266,11 +273,13 @@ async def list_marketplace(
         desc=True,
         limit=200,
     )
+    featured = await featured_workspace_ids(list(all_workspaces or []))
     items = []
     for ws in (all_workspaces or []):
         item = _build_listing_item(ws)
         if not item:
             continue
+        item["is_featured"] = item["workspace_id"] in featured
         if industry and item["primary_industry"] != industry:
             continue
         if business_type and item["business_type"] != business_type:
@@ -301,6 +310,8 @@ async def list_marketplace(
         items.append(item)
 
     await _attach_ratings(items)
+    # Featured listings first; order within each group is unchanged.
+    items.sort(key=lambda i: not i.get("is_featured"))
 
     total = len(items)
     start = (page - 1) * page_size
@@ -405,6 +416,7 @@ async def get_listing(*, workspace_id: str) -> dict:
     item = _build_listing_item(ws)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
+    item["is_featured"] = item["workspace_id"] in await featured_workspace_ids([ws])
     await _attach_ratings([item])
     return item
 
@@ -574,10 +586,42 @@ async def list_rfqs(*, user_id: str, workspace_id: str | None = None) -> dict:
     _, data = _ws_fields(ws)
     financials = data.get("financials") or {}
     items = list(financials.get("rfq_requests") or [])
+    if items and not await has_paid_access(_ws_owner(ws)):
+        # Free plan: RFQs are received but locked until the owner upgrades.
+        return {"items": redact_rfqs(items), "total": len(items), "locked": True}
     return {"items": items, "total": len(items)}
 
 
 async def approve_rfq(
+    *,
+    user_id: str,
+    workspace_id: str | None = None,
+    rfq_id: str,
+    validity_days: int = 30,
+    item_prices: list[dict] | None = None,
+) -> dict:
+    """Respond to an RFQ: paid plans only, costs 1 AI credit (refunded on failure)."""
+    ws = await _load_workspace(user_id, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await require_rfq_access(_ws_owner(ws))
+    _, data = _ws_fields(ws)
+    rfq = next((r for r in ((data.get("financials") or {}).get("rfq_requests") or []) if r.get("id") == rfq_id), None)
+    if not rfq:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RFQ not found")
+    if rfq.get("status") != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="RFQ is not pending")
+    async with credit_guard(user_id, "rfq_response"):
+        return await _approve_rfq(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            rfq_id=rfq_id,
+            validity_days=validity_days,
+            item_prices=item_prices,
+        )
+
+
+async def _approve_rfq(
     *,
     user_id: str,
     workspace_id: str | None = None,
@@ -769,6 +813,7 @@ async def reject_rfq(*, user_id: str, workspace_id: str | None = None, rfq_id: s
     ws = await _load_workspace(user_id, workspace_id)
     if not ws:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await require_rfq_access(_ws_owner(ws))
     ws_id, data = _ws_fields(ws)
     financials = data.get("financials") or {}
     rfq_requests = list(financials.get("rfq_requests") or [])

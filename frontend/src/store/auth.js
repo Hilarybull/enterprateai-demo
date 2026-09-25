@@ -4,9 +4,13 @@ import { useWorkspaceStore } from "./workspace";
 
 function humanizeAuthError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
-  if (msg === "NETWORK_ERROR") {
-    const base = import.meta.env.VITE_API_URL ?? import.meta.env.REACT_APP_BACKEND_URL ?? "http://localhost:8000";
-    return `Can't reach the server at ${base}. Start the backend and check your API URL.`;
+  if (e?.code === "NETWORK_ERROR" || msg === "NETWORK_ERROR") {
+    // The API URL is developer detail; real customers get a plain message.
+    if (import.meta.env.DEV) {
+      const base = import.meta.env.VITE_API_URL ?? import.meta.env.REACT_APP_BACKEND_URL ?? "http://localhost:8000";
+      return `Can't reach the server at ${base}. Start the backend and check your API URL.`;
+    }
+    return "We couldn't reach the server. Please check your connection and try again in a moment.";
   }
   if (msg === "AUTH_RESPONSE_INVALID") return "Authentication failed. Please try again.";
   if (msg.startsWith("HTTP 401:")) return "Invalid credentials. Try again or create an account.";
@@ -76,6 +80,9 @@ export const useAuthStore = create((set, get) => ({
   verificationPending: false,
   verificationEmail: null,
   clearVerificationPending: () => set({ verificationPending: false, verificationEmail: null }),
+  resendVerification: async (email) => {
+    await apiRequest("/auth/resend-verification", "POST", { email });
+  },
   setCreditBalance: (v) => set({ creditBalance: typeof v === "number" ? v : null }),
   setCreditInfo: (info) => set({ creditInfo: info || null, creditBalance: typeof info?.available_credits === "number" ? info.available_credits : null }),
 
@@ -189,7 +196,13 @@ export const useAuthStore = create((set, get) => ({
         subscription: sub ?? DEFAULT_SUB,
       })).catch(() => {});
     } catch (e) {
-      set({ error: humanizeAuthError(e) });
+      const msg = e instanceof Error ? e.message : String(e || "");
+      if (msg.startsWith("HTTP 403:") && msg.toLowerCase().includes("not verified")) {
+        // Show the "check your inbox" screen, which offers a fresh link.
+        set({ verificationPending: true, verificationEmail: email, error: null });
+      } else {
+        set({ error: humanizeAuthError(e) });
+      }
     } finally {
       set({ isLoading: false });
     }

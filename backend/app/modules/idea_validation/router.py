@@ -38,6 +38,14 @@ from app.modules.credits.service import credit_guard
 router = APIRouter(prefix="/validation", tags=["idea_validation"])
 
 
+async def _ws_response(ws) -> WorkspaceResponse:
+    """Workspace payload with RFQs redacted when the owner is on the free plan."""
+    from app.modules.addons.service import redact_workspace_data_for_owner
+    resp = WorkspaceResponse.from_doc(ws)
+    resp.data = await redact_workspace_data_for_owner(resp.data, resp.user_id)
+    return resp
+
+
 @router.get("/market-fit")
 async def market_fit_endpoint(
     keyword: str = Query(min_length=2),
@@ -77,7 +85,7 @@ async def get_my_workspace(
     ws = await get_user_workspace(user_id=user["id"])
     if not ws:
         return Response(status_code=204)
-    return WorkspaceResponse.from_doc(ws)
+    return await _ws_response(ws)
 
 
 @router.get("/list", response_model=list[WorkspaceResponse])
@@ -85,7 +93,7 @@ async def list_my_workspaces(
     user=Depends(get_current_user),
 ) -> list[WorkspaceResponse]:
     workspaces = await list_user_workspaces(user_id=user["id"])
-    return [WorkspaceResponse.from_doc(ws) for ws in workspaces]
+    return [await _ws_response(ws) for ws in workspaces]
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)
@@ -94,7 +102,7 @@ async def get_validation_workspace(
     user=Depends(get_current_user),
 ) -> WorkspaceResponse:
     ws = await get_workspace(user_id=user["id"], workspace_id=workspace_id)
-    return WorkspaceResponse.from_doc(ws)
+    return await _ws_response(ws)
 
 
 @router.post("/evaluate", response_model=ValidationResult)
@@ -143,7 +151,7 @@ async def patch_my_workspace(
     user=Depends(get_current_user),
 ) -> WorkspaceResponse:
     ws = await upsert_user_workspace(user_id=user["id"], data_patch=payload.data, name=payload.name)
-    return WorkspaceResponse.from_doc(ws)
+    return await _ws_response(ws)
 
 
 
@@ -159,7 +167,7 @@ async def patch_validation_workspace(
         data_patch=payload.data,
         name=payload.name,
     )
-    return WorkspaceResponse.from_doc(ws)
+    return await _ws_response(ws)
 
 
 class FieldSuggestRequest(BaseModel):

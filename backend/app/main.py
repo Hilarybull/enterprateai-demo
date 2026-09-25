@@ -37,6 +37,7 @@ from app.modules.workspace_access.router import router as workspace_access_route
 from app.modules.admin.router import router as admin_router
 from app.modules.plans.router import router as plans_router
 from app.modules.marketplace.router import router as marketplace_router
+from app.modules.addons.router import router as addons_router
 from app.modules.support.router import router as support_router
 from app.modules.reports.router import router as reports_router
 from app.modules.credits.router import router as credits_router
@@ -116,6 +117,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
     app.include_router(plans_router)
     app.include_router(marketplace_router)
+    app.include_router(addons_router)
     app.include_router(support_router)
     app.include_router(reports_router)
     app.include_router(credits_router)
