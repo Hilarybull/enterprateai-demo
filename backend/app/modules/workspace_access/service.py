@@ -10,6 +10,34 @@ from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.core.config import get_settings
 from app.shared.email.resend import send_workspace_invitation_email_with_link
 
+# Invited (non-owner) seats per plan, on top of the workspace owner.
+PLAN_MEMBER_LIMIT = {
+    "explorer": 0,
+    "starter_insight": 1,
+    "decision_engine": 3,
+    "growth_navigator": 10,
+    "strategic_business_os": 25,
+}
+
+
+async def _require_seat_available(workspace_id: str) -> None:
+    from app.modules.plans.access import effective_plan_key
+    ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], columns="id,user_id", single=True)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    limit = PLAN_MEMBER_LIMIT.get(await effective_plan_key(ws["user_id"]), 0)
+    current = await sb_select("workspace_members", filters=[("workspace_id", "eq", workspace_id)], columns="id")
+    if len(current or []) >= limit:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Your plan doesn't include more team members. Upgrade to invite more people, "
+                "or remove an existing member first."
+                if limit else
+                "Inviting team members is available on paid plans. Upgrade to invite your team."
+            ),
+        )
+
 
 def _normalize_expiry_days(expires_in_days: int | None) -> int:
     if expires_in_days is None:
@@ -38,6 +66,7 @@ async def create_invitation(
     permissions: Dict[str, Any],
     expires_in_days: int = 7,
 ) -> Dict[str, Any]:
+    await _require_seat_available(workspace_id)
     expires_in_days = _normalize_expiry_days(expires_in_days)
     normalized_email = email.strip().lower() if email else None
     token = secrets.token_urlsafe(32)
@@ -259,6 +288,10 @@ async def accept_invitation(token: str, user_id: str, user_email: str | None = N
         filters=[("workspace_id", "eq", inv["workspace_id"]), ("user_id", "eq", user_id)],
         single=True,
     )
+    # Re-checked at acceptance: seats may have filled since the invite was sent.
+    # Updating an existing membership doesn't use a new seat.
+    if not existing:
+        await _require_seat_available(inv["workspace_id"])
     now = datetime.now(timezone.utc).isoformat()
 
     if existing:

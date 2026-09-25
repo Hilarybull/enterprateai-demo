@@ -18,6 +18,7 @@ import Layout from "./components/Layout";
 import LandingPage from "./pages/LandingPage";
 import NewLandingPage from "./pages/NewLandingPage";
 import EssentialsPage from "./pages/EssentialsPage";
+import OnboardingPage from "./pages/OnboardingPage";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ValidationWizardPage from "./pages/ValidationWizardPage";
@@ -104,6 +105,7 @@ export default function App() {
       <Route path="/" element={<PublicRoot />} />
       <Route path="/home" element={<NewLandingPage />} />
       <Route path="/essentials" element={<EssentialsPage />} />
+      <Route path="/onboarding" element={<Protected><OnboardingPage /></Protected>} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />

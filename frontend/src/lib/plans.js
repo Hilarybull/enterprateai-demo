@@ -126,19 +126,22 @@ export function normalisePlanKey(key) {
 
 // Which top-level modules each plan can access
 export const PLAN_MODULE_ACCESS = {
-  // Explorer: all modules included for development/trial optimization
-  explorer: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
-  // Starter (Insight): 2 scenario simulations included
+  // Explorer (free): core tools. Proposals, integrations and the live plan are paid.
+  explorer: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "operations"],
+  // Starter: everything on Explorer + proposals.
   starter_insight: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
-  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations"],
-  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
-  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
+  // Decision Engine: everything on Starter + integrations and Live Business Plan Intelligence.
+  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan"],
+  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan"],
+  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan"],
 };
 
 // Minimum plan needed to access a module (for upgrade prompts)
 export const MODULE_MIN_PLAN = {
   simulation: "explorer",
   integrations: "decision_engine",
+  live_plan: "decision_engine",
+  proposals: "starter_insight",
 };
 
 // Scenario templates available for manual runs on the Starter plan.
@@ -193,4 +196,12 @@ export function planLabel(planKey, status) {
   if (normalised === "explorer" && status === "expired") return "Trial Expired";
   if (normalised === "explorer") return "Explorer";
   return getPlan(normalised)?.label ?? planKey;
+}
+
+// Paid features (proposals, RFQ replies, multiple listings) need Starter or above.
+// Mirrors has_paid_access() in backend/app/modules/plans/access.py.
+export function hasPaidAccess(planKey, status) {
+  if (status === "grandfathered") return true;
+  if (status === "trial" || status === "expired") return false;
+  return planRank(planKey) >= planRank("starter_insight");
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
+import { hasPaidAccess } from "../lib/plans";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
@@ -1340,12 +1341,13 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
   const token = useAuthStore((s) => s.token);
   const isLoggedIn = Boolean(token);
   const planKey = useAuthStore((s) => s.subscription?.plan_key ?? "explorer");
+  const planStatus = useAuthStore((s) => s.subscription?.status);
   const platformGrants = useAuthStore((s) => s.platformGrants ?? []);
   const userEmail = useAuthStore((s) => s.user?.email || s.session?.user?.email || "");
   const hasBlueprintGrant = platformGrants.some(
     (g) => !g.feature_key || g.module_key === "blueprint" || g.module_key === "marketplace"
   );
-  const isPaid = ["starter_insight", "growth", "scale", "enterprise"].includes(planKey) || hasBlueprintGrant;
+  const isPaid = hasPaidAccess(planKey, planStatus) || hasBlueprintGrant;
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const isOwnListing = workspaceId && listing.workspace_id === workspaceId;
 

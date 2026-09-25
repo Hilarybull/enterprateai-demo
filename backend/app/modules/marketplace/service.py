@@ -209,6 +209,17 @@ async def publish_workspace(*, user_id: str, workspace_id: str | None = None) ->
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Complete your workspace profile before publishing to the marketplace",
         )
+    if not await has_paid_access(user_id):
+        published = await sb_select(
+            "workspaces",
+            filters=[("user_id", "eq", user_id), ("data", "cs", {"marketplace": {"is_active": True}})],
+            columns="id",
+        )
+        if any(str(w["id"]) != ws_id for w in (published or [])):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="The Explorer plan includes 1 marketplace listing. Unlist your other business or upgrade for multiple listings.",
+            )
     now = datetime.now(timezone.utc).isoformat()
     existing_marketplace = data.get("marketplace") or {}
     marketplace_data = {

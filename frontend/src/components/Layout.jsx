@@ -302,6 +302,11 @@ export default function Layout() {
   const token = useAuthStore((s) => s.token);
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
+  // With no known workspace (e.g. a brand-new sign-up), hold the page until the
+  // workspace check finishes so the dashboard doesn't flash before the
+  // onboarding redirect. Returning users have a remembered workspace and
+  // render immediately.
+  const [workspaceChecked, setWorkspaceChecked] = useState(() => !!useWorkspaceStore.getState().workspaceId);
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [apiStatus, setApiStatus] = useState("unknown"); // unknown | ok | down
@@ -606,7 +611,18 @@ export default function Layout() {
         const ws = pinnedId
           ? await apiRequestCached(`/validation/${pinnedId}`)
           : await apiRequestCached("/validation/me");
-        if (cancelled || !ws) return;
+        if (cancelled) return;
+
+        // First sign-in (or a workspace that was never set up): show the
+        // stepped workspace form once. Finishing or skipping it records
+        // data.onboarding, so this never repeats.
+        const needsOnboarding = !ws || (!ws?.data?.workspace_profile && !ws?.data?.onboarding);
+        if (needsOnboarding && !demoTour?.active && !isDemoUser) {
+          const here = `${location.pathname}${location.search}`;
+          navigate(`/onboarding?next=${encodeURIComponent(here || "/dashboard")}`, { replace: true });
+          return;
+        }
+        if (!ws) return;
 
         // User has their own workspace — owner mode
         clearMemberMode();
@@ -707,7 +723,7 @@ export default function Layout() {
       }
     }
 
-    loadWorkspace();
+    loadWorkspace().finally(() => { if (!cancelled) setWorkspaceChecked(true); });
     window.addEventListener("ea:workspace:refresh", loadWorkspace);
     return () => {
       cancelled = true;
@@ -748,6 +764,7 @@ export default function Layout() {
     if (path.startsWith("/registration")) return "registration";
     if (path.startsWith("/integrations")) return "integrations";
     if (path.startsWith("/reports")) return "reports";
+    if (path.startsWith("/business-plan") || path.startsWith("/live-plan")) return "live_plan";
     return null;
   }, [location.pathname]);
 
@@ -1502,8 +1519,12 @@ export default function Layout() {
                     </>
                   )}
                 </div>
-              ) : (
+              ) : workspaceChecked ? (
                 <Outlet />
+              ) : (
+                <div className="flex min-h-[50vh] items-center justify-center" role="status" aria-label="Loading">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-200 border-t-brand-600" />
+                </div>
               )}
             </div>
           </div>

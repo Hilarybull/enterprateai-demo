@@ -222,7 +222,7 @@ async def _ensure_demo_user(*, email: str, password: str) -> dict:
 
 _DEMO_MODULE_KEYS = [
     "dashboard", "validation", "blueprint", "simulation",
-    "catalogue", "financials", "integrations", "registration",
+    "catalogue", "financials", "integrations", "registration", "live_plan",
 ]
 
 

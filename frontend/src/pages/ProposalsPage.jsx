@@ -94,7 +94,7 @@ const PROPOSAL_CATEGORIES = [
 export function SettingsTab() {
   const { preferences, preferencesLoading, preferencesError, fetchPreferences, savePreferences } = useProposalStore();
   const subscription = useAuthStore((s) => s.subscription);
-  const paid = hasPaidAccess(subscription?.plan_key);
+  const paid = hasPaidAccess(subscription?.plan_key, subscription?.status);
 
   const [enabled, setEnabled] = useState(false);
   const [modes, setModes] = useState(["general"]);

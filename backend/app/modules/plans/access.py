@@ -57,3 +57,39 @@ async def has_paid_access(user_id: str) -> bool:
     if sub.status != "active":
         return False
     return _plan_rank(sub.plan_key) >= _plan_rank("starter_insight")
+
+
+async def _has_module_grant(user_id: str, module_key: str) -> bool:
+    try:
+        rows = await sb_select(
+            "user_platform_grants",
+            filters=[("user_id", "eq", user_id), ("module_key", "eq", module_key)],
+            columns="id,feature_key",
+        )
+        return any(not r.get("feature_key") for r in (rows or []))
+    except Exception:
+        return False
+
+
+async def plan_meets(user_id: str, minimum_plan: str, *, grant_module: str | None = None) -> bool:
+    """True if the user's effective plan is at least `minimum_plan`.
+    Grandfathered accounts and admin module grants always qualify."""
+    if grant_module and await _has_module_grant(user_id, grant_module):
+        return True
+    sub = await resolve_subscription(user_id)
+    if sub.status == "grandfathered":
+        return True
+    if sub.status != "active":
+        return False
+    return _plan_rank(sub.plan_key) >= _plan_rank(minimum_plan)
+
+
+async def effective_plan_key(user_id: str) -> str:
+    """Normalised plan key; grandfathered accounts count as the top plan."""
+    from app.modules.credits.service import normalise_plan_key
+    sub = await resolve_subscription(user_id)
+    if sub.status == "grandfathered":
+        return "strategic_business_os"
+    if sub.status != "active":
+        return "explorer"
+    return normalise_plan_key(sub.plan_key)
