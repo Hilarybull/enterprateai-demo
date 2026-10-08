@@ -10,6 +10,7 @@ class BusinessAssistantMessage(BaseModel):
 
 class BusinessAssistantChatRequest(BaseModel):
     messages: list[BusinessAssistantMessage] = Field(default_factory=list, min_length=1, max_length=40)
+    workspace_id: str | None = Field(default=None, max_length=64)      # the business on screen; the user's own when omitted
 
 
 class BusinessAssistantChatResponse(BaseModel):

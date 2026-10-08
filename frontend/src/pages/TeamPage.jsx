@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { alertDialog, confirmDialog } from "../lib/dialog";
 import { apiRequest } from "../api/client";
 import { describePermissions } from "../lib/permissions";
 import InviteModal from "../components/InviteModal";
@@ -179,7 +180,7 @@ export default function TeamPage() {
         prev.map((i) => (i.id === invId ? { ...i, status: "revoked" } : i))
       );
     } catch (e) {
-      alert(e.message || "Failed to revoke invitation.");
+      alertDialog(e.message || "Failed to revoke invitation.");
     } finally {
       setActionLoading(null);
     }
@@ -193,20 +194,20 @@ export default function TeamPage() {
         prev.map((item) => (item.id === shareId ? { ...item, status: "revoked" } : item))
       );
     } catch (e) {
-      alert(e.message || "Failed to revoke share link.");
+      alertDialog(e.message || "Failed to revoke share link.");
     } finally {
       setActionLoading(null);
     }
   }
 
   async function removeMember(memberId) {
-    if (!confirm("Remove this member from the workspace?")) return;
+    if (!(await confirmDialog("Remove this member from the workspace? They will lose access straight away.", { title: "Remove member", confirmLabel: "Remove member", danger: true }))) return;
     setActionLoading(memberId);
     try {
       await apiRequest(`/workspace/members/${memberId}`, "DELETE");
       setMembers((prev) => prev.filter((m) => m.id !== memberId));
     } catch (e) {
-      alert(e.message || "Failed to remove member.");
+      alertDialog(e.message || "Failed to remove member.");
     } finally {
       setActionLoading(null);
     }

@@ -23,6 +23,7 @@ except Exception as e:
 
 from app.core.config import get_settings
 from app.core.database import connect_to_mongo, close_mongo_connection
+from app.core.supabase import keep_pool_warm, read_cache
 from app.modules.blueprint.router import router as blueprint_router
 from app.modules.blueprint.share_preview_router import share_preview_router
 from app.modules.business_assistant.router import router as business_assistant_router
@@ -37,6 +38,12 @@ from app.modules.workspace_access.router import router as workspace_access_route
 from app.modules.admin.router import router as admin_router
 from app.modules.plans.router import router as plans_router
 from app.modules.marketplace.router import router as marketplace_router
+from app.modules.addons.router import router as addons_router
+from app.modules.agent.router import router as agent_router, start_scheduler as start_agent_scheduler, stop_scheduler as stop_agent_scheduler
+from app.modules.readiness.router import router as readiness_router
+from app.modules.agent.goal_router import router as goal_router
+from app.modules.marketplace.directory_router import router as marketplace_directory_router
+from app.modules.activation.router import router as activation_router, start_scheduler as start_activation_scheduler, stop_scheduler as stop_activation_scheduler
 from app.modules.support.router import router as support_router
 from app.modules.reports.router import router as reports_router
 from app.modules.credits.router import router as credits_router
@@ -50,6 +57,7 @@ from app.modules.proposals.router import router as proposals_router
 from app.shared.auth.router import router as auth_router
 from app.shared.utils.logging import configure_logging
 from app.shared.utils.middleware import request_logging_middleware
+from app.shared.utils.errors import CatchAllErrors
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +80,9 @@ def create_app() -> FastAPI:
         )
 
     app = FastAPI(title=settings.app_name)
+    # Added before CORS so it sits inside it: unhandled errors become JSON responses
+    # that still carry CORS headers (otherwise the browser reports a network error).
+    app.add_middleware(CatchAllErrors)
 
     if settings.environment == "development":
         allow_origins = list(dict.fromkeys(settings.cors_origins + [
@@ -96,6 +107,14 @@ def create_app() -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+    @app.middleware("http")
+    async def one_read_per_request(request, call_next):
+        # A page load asks for the same rows several times over; each is fetched once.
+        if request.method != "GET":
+            return await call_next(request)
+        with read_cache():
+            return await call_next(request)
+
     app.add_middleware(CORSMiddleware, **cors_kwargs)
 
     if settings.environment == "development":
@@ -107,7 +126,8 @@ def create_app() -> FastAPI:
     app.include_router(registration_router)
     app.include_router(share_preview_router)
     app.include_router(blueprint_router)
-    app.include_router(business_assistant_router)
+    # The separate assistant chat endpoint is gone: the chat bubble and the Agent box are one
+    # Agent, and every message goes to /agent/requests (which writes the answer when one is needed).
     app.include_router(simulation_router)
     app.include_router(scenario_intelligence_router)
     app.include_router(upgrade_router)
@@ -116,6 +136,12 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
     app.include_router(plans_router)
     app.include_router(marketplace_router)
+    app.include_router(addons_router)
+    app.include_router(agent_router)
+    app.include_router(readiness_router)
+    app.include_router(goal_router)
+    app.include_router(marketplace_directory_router)
+    app.include_router(activation_router)
     app.include_router(support_router)
     app.include_router(reports_router)
     app.include_router(credits_router)
@@ -133,9 +159,26 @@ def create_app() -> FastAPI:
         # Keep startup fast for Railway health checks.
         # MongoDB is still lazily initialized when first needed.
         asyncio.create_task(connect_to_mongo())
+        # Open database connections now and keep them open, so requests don't each pay
+        # for a new one.
+        if settings.supabase_url and settings.supabase_service_role_key:
+            app.state.supabase_warm_task = asyncio.create_task(keep_pool_warm())
+        # Agent workflows wait on due dates and payments; this wakes the ones that are due.
+        start_agent_scheduler()
+        start_activation_scheduler()      # does nothing each run unless ACTIVATION_EMAILS_ENABLED is set
+        # Flag receipts that were sent but are missing from the books (logged, never blocking).
+        if settings.supabase_url and settings.supabase_service_role_key:
+            from app.modules.agent.integrity import check_all_at_startup
+            from app.modules.agent.router import get_orchestrator
+            app.state.receipt_check_task = asyncio.create_task(check_all_at_startup(get_orchestrator().rt))
 
     @app.on_event("shutdown")
     async def shutdown():
+        stop_agent_scheduler()
+        stop_activation_scheduler()
+        warm_task = getattr(app.state, "supabase_warm_task", None)
+        if warm_task:
+            warm_task.cancel()
         await close_mongo_connection()
 
     @app.get("/health")

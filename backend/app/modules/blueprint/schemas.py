@@ -126,8 +126,12 @@ class BlueprintShareEmailResponse(BaseModel):
 
 
 class QuotationRespondRequest(BaseModel):
-    action: str  # "accept" or "reject"
+    action: str  # "accept", "reject" or "question"
     email: Optional[EmailStr] = None
+    message: Optional[str] = Field(default=None, max_length=2000)   # the customer's question (action "question")
+    signer_name: Optional[str] = Field(default=None, max_length=120)   # accept: who is accepting
+    accepted_terms: bool = False                                       # accept: "I accept the quotation and its terms"
+    reason: Optional[str] = Field(default=None, max_length=1000)       # decline: optional reason
 
 
 class BlueprintShareCreateRequest(BaseModel):

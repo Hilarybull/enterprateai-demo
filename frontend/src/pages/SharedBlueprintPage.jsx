@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { alertDialog } from "../lib/dialog";
 import { useParams, useSearchParams } from "react-router-dom";
 import html2pdf from "html2pdf.js";
 import Spinner from "../components/Spinner";
 import Button from "../components/Button";
 import { apiRequest, getApiBaseUrl } from "../api/client";
 import enterprateLogo from "../logo.png";
+import { QuoteMobileBar, QuoteResponsePanel, QuoteStatusBanner, QuoteSummaryBar } from "../components/QuoteResponse";
 
 function escapeHtml(s) {
   return String(s || "")
@@ -215,9 +217,9 @@ export default function SharedBlueprintPage() {
   const [emailRequired, setEmailRequired] = useState(false);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
-  const [respondAction, setRespondAction] = useState(null); // "accept" | "reject" | null
-  const [respondDone, setRespondDone] = useState(false);
-  const [respondError, setRespondError] = useState(null);
+  const [quoteInfo, setQuoteInfo] = useState(null);   // a quotation's live status, seller and questions
+  const openQuoteAction = useRef(null);
+  const [quoteDialogOpen, setQuoteDialogOpen] = useState(false);
 
   function isEmailGateMessage(message) {
     return (
@@ -334,6 +336,7 @@ export default function SharedBlueprintPage() {
         const source = documentRef.current.cloneNode(true);
         const container = document.createElement("div");
         container.appendChild(source);
+        container.className = "eaq-pdf";      // shows what the page keeps in its summary bar (the validity date)
         container.style.width = "210mm";
         container.style.padding = "12mm";
         container.style.boxSizing = "border-box";
@@ -379,7 +382,7 @@ export default function SharedBlueprintPage() {
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 100);
     } catch {
-      alert("Unable to generate PDF. Please try again.");
+      alertDialog("Unable to generate PDF. Please try again.");
     } finally {
       setDownloading(false);
     }
@@ -387,37 +390,50 @@ export default function SharedBlueprintPage() {
 
   const isQuotationAcceptance = String(doc?.type || "").startsWith("quotation_acceptance");
 
-  async function handleRespond(action) {
-    setRespondAction(action);
-    setRespondError(null);
+  async function loadQuoteInfo() {
+    if (!token) return;
     try {
-      await apiRequest(`/blueprint/share/${token}/respond`, "POST", {
-        action,
-        email: submittedEmail.trim() || null,
-      });
-      setRespondDone(action);
-    } catch (e) {
-      setRespondError(e instanceof Error ? e.message : "Failed to submit response.");
-    } finally {
-      setRespondAction(null);
+      const suffix = submittedEmail.trim() ? `?email=${encodeURIComponent(submittedEmail.trim())}` : "";
+      setQuoteInfo(await apiRequest(`/blueprint/share/${token}/quote${suffix}`, "GET"));
+    } catch {
+      setQuoteInfo(null);      // the document still shows; only the live status is missing
     }
   }
+
+  useEffect(() => {
+    if (isQuotationAcceptance) loadQuoteInfo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isQuotationAcceptance, token]);
+
+  const seller = isQuotationAcceptance ? quoteInfo?.seller : null;
+  const quoteOpen = quoteInfo?.state === "open";
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fbff_0%,#f8fafc_45%,#f8fafc_100%)]">
       <div className="fixed left-0 right-0 top-0 z-50 border-b border-slate-200/80 bg-white/90 backdrop-blur">
         <div className="flex w-full items-center gap-2 px-3 py-3 sm:gap-3 sm:px-6">
-          <div className="shrink-0">
-            <img
-              src={enterprateLogo}
-              alt="EnterprateAI"
-              className="block h-6 w-auto max-w-[72px] object-contain sm:h-8 sm:max-w-[160px]"
-            />
-          </div>
-
-          <div className="min-w-0 flex-1 px-1">
-            <div className="truncate text-center text-xs font-semibold text-slate-900 sm:text-sm">{title}</div>
-          </div>
+          {seller ? (
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              {seller.logo && <img src={seller.logo} alt="" className="block h-8 w-auto max-w-[96px] shrink-0 object-contain sm:h-9 sm:max-w-[140px]" />}
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold text-slate-900 sm:text-base">{seller.name}</div>
+                <div className="truncate text-[11px] text-slate-500 sm:text-xs">Quotation {quoteInfo?.reference}</div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="shrink-0">
+                <img
+                  src={enterprateLogo}
+                  alt="EnterprateAI"
+                  className="block h-6 w-auto max-w-[72px] object-contain sm:h-8 sm:max-w-[160px]"
+                />
+              </div>
+              <div className="min-w-0 flex-1 px-1">
+                <div className="truncate text-center text-xs font-semibold text-slate-900 sm:text-sm">{title}</div>
+              </div>
+            </>
+          )}
 
           <div className="shrink-0">
             <Button
@@ -432,7 +448,13 @@ export default function SharedBlueprintPage() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-6xl px-4 pb-10 pt-24 sm:px-6 sm:pb-12">
+      <div className={`mx-auto max-w-6xl px-4 pt-24 sm:px-6 sm:pb-12 ${isQuotationAcceptance && quoteOpen ? "pb-44" : "pb-10"}`}>
+        {isQuotationAcceptance && quoteInfo && !loading && !error && (
+          <div className="mx-auto mt-6 max-w-[960px] space-y-3">
+            <QuoteStatusBanner info={quoteInfo} />
+            <QuoteSummaryBar info={quoteInfo} />
+          </div>
+        )}
 
         {loading ? (
           <div className="mt-8 flex min-h-[280px] items-center justify-center rounded-[28px] border border-slate-200 bg-white/90 p-8 shadow-[0_20px_60px_rgba(15,23,42,0.06)]">
@@ -488,7 +510,7 @@ export default function SharedBlueprintPage() {
         ) : bodyHtml.trim() ? (
             <div
               ref={documentRef}
-              className={`mt-8 rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.06)] ${isFullHtml ? "px-2 py-2 sm:px-6 sm:py-6" : "px-5 py-6 sm:px-8"}`}
+              className={`mt-8 rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.06)] ${isQuotationAcceptance ? "mx-auto mt-4 max-w-[960px] px-4 py-6 sm:px-10 sm:py-10" : isFullHtml ? "px-2 py-2 sm:px-6 sm:py-6" : "px-5 py-6 sm:px-8"}`}
             >
               {isFullHtml ? <div dangerouslySetInnerHTML={{ __html: styleHtml }} /> : null}
               {!isFullHtml ? (
@@ -518,57 +540,22 @@ export default function SharedBlueprintPage() {
           </div>
         )}
 
-        {/* Quotation Accept/Reject */}
-        {isQuotationAcceptance && !loading && bodyHtml.trim() && (
-          <div className="mt-6 rounded-[28px] border border-slate-200 bg-white px-6 py-6 shadow-[0_20px_60px_rgba(15,23,42,0.06)]">
-            {respondDone ? (
-              <div className="flex flex-col items-center gap-3 py-4 text-center">
-                <div className={`flex h-14 w-14 items-center justify-center rounded-2xl ${respondDone === "accept" ? "bg-emerald-100 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
-                  {respondDone === "accept" ? (
-                    <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>
-                  ) : (
-                    <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                  )}
-                </div>
-                <div className="text-[15px] font-bold text-slate-900">
-                  {respondDone === "accept" ? "Quotation accepted!" : "Quotation rejected."}
-                </div>
-                <p className="text-sm text-slate-500">
-                  {respondDone === "accept"
-                    ? "Your acceptance has been recorded. The business will be in touch to confirm next steps."
-                    : "Your rejection has been recorded. Thank you for your response."}
-                </p>
-              </div>
-            ) : (
-              <>
-                <h3 className="mb-1 text-[15px] font-bold text-slate-900">Respond to this Quotation</h3>
-                <p className="mb-4 text-sm text-slate-500">Please review the quotation above and let us know if you accept or reject it.</p>
-                {respondError && (
-                  <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{respondError}</div>
-                )}
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    disabled={Boolean(respondAction)}
-                    onClick={() => handleRespond("accept")}
-                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-50"
-                  >
-                    {respondAction === "accept" ? <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg> : <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>}
-                    Accept Quotation
-                  </button>
-                  <button
-                    disabled={Boolean(respondAction)}
-                    onClick={() => handleRespond("reject")}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-6 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
-                  >
-                    {respondAction === "reject" ? <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg> : <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>}
-                    Reject Quotation
-                  </button>
-                </div>
-              </>
-            )}
+        {isQuotationAcceptance && !loading && bodyHtml.trim() && quoteInfo && (
+          <div className="mx-auto mt-6 max-w-[960px]">
+            <QuoteResponsePanel token={token} info={quoteInfo} viewerEmail={submittedEmail.trim()} openRef={openQuoteAction}
+              onChanged={loadQuoteInfo} onModalChange={setQuoteDialogOpen} />
           </div>
         )}
+
+        {isQuotationAcceptance && !loading && (
+          <footer className="mx-auto mt-10 max-w-[960px] text-center text-[12px] text-slate-400">
+            Powered by <span className="font-semibold text-slate-500">EnterprateAI</span>
+          </footer>
+        )}
       </div>
+      {isQuotationAcceptance && quoteOpen && !quoteDialogOpen && (
+        <QuoteMobileBar info={quoteInfo} onOpen={(which) => openQuoteAction.current?.(which)} />
+      )}
     </div>
   );
 }

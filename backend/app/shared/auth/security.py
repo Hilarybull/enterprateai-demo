@@ -16,6 +16,8 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    if not hashed_password:      # an account with no password yet (made with an email code, or Google): never a match, never an error
+        return False
     return pwd_context.verify(plain_password, hashed_password)
 
 

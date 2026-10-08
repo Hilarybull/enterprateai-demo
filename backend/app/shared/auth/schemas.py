@@ -12,6 +12,8 @@ class RegisterRequest(BaseModel):
     company: str | None = Field(default=None, max_length=150)
     ref_click_id: str | None = None
     ref_code: str | None = None
+    marketing_opt_in: bool = False      # ticked by the person; never assumed from creating an account
+    timezone: str | None = Field(default=None, max_length=64)
 
 
 class LoginRequest(BaseModel):
@@ -36,6 +38,12 @@ class UserPublic(BaseModel):
 
 class UpdateProfileRequest(BaseModel):
     name: str | None = Field(default=None, max_length=100)
+    # A small image as a data URL, or "" to remove the photo. Left out: unchanged.
+    picture: str | None = Field(default=None, max_length=400_000)
+
+
+class DeleteAccountRequest(BaseModel):
+    confirm: str = Field(max_length=320)      # the account's email address, typed out
 
 
 class ChangePasswordRequest(BaseModel):

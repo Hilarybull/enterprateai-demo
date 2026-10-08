@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { confirmDialog } from "../lib/dialog";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
@@ -5960,10 +5961,11 @@ export default function ValidationWizardPage() {
                                   const verdict = String(entry?.verdict || "").toLowerCase();
                                   const isWeak = (score !== null && score < 40) || verdict === "weak" || verdict === "not recommended" || verdict === "poor";
                                   if (isWeak) {
-                                    const ok = window.confirm(
+                                    const ok = await confirmDialog(
                                       `This idea scored ${score !== null ? score + "/100" : "low"} and is rated "${entry?.verdict || "Weak"}". ` +
                                       "Are you sure you want to accept it and add it to your pipeline? " +
-                                      "We recommend addressing the key gaps first."
+                                      "We recommend addressing the key gaps first.",
+                                      { title: "Accept a weak idea?", confirmLabel: "Accept anyway" },
                                     );
                                     if (!ok) return;
                                   }

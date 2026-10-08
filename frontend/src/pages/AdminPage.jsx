@@ -1,11 +1,17 @@
+import { createPortal } from "react-dom";
+import { alertDialog } from "../lib/dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { apiRequest } from "../api/client";
-import { MODULES, FEATURES } from "../lib/permissions";
-import { getPlan, normalisePlanKey } from "../lib/plans";
+import { EXTRA_GRANTS, MODULES, FEATURES } from "../lib/permissions";
+import { getPlan, normalisePlanKey, planLabel } from "../lib/plans";
 import logoUrl from "../enterprate-logo.png";
 import ConfirmDialog from "../components/ConfirmDialog";
+import AdminClaims from "../components/marketplace/AdminClaims";
+import ActivationAdmin from "../components/admin/ActivationAdmin";
+import { ADMIN_NAV, AdminDrawer, AdminHeader, AdminInsight, AdminSidebar, AdminTable, KpiTile, weeklySeries } from "../components/admin/AdminUI";
+import { moderatorAccess } from "../lib/directory";
 
 function fmtAdminDate(iso) {
   if (!iso) return null;
@@ -43,6 +49,7 @@ function XIcon({ className = "h-4 w-4" }) {
   );
 }
 
+// eslint-disable-next-line no-unused-vars
 function RefreshIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
@@ -301,7 +308,7 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
           const res = await apiRequest(`/admin/workspaces/${detail.id}/restore`, "POST", { snapshot_id: snap.snapshot_id });
           onRestore && onRestore(res);
         } catch (e) {
-          alert(e.message || "Restore failed.");
+          alertDialog(e.message || "Restore failed.");
         } finally {
           setRestoring(false);
         }
@@ -318,7 +325,7 @@ function WorkspaceDetailPanel({ detail, onClose, onDeleteMember, onRevokeInvitat
       onRename && onRename(detail.id, nameValue.trim());
       setEditingName(false);
     } catch (e) {
-      alert(e.message || "Rename failed.");
+      alertDialog(e.message || "Rename failed.");
     } finally {
       setNameSaving(false);
     }
@@ -668,6 +675,12 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   const [grants, setGrants] = useState([]);
   const [grantsLoading, setGrantsLoading] = useState(false);
   const [grantModule, setGrantModule] = useState("");
+  const [access, setAccess] = useState(null);      // effective access: plan in force, Agent tasks, RFQs
+  const accessUserId = user?.id;
+  useEffect(() => {      // re-read whenever the grants change, so the summary always matches them
+    if (!accessUserId) return;
+    apiRequest(`/admin/users/${encodeURIComponent(accessUserId)}/access`, "GET").then(setAccess).catch(() => setAccess(null));
+  }, [accessUserId, grants.length]);
   const [addingGrant, setAddingGrant] = useState(false);
   const [removingGrantId, setRemovingGrantId] = useState(null);
   const [grantingFullAccess, setGrantingFullAccess] = useState(false);
@@ -683,6 +696,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   const [credits, setCredits] = useState(null);
   const [creditsLoading, setCreditsLoading] = useState(false);
   const [grantAmount, setGrantAmount] = useState("");
+  const [reduceConfirm, setReduceConfirm] = useState(null);      // { amount, message, confirmLabel }
   const [grantReason, setGrantReason] = useState("");
   const [grantLoading, setGrantLoading] = useState(false);
   const [provisionLoading, setProvisionLoading] = useState(false);
@@ -862,6 +876,41 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
     }
   }
 
+  // Asks first, in the app's own dialog (not the browser's).
+  function askReduceCredits() {
+    const amount = parseInt(grantAmount, 10);
+    if (!amount || amount <= 0 || grantLoading) return;
+    const available = Number(credits?.available_credits ?? 0);
+    const taking = Math.min(amount, available);
+    const note = amount > available ? ` Only ${available} are available, so ${taking} will be removed.` : "";
+    setReduceConfirm({
+      amount,
+      message: `Remove ${taking} credit${taking === 1 ? "" : "s"} from ${user.email || user.id}?${note} The balance will be ${available - taking}.`,
+      confirmLabel: `Remove ${taking} credit${taking === 1 ? "" : "s"}`,
+    });
+  }
+
+  async function handleReduceCredits(amount) {
+    setReduceConfirm(null);
+    if (!amount || amount <= 0 || grantLoading) return;
+    setGrantLoading(true);
+    try {
+      const res = await apiRequest(`/admin/users/${encodeURIComponent(user.id)}/credits/deduct`, "POST", {
+        amount,
+        reason: grantReason.trim() || "Admin credit reduction",
+      });
+      const removed = res?.deducted ?? amount;
+      showToast("success", `${removed} credit${removed === 1 ? "" : "s"} removed.${res?.balance != null ? ` Balance: ${res.balance}.` : ""}`);
+      setGrantAmount("");
+      setGrantReason("");
+      loadCredits(user.id);
+    } catch (e) {
+      showToast("error", e?.data?.detail || e.message || "Failed to reduce credits.");
+    } finally {
+      setGrantLoading(false);
+    }
+  }
+
   async function handleProvisionCredits() {
     if (provisionLoading) return;
     setProvisionLoading(true);
@@ -966,7 +1015,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
   if (!user) return null;
 
   const availableFeatures = addModule ? (FEATURES[addModule] || []) : [];
-  const moduleLabel = (key) => MODULES.find((m) => m.key === key)?.label || key;
+  const moduleLabel = (key) => [...MODULES, ...EXTRA_GRANTS].find((m) => m.key === key)?.label || key;
   const featureLabel = (modKey, featKey) => (FEATURES[modKey] || []).find((f) => f.key === featKey)?.label || featKey;
 
   return (
@@ -1222,7 +1271,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                 <p className="mb-3 text-[11px] text-slate-400 italic">No wallet found. User has not used AI features yet.</p>
               )}
 
-              {/* Grant credits form */}
+              {/* Grant or reduce credits */}
               <div className="flex items-end gap-2 mb-2">
                 <div className="flex-1 min-w-0">
                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Amount</label>
@@ -1253,7 +1302,25 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                 >
                   {grantLoading ? "…" : "Grant"}
                 </button>
+                <button
+                  type="button"
+                  disabled={!grantAmount || parseInt(grantAmount) <= 0 || grantLoading || !(Number(credits?.available_credits ?? 0) > 0)}
+                  onClick={askReduceCredits}
+                  title="Remove this many credits from the available balance"
+                  className="shrink-0 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-40"
+                >
+                  {grantLoading ? "…" : "Reduce"}
+                </button>
               </div>
+              <p className="mb-2 text-[10px] text-slate-400">Enter an amount, then Grant to add or Reduce to remove. The balance never goes below zero.</p>
+              {reduceConfirm && createPortal(
+                // Above the user panel, whatever its stacking order.
+                <div className="relative z-[200]">
+                  <ConfirmDialog danger message={reduceConfirm.message} confirmLabel={reduceConfirm.confirmLabel}
+                    onConfirm={() => handleReduceCredits(reduceConfirm.amount)} onCancel={() => setReduceConfirm(null)} />
+                </div>,
+                document.body,
+              )}
 
               {/* Provision plan allocation */}
               <button
@@ -1354,7 +1421,20 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
               </div>
               <p className="mb-3 text-[11px] text-slate-500 leading-relaxed">
                 Grants unlock plan-locked modules for this user, overriding their current subscription limits.
+                Full access counts as the top plan: Agent tasks, automatic drafts and Marketplace RFQs included.
               </p>
+              {access && (
+                <dl aria-label="Effective access" className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[12px] dark:border-slate-700 dark:bg-slate-800/50">
+                  <dt className="font-semibold text-slate-600 dark:text-slate-300">Subscription</dt>
+                  <dd className="text-slate-700 dark:text-slate-200">{planLabel(access.subscription_plan, access.subscription_status)}</dd>
+                  <dt className="font-semibold text-slate-600 dark:text-slate-300">Effective plan</dt>
+                  <dd className="text-slate-700 dark:text-slate-200">{getPlan(access.effective_plan)?.label || access.effective_plan} <span className="text-slate-500">({access.source})</span></dd>
+                  <dt className="font-semibold text-slate-600 dark:text-slate-300">Agent tasks</dt>
+                  <dd className={access.agent_tasks ? "font-semibold text-emerald-700" : "text-slate-500"}>{access.agent_tasks ? "Yes" : "No"}</dd>
+                  <dt className="font-semibold text-slate-600 dark:text-slate-300">Marketplace RFQs</dt>
+                  <dd className={access.marketplace_rfqs ? "font-semibold text-emerald-700" : "text-slate-500"}>{access.marketplace_rfqs ? "Unlocked" : "Locked"}</dd>
+                </dl>
+              )}
 
               {/* Full access actions */}
               <div className="mb-3 flex gap-2">
@@ -1421,7 +1501,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
                 >
                   <option value="">Select module…</option>
-                  {MODULES.filter((m) => m.key !== "dashboard").map((m) => (
+                  {[...MODULES.filter((m) => m.key !== "dashboard"), ...EXTRA_GRANTS].map((m) => (
                     <option key={m.key} value={m.key}>{m.label}</option>
                   ))}
                 </select>
@@ -1563,131 +1643,131 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
 
 // ── Insight card ──────────────────────────────────────────────────────────────
 
-const INSIGHT_COLORS = {
-  amber: { bg: "bg-amber-50", border: "border-amber-100", count: "text-amber-700", label: "text-amber-600", btn: "bg-amber-600 hover:bg-amber-700", dot: "bg-amber-400" },
-  sky:   { bg: "bg-sky-50",   border: "border-sky-100",   count: "text-sky-700",   label: "text-sky-600",   btn: "bg-sky-600 hover:bg-sky-700",   dot: "bg-sky-400" },
-  violet:{ bg: "bg-violet-50",border: "border-violet-100",count: "text-violet-700",label: "text-violet-600",btn: "bg-violet-600 hover:bg-violet-700",dot: "bg-violet-400" },
-  emerald:{bg:"bg-emerald-50",border:"border-emerald-100",count:"text-emerald-700",label:"text-emerald-600",btn:"bg-emerald-600 hover:bg-emerald-700",dot:"bg-emerald-400"},
-};
-
-function InsightCard({ label, count, description, color = "amber", onAction, actionLabel }) {
-  const c = INSIGHT_COLORS[color] || INSIGHT_COLORS.amber;
-  return (
-    <div className={`flex flex-col justify-between rounded-2xl border p-4 ${c.bg} ${c.border}`}>
-      <div>
-        <div className={`text-3xl font-bold tabular-nums ${c.count}`}>{count}</div>
-        <div className={`mt-1 text-xs font-semibold ${c.label}`}>{label}</div>
-        <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">{description}</p>
-      </div>
-      {onAction && (
-        <button
-          type="button"
-          onClick={onAction}
-          className={`mt-4 rounded-xl px-3 py-2 text-[12px] font-semibold text-white transition ${c.btn}`}
-        >
-          {actionLabel || "View →"}
-        </button>
-      )}
-    </div>
-  );
+// Insight cards, tables and KPI tiles are the shared admin pieces (components/admin/AdminUI).
+function InsightCard(props) {
+  return <AdminInsight {...props} />;
 }
 
-// ── Data table ────────────────────────────────────────────────────────────────
-
+/** Every section's table: the shared AdminTable. */
 function DataTable({ columns, rows, emptyText = "No data" }) {
-  if (!rows || rows.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-6 w-6 text-slate-400">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
-          </svg>
-        </div>
-        <p className="mt-3 text-sm text-slate-400">{emptyText}</p>
-      </div>
-    );
-  }
-  return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200">
-      <table className="w-full min-w-max text-sm">
-        <thead>
-          <tr className="border-b border-slate-100 bg-slate-50/80">
-            {columns.map((col) => (
-              <th key={col.key} className={`px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400 ${col.className || ""}`}>
-                {col.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-50">
-          {rows.map((row, i) => (
-            <tr key={row.id || i} className="hover:bg-slate-50/60 transition-colors">
-              {columns.map((col) => (
-                <td key={col.key} className={`px-4 py-3 text-slate-700 ${col.tdClass || ""}`}>
-                  {col.render ? col.render(row) : (row[col.key] ?? "—")}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  return <AdminTable columns={columns} rows={rows || []} emptyText={emptyText} />;
 }
 
-// ── Stat tiles ────────────────────────────────────────────────────────────────
-
+// The five headline figures. Blueprints and validated workspaces sit with the health metrics below.
 const STAT_CONFIG = [
-  { key: "total_workspaces", label: "Workspaces", targetTab: "workspaces", color: "bg-brand-50 text-brand-700 border-brand-100", iconBg: "bg-brand-100", iconColor: "text-brand-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" /></svg> },
-  { key: "total_users", label: "Total Users", targetTab: "users", color: "bg-emerald-50 text-emerald-700 border-emerald-100", iconBg: "bg-emerald-100", iconColor: "text-emerald-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" /></svg> },
-  { key: "total_members", label: "Members", targetTab: "members", color: "bg-violet-50 text-violet-700 border-violet-100", iconBg: "bg-violet-100", iconColor: "text-violet-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" /></svg> },
-  { key: "total_invitations", label: "Invitations", targetTab: "invitations", color: "bg-amber-50 text-amber-700 border-amber-100", iconBg: "bg-amber-100", iconColor: "text-amber-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg> },
-  { key: "total_simulations", label: "Simulations", targetTab: null, color: "bg-sky-50 text-sky-700 border-sky-100", iconBg: "bg-sky-100", iconColor: "text-sky-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg> },
-  { key: "total_blueprints", label: "Blueprints", targetTab: null, color: "bg-indigo-50 text-indigo-700 border-indigo-100", iconBg: "bg-indigo-100", iconColor: "text-indigo-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg> },
-  { key: "total_validated_workspaces", label: "Validated", targetTab: null, color: "bg-teal-50 text-teal-700 border-teal-100", iconBg: "bg-teal-100", iconColor: "text-teal-600", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+  { key: "total_workspaces", label: "Workspaces", targetTab: "workspaces", list: "workspaces" },
+  { key: "total_users", label: "Total users", targetTab: "users", list: "users" },
+  { key: "total_members", label: "Members", targetTab: "members", list: "members" },
+  { key: "total_invitations", label: "Invitations", targetTab: "invitations", list: "invitations" },
+  { key: "total_simulations", label: "Simulations", targetTab: null, list: null },
 ];
-
-function StatTile({ config, value, onClick }) {
-  const Tag = onClick ? "button" : "div";
-  return (
-    <Tag
-      type={onClick ? "button" : undefined}
-      onClick={onClick}
-      className={`flex items-center gap-3 rounded-2xl border p-4 text-left transition ${config.color} ${onClick ? "cursor-pointer hover:shadow-md hover:scale-[1.02]" : ""}`}
-    >
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${config.iconBg} ${config.iconColor}`}>
-        {config.icon}
-      </div>
-      <div className="min-w-0">
-        <div className="text-2xl font-bold tabular-nums leading-none">{value ?? "—"}</div>
-        <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide opacity-70 truncate">{config.label}</div>
-      </div>
-    </Tag>
-  );
-}
 
 // ── Tab config ────────────────────────────────────────────────────────────────
 
-const TABS = [
-  { key: "overview", label: "Overview" },
-  { key: "ai-usage", label: "AI Usage" },
-  { key: "workspaces", label: "Workspaces" },
-  { key: "users", label: "Users" },
-  { key: "members", label: "Members" },
-  { key: "invitations", label: "Invitations" },
-  { key: "upgrades", label: "Upgrade Clicks" },
-  { key: "module-interest", label: "Module Interest" },
-  { key: "mailing-list", label: "Mailing List" },
-  { key: "support", label: "Support Messages" },
-  { key: "demo-requests", label: "Demo Requests" },
-  { key: "referrals", label: "Referrals" },
-  { key: "blog", label: "Blog" },
-  { key: "research", label: "Research & Development" },
-];
+// Title (one brand-coloured word) and subtitle for each section's header.
+const PAGE_TITLE = {
+  overview: ["Platform", "Overview", "How the platform is doing, and what needs attention."],
+  "ai-usage": ["AI", "Usage", "Calls, tokens and estimated cost."],
+  workspaces: ["All", "Workspaces", "Every business on the platform."],
+  users: ["All", "Users", "Accounts, plans and access."],
+  members: ["Team", "Members", "Who belongs to which workspace."],
+  invitations: ["Team", "Invitations", "Invitations sent, accepted and revoked."],
+  upgrades: ["Upgrade", "Clicks", "People who showed interest in a paid plan."],
+  "module-interest": ["Module", "Interest", "Tools people asked to hear about."],
+  activation: ["Activation", "Emails", "Getting-started and education journeys: who gets what, and what it changes."],
+  contacts: ["All", "Contacts", "Everyone's name and email, how they came, and their marketing choice."],
+  "mailing-list": ["Mailing", "List", "Newsletter sign-ups."],
+  support: ["Support", "Messages", "Messages sent from inside the app."],
+  "demo-requests": ["Demo", "Requests", "People who asked for a demonstration."],
+  referrals: ["Referral", "Programme", "Referral links, sign-ups and rewards."],
+  blog: ["Blog", "Articles", "Articles, categories and tags."],
+  research: ["Research &", "Development", "Research notes and experiments."],
+  marketplace: ["Marketplace", "Claims", "Claims, unclaimed profiles, reports and who can see what."],
+};
+const ALL_KEYS = ADMIN_NAV.flatMap((g) => g.items.map((i) => i.key));
 
 const INV_FILTERS = ["all", "pending", "accepted", "revoked"];
 
 // ── Main page ─────────────────────────────────────────────────────────────────
+
+const CONTACT_SOURCES = { homepage_agent: "Homepage Agent", start_goal: "Homepage goal", direct_signup: "Direct sign-up", marketplace_rfq: "Marketplace request" };
+
+/** Superadmin: everyone with an account, with their marketing choice. Filters, search and a CSV export (which the server writes to the audit log). */
+export function ContactsSection() {
+  const [filters, setFilters] = useState({ q: "", consent: "", plan: "", source: "", since: "", until: "" });
+  const [state, setState] = useState({ loading: true, items: [], total: 0, can_be_sent_marketing: 0 });
+  const query = new URLSearchParams(Object.entries(filters).filter(([, v]) => v)).toString();
+  useEffect(() => {
+    let live = true;
+    setState((st) => ({ ...st, loading: true, problem: "" }));
+    const timer = setTimeout(() => {
+      apiRequest(`/admin/contacts${query ? `?${query}` : ""}`, "GET")
+        .then((res) => { if (live) setState({ loading: false, items: res.items || [], total: res.total || 0, can_be_sent_marketing: res.can_be_sent_marketing || 0 }); })
+        .catch(() => { if (live) setState({ loading: false, items: [], total: 0, can_be_sent_marketing: 0, problem: "Contacts couldn't be loaded. Please try again." }); });
+    }, 250);
+    return () => { live = false; clearTimeout(timer); };
+  }, [query]);
+  const set = (key) => (e) => setFilters((f) => ({ ...f, [key]: e.target.value }));
+  const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "");
+  async function exportCsv() {
+    try {
+      const text = await apiRequest(`/admin/contacts/export${query ? `?${query}` : ""}`, "GET", undefined, { raw: true });
+      const blob = new Blob([typeof text === "string" ? text : await text.text()], { type: "text/csv" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "contacts.csv";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch { setState((st) => ({ ...st, problem: "The export couldn't be made. Please try again." })); }
+  }
+  const field = "rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] text-slate-800";
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5" data-contacts>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-800">Contacts <span className="ml-1 font-normal text-slate-400">({state.total})</span></h2>
+          <p className="mt-0.5 text-[11px] text-slate-400">{state.can_be_sent_marketing} of these agreed to marketing and have not unsubscribed. Only they may be sent tips or the newsletter.</p>
+        </div>
+        <button type="button" onClick={exportCsv} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50">Export CSV</button>
+      </div>
+      <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Filter contacts">
+        <input aria-label="Search by name or email" placeholder="Search name or email" value={filters.q} onChange={set("q")} className={`${field} min-w-[12rem] flex-1`} />
+        <select aria-label="Marketing consent" value={filters.consent} onChange={set("consent")} className={field}><option value="">Any consent</option><option value="yes">Can be sent marketing</option><option value="no">Cannot be sent marketing</option></select>
+        <select aria-label="Plan" value={filters.plan} onChange={set("plan")} className={field}><option value="">Any plan</option><option value="explorer">Explorer</option><option value="starter_insight">Starter</option><option value="decision_engine">Decision Engine</option></select>
+        <select aria-label="Sign-up source" value={filters.source} onChange={set("source")} className={field}><option value="">Any source</option>{Object.entries(CONTACT_SOURCES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+        <input type="date" aria-label="Joined from" value={filters.since} onChange={set("since")} className={field} />
+        <input type="date" aria-label="Joined until" value={filters.until} onChange={set("until")} className={field} />
+      </div>
+      {state.problem && <p role="alert" className="mb-2 text-[13px] text-rose-600">{state.problem}</p>}
+      {state.loading ? <p role="status" className="py-6 text-center text-[13px] text-slate-400">Loading contacts…</p> : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] text-left text-[13px]">
+            <thead className="text-[11px] uppercase tracking-wide text-slate-400">
+              <tr>{["Name", "Email", "Source", "First goal or task", "Plan", "Joined", "Last active", "Marketing", "Verified", "Unsubscribed"].map((h) => <th key={h} className="px-2 py-2 font-semibold">{h}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {state.items.map((c) => (
+                <tr key={c.id}>
+                  <td className="px-2 py-2 font-medium text-slate-800">{c.name || ""}</td>
+                  <td className="px-2 py-2 text-slate-600">{c.email}</td>
+                  <td className="px-2 py-2 text-slate-600">{CONTACT_SOURCES[c.signup_source] || c.signup_source}</td>
+                  <td className="px-2 py-2 text-slate-600">{String(c.first_goal || "").replace(/_/g, " ")}</td>
+                  <td className="px-2 py-2 text-slate-600">{c.plan}</td>
+                  <td className="px-2 py-2 text-slate-600">{day(c.created_at)}</td>
+                  <td className="px-2 py-2 text-slate-600">{day(c.last_active)}</td>
+                  <td className="px-2 py-2 text-slate-600">{c.marketing_consent ? `Yes${c.consent_at ? `, ${day(c.consent_at)}` : ""}` : "No"}</td>
+                  <td className="px-2 py-2 text-slate-600">{c.email_verified === false ? "No" : c.email_verified ? "Yes" : ""}</td>
+                  <td className="px-2 py-2 text-slate-600">{c.unsubscribed ? "Yes" : "No"}</td>
+                </tr>
+              ))}
+              {state.items.length === 0 && <tr><td colSpan={10} className="px-2 py-6 text-center text-slate-400">No contacts match.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AdminPage() {
   const navigate = useNavigate();
@@ -1697,7 +1777,15 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
-  const [tab, setTab] = useState("overview");
+  const [params, setParams] = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const wanted = params.get("tab");
+    if (ALL_KEYS.includes(wanted) || wanted === "marketplace-reports") return wanted;
+    return params.get("section") === "marketplace" ? "marketplace-queue" : "overview";
+  });
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState(null);
+  const [moderator, setModerator] = useState(null);      // a Marketplace moderator who isn't an administrator sees only that section
   const [search, setSearch] = useState("");
   const [invitationFilter, setInvitationFilter] = useState("all");
   const [aiModelFilter, setAiModelFilter] = useState("");
@@ -1730,6 +1818,7 @@ export default function AdminPage() {
     try {
       const data = await apiRequest("/admin/stats", "GET", undefined, { timeoutMs: 90000 });
       setStats(data);
+      setUpdatedAt(Date.now());
     } catch (e) {
       setError(e.message || "Failed to load admin stats.");
     } finally {
@@ -1742,6 +1831,14 @@ export default function AdminPage() {
     if (!isAdmin) return;
     loadStats();
   }, [isAdmin, loadStats]);
+
+  // Not an administrator: the server says whether this account moderates the Marketplace.
+  useEffect(() => {
+    if (isAdmin) return;
+    moderatorAccess().then((r) => setModerator(Boolean(r.moderator))).catch(() => setModerator(false));
+  }, [isAdmin]);
+  const marketplaceOnly = !isAdmin && moderator === true;
+  useEffect(() => { if (marketplaceOnly && !tab.startsWith("marketplace-")) setTab("marketplace-queue"); }, [marketplaceOnly, tab]);
 
   const loadUpgrades = useCallback(() => {
     if (upgradesLoaded) return;
@@ -2221,6 +2318,8 @@ export default function AdminPage() {
   function goToTab(tabKey) {
     setTab(tabKey);
     setSearch("");
+    setMenuOpen(false);
+    setParams({ tab: tabKey }, { replace: true });      // a refresh or a shared link opens the same section
   }
 
   // ── Derived / filtered data ───────────────────────────────────────────────
@@ -2338,12 +2437,18 @@ export default function AdminPage() {
       { label: "Validation completion rate", value: pct(stats.total_validated_workspaces, ws.length), sub: `${stats.total_validated_workspaces} of ${ws.length} workspaces validated` },
       { label: "Simulation usage rate", value: pct(stats.total_simulations, ws.length), sub: `${stats.total_simulations} simulation runs total` },
       { label: "Blueprint generation rate", value: pct(stats.total_blueprints, ws.length), sub: `${stats.total_blueprints} blueprints generated` },
+      { label: "Blueprints", value: stats.total_blueprints ?? "—", sub: "Generated in total" },
+      { label: "Validated workspaces", value: stats.total_validated_workspaces ?? "—", sub: "Completed idea validation" },
     ];
   }, [stats]);
 
   // ── Guard states ──────────────────────────────────────────────────────────
 
-  if (!isAdmin) {
+  if (!isAdmin && moderator === null) {
+    return <div className="flex min-h-screen items-center justify-center bg-slate-50"><p role="status" className="text-sm text-slate-500">Loading…</p></div>;
+  }
+
+  if (!isAdmin && !moderator) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 text-center">
         <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
@@ -2361,7 +2466,7 @@ export default function AdminPage() {
     );
   }
 
-  if (loading) {
+  if (loading && isAdmin) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-slate-50">
         <img src={logoUrl} alt="EnterprateAI" className="h-8 w-auto opacity-60" />
@@ -2371,7 +2476,7 @@ export default function AdminPage() {
     );
   }
 
-  if (error) {
+  if (error && isAdmin) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-slate-50 px-4 text-center">
         <p className="text-sm font-medium text-slate-700">Failed to load data</p>
@@ -2427,112 +2532,67 @@ export default function AdminPage() {
 
       {/* Top bar */}
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-6">
+        <div className="flex items-center gap-3 px-4 py-3 sm:px-6">
+          <button type="button" aria-label="Menu" aria-haspopup="dialog" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-700 lg:hidden">
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+          </button>
           <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" />
           <div className="h-5 w-px bg-slate-200" />
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-slate-800">System Admin</span>
+            <span className="whitespace-nowrap text-sm font-semibold text-slate-800">{marketplaceOnly ? "Marketplace moderation" : "System Admin"}</span>
             <span className="hidden rounded-full bg-brand-100 px-2.5 py-0.5 text-[11px] font-semibold text-brand-700 sm:inline">
               Control Panel
             </span>
           </div>
           <div className="ml-auto flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => loadStats(true)}
-              disabled={refreshing}
-              title="Refresh data"
-              className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-800 disabled:opacity-40"
-            >
-              <span className={refreshing ? "animate-spin" : ""}><RefreshIcon /></span>
-            </button>
             <span className="hidden text-xs text-slate-400 sm:block">{email}</span>
-            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">Admin</span>
+            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">{marketplaceOnly ? "Moderator" : "Admin"}</span>
           </div>
         </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Sidebar nav */}
-        <aside className="hidden w-52 shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
-          <div className="flex-1 overflow-y-auto py-4 px-2">
-            <nav className="space-y-0.5">
-              {TABS.map((t) => (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => goToTab(t.key)}
-                  className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition text-left ${
-                    tab === t.key
-                      ? "bg-brand-600 text-white shadow-sm"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                  }`}
-                >
-                  <span className="truncate">{t.label}</span>
-                  {tabCounts[t.key] !== undefined && (
-                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
-                      tab === t.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"
-                    }`}>
-                      {tabCounts[t.key]}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </nav>
+        {/* Sidebar: the app sidebar's item style, in groups. Below 1024px the same list opens from the menu button. */}
+        <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
+          <div className="flex-1 overflow-y-auto py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <AdminSidebar current={tab} onGo={goToTab} counts={tabCounts} only={marketplaceOnly ? (i) => i.marketplace : null} />
           </div>
         </aside>
-
-        {/* Mobile tab strip (visible only < lg) */}
-        <div className="absolute left-0 right-0 top-[57px] z-20 border-b border-slate-200 bg-white px-3 py-1.5 lg:hidden">
-          <div className="overflow-x-auto">
-            <div className="flex min-w-max gap-1">
-              {TABS.map((t) => (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => goToTab(t.key)}
-                  className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
-                    tab === t.key ? "bg-brand-600 text-white" : "text-slate-500 hover:bg-slate-100"
-                  }`}
-                >
-                  {t.label}
-                  {tabCounts[t.key] !== undefined && (
-                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
-                      tab === t.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"
-                    }`}>
-                      {tabCounts[t.key]}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <AdminDrawer open={menuOpen} onClose={() => setMenuOpen(false)}>
+          <AdminSidebar current={tab} onGo={goToTab} counts={tabCounts} only={marketplaceOnly ? (i) => i.marketplace : null} />
+        </AdminDrawer>
 
         <div className="ea-scroll flex-1 overflow-y-auto overflow-x-hidden">
-        <main className="mx-auto max-w-6xl space-y-5 px-4 py-6 pb-10 pt-16 sm:px-6 lg:pt-6">
+        <main className="mx-auto max-w-6xl space-y-5 px-4 py-6 pb-10 sm:px-6">
 
-        {/* Stat tiles — clickable where a target tab exists */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-          {STAT_CONFIG.map((cfg) => (
-            <StatTile
-              key={cfg.key}
-              config={cfg}
-              value={stats[cfg.key]}
-              onClick={cfg.targetTab ? () => goToTab(cfg.targetTab) : undefined}
-            />
-          ))}
-        </div>
+        {(() => {
+          const [lead, accent, subtitle] = PAGE_TITLE[tab.startsWith("marketplace-") ? "marketplace" : tab] || PAGE_TITLE.overview;
+          return <AdminHeader lead={lead} accent={accent} subtitle={subtitle} updatedAt={isAdmin ? updatedAt : null} onRefresh={isAdmin ? () => loadStats(true) : null} refreshing={refreshing} />;
+        })()}
 
-        {/* ── Overview ── */}
-        {tab === "overview" && (
+        {tab.startsWith("marketplace-") && <AdminClaims section={tab.slice("marketplace-".length)} onSection={(key) => goToTab(`marketplace-${key}`)} />}
+
+        {tab === "overview" && isAdmin && (
           <div className="space-y-5">
+
+            {/* Platform health: the headline figures, each with new records per week where there is a history */}
+            <section aria-label="Platform health">
+              <h2 className="mb-3 text-base font-bold text-slate-900">Platform health</h2>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+                {STAT_CONFIG.map((cfg, n) => (
+                  <KpiTile key={cfg.key} label={cfg.label} value={stats[cfg.key]} series={cfg.list ? weeklySeries(stats[cfg.list]) : null}
+                    className={n === STAT_CONFIG.length - 1 ? "col-span-2 md:col-span-1" : ""}
+                    hint={cfg.list ? "New per week, last 8 weeks" : null} onClick={cfg.targetTab ? () => goToTab(cfg.targetTab) : undefined} />
+                ))}
+              </div>
+            </section>
 
             {/* 1 — Actionable insights */}
             <section>
-              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Actionable insights</h2>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <h2 className="mb-3 text-base font-bold text-slate-900">Actionable insights</h2>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 {insights.map((ins) => (
                   <InsightCard
                     key={ins.id}
@@ -2549,8 +2609,8 @@ export default function AdminPage() {
 
             {/* 2 — Platform health metrics */}
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
-              <h2 className="mb-4 text-sm font-semibold text-slate-800">Platform health metrics</h2>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              <h2 className="mb-4 text-base font-bold text-slate-900">Health metrics</h2>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 {platformMetrics.map((m) => (
                   <div key={m.label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
                     <div className="text-xl font-bold tabular-nums text-slate-900">{m.value}</div>
@@ -2747,7 +2807,7 @@ export default function AdminPage() {
         )}
 
         {/* ── AI Usage ── */}
-        {tab === "ai-usage" && (
+        {tab === "ai-usage" && isAdmin && (
           <div className="space-y-5">
             {/* Summary metrics */}
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -3032,7 +3092,7 @@ export default function AdminPage() {
         )}
 
         {/* ── Workspaces ── */}
-        {tab === "workspaces" && (
+        {tab === "workspaces" && isAdmin && (
           <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <h2 className="text-sm font-semibold text-slate-800">
@@ -3081,7 +3141,7 @@ export default function AdminPage() {
         )}
 
         {/* ── Users ── */}
-        {tab === "users" && (
+        {tab === "users" && isAdmin && (
           <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <h2 className="text-sm font-semibold text-slate-800">
@@ -3143,7 +3203,7 @@ export default function AdminPage() {
         )}
 
         {/* ── Members ── */}
-        {tab === "members" && (
+        {tab === "members" && isAdmin && (
           <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <h2 className="text-sm font-semibold text-slate-800">
@@ -3183,7 +3243,7 @@ export default function AdminPage() {
         )}
 
         {/* ── Invitations ── */}
-        {tab === "invitations" && (
+        {tab === "invitations" && isAdmin && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -3256,7 +3316,7 @@ export default function AdminPage() {
         )}
 
         {/* ── Upgrade Clicks ── */}
-        {tab === "upgrades" && (
+        {tab === "upgrades" && isAdmin && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -3314,7 +3374,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {tab === "module-interest" && (
+        {tab === "module-interest" && isAdmin && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -3370,7 +3430,11 @@ export default function AdminPage() {
           </div>
         )}
 
-        {tab === "mailing-list" && (
+        {tab === "activation" && isAdmin && <ActivationAdmin />}
+
+        {tab === "contacts" && isAdmin && <ContactsSection />}
+
+        {tab === "mailing-list" && isAdmin && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -3426,7 +3490,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {tab === "support" && (
+        {tab === "support" && isAdmin && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -3496,7 +3560,7 @@ export default function AdminPage() {
         )}
 
         {/* ── Demo Requests ── */}
-        {tab === "demo-requests" && (
+        {tab === "demo-requests" && isAdmin && (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
@@ -3553,7 +3617,7 @@ export default function AdminPage() {
         )}
 
         {/* ── Referrals ── */}
-        {tab === "referrals" && (
+        {tab === "referrals" && isAdmin && (
           <div className="space-y-5">
 
             {/* Stats */}
@@ -3797,7 +3861,7 @@ export default function AdminPage() {
         )}
 
         {/* ── Blog ── */}
-        {tab === "blog" && (
+        {tab === "blog" && isAdmin && (
           <div className="space-y-5">
             {/* Sub-tab nav */}
             <div className="flex gap-2 rounded-xl border border-slate-200 bg-white p-1 w-fit">
@@ -4019,7 +4083,7 @@ export default function AdminPage() {
         )}
 
         {/* ── Research & Development ── */}
-        {tab === "research" && (
+        {tab === "research" && isAdmin && (
           <div className="space-y-5">
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
               <div className="mb-4 flex items-center justify-between">

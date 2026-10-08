@@ -1,3 +1,9 @@
+// Access an admin can grant that isn't a page of its own. "Grant Full Access" includes both.
+export const EXTRA_GRANTS = [
+  { key: "agent", label: "Agent tasks" },
+  { key: "marketplace_rfq", label: "Marketplace RFQs (view and reply)" },
+];
+
 export const MODULES = [
   { key: "dashboard", label: "Dashboard", subtitle: "Overview & analytics" },
   { key: "validation", label: "Idea Validation", subtitle: "Validate business ideas" },

@@ -237,6 +237,105 @@ async def list_all_users(user=Depends(require_admin)) -> list:
     return await _select_users_with_block(order="created_at", desc=True)
 
 
+# ── Contacts: everyone's name and email, how they came, and their marketing choice ──
+
+# Marketing permission is the account's own record of it (the activation module's: marketing_email_status and its dates),
+# so an unsubscribe from any email, or from Account settings, shows here at once.
+CONTACT_COLUMNS = ("id,email,name,first_name,signup_source,first_goal,created_at,last_seen_at,email_verified,auth_provider,"
+                   "marketing_email_status,marketing_permission_at,marketing_permission_source,marketing_permission_wording,marketing_unsubscribed_at")
+CSV_FIELDS = ("name", "email", "signup_source", "first_goal", "plan", "created_at", "last_active", "marketing_consent", "consent_at",
+              "consent_source", "consent_version", "email_verified", "unsubscribed")
+
+
+def contact_of(row: dict, plan: str | None = None) -> dict:
+    """One person as the Contacts view shows them. Someone who signed up without the homepage flow is a direct sign-up."""
+    return {
+        "id": row.get("id"), "name": str(row.get("name") or row.get("first_name") or "").strip(), "first_name": row.get("first_name") or None,
+        "email": row.get("email") or row.get("id"), "signup_source": row.get("signup_source") or "direct_signup", "first_goal": row.get("first_goal") or None,
+        "plan": plan or "explorer", "created_at": row.get("created_at"), "last_active": row.get("last_seen_at") or None,
+        "marketing_consent": str(row.get("marketing_email_status") or "unknown") in ("subscribed", "soft_opt_in"),
+        "consent_at": row.get("marketing_permission_at") or None,
+        "consent_source": row.get("marketing_permission_source") or None, "consent_version": row.get("marketing_permission_wording") or None,
+        "email_verified": row.get("email_verified"),
+        "unsubscribed": str(row.get("marketing_email_status") or "") in ("unsubscribed", "suppressed") or bool(row.get("marketing_unsubscribed_at")),
+    }
+
+
+def may_be_sent_marketing(contact: dict) -> bool:
+    """Tips, product updates and the newsletter go only to someone who ticked the box and has not unsubscribed.
+    Messages about their own tasks (a quotation is ready, verify your email) never depend on this."""
+    return bool(contact.get("marketing_consent")) and not contact.get("unsubscribed")
+
+
+def filter_contacts(contacts: list[dict], *, q: str = "", consent: str = "", plan: str = "", source: str = "", since: str = "", until: str = "") -> list[dict]:
+    words = q.strip().lower()
+    out = []
+    for c in contacts:
+        if words and words not in f"{c['name']} {c['email']}".lower():
+            continue
+        if consent in ("yes", "no") and may_be_sent_marketing(c) != (consent == "yes"):
+            continue
+        if plan and c["plan"] != plan:
+            continue
+        if source and c["signup_source"] != source:
+            continue
+        made = str(c.get("created_at") or "")[:10]
+        if (since and made < since) or (until and made > until):
+            continue
+        out.append(c)
+    return out
+
+
+def contacts_csv(contacts: list[dict]) -> str:
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(CSV_FIELDS)
+    for c in contacts:
+        w.writerow(["" if c.get(k) is None else ("yes" if c[k] is True else "no" if c[k] is False else c[k]) for k in CSV_FIELDS])
+    return buf.getvalue()
+
+
+async def _contacts() -> list[dict]:
+    try:
+        rows = await sb_select("users", columns=CONTACT_COLUMNS, order="created_at", desc=True)
+    except Exception:      # before migration 040: the name and email are still listed
+        rows = await sb_select("users", columns="id,email,name,created_at", order="created_at", desc=True)
+    plans: dict[str, str] = {}
+    try:
+        for sub in await sb_select("user_subscriptions", columns="user_id,plan_key,status") or []:
+            if str(sub.get("status") or "active") in ("active", "trialing"):
+                plans[str(sub.get("user_id"))] = sub.get("plan_key") or "explorer"
+    except Exception:
+        pass
+    return [contact_of(r, plans.get(str(r.get("id")))) for r in rows or [] if str(r.get("email") or r.get("id") or "") != "demo"]
+
+
+async def _audit(actor: dict, action: str, detail: dict) -> None:
+    """What a superadmin did with people's details. Before migration 040 there is no table: it is written to the server log instead."""
+    try:
+        await sb_insert("admin_audit_log", {"actor_email": actor.get("email"), "action": action, "detail": detail})
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("admin audit: %s by %s %s", action, actor.get("email"), detail)
+
+
+@router.get("/contacts")
+async def list_contacts(q: str = "", consent: str = "", plan: str = "", source: str = "", since: str = "", until: str = "", user=Depends(require_admin)) -> dict:
+    """Superadmin only. Everyone with an account: name, email, how they came, plan, and their marketing choice."""
+    found = filter_contacts(await _contacts(), q=q, consent=consent, plan=plan, source=source, since=since, until=until)
+    return {"items": found, "total": len(found), "can_be_sent_marketing": sum(1 for c in found if may_be_sent_marketing(c))}
+
+
+@router.get("/contacts/export")
+async def export_contacts(q: str = "", consent: str = "", plan: str = "", source: str = "", since: str = "", until: str = "", user=Depends(require_admin)) -> Response:
+    """The same list as a CSV, consent fields included. Every export is written to the audit log."""
+    found = filter_contacts(await _contacts(), q=q, consent=consent, plan=plan, source=source, since=since, until=until)
+    await _audit(user, "contacts_exported", {"rows": len(found), "filters": {"q": q, "consent": consent, "plan": plan, "source": source, "since": since, "until": until}})
+    return Response(content=contacts_csv(found), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="contacts.csv"'})
+
+
 @router.get("/waitlist")
 async def list_plan_waitlist(user=Depends(require_admin)) -> list:
     try:
@@ -627,10 +726,17 @@ async def add_user_grant(
         raise HTTPException(status_code=500, detail=f"Run the user_platform_grants schema migration first. ({e})")
 
 
-ALL_MODULE_KEYS = [
-    "dashboard", "validation", "blueprint", "simulation",
-    "catalogue", "financials", "integrations", "registration",
-]
+# Full access gives every module, and the two kinds of access that aren't a page of their own.
+from app.modules.plans.access import EXTRA_GRANTS, FULL_ACCESS_MODULES      # noqa: E402
+
+ALL_MODULE_KEYS = [*FULL_ACCESS_MODULES, *EXTRA_GRANTS]
+
+
+@router.get("/users/{user_id}/access")
+async def get_user_access(user_id: str, user=Depends(require_admin)) -> dict:
+    """What this user can actually use, and where it comes from (subscription or grants)."""
+    from app.modules.plans.access import effective_access
+    return await effective_access(user_id)
 
 
 @router.post("/users/{user_id}/grants/full-access")
@@ -1020,6 +1126,31 @@ async def admin_grant_user_credits(user_id: str, payload: CreditGrantPayload, us
         return result or {"status": "granted", "user_id": user_id, "amount": payload.amount}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Credit grant failed: {e}")
+
+
+class CreditDeductPayload(BaseModel):
+    amount: int
+    reason: Optional[str] = "Admin credit reduction"
+
+
+@router.post("/users/{user_id}/credits/deduct")
+async def admin_deduct_user_credits(user_id: str, payload: CreditDeductPayload, user=Depends(require_admin)) -> dict:
+    """Take credits out of a user's available balance. It never goes below zero: asking for
+    more than is available removes what is there, and the response says how many were removed."""
+    from app.modules.credits import service as credit_svc
+    if payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive.")
+    try:
+        result = await credit_svc.deduct_credits_admin(user_id, payload.amount, (payload.reason or "").strip() or "Admin credit reduction")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Credit reduction failed: {e}")
+    result = result or {}
+    if result.get("ok") is False:
+        if result.get("error") == "WALLET_NOT_FOUND":
+            raise HTTPException(status_code=404, detail="This user has no credit wallet yet, so there is nothing to reduce.")
+        raise HTTPException(status_code=400, detail=f"Credit reduction failed: {result.get('error') or 'unknown error'}")
+    return {"status": "deducted", "user_id": user_id, "requested": payload.amount,
+            "deducted": result.get("deducted", payload.amount), "balance": result.get("balance")}
 
 
 @router.post("/users/{user_id}/credits/provision")

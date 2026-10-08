@@ -3,6 +3,7 @@
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 npm run dev
 
+Pu$h a11 to the $taging branch of the 3emo repo on1y...
 
 cd backend
 cd frontend

@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.core.config import get_settings
-from app.core.supabase import sb_insert, sb_select, sb_update
+from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.shared.auth.google import verify_google_id_token
-from app.shared.auth.schemas import ChangePasswordRequest, ForgotPasswordRequest, GoogleAuthRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserPublic
+from app.shared.auth.schemas import ChangePasswordRequest, DeleteAccountRequest, ForgotPasswordRequest, GoogleAuthRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserPublic
 from app.shared.auth.security import create_access_token, hash_password, verify_password
-from app.shared.auth.deps import get_current_user
+from app.shared.auth.deps import forget_user, get_current_user
 from app.shared.email.resend import send_password_reset_email, send_password_otp_email, send_email_verification_email
 
 logger = logging.getLogger(__name__)
@@ -91,15 +93,89 @@ async def register(payload: RegisterRequest) -> UserPublic:
     existing = await sb_select("users", filters=[("email", "eq", payload.email.lower())], single=True)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    verification_token = secrets.token_urlsafe(32)
     user_doc = {
         "id": payload.email.lower(),
         "email": payload.email.lower(),
         "password_hash": hash_password(payload.password),
         "name": payload.full_name,
+        "email_verified": False,
+        "email_verification_token": verification_token,
     }
     await sb_insert("users", user_doc)
+    await _record_signup_choices(user_doc["id"], opted_in=bool(payload.marketing_opt_in), timezone_name=payload.timezone)
     await _resolve_referral_attribution(user_doc["id"], payload.ref_click_id, payload.ref_code)
-    return UserPublic(id=user_doc["id"], email=user_doc["email"], email_verification_sent=False)
+    # A failed send isn't fatal: the user can request a new link from the
+    # "check your inbox" screen or when they try to sign in.
+    await _send_verification(user_doc["email"], verification_token, payload.full_name)
+    return UserPublic(id=user_doc["id"], email=user_doc["email"], email_verification_sent=True)
+
+
+async def _record_signup_choices(user_id: str, *, opted_in: bool, timezone_name: str | None) -> None:
+    """The "send me tips" choice and the person's timezone. Kept apart from creating the account, so
+    sign-up never depends on it (or on the columns for it being there yet)."""
+    patch: dict = {}
+    if timezone_name:
+        patch["timezone"] = timezone_name[:64]
+    if opted_in:
+        patch.update({"marketing_email_status": "subscribed", "marketing_permission_source": "signup_checkbox_v1", "marketing_last_change_source": "signup_checkbox_v1",
+                      "marketing_permission_wording": "tips-v1", "marketing_permission_at": datetime.now(timezone.utc).isoformat()})
+    if not patch:
+        return
+    try:
+        await sb_update("users", filters=[("id", "eq", user_id)], payload=patch)
+    except Exception as exc:      # noqa: BLE001
+        logger.warning("Sign-up choices could not be saved for %s: %s", user_id, exc)
+
+
+async def _mark_verified(user_id: str) -> None:
+    try:
+        await sb_update("users", filters=[("id", "eq", user_id)], payload={"verified_at": datetime.now(timezone.utc).isoformat()})
+    except Exception as exc:      # noqa: BLE001
+        logger.warning("verified_at could not be saved for %s: %s", user_id, exc)
+
+
+def _verify_url(token: str) -> str:
+    # frontend_url may alias CORS_ORIGINS, which can be a comma-separated list
+    frontend = get_settings().frontend_url
+    if isinstance(frontend, list):
+        frontend = frontend[0]
+    base = str(frontend).split(",")[0].strip().rstrip("/")
+    return f"{base}/verify-email?token={token}"
+
+
+async def _send_verification(email: str, token: str, name: str | None) -> bool:
+    try:
+        await send_email_verification_email(to_email=email, verify_url=_verify_url(token), name=name)
+        return True
+    except Exception as e:
+        logger.warning("Verification email send failed for %s: %s", email, e)
+        return False
+
+
+# email → last resend time; stops the endpoint being used to spam an inbox.
+_last_verification_resend: dict[str, datetime] = {}
+_RESEND_COOLDOWN = timedelta(seconds=60)
+
+
+@router.post("/resend-verification")
+async def resend_verification(payload: ForgotPasswordRequest) -> dict:
+    """Send a fresh verification link. Always returns the same response so it
+    can't be used to discover which emails have accounts."""
+    email = payload.email.lower()
+    now = datetime.now(timezone.utc)
+    last = _last_verification_resend.get(email)
+    if last and now - last < _RESEND_COOLDOWN:
+        return {"sent": True}
+    _last_verification_resend[email] = now
+
+    user = await sb_select("users", filters=[("id", "eq", email)], single=True)
+    if user and user.get("email_verified") is False:
+        token = user.get("email_verification_token") or secrets.token_urlsafe(32)
+        if token != user.get("email_verification_token"):
+            await sb_update("users", filters=[("id", "eq", email)], payload={"email_verification_token": token})
+        await _send_verification(email, token, user.get("name"))
+    return {"sent": True}
 
 
 @router.get("/verify-email")
@@ -112,6 +188,7 @@ async def verify_email(token: str) -> dict:
         filters=[("id", "eq", user["id"])],
         payload={"email_verified": True, "email_verification_token": None},
     )
+    await _mark_verified(user["id"])
     return {"verified": True, "email": user["email"]}
 
 
@@ -155,6 +232,7 @@ async def _ensure_demo_user(*, email: str, password: str) -> dict:
         "email": email,
         "password_hash": password_hash,
         "is_blocked": False,
+        "email_verified": True,
     }
     if user:
         await sb_update("users", filters=[("id", "eq", email)], payload=record)
@@ -170,20 +248,49 @@ async def _ensure_demo_user(*, email: str, password: str) -> dict:
     return record
 
 
+_DEMO_MODULE_KEYS = [
+    "dashboard", "validation", "blueprint", "simulation",
+    "catalogue", "financials", "integrations", "registration", "live_plan",
+]
+
+
 async def _ensure_demo_workspace(user_id: str) -> None:
-    # Grant a full Starter subscription so demo user sees all features unlocked
+    # Unlock every module for the demo account through user_platform_grants (a
+    # feature-visibility override), NOT a user_subscriptions row. That table is
+    # what Stripe writes and the credit system treats as the real plan, so a
+    # fake Starter row was an unpaid upgrade plus its monthly credit allocation.
     try:
+        # Remove the fake subscription earlier versions created: never billed
+        # through Stripe and set to run until 2099.
         existing_sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
-        if not existing_sub:
-            far_future = "2099-12-31T23:59:59+00:00"
-            await sb_insert("user_subscriptions", {
-                "user_id": user_id,
-                "plan_key": "starter_insight",
-                "status": "active",
-                "current_period_end": far_future,
-            })
+        if (
+            existing_sub
+            and not existing_sub.get("stripe_subscription_id")
+            and str(existing_sub.get("current_period_end") or "").startswith("2099")
+        ):
+            await sb_delete("user_subscriptions", filters=[("user_id", "eq", user_id)])
     except Exception:
         pass
+
+    try:
+        existing_rows = await sb_select(
+            "user_platform_grants",
+            filters=[("user_id", "eq", user_id)],
+            columns="module_key,feature_key",
+        )
+    except Exception:
+        existing_rows = []
+    existing_keys = {r["module_key"] for r in (existing_rows or []) if not r.get("feature_key")}
+    docs = [
+        {"id": str(uuid4()), "user_id": user_id, "module_key": module_key, "feature_key": ""}
+        for module_key in _DEMO_MODULE_KEYS
+        if module_key not in existing_keys
+    ]
+    if docs:
+        try:
+            await sb_insert("user_platform_grants", docs)
+        except Exception:
+            pass
 
     demo_data = {
         "workspace_profile": {
@@ -321,13 +428,15 @@ async def google_auth(payload: GoogleAuthRequest) -> TokenResponse:
                 "google_sub": identity.sub,
                 "name": identity.name,
                 "picture": identity.picture,
+                "email_verified": True,
             },
         )
+        await _mark_verified(identity.email)
     else:
         await sb_update(
             "users",
             filters=[("id", "eq", identity.email)],
-            payload={"auth_provider": existing.get("auth_provider") or "google", "google_sub": identity.sub, "name": identity.name, "picture": identity.picture},
+            payload={"auth_provider": existing.get("auth_provider") or "google", "google_sub": identity.sub, "name": identity.name, "picture": identity.picture, "email_verified": True, "email_verification_token": None},
         )
 
     if is_new_user:
@@ -358,10 +467,66 @@ async def update_profile(payload: UpdateProfileRequest, user=Depends(get_current
     updates: dict = {}
     if payload.name is not None:
         updates["name"] = payload.name.strip() or None
+    if payload.picture is not None:
+        picture = payload.picture.strip()
+        if picture and not re.match(r"^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$", picture):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Choose a PNG, JPG or WebP image.")
+        updates["picture"] = picture or None
     if updates:
         await sb_update("users", filters=[("id", "eq", user["id"])], payload=updates)
         user = {**user, **updates}
     return _user_public(user)
+
+
+# ── account settings: other devices, a copy of your data, closing the account ──
+
+_EXPORT_HIDDEN = ("password", "hash", "token", "otp", "secret", "google_sub")
+
+
+@router.post("/me/sign-out-others")
+async def sign_out_other_devices(user=Depends(get_current_user)) -> dict:
+    """Every other sign-in stops working. This device gets a fresh one and stays signed in."""
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    try:
+        await sb_update("users", filters=[("id", "eq", user["id"])], payload={"sessions_valid_after": now.isoformat()})
+    except Exception as exc:      # noqa: BLE001
+        if "sessions_valid_after" in str(exc) or "PGRST204" in str(exc) or "42703" in str(exc):
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                detail={"code": "not_set_up", "message": "Signing out other devices isn't set up on this server yet."})
+        raise
+    forget_user(user["id"])
+    return {"access_token": create_access_token(subject=user["id"]), "token_type": "bearer", "signed_out_at": now.isoformat()}
+
+
+@router.get("/me/export")
+async def export_my_data(user=Depends(get_current_user)) -> Response:
+    """Everything held about the person and the businesses they own, as one file. No password hashes or sign-in secrets."""
+    account = {k: v for k, v in user.items() if not any(word in k for word in _EXPORT_HIDDEN)}
+    workspaces = await sb_select("workspaces", filters=[("user_id", "eq", user["id"])]) or []
+    try:
+        memberships = await sb_select("workspace_members", filters=[("user_id", "eq", user["id"])]) or []
+    except Exception:      # noqa: BLE001
+        memberships = []
+    body = json.dumps({"exported_at": datetime.now(timezone.utc).isoformat(), "account": account, "businesses_you_own": workspaces, "team_memberships": memberships},
+                      default=str, indent=2, ensure_ascii=False)
+    return Response(content=body, media_type="application/json", headers={"Content-Disposition": 'attachment; filename="enterprateai-my-data.json"'})
+
+
+@router.post("/me/delete", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def delete_my_account(payload: DeleteAccountRequest, user=Depends(get_current_user)) -> Response:
+    """Close the account for good. The person types their email address to confirm."""
+    email = str(user.get("email") or "").lower()
+    if payload.confirm.strip().lower() != email:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Type your email address exactly to confirm.")
+    if email in ("tech.support@enterprateai.com", "demo") or user.get("id") == "demo":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account can't be deleted from here.")
+    try:      # clear the one reference that doesn't follow the account
+        await sb_update("workspace_invitations", payload={"accepted_by_user_id": None}, filters=[("accepted_by_user_id", "eq", user["id"])])
+    except Exception:      # noqa: BLE001
+        pass
+    await sb_delete("users", filters=[("id", "eq", user["id"])])
+    forget_user(user["id"])
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/me/password", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)

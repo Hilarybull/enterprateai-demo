@@ -1,7 +1,12 @@
-import { useMemo, useRef, useState } from "react";
+import { useAuthStore } from "../store/auth";
+import { firstNameOf, getGreeting } from "../lib/greeting";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Button from "./Button";
-import { apiRequest } from "../api/client";
+import { apiRequestCached } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
+import { agentErrorMessage, clearConversation, getConversation, replyText, saveAgentFact, submitAgentRequest } from "../lib/agent";
+import { useTaskFlow } from "./agent/TaskFlow";
 
 const STARTER_PROMPTS = [
   "What does my business do?",
@@ -12,21 +17,105 @@ const STARTER_PROMPTS = [
   "What should I improve next?",
 ];
 
+/** One reply from the Agent as a chat message: the result, links to what it made, and what needs the owner. */
+function toMessage(routed, businessId) {
+  const run = routed.run;
+  const message = { role: "assistant", content: replyText(routed), link: null, links: null, prompts: null, remember: null };
+  if (routed.kind === "workflow") {
+    const many = (routed.runs || []).length > 1;
+    message.link = many ? "/agent" : `/agent/runs/${run.id}`;
+    if (!many) message.links = (run.outcome?.links || []).filter((l) => l.to).map((l) => ({ label: l.label, to: l.to }));
+  } else if (routed.kind === "remember") {
+    message.remember = routed.can_save ? { fact: routed.fact, businessId } : null;      // nothing is remembered until the owner says so
+  } else if (routed.kind === "needs_input") {
+    message.link = "/agent";
+    message.content = `${routed.message} I need those details to carry on.`;
+  } else if (routed.kind === "blocked" && routed.upgrade) {
+    message.link = "/pricing";
+  } else if (routed.kind === "answer") {
+    message.links = (routed.actions || []).filter((a) => a.to).map((a) => ({ label: a.label, to: a.to }));
+    message.prompts = (routed.actions || []).filter((a) => a.capability && !a.to).map((a) => ({ label: a.label, prompt: a.label }));
+  } else if (routed.kind === "unavailable") {
+    message.links = (routed.offers || []).filter((o) => o.to).map((o) => ({ label: o.label, to: o.to }));
+    message.prompts = (routed.offers || []).filter((o) => o.kind === "explain").map((o) => ({ label: o.label, prompt: o.prompt }));
+  }
+  if (!message.content) message.content = "I couldn't find a clear answer just yet.";
+  return message;
+}
+
 export default function BusinessAssistant() {
-  const workspaceName = useWorkspaceStore((state) => state.workspaceName);
-  const intro = `Hi - ask me anything about ${workspaceName || "your business"}. I'll answer from your workspace, documents, catalogue, financials, validations, registrations, and simulations.`;
+  // One name everywhere: the business name the sidebar and the Marketplace show.
+  const workspaceName = useWorkspaceStore((state) => state.workspaceCompanyName || state.workspaceName);
+  const [answerCost, setAnswerCost] = useState(null);      // credits per conversational answer, from the price list
+  useEffect(() => {
+    let alive = true;
+    apiRequestCached("/credits/features")
+      .then((res) => {
+        const row = (res?.features || []).find((f) => f.feature_code === "chat_message");
+        if (alive && row && row.enabled !== false) setAnswerCost(Number(row.credit_cost) || 0);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const person = firstNameOf(useAuthStore((st) => st.name));      // the person, by first name, as everywhere the Agent speaks to them
+  const intro = `${getGreeting({ subject: person })}. Ask me anything about ${workspaceName || "your business"}. I'll answer from your workspace, documents, catalogue, financials, validations, registrations, and simulations.`;
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState([{ role: "assistant", content: intro }]);
+  // The conversation so far in this business is picked up again (it is shared with the Agent box).
+  const [messages, setMessages] = useState(() => [{ role: "assistant", content: intro }, ...getConversation(useWorkspaceStore.getState().workspaceId)]);
   const listRef = useRef(null);
+  // A task started from the chat stays in the chat: its questions open in a dialog over the page,
+  // and what happens next is said here as a message. Its own page opens only from "See details".
+  const [working, setWorking] = useState(false);
+  const flow = useTaskFlow({
+    say: (reply) => {
+      setWorking(Boolean(reply?.working));
+      if (!reply || reply.working) return;
+      setMessages((prev) => [...prev, { role: "assistant", content: [reply.text, reply.next].filter(Boolean).join(" "),
+        link: reply.runId ? `/agent/runs/${reply.runId}` : null, links: (reply.links || []).filter((l) => l.to).map((l) => ({ label: l.label, to: l.to })) }]);
+    },
+    onChanged: () => window.dispatchEvent(new CustomEvent("ea:credits:refresh")),
+    onDetails: (runId) => { window.location.assign(`/agent/runs/${runId}`); },
+  });
+
+  /** One reply from the Agent, put where it belongs: a message, a question in a dialog, or a task to watch. */
+  function deliver(routed, businessId) {
+    const parts = routed.kind === "multi" ? routed.results || [] : [routed];
+    const single = parts.length === 1 ? parts[0] : null;
+    const run = single?.kind === "workflow" && !((single.runs || []).length > 1) ? single.run : null;
+    if (run && !["succeeded", "cancelled"].includes(run.status)) return flow.follow(run);
+    if (single?.kind === "needs_input") {
+      return flow.ask({ message: single.message, fields: single.fields, onSubmit: async (answers) => {
+        setLoading(true);
+        try {
+          deliver(await submitAgentRequest({ businessId, capability: single.capability, params: { ...(single.params || {}), ...answers }, sourceChannel: "ui_action", background: true }), businessId);
+        } catch (error) {
+          setMessages((prev) => [...prev, { role: "assistant", content: agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again.") }]);
+        } finally {
+          setLoading(false);
+        }
+      } });
+    }
+    return setMessages((prev) => [...prev, ...parts.map((r) => toMessage(r, businessId))]);
+  }
 
   const sendDisabled = !String(input || "").trim() || loading;
   const title = useMemo(() => workspaceName || "Business assistant", [workspaceName]);
 
   function resetConversation() {
+    clearConversation(useWorkspaceStore.getState().workspaceId);      // a new conversation: nothing earlier is sent again
     setMessages([{ role: "assistant", content: intro }]);
     setInput("");
+  }
+
+  async function rememberFact(index, remember) {
+    try {
+      await saveAgentFact(remember.businessId, remember.fact);
+      setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, remember: null, content: `Saved. I'll remember: “${remember.fact}”. You can remove it in Agent settings.` } : m)));
+    } catch (e) {
+      setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, remember: null, content: agentErrorMessage(e, "I couldn't save that. Please try again.") } : m)));
+    }
   }
 
   async function send(prefilledQuestion = "") {
@@ -39,35 +128,22 @@ export default function BusinessAssistant() {
     setInput("");
     setLoading(true);
 
+    const agentBusinessId = useWorkspaceStore.getState().workspaceId;
     try {
-      const res = await apiRequest("/business-assistant/chat", "POST", {
-        messages: trimmedMessages.map((message) => ({
-          role: message.role,
-          content: message.content,
-        })),
-      });
-
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: res?.answer || "I couldn't find a clear answer just yet." },
-      ]);
-
+      if (!agentBusinessId) {
+        setMessages((prev) => [...prev, { role: "assistant", content: "It looks like you haven't set up a workspace yet. Create one first and I'll be able to help with your business." }]);
+        return;
+      }
+      // One Agent: every message goes to the same place. It answers from the records, runs the
+      // task, or writes the answer itself. There is no second chat behind this one.
+      const routed = await submitAgentRequest({ businessId: agentBusinessId, text: question, sourceChannel: "text", background: true });
+      deliver(routed, agentBusinessId);
+      window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // tasks and written answers use credits
       requestAnimationFrame(() => {
-        listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+        listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: "smooth" });
       });
     } catch (error) {
-      const raw = error instanceof Error ? error.message : String(error || "");
-      let friendly = "I couldn't answer that right now. Please try again.";
-      if (raw.includes("404") || raw.toLowerCase().includes("workspace not found")) {
-        friendly = "It looks like you haven't set up a workspace yet. Create one first and I'll be able to answer questions about your business.";
-      } else if (raw.includes("401") || raw.includes("403")) {
-        friendly = "Your session may have expired. Try refreshing the page and signing in again.";
-      } else if (raw === "NETWORK_ERROR" || raw.toLowerCase().includes("network")) {
-        friendly = "I can't reach the server right now. Check your connection and try again.";
-      } else if (raw.includes("500")) {
-        friendly = "Something went wrong on our end. Please try again in a moment.";
-      }
-      setMessages((prev) => [...prev, { role: "assistant", content: friendly }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again.") }]);
     } finally {
       setLoading(false);
     }
@@ -93,8 +169,8 @@ export default function BusinessAssistant() {
                 type="button"
                 onClick={resetConversation}
                 className="rounded-xl p-2 text-slate-500 hover:bg-white dark:hover:bg-slate-900"
-                aria-label="Reset conversation"
-                title="Reset conversation"
+                aria-label="New conversation"
+                title="New conversation"
               >
                 <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M3 12a9 9 0 1 0 3-6.7" />
@@ -146,11 +222,39 @@ export default function BusinessAssistant() {
                 }
               >
                 {message.content}
+                {message.link && (
+                  <a href={message.link} className="mt-1.5 block font-semibold underline">
+                    {message.link === "/pricing" ? "See plans" : message.link === "/agent" ? "Open Agent Centre" : "See details"}
+                  </a>
+                )}
+                {message.remember && (
+                  <div className="mt-2 flex flex-wrap gap-2 whitespace-normal">
+                    <button type="button" onClick={() => rememberFact(index, message.remember)}
+                      className="rounded-lg bg-brand-600 px-2.5 py-1 text-[13px] font-semibold text-white hover:bg-brand-700">Save</button>
+                    <button type="button" onClick={() => setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, remember: null, content: "Not saved." } : m)))}
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[13px] font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">Don't save</button>
+                  </div>
+                )}
+                {(message.links?.length > 0 || message.prompts?.length > 0) && (
+                  <div className="mt-2 flex flex-wrap gap-2 whitespace-normal">
+                    {(message.prompts || []).map((p) => (
+                      <button key={p.label} type="button" disabled={loading} onClick={() => send(p.prompt)}
+                        className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[13px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                        {p.label}
+                      </button>
+                    ))}
+                    {(message.links || []).map((l) => (
+                      <a key={l.to} href={l.to} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[13px] font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                        {l.label}
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
-            {loading ? (
+            {loading || working ? (
               <div className="max-w-[88%] rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-                Thinking...
+                {working && !loading ? "Working on it…" : "Thinking..."}
               </div>
             ) : null}
           </div>
@@ -173,20 +277,34 @@ export default function BusinessAssistant() {
                 Send
               </Button>
             </div>
+            {answerCost > 0 && (
+              <p className="mt-2 text-[12px] text-slate-500 dark:text-slate-400">
+                A written answer uses {answerCost} AI Credit{answerCost === 1 ? "" : "s"}. Answers read straight from your records are free; Agent tasks are charged as they run.
+              </p>
+            )}
           </div>
         </div>
       ) : null}
 
+      {flow.element}
+
+      {/* Rendered on <body> so no ancestor transform or overflow can ever break position: fixed.
+          Always the viewport's bottom-right corner: 16px on mobile, 24px from 640px. */}
+      {createPortal(
       <button
         type="button"
+        aria-label="Ask about your business"
         onClick={() => setOpen(true)}
-        className="group fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] right-5 z-30 flex items-center overflow-hidden rounded-full bg-brand-600 p-4 text-sm font-semibold text-white shadow-lg transition-all duration-300 hover:bg-brand-700 sm:bottom-20 sm:right-6"
+        className="group fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] right-4 z-30 flex items-center overflow-hidden rounded-full bg-brand-600 p-3 text-sm font-semibold text-white shadow-lg transition-colors duration-300 hover:bg-brand-700 sm:bottom-6 sm:right-6"
       >
         <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
-        <span className="max-w-0 overflow-hidden whitespace-nowrap transition-all duration-300 group-hover:max-w-[200px] group-hover:ml-2">Ask about your business</span>
-      </button>
+        {/* The label only opens for a real pointer. On touch screens "hover" sticks after a tap, which
+            left the button stretched across the page, over whatever sat beside it. */}
+        <span className="max-w-0 overflow-hidden whitespace-nowrap transition-all duration-300 [@media(hover:hover)_and_(pointer:fine)]:group-hover:ml-2 [@media(hover:hover)_and_(pointer:fine)]:group-hover:max-w-[200px]">Ask about your business</span>
+      </button>,
+      document.body)}
     </>
   );
 }

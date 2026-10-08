@@ -1,0 +1,3046 @@
+import { SkeletonCard, SkeletonRegion } from "../components/Skeleton";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { alertDialog } from "../lib/dialog";
+import { hasPaidAccess } from "../lib/plans";
+import { createPortal } from "react-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { apiRequest } from "../api/client";
+import { useAuthStore } from "../store/auth";
+import { useWorkspaceStore } from "../store/workspace";
+import { useProposalStore } from "../store/proposal";
+import Spinner from "../components/Spinner";
+import { useDemoTour } from "../context/DemoTourContext";
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+function fmt(str) {
+  if (!str) return "";
+  return str.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function industryColor(industry) {
+  const map = {
+    technology: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+    finance: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+    healthcare: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+    education: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300",
+    retail: "bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300",
+    ecommerce: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+    consulting: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300",
+    logistics: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300",
+    manufacturing: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+    real_estate: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+    marketing: "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/40 dark:text-fuchsia-300",
+  };
+  return map[industry] || "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300";
+}
+
+function categoryColor(cat) {
+  const map = {
+    software: "bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
+    design: "bg-fuchsia-50 text-fuchsia-600 dark:bg-fuchsia-900/30 dark:text-fuchsia-400",
+    consulting: "bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400",
+    marketing: "bg-pink-50 text-pink-600 dark:bg-pink-900/30 dark:text-pink-400",
+    finance: "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
+    legal: "bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
+    logistics: "bg-orange-50 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400",
+    health: "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400",
+    education: "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+  };
+  const key = Object.keys(map).find((k) => (cat || "").toLowerCase().includes(k));
+  return key ? map[key] : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300";
+}
+
+function initials(name) {
+  return (name || "?").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+}
+
+function avatarGradient(name) {
+  const gradients = [
+    "from-brand-500 to-accent-500", "from-blue-500 to-indigo-600",
+    "from-emerald-500 to-teal-600", "from-orange-400 to-red-500",
+    "from-purple-500 to-pink-500", "from-yellow-400 to-orange-500",
+    "from-cyan-500 to-blue-600", "from-rose-400 to-fuchsia-500",
+  ];
+  let hash = 0;
+  for (let i = 0; i < (name || "").length; i++) hash = (hash * 31 + name.charCodeAt(i)) & 0xffffffff;
+  return gradients[Math.abs(hash) % gradients.length];
+}
+
+// ─── star rating ──────────────────────────────────────────────────────────────
+
+function StarDisplay({ rating, count, size = "sm" }) {
+  const filled = Math.floor(rating || 0);
+  const half = rating && (rating - filled) >= 0.4;
+  const s = size === "lg" ? "h-5 w-5" : "h-3.5 w-3.5";
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="inline-flex items-center gap-0.5">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <svg key={i} className={`${s} shrink-0`} viewBox="0 0 24 24">
+            {i <= filled ? (
+              <path fill="#f59e0b" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            ) : i === filled + 1 && half ? (
+              <>
+                <defs><linearGradient id={`hg-${i}`}><stop offset="50%" stopColor="#f59e0b" /><stop offset="50%" stopColor="#e2e8f0" /></linearGradient></defs>
+                <path fill={`url(#hg-${i})`} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </>
+            ) : (
+              <path fill="#e2e8f0" className="dark:fill-slate-700" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            )}
+          </svg>
+        ))}
+      </span>
+      {rating != null && (
+        <span className={`font-semibold text-slate-700 dark:text-slate-300 ${size === "lg" ? "text-base" : "text-[11px]"}`}>
+          {rating.toFixed(1)}
+        </span>
+      )}
+      {count != null && (
+        <span className={`text-slate-400 dark:text-slate-500 ${size === "lg" ? "text-sm" : "text-[10px]"}`}>({count})</span>
+      )}
+    </span>
+  );
+}
+
+function StarInput({ value, hover, onHover, onLeave, onChange, disabled }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {[1, 2, 3, 4, 5].map((i) => {
+        const active = i <= (hover || value || 0);
+        return (
+          <button key={i} type="button" disabled={disabled}
+            onMouseEnter={() => onHover(i)} onMouseLeave={onLeave} onClick={() => onChange(i)}
+            className="transition-transform hover:scale-110 focus:outline-none disabled:cursor-not-allowed">
+            <svg className="h-7 w-7" viewBox="0 0 24 24">
+              <path fill={active ? "#f59e0b" : "#e2e8f0"} className={active ? "" : "dark:fill-slate-700"}
+                d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
+const STAR_LABELS = ["", "Poor", "Fair", "Good", "Very Good", "Excellent"];
+
+// ─── company avatar ───────────────────────────────────────────────────────────
+
+function CompanyAvatar({ listing, size = "md" }) {
+  const grad = avatarGradient(listing.company_name);
+  const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
+  const cls = size === "sm" ? "h-7 w-7 text-[10px]" : size === "lg" ? "h-14 w-14 text-lg" : "h-10 w-10 text-xs";
+  return hasLogo ? (
+    <img src={listing.logo_data_url} alt={listing.company_name}
+      className={`${cls} rounded-xl border border-slate-200 bg-white object-contain p-0.5 shadow-sm dark:border-slate-700 dark:bg-slate-900`} />
+  ) : (
+    <div className={`${cls} flex shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${grad} font-bold text-white shadow-sm`}>
+      {initials(listing.company_name)}
+    </div>
+  );
+}
+
+// ─── filter chip ──────────────────────────────────────────────────────────────
+
+function FeaturedBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-lg bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 2l2.9 6.9 7.1.6-5.4 4.7 1.6 7L12 17.8 5.8 21.2l1.6-7L2 9.5l7.1-.6L12 2z" />
+      </svg>
+      Featured
+    </span>
+  );
+}
+
+function FilterChip({ label, active, onClick }) {
+  return (
+    <button onClick={onClick}
+      className={`rounded-xl border px-3 py-1.5 text-[12px] font-medium transition whitespace-nowrap ${active
+        ? "border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-500 dark:bg-brand-900/30 dark:text-brand-300"
+        : "border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
+      {label}
+    </button>
+  );
+}
+
+// ─── service detail modal ─────────────────────────────────────────────────────
+
+function ServiceDetailModal({ product, onClose, onRequestQuote, onCompanyClick, isOwnListing, userEmail }) {
+  const { service, listing } = product;
+  const grad = avatarGradient(listing.company_name);
+
+  const [ratingData, setRatingData] = useState({ avg_rating: listing.avg_rating, rating_count: listing.rating_count || 0, user_rating: null, user_review: null });
+  const [ratingLoading, setRatingLoading] = useState(true);
+  const [hoverStar, setHoverStar] = useState(0);
+  const [pendingStar, setPendingStar] = useState(0);
+  const [reviewText, setReviewText] = useState("");
+  const [ratingEmail, setRatingEmail] = useState(userEmail || "");
+  const [submitting, setSubmitting] = useState(false);
+  const [ratingError, setRatingError] = useState(null);
+  const [showReviewBox, setShowReviewBox] = useState(false);
+
+  const svcKey = encodeURIComponent(service.service_name || "");
+
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      setRatingLoading(true);
+      try {
+        const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}?service_name=${svcKey}`, "GET");
+        if (!alive) return;
+        setRatingData(res); setPendingStar(res.user_rating || 0); setReviewText(res.user_review || "");
+      } catch { } finally { if (alive) setRatingLoading(false); }
+    }
+    load();
+    return () => { alive = false; };
+  }, [listing.workspace_id, svcKey]);
+
+  async function submitRating() {
+    if (!pendingStar) return;
+    const emailTrimmed = ratingEmail.trim();
+    if (!emailTrimmed) { setRatingError("Please enter your email to verify this review."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) { setRatingError("Enter a valid email address."); return; }
+    setSubmitting(true); setRatingError(null);
+    try {
+      const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}`, "POST", {
+        rating: pendingStar, review: reviewText.trim() || null, rater_email: emailTrimmed,
+        service_name: service.service_name || "",
+      });
+      setRatingData(res); setShowReviewBox(false); setRatingEmail("");
+    } catch (e) { setRatingError(e instanceof Error ? e.message : "Failed to submit rating."); }
+    finally { setSubmitting(false); }
+  }
+
+  async function removeRating() {
+    setSubmitting(true); setRatingError(null);
+    try {
+      const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}?service_name=${svcKey}`, "DELETE");
+      setRatingData(res); setPendingStar(0); setReviewText("");
+    } catch (e) { setRatingError(e instanceof Error ? e.message : "Failed to remove rating."); }
+    finally { setSubmitting(false); }
+  }
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center p-0 sm:items-center sm:p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="ea-dialog relative z-10 w-full max-w-lg overflow-hidden rounded-t-3xl sm:rounded-2xl" style={{ maxHeight: "92vh" }}>
+        {/* Header gradient */}
+        <div className={`h-2 w-full bg-gradient-to-r ${grad}`} />
+        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4">
+          <div className="min-w-0 flex-1">
+            {service.service_category && (
+              <span className={`mb-2 inline-block rounded-lg px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${categoryColor(service.service_category)}`}>
+                {fmt(service.service_category)}
+              </span>
+            )}
+            <h3 className="text-[17px] font-bold text-slate-900 dark:text-slate-100 leading-tight">{service.service_name}</h3>
+          </div>
+          <button onClick={onClose}
+            className="shrink-0 flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+
+        <div className="ea-scroll overflow-y-auto px-5 pb-6" style={{ maxHeight: "calc(92vh - 120px)" }}>
+          {/* Description */}
+          {service.service_description ? (
+            <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4 mb-4">
+              <p className="text-[13px] leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-line">{service.service_description}</p>
+            </div>
+          ) : (
+            <p className="text-[13px] italic text-slate-400 dark:text-slate-500 mb-4">No description provided.</p>
+          )}
+
+          {/* Offered by — click opens business profile */}
+          <button
+            type="button"
+            onClick={() => onCompanyClick && onCompanyClick(listing)}
+            className="mb-4 w-full rounded-2xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3 text-left hover:border-brand-300 hover:bg-brand-50/40 dark:hover:border-brand-700 dark:hover:bg-brand-900/10 transition group/co">
+            <CompanyAvatar listing={listing} size="md" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-0.5">Offered by</div>
+              <div className="text-[14px] font-bold text-slate-900 dark:text-slate-100 group-hover/co:text-brand-700 dark:group-hover/co:text-brand-400 truncate transition-colors">{listing.company_name}</div>
+              {listing.tagline && <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">{listing.tagline}</div>}
+            </div>
+            {listing.avg_rating != null ? (
+              <StarDisplay rating={listing.avg_rating} count={listing.rating_count} />
+            ) : (
+              <span className="text-[10px] text-slate-400 italic shrink-0">No ratings</span>
+            )}
+          </button>
+
+          {/* Location + industry */}
+          <div className="flex flex-wrap gap-2 mb-5">
+            {[listing.city, listing.country].filter(Boolean).length > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+                <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2C8.1 2 5 5.1 5 9c0 5.3 7 13 7 13s7-7.7 7-13c0-3.9-3.1-7-7-7Z" /><circle cx="12" cy="9" r="2.5" />
+                </svg>
+                {[listing.city, listing.country].filter(Boolean).join(", ")}
+              </span>
+            )}
+            {listing.primary_industry && (
+              <span className={`rounded-xl px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${industryColor(listing.primary_industry)}`}>
+                {fmt(listing.primary_industry)}
+              </span>
+            )}
+          </div>
+
+          {/* CTA */}
+          {!isOwnListing && (
+            <button
+              onClick={() => { onClose(); onRequestQuote && onRequestQuote(listing, service.service_name); }}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 py-3 text-[13px] font-bold text-white hover:bg-brand-700 transition">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
+                <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+              Request Quotation for {service.service_name}
+            </button>
+          )}
+
+          {/* Ratings & Reviews */}
+          <div className="mt-5 border-t border-slate-100 dark:border-slate-800 pt-5">
+            <h4 className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+              Ratings &amp; Reviews
+            </h4>
+            <p className="mb-3 text-[11px] text-slate-400 dark:text-slate-500">
+              For <span className="font-semibold text-slate-600 dark:text-slate-300">{service.service_name}</span> by {listing.company_name}
+            </p>
+            <div className="mb-4 flex items-center gap-4 rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
+              {ratingLoading ? <Spinner size={14} /> : ratingData.avg_rating != null ? (
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-slate-900 dark:text-slate-100">{ratingData.avg_rating.toFixed(1)}</div>
+                  <div className="mt-1"><StarDisplay rating={ratingData.avg_rating} size="lg" /></div>
+                  <div className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">{ratingData.rating_count} review{ratingData.rating_count !== 1 ? "s" : ""}</div>
+                </div>
+              ) : (
+                <div className="text-[13px] text-slate-500 dark:text-slate-400 italic">No ratings yet. Be the first to review.</div>
+              )}
+            </div>
+            {isOwnListing ? (
+              <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">You cannot rate your own business.</p>
+            ) : (
+              <div>
+                {ratingData.user_rating && !showReviewBox ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-400 mb-1">Your rating</div>
+                        <StarDisplay rating={ratingData.user_rating} count={null} />
+                        {ratingData.user_review && <p className="mt-1.5 text-[12px] text-slate-500 dark:text-slate-400 italic">"{ratingData.user_review}"</p>}
+                      </div>
+                      <button onClick={removeRating} disabled={submitting}
+                        className="text-[11px] font-medium text-red-500 hover:text-red-600 hover:underline disabled:opacity-50 transition">Remove</button>
+                    </div>
+                    <button onClick={() => { setPendingStar(ratingData.user_rating); setShowReviewBox(true); }}
+                      className="mt-2 text-[11px] font-medium text-brand-600 hover:underline dark:text-brand-400">Edit rating</button>
+                  </div>
+                ) : null}
+                {(!ratingData.user_rating || showReviewBox) && (
+                  <div className={`rounded-2xl border p-4 dark:bg-slate-900 ${showReviewBox ? "border-brand-200 bg-brand-50 dark:border-brand-800 dark:bg-brand-900/20" : "border-slate-200 bg-white dark:border-slate-700"}`}>
+                    <div className="mb-3 text-[12px] font-semibold text-slate-700 dark:text-slate-300">
+                      {showReviewBox ? `Update your rating for ${service.service_name}` : `Rate ${service.service_name}`}
+                    </div>
+                    <div className="flex items-center gap-3 mb-3">
+                      <StarInput value={pendingStar} hover={hoverStar} onHover={setHoverStar} onLeave={() => setHoverStar(0)} onChange={setPendingStar} disabled={submitting} />
+                      {(hoverStar || pendingStar) > 0 && (
+                        <span className="text-[13px] font-semibold text-amber-600 dark:text-amber-400">{STAR_LABELS[hoverStar || pendingStar]}</span>
+                      )}
+                    </div>
+                    <textarea placeholder="Write a short review (optional)…" value={reviewText} onChange={(e) => setReviewText(e.target.value)} rows={2} className="ea-input mb-3 resize-none" />
+                    <div className="mb-3">
+                      <input type="email" placeholder="Your email address" value={ratingEmail} onChange={(e) => setRatingEmail(e.target.value)} className="ea-input" />
+                      <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Required for review credibility. Not shown publicly.</p>
+                    </div>
+                    {ratingError && <p className="mb-2 text-[12px] text-red-500">{ratingError}</p>}
+                    <div className="flex gap-2">
+                      {showReviewBox && (
+                        <button onClick={() => setShowReviewBox(false)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-[12px] font-medium text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">Cancel</button>
+                      )}
+                      <button onClick={submitRating} disabled={!pendingStar || submitting}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-1.5 text-[12px] font-semibold text-white hover:bg-brand-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                        {submitting ? <Spinner size={12} /> : null}
+                        {ratingData.user_rating ? "Update Rating" : "Submit Rating"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── product card ─────────────────────────────────────────────────────────────
+
+function ProductCard({ product, onOpen, onRequestQuote, onCompanyClick, isOwn }) {
+  const { service, listing } = product;
+  const grad = avatarGradient(listing.company_name);
+  const hasDesc = !!service.service_description;
+  const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
+
+  return (
+    <article
+      onClick={() => onOpen(product)}
+      className="ea-card ea-card-hover flex cursor-pointer flex-col overflow-hidden group">
+      <div className={`h-1 w-full bg-gradient-to-r ${grad}`} />
+      <div className="flex flex-1 flex-col p-4 gap-3">
+        {/* Category + name */}
+        <div>
+          {listing.is_featured && <div className="mb-1.5"><FeaturedBadge /></div>}
+          {service.service_category && (
+            <span className={`mb-1.5 inline-block rounded-lg px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${categoryColor(service.service_category)}`}>
+              {fmt(service.service_category)}
+            </span>
+          )}
+          <h3 className="text-[14px] font-bold text-slate-900 dark:text-slate-100 leading-snug group-hover:text-brand-700 dark:group-hover:text-brand-400 transition-colors">
+            {service.service_name}
+          </h3>
+        </div>
+
+        {/* Description */}
+        <div className="flex-1">
+          {hasDesc ? (
+            <p className="text-[12px] leading-relaxed text-slate-500 dark:text-slate-400 line-clamp-4">{service.service_description}</p>
+          ) : (
+            <p className="text-[12px] italic text-slate-400 dark:text-slate-500">No description provided.</p>
+          )}
+        </div>
+
+        {/* Company name — click opens business profile */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onCompanyClick(listing); }}
+          className="flex items-center gap-1.5 self-start rounded-lg px-1.5 py-0.5 -ml-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 transition group/biz">
+          {hasLogo ? (
+            <img src={listing.logo_data_url} alt="" className="h-4 w-4 rounded object-cover shrink-0" />
+          ) : (
+            <span className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[8px] font-bold text-white bg-gradient-to-br ${grad}`}>
+              {(listing.company_name || "?")[0].toUpperCase()}
+            </span>
+          )}
+          <span className="text-[11px] font-medium text-slate-500 group-hover/biz:text-brand-600 dark:text-slate-400 dark:group-hover/biz:text-brand-400 transition-colors truncate max-w-[140px]">
+            {listing.company_name}
+          </span>
+        </button>
+
+        {/* Location + rating preview */}
+        <div className="border-t border-slate-100 dark:border-slate-800 pt-3 flex items-center justify-between gap-2 min-w-0">
+          <span className="truncate text-[11px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
+            {[listing.city, listing.country].filter(Boolean).length > 0 ? (
+              <>
+                <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2C8.1 2 5 5.1 5 9c0 5.3 7 13 7 13s7-7.7 7-13c0-3.9-3.1-7-7-7Z" /><circle cx="12" cy="9" r="2.5" />
+                </svg>
+                <span className="truncate">{[listing.city, listing.country].filter(Boolean).join(", ")}</span>
+              </>
+            ) : (
+              <span className="italic">Location not set</span>
+            )}
+          </span>
+          {listing.avg_rating != null ? (
+            <StarDisplay rating={listing.avg_rating} count={listing.rating_count} />
+          ) : (
+            <span className="text-[10px] italic text-slate-400 shrink-0">No ratings</span>
+          )}
+        </div>
+
+        {/* Actions */}
+        {!isOwn && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRequestQuote(listing, service.service_name); }}
+            className="w-full rounded-xl border border-brand-200 bg-brand-50 py-2 text-[12px] font-semibold text-brand-700 hover:bg-brand-100 transition dark:border-brand-800 dark:bg-brand-900/20 dark:text-brand-300 dark:hover:bg-brand-900/40">
+            Request Quotation
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+// ─── business card ────────────────────────────────────────────────────────────
+
+function BusinessCard({ listing, onClick, isOwn, viewCount, onViewsClick, onApply }) {
+  const grad = avatarGradient(listing.company_name);
+  const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
+  const openForProposals = !!listing.open_for_proposals;
+  return (
+    <article onClick={() => onClick(listing)}
+      className={`ea-card ea-card-hover group flex cursor-pointer flex-col overflow-hidden ${listing.is_featured ? "ring-2 ring-amber-300 dark:ring-amber-700" : ""}`}>
+      <div className={`h-1.5 w-full bg-gradient-to-r ${grad} opacity-80`} />
+      <div className="flex flex-1 flex-col p-5">
+        {listing.is_featured && <div className="mb-3"><FeaturedBadge /></div>}
+        {/* Open for Proposals badge */}
+        {openForProposals && (
+          <div className="mb-3 flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 dark:border-emerald-800 dark:bg-emerald-900/20">
+            <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+            <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Open for Proposals</span>
+          </div>
+        )}
+        <div className="flex items-start gap-3">
+          <div className="shrink-0">
+            {hasLogo ? (
+              <img src={listing.logo_data_url} alt={listing.company_name}
+                className="h-12 w-12 rounded-2xl border border-slate-200 bg-white object-contain p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900" />
+            ) : (
+              <div className={`flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br ${grad} text-sm font-bold text-white shadow-sm`}>
+                {initials(listing.company_name)}
+              </div>
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-[15px] font-bold text-slate-900 dark:text-slate-100 group-hover:text-brand-700 dark:group-hover:text-brand-400 transition-colors">
+              {listing.company_name}
+            </h3>
+            {listing.tagline && <p className="truncate text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">{listing.tagline}</p>}
+            <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
+              <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2C8.1 2 5 5.1 5 9c0 5.3 7 13 7 13s7-7.7 7-13c0-3.9-3.1-7-7-7Z" /><circle cx="12" cy="9" r="2.5" />
+              </svg>
+              <span className="truncate">{[listing.city, listing.country].filter(Boolean).join(", ")}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <span className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${industryColor(listing.primary_industry)}`}>{fmt(listing.primary_industry)}</span>
+          {listing.business_type && (
+            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-400">{fmt(listing.business_type)}</span>
+          )}
+        </div>
+
+        <p className="mt-3 line-clamp-3 text-[12px] leading-relaxed text-slate-600 dark:text-slate-400">{listing.about_company}</p>
+
+        {listing.services && listing.services.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1">
+            {listing.services.slice(0, 3).map((s, i) => (
+              <span key={i} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400">
+                {s.service_name}
+              </span>
+            ))}
+            {listing.services.length > 3 && (
+              <span className="rounded-md border border-dashed border-slate-200 px-2 py-0.5 text-[11px] text-slate-400 dark:border-slate-700">
+                +{listing.services.length - 3} more
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="mt-auto pt-4 flex flex-col gap-2.5 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-center justify-between">
+            {listing.avg_rating != null ? (
+              <StarDisplay rating={listing.avg_rating} count={listing.rating_count} />
+            ) : (
+              <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">No ratings yet</span>
+            )}
+            {isOwn ? (
+              <button type="button" onClick={(e) => { e.stopPropagation(); onViewsClick(); }}
+                className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 hover:bg-brand-50 hover:text-brand-600 transition dark:hover:bg-brand-900/20 dark:hover:text-brand-400">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                </svg>
+                {viewCount != null ? `${viewCount} view${viewCount !== 1 ? "s" : ""}` : "Views"}
+              </button>
+            ) : (
+              <span className="text-[11px] font-semibold text-brand-600 group-hover:text-brand-700 dark:text-brand-400">View Profile →</span>
+            )}
+          </div>
+          {openForProposals && !isOwn && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onApply && onApply(listing); }}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-[12px] font-bold text-white hover:bg-emerald-700 transition">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
+                <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+              Apply / Submit Proposal
+            </button>
+          )}
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 text-[11px] text-slate-500 dark:text-slate-400">
+              {listing.phone_number ? (
+                <a href={`tel:${listing.phone_number}`}
+                  className="inline-flex max-w-full items-center gap-1.5 truncate hover:text-brand-600 dark:hover:text-brand-400"
+                  onClick={(e) => e.stopPropagation()}>
+                  <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.63 2.62a2 2 0 0 1-.45 2.11L8 9.91a16 16 0 0 0 6.09 6.09l1.46-1.29a2 2 0 0 1 2.11-.45c.84.3 1.72.51 2.62.63A2 2 0 0 1 22 16.92z" />
+                  </svg>
+                  <span className="truncate">{listing.phone_number}</span>
+                </a>
+              ) : (
+                <span className="italic text-slate-400 dark:text-slate-500">Phone not listed</span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5">
+              {listing.website && (
+                <a href={listing.website.startsWith("http") ? listing.website : `https://${listing.website}`}
+                  target="_blank" rel="noopener noreferrer"
+                  className="flex h-7 w-7 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900"
+                  onClick={(e) => e.stopPropagation()}>
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" /></svg>
+                </a>
+              )}
+              {listing.linkedin_url && (
+                <a href={listing.linkedin_url} target="_blank" rel="noopener noreferrer"
+                  className="flex h-7 w-7 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900"
+                  onClick={(e) => e.stopPropagation()}>
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6zM2 9h4v12H2z" /><circle cx="4" cy="4" r="2" /></svg>
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+// ─── RFQ modal ────────────────────────────────────────────────────────────────
+
+function RFQModal({ listing, onClose, prefilledProduct }) {
+  const [form, setForm] = useState({ name: "", email: "", message: "" });
+  const [items, setItems] = useState([{ name: prefilledProduct || "", quantity: "1", notes: "" }]);
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState(null);
+
+  const productOptions = (() => {
+    const seen = new Set();
+    const opts = [];
+    for (const p of (listing.catalogue_products || [])) {
+      const n = String(p.name || "").trim();
+      if (n && !seen.has(n.toLowerCase())) { seen.add(n.toLowerCase()); opts.push(n); }
+    }
+    for (const s of (listing.services || [])) {
+      const n = String(s.service_name || "").trim();
+      if (n && !seen.has(n.toLowerCase())) { seen.add(n.toLowerCase()); opts.push(n); }
+    }
+    return opts;
+  })();
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const selectedNames = new Set(items.map((it) => it.name).filter((n) => n && n !== "__other__").map((n) => n.toLowerCase()));
+  function addItem() {
+    const nextAvailable = productOptions.find((o) => !selectedNames.has(o.toLowerCase()));
+    setItems((p) => [...p, { name: nextAvailable || "", quantity: "1", notes: "" }]);
+  }
+  function removeItem(idx) { setItems((p) => p.filter((_, i) => i !== idx)); }
+  function updateItem(idx, field, value) {
+    setItems((p) => p.map((item, i) => {
+      if (i !== idx) return item;
+      const u = { ...item, [field]: value };
+      if (field === "name" && value !== "__other__") u.customName = "";
+      return u;
+    }));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.name.trim() || !form.email.trim()) { setError("Name and email are required."); return; }
+    const validItems = items.filter((item) => item.name && item.name !== "__other__" ? item.name.trim() : (item.customName || "").trim());
+    if (!validItems.length) { setError("Select at least one product or service."); return; }
+    if (validItems.some((item) => item.name === "__other__" && !(item.customName || "").trim())) {
+      setError("Enter a name for the custom product or service."); return;
+    }
+    if (validItems.some((item) => !Number(item.quantity) || Number(item.quantity) < 1)) {
+      setError("Quantity must be at least 1 for all items."); return;
+    }
+    setSubmitting(true); setError(null);
+    try {
+      await apiRequest(`/marketplace/rfq/${listing.workspace_id}`, "POST", {
+        customer_name: form.name.trim(),
+        customer_email: form.email.trim(),
+        items: validItems.map((item) => ({
+          name: item.name === "__other__" ? item.customName.trim() : item.name.trim(),
+          quantity: Number(item.quantity) || 1,
+          notes: (item.notes || "").trim() || null,
+        })),
+        message: form.message.trim() || null,
+      });
+      setDone(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to send request.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="ea-dialog relative z-10 w-full max-w-lg overflow-hidden" style={{ maxHeight: "90vh" }}>
+        <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800">
+          <div>
+            <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Request Quotation</h3>
+            <p className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">from {listing.company_name}</p>
+          </div>
+          <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+        {done ? (
+          <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>
+            </div>
+            <h4 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Request sent!</h4>
+            <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">{listing.company_name} will review your request and send a quotation to your email.</p>
+            <button onClick={onClose} className="mt-6 rounded-xl bg-brand-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 transition">Done</button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="ea-scroll overflow-y-auto px-5 py-4" style={{ maxHeight: "calc(90vh - 80px)" }}>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="ea-label">Your Name *</label>
+                <input className="ea-input" placeholder="Full name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              </div>
+              <div>
+                <label className="ea-label">Your Email *</label>
+                <input type="email" className="ea-input" placeholder="email@example.com" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+              </div>
+            </div>
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between">
+                <label className="ea-label mb-0">Products / Services *</label>
+                {(productOptions.length === 0 || productOptions.some((o) => !selectedNames.has(o.toLowerCase())) || selectedNames.has("__other__")) && (
+                  <button type="button" onClick={addItem} className="text-[11px] font-semibold text-brand-600 hover:text-brand-700 dark:text-brand-400">+ Add item</button>
+                )}
+              </div>
+              <div className="space-y-2">
+                {items.map((item, idx) => (
+                  <div key={idx} className="space-y-1">
+                    <div className="grid grid-cols-[1fr,80px,auto] items-start gap-2">
+                      {prefilledProduct && idx === 0 ? (
+                        <div className="flex items-center rounded-xl border border-brand-200 bg-brand-50 px-3 py-2.5 text-[13px] font-semibold text-brand-800 dark:border-brand-800 dark:bg-brand-900/20 dark:text-brand-300">
+                          {prefilledProduct}
+                        </div>
+                      ) : productOptions.length > 0 ? (
+                        <div className="relative">
+                          <select
+                            className={`w-full appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-8 py-2.5 text-sm outline-none ring-brand-200 focus:ring-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${!item.name ? "text-slate-400 dark:text-slate-500" : "text-slate-900 dark:text-slate-100"}`}
+                            value={item.name} onChange={(e) => updateItem(idx, "name", e.target.value)}>
+                            <option value="">Select a product / service</option>
+                            {productOptions.map((opt) => {
+                              const takenByOther = selectedNames.has(opt.toLowerCase()) && item.name.toLowerCase() !== opt.toLowerCase();
+                              return <option key={opt} value={opt} disabled={takenByOther}>{opt}{takenByOther ? " (already added)" : ""}</option>;
+                            })}
+                            <option value="__other__">Other / Custom…</option>
+                          </select>
+                          <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                      ) : (
+                        <input className="ea-input" placeholder="Product or service name" value={item.name} onChange={(e) => updateItem(idx, "name", e.target.value)} />
+                      )}
+                      <input type="number" min="1" className={`ea-input ${(!item.quantity || Number(item.quantity) < 1) ? "border-red-400 focus:border-red-400" : ""}`} placeholder="Qty" value={item.quantity} onChange={(e) => updateItem(idx, "quantity", e.target.value)} />
+                      {items.length > 1 ? (
+                        <button type="button" onClick={() => removeItem(idx)}
+                          className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500 dark:border-slate-700">
+                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                        </button>
+                      ) : <div className="h-9 w-9" />}
+                    </div>
+                    {item.name === "__other__" && (
+                      <input className="ea-input" placeholder="Describe the product or service you need"
+                        value={item.customName || ""} onChange={(e) => updateItem(idx, "customName", e.target.value)} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="mt-3">
+              <label className="ea-label">Message (optional)</label>
+              <textarea className="ea-input resize-none" rows={3} placeholder="Additional details, timeline, or requirements…"
+                value={form.message} onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))} />
+            </div>
+            {error && <p className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700 dark:border-rose-800 dark:bg-rose-900/20 dark:text-rose-400">{error}</p>}
+            <div className="mt-4 flex gap-2">
+              <button type="submit" disabled={submitting}
+                className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 transition disabled:opacity-50">
+                {submitting ? <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg> : null}
+                Send Request
+              </button>
+              <button type="button" onClick={onClose}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-[13px] font-medium text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── sign-up gate modal ───────────────────────────────────────────────────────
+
+function SignUpGateModal({ action, onClose }) {
+  const navigate = useNavigate();
+  const messages = {
+    rate: { title: "Sign in to rate", body: "Share your experience with this business. Create a free account or sign in." },
+    publish: { title: "List your business", body: "Once you sign up and validate your business idea, you can publish it to the marketplace for others to discover." },
+    rfq: { title: "Sign in to request a quote", body: "Create a free account or sign in to send a quotation request to this business." },
+    apply: { title: "Sign in to apply", body: "Create a free account or sign in to submit a proposal to this business." },
+  };
+  const { title, body } = messages[action] || messages.publish;
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="ea-dialog relative z-10 w-full max-w-sm p-7">
+        <button onClick={onClose} className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+        <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-accent-500">
+          <svg className="h-7 w-7 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">{title}</h3>
+        <p className="mt-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">{body}</p>
+        <div className="mt-6 flex flex-col gap-2.5">
+          <button onClick={() => navigate("/login?signup=1")}
+            className="w-full rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 py-2.5 text-[13px] font-bold text-white transition hover:opacity-90">
+            Create Free Account
+          </button>
+          <button onClick={() => navigate("/login")}
+            className="w-full rounded-xl border border-slate-200 py-2.5 text-[13px] font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+            Sign In
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── detail row ───────────────────────────────────────────────────────────────
+
+function DetailRow({ icon, label, value }) {
+  if (!value) return null;
+  return (
+    <div className="flex items-start gap-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">{icon}</div>
+      <div>
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</div>
+        <div className="text-[13px] font-medium text-slate-700 dark:text-slate-300">{value}</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── business profile modal ───────────────────────────────────────────────────
+
+export function BusinessProfileModal({ listing, onClose, isLoggedIn, userEmail, ownWorkspaceId, onNeedAuth, onRequestQuote }) {
+  const grad = avatarGradient(listing.company_name);
+  const hasLogo = listing.logo_data_url && listing.logo_data_url.startsWith("data:");
+  const isOwnListing = isLoggedIn && ownWorkspaceId === listing.workspace_id;
+
+  // For owner: full catalogue products including hidden ones
+  const [ownerCatProducts, setOwnerCatProducts] = useState(null); // null = not loaded yet
+  const [togglingItem, setTogglingItem] = useState(null);
+
+  useEffect(() => {
+    if (!isOwnListing || !ownWorkspaceId) return;
+    apiRequest(`/validation/${ownWorkspaceId}`, "GET").then((ws) => {
+      const prods = (ws?.data?.catalogue?.products || []).filter((p) => p.name && !p.archived);
+      setOwnerCatProducts(prods);
+    }).catch(() => setOwnerCatProducts([]));
+  }, [isOwnListing, ownWorkspaceId]);
+
+  async function toggleMarketplaceListed(productId, currentlyListed) {
+    if (!ownWorkspaceId) return;
+    setTogglingItem(productId);
+    try {
+      const ws = await apiRequest(`/validation/${ownWorkspaceId}`, "GET");
+      const data = ws?.data || {};
+      const cat = data.catalogue || { products: [] };
+      const products = (cat.products || []).map((p) =>
+        p.id === productId ? { ...p, marketplace_listed: !currentlyListed } : p
+      );
+      await apiRequest(`/validation/${ownWorkspaceId}`, "PATCH", { data: { catalogue: { ...cat, products } } });
+      setOwnerCatProducts(products.filter((p) => p.name && !p.archived));
+      window.dispatchEvent(new CustomEvent("ea:workspace:refresh"));
+    } catch { /* silent */ } finally { setTogglingItem(null); }
+  }
+
+  const [ratingData, setRatingData] = useState({ avg_rating: listing.avg_rating, rating_count: listing.rating_count || 0, user_rating: null, user_review: null });
+  const [ratingLoading, setRatingLoading] = useState(true);
+  const [hoverStar, setHoverStar] = useState(0);
+  const [pendingStar, setPendingStar] = useState(0);
+  const [reviewText, setReviewText] = useState("");
+  const [ratingEmail, setRatingEmail] = useState(userEmail || "");
+  const [submitting, setSubmitting] = useState(false);
+  const [ratingError, setRatingError] = useState(null);
+  const [showReviewBox, setShowReviewBox] = useState(false);
+  const [expandedServices, setExpandedServices] = useState({});
+
+  useEffect(() => {
+    if (!isOwnListing) {
+      apiRequest(`/marketplace/listings/${listing.workspace_id}/view`, "POST", {
+        viewer_workspace_id: ownWorkspaceId || null, viewer_email: userEmail || null,
+      }).catch(() => {});
+    }
+  }, [listing.workspace_id]);
+
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      setRatingLoading(true);
+      try {
+        const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}`, "GET");
+        if (!alive) return;
+        setRatingData(res); setPendingStar(res.user_rating || 0); setReviewText(res.user_review || "");
+      } catch { } finally { if (alive) setRatingLoading(false); }
+    }
+    load();
+    return () => { alive = false; };
+  }, [listing.workspace_id]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  async function submitRating() {
+    if (!pendingStar) return;
+    const emailTrimmed = ratingEmail.trim();
+    if (!emailTrimmed) { setRatingError("Please enter your email to verify this review."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) { setRatingError("Enter a valid email address."); return; }
+    setSubmitting(true); setRatingError(null);
+    try {
+      const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}`, "POST", { rating: pendingStar, review: reviewText.trim() || null, rater_email: emailTrimmed });
+      setRatingData(res); setShowReviewBox(false); setRatingEmail("");
+    } catch (e) { setRatingError(e instanceof Error ? e.message : "Failed to submit rating."); }
+    finally { setSubmitting(false); }
+  }
+
+  async function removeRating() {
+    setSubmitting(true); setRatingError(null);
+    try {
+      const res = await apiRequest(`/marketplace/ratings/${listing.workspace_id}`, "DELETE");
+      setRatingData(res); setPendingStar(0); setReviewText("");
+    } catch (e) { setRatingError(e instanceof Error ? e.message : "Failed to remove rating."); }
+    finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="ea-dialog relative z-10 flex w-full max-w-2xl flex-col overflow-hidden" style={{ maxHeight: "90vh" }}>
+        {/* Hero */}
+        <div className={`relative h-28 bg-gradient-to-br ${grad} shrink-0`}>
+          <button onClick={onClose} className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl bg-white/20 text-white backdrop-blur-sm hover:bg-white/30 transition">
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+          <div className="absolute -bottom-6 left-6">
+            {hasLogo ? (
+              <img src={listing.logo_data_url} alt={listing.company_name} className="h-16 w-16 rounded-2xl border-4 border-white bg-white object-contain shadow-lg dark:border-slate-900" />
+            ) : (
+              <div className={`flex h-16 w-16 items-center justify-center rounded-2xl border-4 border-white bg-gradient-to-br ${grad} text-xl font-bold text-white shadow-lg dark:border-slate-900`}>
+                {initials(listing.company_name)}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="ea-scroll flex-1 overflow-y-auto px-6 pb-8 pt-10">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">{listing.company_name}</h2>
+              {listing.tagline && <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{listing.tagline}</p>}
+              <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-slate-400 dark:text-slate-500">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2C8.1 2 5 5.1 5 9c0 5.3 7 13 7 13s7-7.7 7-13c0-3.9-3.1-7-7-7Z" /><circle cx="12" cy="9" r="2.5" />
+                </svg>
+                {[listing.city, listing.state_or_region, listing.country].filter(Boolean).join(", ")}
+              </div>
+            </div>
+            <span className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${industryColor(listing.primary_industry)}`}>{fmt(listing.primary_industry)}</span>
+          </div>
+
+          {/* About */}
+          <div className="mt-5 rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
+            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">About</h4>
+            <p className="text-[13px] leading-relaxed text-slate-700 dark:text-slate-300">{listing.about_company}</p>
+          </div>
+
+          {/* Services & Products (profile services + catalogue products) */}
+          {(() => {
+            // Owner sees all catalogue products (including hidden); others see only listed ones
+            const catSource = isOwnListing && ownerCatProducts !== null
+              ? ownerCatProducts.map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  desc: /^cost of sales/i.test(p.description || "") ? "" : (p.description || ""),
+                  cat: p.type,
+                  _src: "catalogue",
+                  listed: p.marketplace_listed !== false,
+                }))
+              : (listing.catalogue_products || []).filter((p) => p.name).map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  desc: /^cost of sales/i.test(p.description || "") ? "" : (p.description || ""),
+                  cat: p.type,
+                  _src: "catalogue",
+                  listed: true,
+                }));
+            const allItems = [
+              ...(listing.services || []).map((s) => ({ name: s.service_name, desc: /^cost of sales/i.test(s.service_description || "") ? "" : (s.service_description || ""), cat: s.service_category, _src: "service", listed: true })),
+              ...catSource,
+            ];
+            if (!allItems.length) return null;
+            return (
+              <div className="mt-5">
+                <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Services &amp; Products
+                </h4>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {allItems.map((item, i) => {
+                    const isExpanded = expandedServices[i];
+                    const hasLongDesc = item.desc && item.desc.length > 100;
+                    const isToggling = togglingItem === item.id;
+                    return (
+                      <div key={i} className={`rounded-xl border p-3 ${item.listed ? "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900" : "border-dashed border-slate-200 bg-slate-50 opacity-60 dark:border-slate-700 dark:bg-slate-800/50"}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">{item.name}</div>
+                            {item.cat && (
+                              <span className={`mt-0.5 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${categoryColor(item.cat)}`}>
+                                {fmt(item.cat)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {item._src === "catalogue" && isOwnListing && (
+                              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">Catalogue</span>
+                            )}
+                            {isOwnListing && item._src === "catalogue" && (
+                              <button
+                                type="button"
+                                title={item.listed ? "Unlist from marketplace" : "List on marketplace"}
+                                disabled={isToggling}
+                                onClick={() => toggleMarketplaceListed(item.id, item.listed)}
+                                className={`flex h-6 w-6 items-center justify-center rounded-md transition disabled:opacity-40 ${item.listed ? "text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20" : "text-brand-500 hover:bg-brand-50 dark:hover:bg-brand-900/20"}`}
+                              >
+                                {isToggling ? (
+                                  <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                                ) : item.listed ? (
+                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9" />
+                                    <path d="M9 13.5 11 15.5 15.5 11" />
+                                  </svg>
+                                ) : (
+                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9" />
+                                    <path d="M4 20 20 4" />
+                                  </svg>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {item.desc && (
+                          <div className="mt-1.5">
+                            <p className={`text-[12px] text-slate-500 dark:text-slate-400 ${isExpanded ? "" : "line-clamp-2"}`}>
+                              {item.desc}
+                            </p>
+                            {hasLongDesc && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedServices((p) => ({ ...p, [i]: !p[i] }))}
+                                className="mt-0.5 text-[11px] font-semibold text-brand-600 hover:underline dark:text-brand-400">
+                                {isExpanded ? "Show less" : "See more"}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {isOwnListing && !item.listed && (
+                          <p className="mt-1 text-[10px] text-slate-400">Hidden from marketplace</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Details */}
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <DetailRow icon={<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9M12 3v6" /></svg>} label="Business Type" value={fmt(listing.business_type)} />
+            {listing.company_size && <DetailRow icon={<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>} label="Team Size" value={listing.company_size} />}
+            {listing.year_established && <DetailRow icon={<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>} label="Est." value={String(listing.year_established)} />}
+            {listing.delivery_model && <DetailRow icon={<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12H3l9-9 9 9h-2" /><path d="M9 21V12h6v9" /></svg>} label="Delivery" value={fmt(listing.delivery_model)} />}
+            {listing.target_customer_type && <DetailRow icon={<svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" /></svg>} label="Target Customer" value={fmt(listing.target_customer_type)} />}
+          </div>
+
+          {/* Contact */}
+          <div className="mt-5">
+            <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Contact</h4>
+            <div className="flex flex-wrap gap-2">
+              {listing.email && (
+                <a href={`mailto:${listing.email}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-medium text-slate-700 hover:border-brand-300 transition dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300" onClick={(e) => e.stopPropagation()}>
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>
+                  {listing.email}
+                </a>
+              )}
+              {listing.phone_number && (
+                <a href={`tel:${listing.phone_number}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-medium text-slate-700 hover:border-brand-300 transition dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300" onClick={(e) => e.stopPropagation()}>
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.63 2.62a2 2 0 0 1-.45 2.11L8 9.91a16 16 0 0 0 6.09 6.09l1.46-1.29a2 2 0 0 1 2.11-.45c.84.3 1.72.51 2.62.63A2 2 0 0 1 22 16.92z" /></svg>
+                  {listing.phone_number}
+                </a>
+              )}
+              {listing.website && (
+                <a href={listing.website.startsWith("http") ? listing.website : `https://${listing.website}`}
+                  target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-[12px] font-semibold text-brand-700 hover:bg-brand-100 transition dark:border-brand-800 dark:bg-brand-900/30 dark:text-brand-300"
+                  onClick={(e) => e.stopPropagation()}>
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" /></svg>
+                  Visit Website
+                </a>
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {[
+                { url: listing.linkedin_url, label: "LinkedIn", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6zM2 9h4v12H2z" /><circle cx="4" cy="4" r="2" /></svg> },
+                { url: listing.twitter_url, label: "Twitter/X", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg> },
+                { url: listing.instagram_url, label: "Instagram", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="2" width="20" height="20" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" /></svg> },
+                { url: listing.facebook_url, label: "Facebook", icon: <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" /></svg> },
+              ].filter((s) => s.url).map((s) => (
+                <a key={s.label} href={s.url} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-medium text-slate-600 hover:border-brand-300 hover:text-brand-600 transition dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
+                  onClick={(e) => e.stopPropagation()}>
+                  {s.icon}{s.label}
+                </a>
+              ))}
+            </div>
+          </div>
+
+          {/* Request Quotation */}
+          {!isOwnListing && (
+            <div className="mt-5 rounded-2xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-800 dark:bg-brand-900/20">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-[13px] font-bold text-brand-800 dark:text-brand-300">Request a Quotation</div>
+                  <div className="mt-0.5 text-[11px] text-brand-600 dark:text-brand-400">Send your requirements and get a formal quote from {listing.company_name}.</div>
+                </div>
+                <button onClick={() => onRequestQuote(listing)}
+                  className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-brand-700 transition">
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></svg>
+                  Request Quotation
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Ratings */}
+          <div className="mt-6 border-t border-slate-100 dark:border-slate-800 pt-5">
+            <h4 className="mb-4 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Ratings &amp; Reviews</h4>
+            <div className="mb-4 flex items-center gap-4 rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
+              {ratingLoading ? <Spinner size={14} /> : ratingData.avg_rating != null ? (
+                <div className="text-center">
+                  <div className="text-4xl font-bold text-slate-900 dark:text-slate-100">{ratingData.avg_rating.toFixed(1)}</div>
+                  <div className="mt-1"><StarDisplay rating={ratingData.avg_rating} size="lg" /></div>
+                  <div className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">{ratingData.rating_count} review{ratingData.rating_count !== 1 ? "s" : ""}</div>
+                </div>
+              ) : (
+                <div className="text-[13px] text-slate-500 dark:text-slate-400 italic">No ratings yet. Be the first to review.</div>
+              )}
+            </div>
+            {isOwnListing ? (
+              <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">You cannot rate your own business.</p>
+            ) : (
+              <div>
+                {ratingData.user_rating && !showReviewBox ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-400 mb-1">Your rating</div>
+                        <StarDisplay rating={ratingData.user_rating} count={null} />
+                        {ratingData.user_review && <p className="mt-1.5 text-[12px] text-slate-500 dark:text-slate-400 italic">"{ratingData.user_review}"</p>}
+                      </div>
+                      {isLoggedIn && (
+                        <button onClick={removeRating} disabled={submitting}
+                          className="text-[11px] font-medium text-red-500 hover:text-red-600 hover:underline disabled:opacity-50 transition">Remove</button>
+                      )}
+                    </div>
+                    <button onClick={() => { setPendingStar(ratingData.user_rating); setShowReviewBox(true); }}
+                      className="mt-2 text-[11px] font-medium text-brand-600 hover:underline dark:text-brand-400">Edit rating</button>
+                  </div>
+                ) : null}
+                {(!ratingData.user_rating || showReviewBox) && (
+                  <div className={`rounded-2xl border p-4 dark:bg-slate-900 ${showReviewBox ? "border-brand-200 bg-brand-50 dark:border-brand-800 dark:bg-brand-900/20" : "border-slate-200 bg-white dark:border-slate-700"}`}>
+                    <div className="mb-3 text-[12px] font-semibold text-slate-700 dark:text-slate-300">
+                      {showReviewBox ? "Update your rating" : "Rate this business"}
+                    </div>
+                    <div className="flex items-center gap-3 mb-3">
+                      <StarInput value={pendingStar} hover={hoverStar} onHover={setHoverStar} onLeave={() => setHoverStar(0)} onChange={setPendingStar} disabled={submitting} />
+                      {(hoverStar || pendingStar) > 0 && (
+                        <span className="text-[13px] font-semibold text-amber-600 dark:text-amber-400">{STAR_LABELS[hoverStar || pendingStar]}</span>
+                      )}
+                    </div>
+                    <textarea placeholder="Write a short review (optional)…" value={reviewText} onChange={(e) => setReviewText(e.target.value)} rows={2} className="ea-input mb-3 resize-none" />
+                    <div className="mb-3">
+                      <input type="email" placeholder="Your email address" value={ratingEmail} onChange={(e) => setRatingEmail(e.target.value)} className="ea-input" />
+                      <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Required for review credibility. Not shown publicly.</p>
+                    </div>
+                    {ratingError && <p className="mb-2 text-[12px] text-red-500">{ratingError}</p>}
+                    <div className="flex gap-2">
+                      {showReviewBox && (
+                        <button onClick={() => setShowReviewBox(false)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-[12px] font-medium text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">Cancel</button>
+                      )}
+                      <button onClick={submitRating} disabled={!pendingStar || submitting}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-1.5 text-[12px] font-semibold text-white hover:bg-brand-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                        {submitting ? <Spinner size={12} /> : null}
+                        {ratingData.user_rating ? "Update Rating" : "Submit Rating"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── constants ────────────────────────────────────────────────────────────────
+
+const INDUSTRIES = ["consulting","technology","finance","healthcare","education","retail","ecommerce","logistics","manufacturing","real_estate","marketing"];
+const BIZ_TYPES = ["sole_trader","partnership","limited_company","llp","non_profit","startup"];
+const SERVICE_CATEGORIES = ["software","design","consulting","marketing","finance","legal","logistics","health","education"];
+
+// ─── Apply modal (PI-107, PI-108) ─────────────────────────────────────────────
+
+const REQ_FORMAT_ICONS = {
+  text:         <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>,
+  document:     <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>,
+  image:        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/></svg>,
+  figures:      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+  presentation: <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>,
+  link:         <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>,
+};
+
+const REQ_FORMAT_META = {
+  text:         { label: "Text",         icon: REQ_FORMAT_ICONS.text },
+  document:     { label: "Document",     icon: REQ_FORMAT_ICONS.document },
+  image:        { label: "Image",        icon: REQ_FORMAT_ICONS.image },
+  figures:      { label: "Figures",      icon: REQ_FORMAT_ICONS.figures },
+  presentation: { label: "Presentation", icon: REQ_FORMAT_ICONS.presentation },
+  link:         { label: "Link / URL",   icon: REQ_FORMAT_ICONS.link },
+};
+
+// Module-level PDF cache keyed by content version
+const _pdfBlobCache = new Map();
+
+// Load pdfmake + fonts from CDN once per session
+let _pdfMakeReady = false;
+function _loadPdfMake() {
+  if (_pdfMakeReady || window.pdfMake) { _pdfMakeReady = true; return Promise.resolve(); }
+  const load = (src) => new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src; s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+  return load("https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/pdfmake.min.js")
+    .then(() => load("https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/vfs_fonts.min.js"))
+    .then(() => { _pdfMakeReady = true; });
+}
+
+// Convert simple blueprint HTML → pdfmake content array
+function _htmlToPdfContent(html) {
+  const doc = new DOMParser().parseFromString(html || "", "text/html");
+  const out = [];
+  function inline(el) {
+    if (el.nodeType === 3) return el.textContent || "";
+    const t = el.tagName?.toLowerCase();
+    const kids = Array.from(el.childNodes).map(inline).flat().filter(Boolean);
+    if (t === "strong" || t === "b") return { text: el.textContent, bold: true };
+    if (t === "em" || t === "i") return { text: el.textContent, italics: true };
+    return kids.length === 1 ? kids[0] : kids.length ? kids : "";
+  }
+  function inlineArr(el) {
+    const parts = Array.from(el.childNodes).map(inline).flat().filter(x => x !== "");
+    if (!parts.length) return el.textContent.trim() || null;
+    return parts.length === 1 ? parts[0] : parts;
+  }
+  function block(el) {
+    if (el.nodeType === 3) { const t = el.textContent.trim(); return t ? { text: t, style: "body", margin: [0,0,0,8] } : null; }
+    if (el.nodeType !== 1) return null;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "h1") return { text: inlineArr(el) || "", style: "h1", headlineLevel: 1 };
+    if (tag === "h2") return { text: inlineArr(el) || "", style: "h2", headlineLevel: 2 };
+    if (tag === "h3") return { text: inlineArr(el) || "", style: "h3", headlineLevel: 3 };
+    if (tag === "p") { const c = inlineArr(el); return c ? { text: c, style: "body", margin: [0,0,0,8] } : null; }
+    if (tag === "ul") {
+      const items = Array.from(el.querySelectorAll(":scope > li")).map(li => ({ text: inlineArr(li) || li.textContent.trim(), style: "body" }));
+      return items.length ? { ul: items, margin: [0,0,0,8] } : null;
+    }
+    if (tag === "ol") {
+      const items = Array.from(el.querySelectorAll(":scope > li")).map(li => ({ text: inlineArr(li) || li.textContent.trim(), style: "body" }));
+      return items.length ? { ol: items, margin: [0,0,0,8] } : null;
+    }
+    if (tag === "hr") return { canvas: [{ type: "line", x1: 0, y1: 0, x2: 483, y2: 0, lineWidth: 0.5, lineColor: "#e2e8f0" }], margin: [0,10,0,10] };
+    if (tag === "table") {
+      const rows = Array.from(el.querySelectorAll("tr"));
+      if (!rows.length) return null;
+      const body = rows.map(r => Array.from(r.querySelectorAll("th, td")).map(cell => ({
+        text: cell.textContent.trim(), fontSize: 9, color: "#475569",
+        bold: cell.tagName.toLowerCase() === "th",
+        fillColor: cell.tagName.toLowerCase() === "th" ? "#f1f5f9" : null,
+        margin: [4,3,4,3],
+      })));
+      const cols = body.reduce((m, r) => Math.max(m, r.length), 0);
+      if (!cols) return null;
+      return { table: { body, widths: Array(cols).fill("*"), headerRows: 1 }, layout: { hLineColor: () => "#e2e8f0", vLineColor: () => "#e2e8f0", hLineWidth: () => 0.5, vLineWidth: () => 0.5 }, margin: [0,8,0,12] };
+    }
+    // containers (div, section, etc.)
+    const children = Array.from(el.childNodes).map(block).flat(2).filter(Boolean);
+    return children.length ? children : null;
+  }
+  Array.from(doc.body.childNodes).forEach(el => {
+    const item = block(el);
+    if (!item) return;
+    if (Array.isArray(item)) out.push(...item.flat(3).filter(Boolean));
+    else out.push(item);
+  });
+  return out;
+}
+
+export function ApplyModal({ listing, request, onClose, onSuccess }) {
+  const grad = avatarGradient(listing.company_name);
+  const navigate = useNavigate();
+  const { submitProposal } = useProposalStore();
+  const token = useAuthStore((s) => s.token);
+  const isLoggedIn = Boolean(token);
+  const planKey = useAuthStore((s) => s.subscription?.plan_key ?? "explorer");
+  const planStatus = useAuthStore((s) => s.subscription?.status);
+  const platformGrants = useAuthStore((s) => s.platformGrants ?? []);
+  const userEmail = useAuthStore((s) => s.user?.email || s.session?.user?.email || "");
+  const hasBlueprintGrant = platformGrants.some(
+    (g) => !g.feature_key || g.module_key === "blueprint" || g.module_key === "marketplace"
+  );
+  const isPaid = hasPaidAccess(planKey, planStatus) || hasBlueprintGrant;
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+  const isOwnListing = workspaceId && listing.workspace_id === workspaceId;
+
+  // Detect return from Blueprint proposal generator
+  const blueprintReturn = listing._blueprint_return || null;
+
+  // Category eligibility + profile fetch (also used for PDF cover metadata)
+  const [myProfile, setMyProfile] = useState(null);
+  const [catChecked, setCatChecked] = useState(false);
+  useEffect(() => {
+    if (!workspaceId) { setCatChecked(true); return; }
+    apiRequest(`/validation/${workspaceId}`, "GET", undefined, { timeoutMs: 8000 })
+      .then((data) => { setMyProfile(data?.data?.workspace_profile || null); setCatChecked(true); })
+      .catch(() => setCatChecked(true));
+  }, [request, workspaceId]);
+
+  const acceptedCats = request?.accepted_categories || [];
+  const myIndustry = myProfile?.primary_industry || "";
+  const myServiceCats = (myProfile?.services || []).map((s) => s.service_category).filter(Boolean);
+  const myCats = [myIndustry, ...myServiceCats].filter(Boolean);
+  const categoryBlocked = acceptedCats.length > 0 && catChecked && myProfile && !myCats.some((c) => acceptedCats.includes(c));
+
+  // step: "choose" | "form" | "upgrade" | "signup"
+  const [step, setStep] = useState(blueprintReturn ? "form" : "choose");
+  const [mode, setMode] = useState("ai"); // "ai" | "manual"
+  const defaultTitle = request?.title
+    ? `Response to: ${request.title}`
+    : `Proposal for ${listing.company_name}`;
+  const [title, setTitle] = useState(blueprintReturn?.title || defaultTitle);
+  const _summaryKey = `ea_cover_letter_${listing.workspace_id || "draft"}`;
+  const [summary, setSummary] = useState(() => {
+    try { return sessionStorage.getItem(_summaryKey) || ""; } catch { return ""; }
+  });
+  const slug = listing.company_name.replace(/\s+/g, "-").toLowerCase();
+  const pdfFilename = blueprintReturn?.document_html ? `proposal-${slug}.pdf` : null;
+  const [file, setFile] = useState(null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  useEffect(() => {
+    if (!blueprintReturn?.document_html || !catChecked) return;
+    const cacheKey = "v6:" + blueprintReturn.document_html.slice(0, 200);
+    if (_pdfBlobCache.has(cacheKey)) {
+      setFile(new File([_pdfBlobCache.get(cacheKey)], `proposal-${slug}.pdf`, { type: "application/pdf" }));
+      return;
+    }
+    setPdfGenerating(true);
+    const dateStr = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+    const docTitle = blueprintReturn.title || "Business Proposal";
+    const recipient = listing.company_name;
+    const preparedBy = blueprintReturn.prepared_by || myProfile?.company_name || "";
+    const serviceFocus = blueprintReturn.service_focus || myProfile?.key_offering_focus || myProfile?.tagline || "";
+    const contactInfo = blueprintReturn.contact || userEmail || "";
+    // Strip title h1 + metadata paragraphs that are already on the cover
+    function stripBodyMeta(html) {
+      const d = new DOMParser().parseFromString(html || "", "text/html");
+      const b = d.body;
+      // Remove leading h1 (same as cover title)
+      if (b.firstElementChild?.tagName?.toLowerCase() === "h1") b.firstElementChild.remove();
+      // Remove consecutive leading paragraphs that contain metadata labels
+      const metaRe = /^(prepared\s*by|prepared\s*for|service\s*focus|contact|date)\s*:/i;
+      let el = b.firstElementChild;
+      while (el && el.tagName?.toLowerCase() === "p" && metaRe.test(el.textContent.trim())) {
+        const next = el.nextElementSibling;
+        el.remove();
+        el = next;
+      }
+      return b.innerHTML;
+    }
+    const cleanHtml = stripBodyMeta(
+      (blueprintReturn.document_html || "")
+        .replace(/—/g, ",").replace(/–/g, ",").replace(/ - /g, ", ")
+    );
+
+    _loadPdfMake().then(() => {
+      const bodyContent = _htmlToPdfContent(cleanHtml);
+      // Mark first body element to start on a new page after cover
+      if (bodyContent.length) bodyContent[0] = { ...bodyContent[0], pageBreak: "before", margin: [0, 14, 0, 0] };
+
+      // Build cover meta columns
+      const metaCols = [];
+      if (preparedBy) metaCols.push({ stack: [{ text: "PREPARED BY", style: "metaLabel" }, { text: preparedBy, style: "metaVal" }] });
+      metaCols.push({ stack: [{ text: "PREPARED FOR", style: "metaLabel" }, { text: recipient, style: "metaVal" }] });
+      metaCols.push({ stack: [{ text: "DATE", style: "metaLabel" }, { text: dateStr, style: "metaVal" }] });
+
+      const extraMeta = [];
+      if (serviceFocus) extraMeta.push({ text: [{ text: "SERVICE FOCUS  ", style: "metaLabel" }, { text: serviceFocus, style: "metaVal" }], margin: [0, 10, 0, 0] });
+      if (contactInfo) extraMeta.push({ text: [{ text: "CONTACT  ", style: "metaLabel" }, { text: contactInfo, style: "metaVal" }], margin: [0, 8, 0, 0] });
+
+      const docDef = {
+        pageSize: "A4",
+        pageMargins: [56, 20, 56, 24],
+        background(currentPage, pageSize) {
+          if (currentPage === 1) return { canvas: [{ type: "rect", x: 0, y: 0, w: pageSize.width, h: pageSize.height, color: "#0f172a" }] };
+          if (currentPage === 2) return { canvas: [{ type: "rect", x: 0, y: 0, w: pageSize.width, h: 5, color: "#6366f1" }] };
+          return null;
+        },
+        content: [
+          // Cover — white/indigo text on dark navy (painted by background())
+          { text: "BUSINESS PROPOSAL", style: "eyebrow", color: "#6366f1", margin: [0, 0, 0, 24] },
+          { text: docTitle, style: "coverTitle", color: "#f8fafc", margin: [0, 0, 0, 32] },
+          { canvas: [{ type: "line", x1: 0, y1: 0, x2: 483, y2: 0, lineWidth: 0.5, lineColor: "#334155" }], margin: [0, 0, 0, 24] },
+          { columns: metaCols, columnGap: 28, margin: [0, 0, 0, 0] },
+          ...extraMeta,
+          // Body — starts on page 2
+          ...bodyContent,
+        ],
+        styles: {
+          eyebrow: { fontSize: 7, bold: true, characterSpacing: 3 },
+          coverTitle: { fontSize: 26, bold: true, lineHeight: 1.25 },
+          metaLabel: { fontSize: 7, bold: true, color: "#475569", characterSpacing: 1.5 },
+          metaVal: { fontSize: 11, bold: true, color: "#cbd5e1" },
+          h1: { fontSize: 14, bold: true, color: "#0f172a", margin: [0, 18, 0, 6] },
+          h2: { fontSize: 12, bold: true, color: "#1e293b", margin: [0, 14, 0, 5] },
+          h3: { fontSize: 11, bold: true, color: "#334155", margin: [0, 10, 0, 4] },
+          body: { fontSize: 10, color: "#334155", lineHeight: 1.65 },
+        },
+        defaultStyle: { font: "Roboto", fontSize: 10, lineHeight: 1.5 },
+      };
+
+      window.pdfMake.createPdf(docDef).getBlob((blob) => {
+        _pdfBlobCache.set(cacheKey, blob);
+        setFile(new File([blob], `proposal-${slug}.pdf`, { type: "application/pdf" }));
+        setPdfGenerating(false);
+      });
+    }).catch(() => {
+      const fallback = blueprintReturn.document_markdown || blueprintReturn.document_html;
+      setFile(new File([fallback || ""], `proposal-${slug}.txt`, { type: "text/plain" }));
+      setPdfGenerating(false);
+    });
+  }, [catChecked]); // eslint-disable-line
+  const [aiLoading, setAiLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(false);
+
+  // Per-requirement responses (keyed by requirement index)
+  const allReqs = request?.requirements || [];
+  const _reqKey = `ea_req_responses_${request?.id || listing.workspace_id || "draft"}`;
+  const [reqResponses, setReqResponses] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(_reqKey);
+      if (saved) return JSON.parse(saved);
+    } catch { /* ignore */ }
+    return Object.fromEntries(allReqs.map((_, i) => [i, ""]));
+  });
+  const [reqFiles, setReqFiles] = useState({});
+
+  // Persist requirement responses to sessionStorage whenever they change
+  useEffect(() => {
+    try { sessionStorage.setItem(_reqKey, JSON.stringify(reqResponses)); } catch { /* ignore */ }
+  }, [reqResponses, _reqKey]);
+
+  const REQ_FORMAT_META = {
+    text:         { label: "Text",         icon: "✏️" },
+    document:     { label: "Document",     icon: "📄" },
+    image:        { label: "Image",        icon: "🖼️" },
+    figures:      { label: "Figures",      icon: "📊" },
+    presentation: { label: "Presentation", icon: "🎞️" },
+    link:         { label: "Link / URL",   icon: "🔗" },
+  };
+
+  const allMandatoryAnswered = allReqs.every((r, i) => {
+    const mandatory = typeof r === "object" && r?.mandatory;
+    if (!mandatory) return true;
+    const fmt = (typeof r === "object" && r?.format) || "text";
+    if (fmt === "document" || fmt === "image" || fmt === "presentation") {
+      return !!reqFiles[i];
+    }
+    return (reqResponses[i] || "").trim().length > 0;
+  });
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  async function handleGenerateAI() {
+    setAiLoading(true); setError(null);
+    try {
+      const res = await apiRequest("/proposals/generate-cover-letter", "POST", {
+        recipient_workspace_id: listing.workspace_id,
+        request_title: request?.title || null,
+        request_description: request?.description || null,
+      }, { timeoutMs: 90000 });
+      const cl = res.cover_letter || res.text || "";
+      setSummary(cl);
+      try { sessionStorage.setItem(_summaryKey, cl); } catch {}
+    } catch (e) {
+      const msg = String(e?.message || e || "");
+      console.error("Cover letter generation error:", msg);
+      setError(msg || "Could not generate the cover letter. Please write it manually or try again.");
+    } finally { setAiLoading(false); }
+  }
+
+  function readFileAsBase64(f) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ data_url: reader.result, filename: f.name, mime: f.type, size: f.size });
+      reader.onerror = reject;
+      reader.readAsDataURL(f);
+    });
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!title.trim()) { setError("Please enter a proposal title."); return; }
+    if (!allMandatoryAnswered) { setError("Please provide a response for all required items before submitting."); return; }
+    if (pdfGenerating) { setError("Your proposal document is still being prepared — please wait a moment and try again."); return; }
+    setSubmitting(true); setError(null);
+
+    // Convert per-requirement file uploads to base64
+    const requirementResponses = allReqs.length > 0
+      ? await Promise.all(allReqs.map(async (r, i) => {
+          const fmt = (typeof r === "object" && r?.format) || "text";
+          const isFile = fmt === "document" || fmt === "image" || fmt === "presentation";
+          const fileData = isFile && reqFiles[i] ? await readFileAsBase64(reqFiles[i]).catch(() => null) : null;
+          return {
+            text: typeof r === "string" ? r : r?.text || "",
+            mandatory: typeof r === "object" && !!r?.mandatory,
+            format: fmt,
+            response: (reqResponses[i] || "").trim(),
+            ...(fileData ? { attachment: fileData } : {}),
+          };
+        }))
+      : undefined;
+
+    // General attachment — upload to storage, store URL (avoids base64-in-JSON size issues)
+    const attachments = [];
+    if (file) {
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const fd = await apiRequest("/proposals/upload-attachment", "POST", form, { timeoutMs: 120000 });
+        if (fd?.url) attachments.push({ url: fd.url, filename: fd.filename || file.name, mime: fd.mime || file.type, size: fd.size || file.size });
+      } catch (uploadErr) {
+        setSubmitting(false);
+        const uploadErrMsg = uploadErr?.message || "";
+        const uploadHuman = uploadErrMsg === "NETWORK_ERROR"
+          ? "Unable to reach the server — check your connection and try again, or remove the file to submit without it."
+          : `Document upload failed${uploadErrMsg ? `: ${uploadErrMsg.replace(/^HTTP \d+:\s*/, "")}` : ""}. Remove the file and resubmit, or try again.`;
+        setError(uploadHuman);
+        return;
+      }
+    }
+
+    const res = await submitProposal({
+      recipient_workspace_id: listing.workspace_id,
+      request_id: request?.id || null,
+      title: title.trim(),
+      summary: summary.trim() || null,
+      requirement_responses: requirementResponses,
+      attachments,
+    });
+    setSubmitting(false);
+    if (res.ok) {
+      try { sessionStorage.removeItem("ea_proposal_return"); sessionStorage.removeItem(_summaryKey); sessionStorage.removeItem(_reqKey); } catch {}
+      onSuccess?.(listing.workspace_id, request?.id);
+      setDone(true);
+    } else setError(res.error || "Submission failed. Please try again.");
+  }
+
+  const requirements = request?.requirements || [];
+  const reqMode = Array.isArray(request?.accepted_modes) ? request.accepted_modes[0] : (request?.accepted_modes || null);
+  const isSpecific = reqMode === "specific";
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="ea-dialog relative z-10 w-full max-w-lg overflow-hidden rounded-t-3xl sm:rounded-2xl" style={{ maxHeight: "95vh" }}>
+        <div className={`h-1.5 w-full bg-gradient-to-r ${grad}`} />
+
+        {/* ── Own listing guard ── */}
+        {isOwnListing ? (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Can't submit to your own listing</h2>
+            <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">
+              This is your business profile. You can only submit proposals to other businesses on the marketplace.
+            </p>
+            <button onClick={onClose} className="mt-6 rounded-xl bg-slate-800 px-6 py-2.5 text-[13px] font-bold text-white hover:bg-slate-700 transition dark:bg-slate-700 dark:hover:bg-slate-600">
+              Got it
+            </button>
+          </div>
+
+        /* ── Success ── */
+        ) : done ? (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Proposal Submitted!</h2>
+            <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">
+              Sent to <span className="font-semibold text-slate-700 dark:text-slate-300">{listing.company_name}</span>. You can track and withdraw it from your Activity tab.
+            </p>
+            <div className="mt-6 flex flex-col gap-2.5">
+              <button onClick={() => { onClose(); navigate("/proposals?tab=activity"); }}
+                className="w-full rounded-xl bg-emerald-600 px-6 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition">
+                View My Submissions
+              </button>
+              <button onClick={onClose} className="w-full rounded-xl border border-slate-200 px-6 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+                Stay on Marketplace
+              </button>
+            </div>
+          </div>
+
+        /* ── Signup gate (unauthenticated) ── */
+        ) : step === "signup" ? (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
+              </svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Sign up for free first</h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
+              Create a free EnterprateAI account to get started. It only takes a minute.
+            </p>
+            <div className="mt-6 flex flex-col gap-2.5">
+              <button onClick={() => { onClose(); navigate(`/login?signup=1&next=/marketplace/request/${request?.id || ""}`); }}
+                className="w-full rounded-xl bg-emerald-600 py-2.5 text-[13px] font-bold text-white transition hover:bg-emerald-700">
+                Create Free Account
+              </button>
+              <button onClick={() => { onClose(); navigate(`/login?next=/marketplace/request/${request?.id || ""}`); }}
+                className="w-full rounded-xl border border-slate-200 py-2.5 text-[13px] font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                Already have an account? Sign In
+              </button>
+              <button onClick={() => setStep("choose")}
+                className="text-[12px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition">
+                Go Back
+              </button>
+            </div>
+          </div>
+
+        /* ── Upgrade gate ── */
+        ) : step === "upgrade" ? (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-accent-500 text-white">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Upgrade to Submit Proposals</h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
+              Submitting proposals and using the EnterprateAI Blueprint generator are available on paid plans. Upgrade to unlock full proposal capabilities.
+            </p>
+            <div className="mt-6 flex flex-col gap-2.5">
+              <button onClick={() => { onClose(); navigate("/pricing"); }}
+                className="w-full rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 py-2.5 text-[13px] font-bold text-white transition hover:opacity-90">
+                View Plans & Upgrade
+              </button>
+              <button onClick={() => setStep("choose")}
+                className="w-full rounded-xl border border-slate-200 py-2.5 text-[13px] font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                Go Back
+              </button>
+            </div>
+          </div>
+
+        /* ── Category blocked ── */
+        ) : categoryBlocked ? (
+          <div className="px-6 py-10 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+            </div>
+            <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Category doesn't match</h2>
+            <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
+              This request is looking for businesses in:
+            </p>
+            <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+              {acceptedCats.map((c) => (
+                <span key={c} className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">{fmt(c)}</span>
+              ))}
+            </div>
+            <p className="mt-3 text-[12px] text-slate-400 dark:text-slate-500">
+              Your profile is categorised as <strong className="text-slate-600 dark:text-slate-300">{fmt(myIndustry) || "unknown"}</strong>.
+              Update your workspace profile to match the required categories if you believe you're eligible.
+            </p>
+            <button onClick={onClose} className="mt-6 rounded-xl border border-slate-200 bg-white px-6 py-2.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+              Close
+            </button>
+          </div>
+
+        /* ── Choose method ── */
+        ) : step === "choose" ? (
+          <>
+            <div className="relative px-6 pt-5 pb-2">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">Open for Proposals</span>
+              </div>
+              <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Submit a Proposal to {listing.company_name}</h2>
+              <p className="mt-1 text-[12px] text-slate-500 dark:text-slate-400">Choose how you'd like to prepare your proposal.</p>
+              <button onClick={onClose} className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+
+            {/* Requirements summary — shown before choosing method */}
+            {allReqs.length > 0 && (
+              <div className="mx-6 mb-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/50">
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">What you'll need to provide</p>
+                <ul className="space-y-1.5">
+                  {allReqs.map((r, i) => {
+                    const text = typeof r === "string" ? r : r?.text || "";
+                    const mandatory = typeof r === "object" && !!r?.mandatory;
+                    const fmt_key = (typeof r === "object" && r?.format) || "text";
+                    const meta = REQ_FORMAT_META[fmt_key] || REQ_FORMAT_META.text;
+                    return (
+                      <li key={i} className="flex items-start gap-2 text-[11px] text-slate-600 dark:text-slate-400">
+                        <span className={`mt-0.5 shrink-0 rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide ${mandatory ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-400" : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400"}`}>
+                          {mandatory ? "Required" : "Optional"}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="text-brand-500">{meta.icon}</span>
+                          {text}
+                          <span className="text-slate-400">({meta.label})</span>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+
+            <div className="px-6 py-4 space-y-3">
+              <button type="button" onClick={() => {
+                if (!isLoggedIn) { setStep("signup"); return; }
+                if (!isPaid) { setStep("upgrade"); return; }
+                try {
+                  sessionStorage.setItem("ea_proposal_ctx", JSON.stringify({
+                    listing: { workspace_id: listing.workspace_id, company_name: listing.company_name, logo_data_url: listing.logo_data_url },
+                    request: request ? { id: request.id, title: request.title, description: request.description, requirements: request.requirements } : null,
+                    proposal_title: defaultTitle,
+                    request_title: request?.title || null,
+                    request_description: request?.description || null,
+                  }));
+                } catch {}
+                navigate("/blueprint?from=marketplace");
+                onClose();
+              }}
+                className="w-full flex items-start gap-4 rounded-2xl border border-brand-200 bg-brand-50 p-4 text-left transition hover:border-brand-400 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-900/20 dark:hover:border-brand-600 dark:hover:bg-brand-900/40">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white">
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[14px] font-bold text-brand-800 dark:text-brand-200">Use EnterprateAI</span>
+                    {!isPaid && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">Paid</span>}
+                  </div>
+                  <div className="mt-0.5 text-[12px] text-brand-700 dark:text-brand-400">Generate a full proposal in Business Blueprints, then submit it here.</div>
+                </div>
+              </button>
+              <button type="button" onClick={() => { setMode("manual"); setStep("form"); }}
+                className="w-full flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-brand-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-transparent dark:hover:border-brand-600 dark:hover:bg-slate-800/50">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17,8 12,3 7,8" /><line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[14px] font-bold text-slate-800 dark:text-slate-100">Upload / Write Manually</span>
+                    {!isPaid && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-700 dark:text-slate-400">Preview</span>}
+                  </div>
+                  <div className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">
+                    {isPaid ? "Attach a PDF or Word doc and write your own cover letter." : "Write your proposal and submit it to the business."}
+                  </div>
+                </div>
+              </button>
+            </div>
+            <div className="border-t border-slate-100 px-6 py-4 text-[11px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
+              Your proposal will be reviewed by {listing.company_name}. AI may analyse submissions but humans make all decisions.
+            </div>
+          </>
+
+        /* ── Form ── */
+        ) : (
+          <div className="flex flex-col" style={{ maxHeight: "calc(95vh - 6px)" }}>
+          <div className="ea-scroll overflow-y-auto flex-1 min-h-0">
+            <div className="relative px-6 pt-5 pb-2 flex items-start justify-between">
+              <div>
+                <button type="button" onClick={() => setStep("choose")} className="mb-1 inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-slate-600 transition">
+                  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6" /></svg>
+                  Back
+                </button>
+                <h2 className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Submit Proposal to {listing.company_name}</h2>
+              </div>
+              <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+
+
+            {/* Blueprint return banner */}
+            {blueprintReturn && (
+              <div className="mx-6 mb-3 flex items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 dark:border-brand-800 dark:bg-brand-900/20">
+                <svg className="h-4 w-4 shrink-0 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                <p className="text-[12px] text-brand-800 dark:text-brand-200">
+                  <span className="font-semibold">EnterprateAI generated proposal attached.</span> Your Business Blueprints proposal is ready below. Add a cover letter and fill in any requirements, then submit.
+                </p>
+              </div>
+            )}
+
+            {/* Requirements — format-aware per-item response fields */}
+            {allReqs.length > 0 && (
+              <div className="mx-6 mb-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                    Requirements from {listing.company_name}
+                  </div>
+                  <span className={`text-[10px] font-semibold ${allMandatoryAnswered ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>
+                    {allReqs.filter((r, i) => {
+                      if (!(typeof r === "object" && r?.mandatory)) return false;
+                      const fmt = r?.format || "text";
+                      return (fmt === "document" || fmt === "image" || fmt === "presentation") ? !!reqFiles[i] : (reqResponses[i] || "").trim();
+                    }).length}/{allReqs.filter(r => typeof r === "object" && r?.mandatory).length} required answered
+                  </span>
+                </div>
+                {allReqs.map((r, i) => {
+                  const text = typeof r === "string" ? r : r?.text || "";
+                  const mandatory = typeof r === "object" && r?.mandatory;
+                  const fmt = (typeof r === "object" && r?.format) || "text";
+                  const fmtMeta = REQ_FORMAT_META[fmt] || REQ_FORMAT_META.text;
+                  const isFile = fmt === "document" || fmt === "image" || fmt === "presentation";
+                  const answered = isFile ? !!reqFiles[i] : (reqResponses[i] || "").trim().length > 0;
+                  const acceptMap = { document: ".pdf,.doc,.docx", image: "image/*", presentation: ".pdf,.ppt,.pptx,.key" };
+                  return (
+                    <div key={i} className={`rounded-xl border p-3 transition
+                      ${mandatory
+                        ? answered
+                          ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-900/10"
+                          : "border-red-200 bg-red-50/60 dark:border-red-800 dark:bg-red-900/10"
+                        : "border-amber-100 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-900/10"}`}>
+                      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                        {mandatory
+                          ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-600 dark:bg-red-900/30 dark:text-red-400">Required</span>
+                          : <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">Optional</span>}
+                        <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[9px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                          {fmtMeta.icon} {fmtMeta.label}
+                        </span>
+                        {answered && <svg className="h-3 w-3 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" /></svg>}
+                      </div>
+                      <p className="mb-2 text-[12px] font-medium text-slate-700 dark:text-slate-300">{text}</p>
+                      {fmt === "text" && (
+                        <textarea value={reqResponses[i] || ""} onChange={(e) => setReqResponses(prev => ({ ...prev, [i]: e.target.value }))}
+                          rows={2} placeholder={mandatory ? "Your written response is required…" : "Your response (optional)…"}
+                          className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                      )}
+                      {fmt === "figures" && (
+                        <textarea value={reqResponses[i] || ""} onChange={(e) => setReqResponses(prev => ({ ...prev, [i]: e.target.value }))}
+                          rows={3} placeholder="e.g. Revenue: £120,000 | Margin: 32% | Team: 8"
+                          className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px] font-mono text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                      )}
+                      {fmt === "link" && (
+                        <input type="url" value={reqResponses[i] || ""} onChange={(e) => setReqResponses(prev => ({ ...prev, [i]: e.target.value }))}
+                          placeholder="https://"
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px] text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+                      )}
+                      {isFile && (
+                        <label className={`flex cursor-pointer items-center gap-3 rounded-lg border-2 border-dashed px-3 py-2.5 transition
+                          ${reqFiles[i] ? "border-emerald-400 bg-emerald-50 dark:border-emerald-600 dark:bg-emerald-900/10" : "border-slate-200 bg-slate-50 hover:border-brand-300 dark:border-slate-700 dark:bg-slate-800/40"}`}>
+                          <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                          </svg>
+                          <span className="text-[11px] text-slate-600 dark:text-slate-400">
+                            {reqFiles[i] ? reqFiles[i].name : `Upload ${fmtMeta.label}${mandatory ? " (required)" : " (optional)"}`}
+                          </span>
+                          <input type="file" accept={acceptMap[fmt] || "*"} className="sr-only"
+                            onChange={(e) => setReqFiles(prev => ({ ...prev, [i]: e.target.files?.[0] || null }))} />
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
+                {!allMandatoryAnswered && (
+                  <p className="text-[10px] text-red-500">Complete all required items above before submitting.</p>
+                )}
+              </div>
+            )}
+
+            <form id="proposal-submit-form" onSubmit={handleSubmit} className="px-6 pb-4 pt-2 space-y-4">
+              <div>
+                <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">
+                  Proposal Title <span className="text-red-500">*</span>
+                </label>
+                <input value={title} onChange={(e) => setTitle(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" />
+              </div>
+
+              <div>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-400">Cover Letter / Summary</label>
+                  {isLoggedIn ? (
+                    <button type="button" onClick={handleGenerateAI} disabled={aiLoading}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-brand-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                      {aiLoading ? <Spinner size={10} /> : (
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                      )}
+                      {aiLoading ? "Generating…" : "Generate with AI"}
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => { onClose(); navigate(`/login?next=/marketplace/request/${request?.id || ""}`); }}
+                      className="inline-flex items-center gap-1 rounded-lg bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200 transition dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400" title="Sign in to use AI generation">
+                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+                      Sign in to use AI
+                    </button>
+                  )}
+                </div>
+                <textarea value={summary} onChange={(e) => { setSummary(e.target.value); try { sessionStorage.setItem(_summaryKey, e.target.value); } catch {} }} rows={5}
+                  placeholder={isSpecific
+                    ? "Explain specifically how you meet the requirements of this request, your approach, timeline, and relevant experience..."
+                    : "Introduce yourself, explain why you're a great fit, and highlight key offerings..."}
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">Attach Document <span className="font-normal text-slate-400">(PDF or Word, optional)</span></label>
+                <label className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed px-4 py-3 transition ${(file || pdfFilename) ? "border-brand-400 bg-brand-50 dark:border-brand-600 dark:bg-brand-900/20" : "border-slate-200 bg-slate-50 hover:border-brand-300 dark:border-slate-700 dark:bg-slate-800/40"}`}>
+                  <svg className="h-5 w-5 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17,8 12,3 7,8" /><line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  <span className="text-[12px] text-slate-600 dark:text-slate-400">
+                    {file ? file.name : pdfFilename ? pdfFilename : "Click to upload a PDF or Word document"}
+                  </span>
+                  <input type="file" accept=".pdf,.doc,.docx" className="sr-only"
+                    onChange={(e) => { setPdfGenerating(false); setFile(e.target.files?.[0] || null); }} />
+                </label>
+                {(file || pdfFilename) && (
+                  <div className="mt-1.5 flex items-center justify-between">
+                    <button type="button" onClick={() => { setFile(null); }} className="text-[11px] text-slate-400 hover:text-red-500 transition">Remove file</button>
+                    {file && (
+                      <a href={URL.createObjectURL(file)} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-brand-600 hover:text-brand-700 transition">
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Preview / Download
+                      </a>
+                    )}
+                    {!file && pdfGenerating && (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                        <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                        Preparing PDF...
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Pre-submit checklist */}
+              <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/40">
+                <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">What's included in this submission</div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <svg className={`h-3 w-3 shrink-0 ${summary.trim() ? "text-emerald-500" : "text-slate-300"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>
+                    <span className={summary.trim() ? "text-slate-700 dark:text-slate-300" : "text-slate-400"}>Cover letter / summary {!summary.trim() && <span className="text-amber-500">(empty)</span>}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <svg className={`h-3 w-3 shrink-0 ${file ? "text-emerald-500" : "text-amber-400"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>
+                    <span className={file ? "text-slate-700 dark:text-slate-300" : "text-amber-600 dark:text-amber-400"}>
+                      {file ? `Document: ${file.name}` : pdfFilename && pdfGenerating ? "Document: generating…" : "No document attached"}
+                    </span>
+                  </div>
+                  {allReqs.length > 0 && (
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <svg className={`h-3 w-3 shrink-0 ${allMandatoryAnswered ? "text-emerald-500" : "text-red-400"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>
+                      <span className="text-slate-700 dark:text-slate-300">{allReqs.length} requirement{allReqs.length !== 1 ? "s" : ""} from {listing.company_name}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">{error}</div>
+              )}
+
+            </form>
+          </div>
+          <div className="border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-4 flex gap-3 shrink-0">
+            <button type="button" onClick={onClose}
+              className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+              Cancel
+            </button>
+            {!isLoggedIn ? (
+              <button type="button" onClick={() => setStep("signup")}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 px-4 py-2.5 text-[13px] font-bold text-white hover:opacity-90 transition">
+                Sign Up / Sign In
+              </button>
+            ) : isPaid ? (
+              <button type="submit" form="proposal-submit-form" disabled={submitting || !allMandatoryAnswered}
+                title={!allMandatoryAnswered ? "Respond to all required items above before submitting" : undefined}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                {submitting && <Spinner size={14} />}
+                {submitting ? "Submitting…" : "Submit Proposal"}
+              </button>
+            ) : (
+              <button type="button" onClick={() => setStep("upgrade")}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 px-4 py-2.5 text-[13px] font-bold text-white hover:opacity-90 transition">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                Upgrade to Submit
+              </button>
+            )}
+          </div>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── Proposal Request Detail Modal ───────────────────────────────────────────
+
+function ProposalRequestDetailModal({ req, isOwn, onApply, onClose }) {
+  const deadlinePassed = req.deadline && new Date(req.deadline) < new Date();
+  const reqs = req.requirements || [];
+  const acceptedModeLabel = Array.isArray(req.accepted_modes)
+    ? req.accepted_modes.map((m) => fmt(m)).join(", ")
+    : req.accepted_modes ? fmt(req.accepted_modes) : null;
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="ea-dialog ea-scroll relative z-10 w-full max-w-lg overflow-y-auto rounded-t-3xl sm:rounded-2xl" style={{ maxHeight: "92vh" }}>
+
+        {/* Header */}
+        <div className="sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 px-5 pt-5 pb-4">
+          <div className="flex items-start gap-3">
+            {req.company_logo ? (
+              <img src={req.company_logo} alt={req.company_name} className="h-10 w-10 shrink-0 rounded-xl border border-slate-200 bg-white object-contain p-1 dark:border-slate-700 dark:bg-slate-800" />
+            ) : (
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 text-sm font-bold text-white">
+                {(req.company_name || "?").slice(0, 2).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold text-brand-600 dark:text-brand-400">{req.company_name}</p>
+              <h2 className="mt-0.5 text-[16px] font-bold leading-snug text-slate-900 dark:text-slate-100">{req.title}</h2>
+            </div>
+            <button onClick={onClose} className="shrink-0 flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-4 space-y-4">
+
+          {/* Category + mode badges */}
+          <div className="flex flex-wrap gap-2">
+            {req.category && (
+              <span className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${categoryColor(req.category)}`}>{fmt(req.category)}</span>
+            )}
+            {acceptedModeLabel && (
+              <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-400">{acceptedModeLabel}</span>
+            )}
+            {(req.accepted_categories || []).map((c) => (
+              <span key={c} className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">{fmt(c)}</span>
+            ))}
+          </div>
+
+          {/* Description */}
+          {req.description && (
+            <p className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-400">{req.description}</p>
+          )}
+
+          {/* Meta row */}
+          <div className="flex flex-wrap gap-4 text-[12px] text-slate-500 dark:text-slate-400">
+            {req.budget_range && (
+              <span className="inline-flex items-center gap-1.5">
+                <svg className="h-3.5 w-3.5 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="11" rx="2"/><path d="M16 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0"/><path d="M6 12h.01M18 12h.01"/></svg>
+                Budget: <strong className="text-slate-700 dark:text-slate-300">{req.budget_currency || "GBP"} {req.budget_range}</strong>
+              </span>
+            )}
+            {req.deadline && (
+              <span className={`inline-flex items-center gap-1.5 ${deadlinePassed ? "text-red-500 dark:text-red-400" : ""}`}>
+                <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                {deadlinePassed ? "Deadline passed" : `Due ${new Date(req.deadline).toLocaleDateString()}`}
+              </span>
+            )}
+            {req.submission_cap != null && (
+              <span className="inline-flex items-center gap-1.5">
+                <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Max {req.submission_cap} proposals
+              </span>
+            )}
+          </div>
+
+          {/* Specific criteria */}
+          {req.specific_criteria && (req.specific_criteria.business_types?.length > 0 || req.specific_criteria.operating_stages?.length > 0 || req.specific_criteria.industry || req.specific_criteria.country) && (
+            <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-4 dark:border-violet-800 dark:bg-violet-900/10 space-y-3">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-violet-600 dark:text-violet-400">Who can apply</p>
+              <div className="flex flex-wrap gap-x-6 gap-y-2 text-[12px] text-slate-600 dark:text-slate-400">
+                {req.specific_criteria.business_types?.length > 0 && (
+                  <div>
+                    <span className="font-semibold text-slate-500 dark:text-slate-400">Business type: </span>
+                    <span>{req.specific_criteria.business_types.map(t => t.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())).join(", ")}</span>
+                  </div>
+                )}
+                {req.specific_criteria.operating_stages?.length > 0 && (
+                  <div>
+                    <span className="font-semibold text-slate-500 dark:text-slate-400">Stage: </span>
+                    <span>{req.specific_criteria.operating_stages.map(s => s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())).join(", ")}</span>
+                  </div>
+                )}
+                {req.specific_criteria.industry && (
+                  <div>
+                    <span className="font-semibold text-slate-500 dark:text-slate-400">Industry: </span>
+                    <span>{req.specific_criteria.industry}</span>
+                  </div>
+                )}
+                {req.specific_criteria.country && (
+                  <div>
+                    <span className="font-semibold text-slate-500 dark:text-slate-400">Country: </span>
+                    <span>{req.specific_criteria.country}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Requirements */}
+          {reqs.length > 0 && (
+            <div>
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">What you'll need to provide</p>
+              <ul className="space-y-2">
+                {reqs.map((r, i) => {
+                  const text = typeof r === "string" ? r : r?.text || "";
+                  const mandatory = typeof r === "object" && !!r?.mandatory;
+                  const fmt_key = (typeof r === "object" && r?.format) || "text";
+                  const meta = REQ_FORMAT_META[fmt_key] || REQ_FORMAT_META.text;
+                  return (
+                    <li key={i} className={`flex items-start gap-3 rounded-xl border p-3 ${mandatory ? "border-indigo-100 bg-indigo-50/60 dark:border-indigo-900/50 dark:bg-indigo-900/20" : "border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/30"}`}>
+                      <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${mandatory ? "bg-indigo-200 text-indigo-700 dark:bg-indigo-800 dark:text-indigo-300" : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400"}`}>
+                        {mandatory ? "Required" : "Optional"}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 mb-0.5">
+                          <span className="text-brand-500">{meta.icon}</span>
+                          <span>{meta.label}</span>
+                        </div>
+                        <p className="text-[13px] text-slate-700 dark:text-slate-300">{text}</p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Footer CTA */}
+        <div className="sticky bottom-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 py-4">
+          {isOwn ? (
+            <div className="w-full flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 py-3 text-[12px] font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500">
+              This is your request
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={deadlinePassed}
+              onClick={() => { onClose(); onApply(); }}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-[13px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/>
+                <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
+              </svg>
+              {deadlinePassed ? "Deadline Passed" : "Submit Proposal"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── Proposal Request Card ───────────────────────────────────────────────────
+
+function ProposalRequestCard({ req, isLoggedIn, isOwn, isApplied, onApply, onCompanyClick, onViewDetail }) {
+  const deadlinePassed = req.deadline && new Date(req.deadline) < new Date();
+  const [shareCopied, setShareCopied] = useState(false);
+
+  function handleShare(e) {
+    e.stopPropagation();
+    const url = `${window.location.origin}/marketplace/request/${req.id}`;
+    const budget = req.budget_range ? `. Budget: ${req.budget_currency || "GBP"} ${req.budget_range.replace(/ - /g, " to ")}` : "";
+    const text = `${req.company_name} is looking for proposals: "${req.title}"${budget}. Apply now.`;
+    if (navigator.share) {
+      navigator.share({ title: req.title, text, url }).catch(() => {});
+    } else {
+      navigator.clipboard?.writeText(url).catch(() => {});
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    }
+  }
+
+  return (
+    <article className="group flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-brand-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-600">
+      <div className="flex items-start gap-3">
+        <button type="button" onClick={onCompanyClick} className="shrink-0 hover:opacity-80 transition-opacity">
+          {req.company_logo ? (
+            <img src={req.company_logo} alt={req.company_name} className="h-10 w-10 rounded-xl border border-slate-200 bg-white object-contain p-1 dark:border-slate-700 dark:bg-slate-800" />
+          ) : (
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 text-sm font-bold text-white">
+              {(req.company_name || "?").slice(0, 2).toUpperCase()}
+            </div>
+          )}
+        </button>
+        <button type="button" onClick={onViewDetail} className="min-w-0 flex-1 text-left hover:opacity-90 transition-opacity">
+          <p className="truncate text-[11px] font-semibold text-brand-600 dark:text-brand-400">{req.company_name}</p>
+          <h3 className="mt-0.5 text-[14px] font-bold leading-snug text-slate-900 dark:text-slate-100">{req.title}</h3>
+        </button>
+      </div>
+
+      {/* Clickable body area */}
+      <button type="button" onClick={onViewDetail} className="mt-3 text-left w-full">
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {req.category && (
+            <span className={`inline-flex w-fit rounded-lg px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${categoryColor(req.category)}`}>
+              {fmt(req.category)}
+            </span>
+          )}
+          {(req.accepted_modes || [])[0] === "specific" && (
+            <span className="inline-flex w-fit rounded-lg px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+              Specific
+            </span>
+          )}
+        </div>
+
+        {req.description && (
+          <p className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-slate-600 dark:text-slate-400">{req.description}</p>
+        )}
+
+        {req.specific_criteria && (req.specific_criteria.business_types?.length > 0 || req.specific_criteria.operating_stages?.length > 0 || req.specific_criteria.industry || req.specific_criteria.country) && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {req.specific_criteria.industry && (
+              <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-700 dark:border-violet-800 dark:bg-violet-900/20 dark:text-violet-300">{req.specific_criteria.industry}</span>
+            )}
+            {req.specific_criteria.country && (
+              <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-700 dark:border-violet-800 dark:bg-violet-900/20 dark:text-violet-300">{req.specific_criteria.country}</span>
+            )}
+            {(req.specific_criteria.operating_stages || []).map(s => (
+              <span key={s} className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-700 dark:border-violet-800 dark:bg-violet-900/20 dark:text-violet-300">{s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-slate-500 dark:text-slate-400">
+          {req.budget_range && (
+            <span className="inline-flex items-center gap-1">
+              <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="2" y="7" width="20" height="11" rx="2"/><path d="M16 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0"/><path d="M6 12h.01M18 12h.01"/>
+              </svg>
+              {req.budget_currency || "GBP"} {req.budget_range}
+            </span>
+          )}
+          {req.deadline && (
+            <span className={`inline-flex items-center gap-1 ${deadlinePassed ? "text-red-500 dark:text-red-400" : ""}`}>
+              <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+              {deadlinePassed ? "Closed" : `Due ${new Date(req.deadline).toLocaleDateString()}`}
+            </span>
+          )}
+          {req.submission_cap != null && (
+            <span className="inline-flex items-center gap-1">
+              <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              Max {req.submission_cap} proposals
+            </span>
+          )}
+        </div>
+
+        {(req.requirements || []).length > 0 && (
+          <ul className="mt-3 space-y-1">
+            {req.requirements.slice(0, 3).map((r, i) => (
+              <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-600 dark:text-slate-400">
+                <svg className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" /></svg>
+                {typeof r === "string" ? r : r?.text || JSON.stringify(r)}
+              </li>
+            ))}
+            {req.requirements.length > 3 && (
+              <li className="text-[11px] text-brand-600 dark:text-brand-400 font-medium">View {req.requirements.length - 3} more requirements →</li>
+            )}
+          </ul>
+        )}
+      </button>
+
+      <div className="mt-auto pt-4">
+        {isOwn ? (
+          <div className="flex gap-2">
+            <div className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-[12px] font-semibold text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500">
+              Your request
+            </div>
+            <button type="button" onClick={handleShare} title={shareCopied ? "Link copied!" : "Share"}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition dark:border-slate-700 dark:hover:border-brand-600 dark:hover:text-brand-400">
+              {shareCopied ? <svg className="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                : <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>}
+            </button>
+          </div>
+        ) : isApplied ? (
+          <div className="flex gap-2">
+            <button type="button" onClick={onViewDetail}
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              View
+            </button>
+            <div className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 py-2.5 text-[12px] font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+              Applied
+            </div>
+            <button type="button" onClick={handleShare} title={shareCopied ? "Link copied!" : "Share"}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition dark:border-slate-700 dark:hover:border-brand-600 dark:hover:text-brand-400">
+              {shareCopied ? <svg className="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                : <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>}
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <button type="button" onClick={onViewDetail}
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              View
+            </button>
+            <button type="button" disabled={deadlinePassed} onClick={onApply}
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-[12px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
+                <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+              {deadlinePassed ? "Closed" : "Apply"}
+            </button>
+            <button type="button" onClick={handleShare} title={shareCopied ? "Link copied!" : "Share"}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition dark:border-slate-700 dark:hover:border-brand-600 dark:hover:text-brand-400">
+              {shareCopied ? <svg className="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                : <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>}
+            </button>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+// ─── main page ─────────────────────────────────────────���──────────────────────
+
+// The Products & Services and Proposal Requests tabs of the Marketplace. The page shell
+// (MarketplacePage) owns the header, the search box and the tabs, and loads this on demand.
+export default function MarketplaceListings({ tab = "products", query = "", onTab, onQuery }) {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { triggerDemoGate } = useDemoTour() || {};
+  const token = useAuthStore((s) => s.token);
+  const userEmail = useAuthStore((s) => s.email);
+  const isLoggedIn = Boolean(token);
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+
+  const activeTab = tab;
+  const [listings, setListings] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const [myStatus, setMyStatus] = useState(null);
+  const [featured, setFeatured] = useState(null);
+  const [boosting, setBoosting] = useState(false);
+  const [profileViews, setProfileViews] = useState(null);
+  const [viewsLoading, setViewsLoading] = useState(false);
+  const [showViews, setShowViews] = useState(false);
+
+  const [search, setSearch] = useState(tab === "requests" ? "" : query);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [filterIndustry, setFilterIndustry] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [filterCategory, setFilterCategory] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [sortBy, setSortBy] = useState("az");
+  const [showSort, setShowSort] = useState(false);
+  const [page, setPage] = useState(1);
+
+  const [selected, setSelected] = useState(null);
+  const [gateAction, setGateAction] = useState(null);
+  const [rfqTarget, setRfqTarget] = useState(null);
+  const [serviceDetail, setServiceDetail] = useState(null); // { service, listing }
+  const [applyTarget, setApplyTarget] = useState(null); // listing to apply to
+  const [reqDetail, setReqDetail] = useState(null); // proposal request detail popup
+  const [appliedWorkspaceIds, setAppliedWorkspaceIds] = useState(() => new Set());
+
+  const [propRequests, setPropRequests] = useState([]);
+  const [propReqTotal, setPropReqTotal] = useState(0);
+  const [propReqLoading, setPropReqLoading] = useState(false);
+  const [propReqSearch, setPropReqSearch] = useState(tab === "requests" ? query : "");
+  const [debouncedPropReqSearch, setDebouncedPropReqSearch] = useState("");
+  // The search box lives in the page shell: what is typed there searches the tab in view.
+  useEffect(() => { if (tab === "requests") setPropReqSearch(query); else setSearch(query); }, [query, tab]);
+
+  const PAGE_SIZE = 24;
+
+  useEffect(() => {
+    const t = setTimeout(() => { setDebouncedSearch(search); setPage(1); }, 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedPropReqSearch(propReqSearch), 350);
+    return () => clearTimeout(t);
+  }, [propReqSearch]);
+
+  useEffect(() => {
+    if (activeTab !== "requests") return;
+    let alive = true;
+    setPropReqLoading(true);
+    const params = new URLSearchParams({ page: "1", page_size: "50" });
+    if (debouncedPropReqSearch) params.set("search", debouncedPropReqSearch);
+    apiRequest(`/marketplace/proposal-requests?${params}`, "GET")
+      .then((res) => {
+        if (!alive) return;
+        const items = res.items || [];
+        setPropRequests(items);
+        setPropReqTotal(res.total || 0);
+        // Auto-open apply modal when arriving via invite link (?request=<id>)
+        const targetId = searchParams.get("request");
+        if (targetId) {
+          const target = items.find((r) => r.id === targetId);
+          if (target) {
+            setApplyTarget({ workspace_id: target.workspace_id, company_name: target.company_name, logo_data_url: target.company_logo, _request: target });
+            setSearchParams({ tab: "requests" }, { replace: true }); // clean URL, stay on this tab
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (alive) setPropReqLoading(false); });
+    return () => { alive = false; };
+  }, [activeTab, debouncedPropReqSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") setRefreshKey(k => k + 1); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
+  // Detect return from Blueprint proposal generator
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("ea_proposal_return");
+      if (!raw) return;
+      // Keep in sessionStorage — only cleared after successful submission so the user can navigate back
+      const ret = JSON.parse(raw);
+      if (ret?.listing) {
+        setApplyTarget({ ...ret.listing, _request: ret.request || null, _blueprint_return: { title: ret.title, document_html: ret.document_html, document_markdown: ret.document_markdown || "", prepared_by: ret.prepared_by || "", service_focus: ret.service_focus || "", contact: ret.contact || "" } });
+        onTab?.("requests");
+      }
+    } catch {}
+  }, []); // eslint-disable-line
+
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      setLoading(true); setError(null);
+      try {
+        const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
+        if (debouncedSearch) params.set("search", debouncedSearch);
+        if (filterIndustry) params.set("industry", filterIndustry);
+        if (filterType) params.set("business_type", filterType);
+        const res = await apiRequest(`/marketplace/listings?${params}`, "GET");
+        if (!alive) return;
+        setListings(res.items || []);
+        setTotal(res.total || 0);
+        // ?business=<id>: a link from a business's public profile opens that listing, with its enquiry and quote actions.
+        const wanted = searchParams.get("business");
+        const match = wanted && (res.items || []).find((l) => String(l.workspace_id) === wanted);
+        // &quote=1 (and &offering=<name>): straight to the quote form, with that offering already on its first line.
+        if (match && searchParams.get("quote")) setRfqTarget({ listing: match, productName: searchParams.get("offering") || null });
+        else if (match) setSelected(match);
+      } catch (e) {
+        if (!alive) return;
+        setError(e instanceof Error ? e.message : "Failed to load marketplace.");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+    load();
+    return () => { alive = false; };
+  }, [debouncedSearch, filterIndustry, filterType, page, refreshKey]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !workspaceId) return;
+    let alive = true;
+    apiRequest("/marketplace/status", "GET").then((res) => { if (alive) setMyStatus(res); }).catch(() => {}).finally(() => { alive = false; });
+    return () => { alive = false; };
+  }, [isLoggedIn, workspaceId]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !myStatus?.is_published) { setFeatured(null); return; }
+    let alive = true;
+    apiRequest("/addons/featured", "GET").then((res) => { if (alive) setFeatured(res); }).catch(() => {});
+    return () => { alive = false; };
+  }, [isLoggedIn, myStatus?.is_published]);
+
+  async function boostListing() {
+    if (!featured?.boosts_remaining) { navigate("/pricing#addons"); return; }
+    setBoosting(true);
+    try {
+      const res = await apiRequest("/addons/boost", "POST", {});
+      setFeatured(res);
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      alertDialog(e instanceof Error ? e.message.replace(/^HTTP \d+:\s*/, "") : "Could not boost your listing.");
+    } finally {
+      setBoosting(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isLoggedIn || !myStatus?.is_published) return;
+    let alive = true;
+    setViewsLoading(true);
+    apiRequest("/marketplace/my/views", "GET").then((res) => { if (alive) setProfileViews(res); }).catch(() => {}).finally(() => { if (alive) setViewsLoading(false); alive = false; });
+    return () => { alive = false; };
+  }, [isLoggedIn, myStatus?.is_published]);
+
+  // Derive all products from listings (workspace profile services + catalogue products)
+  const allProducts = useMemo(() => {
+    const products = [];
+    const q = debouncedSearch.toLowerCase();
+    for (const listing of listings) {
+      for (const service of (listing.services || [])) {
+        if (!service.service_name) continue;
+        const cleanSvcDesc = /^cost of sales/i.test(service.service_description || "") ? "" : (service.service_description || "");
+        const cleanService = cleanSvcDesc !== service.service_description ? { ...service, service_description: cleanSvcDesc } : service;
+        const matchesSearch = !q ||
+          cleanService.service_name.toLowerCase().includes(q) ||
+          cleanSvcDesc.toLowerCase().includes(q) ||
+          listing.company_name.toLowerCase().includes(q);
+        const matchesCategory = !filterCategory ||
+          (cleanService.service_category || "").toLowerCase().includes(filterCategory.toLowerCase());
+        if (matchesSearch && matchesCategory)
+          products.push({ service: cleanService, listing, _key: `svc-${listing.workspace_id}-${cleanService.service_name}` });
+      }
+      for (const cp of (listing.catalogue_products || [])) {
+        if (!cp.name) continue;
+        const matchesSearch = !q ||
+          cp.name.toLowerCase().includes(q) ||
+          (cp.description || "").toLowerCase().includes(q) ||
+          listing.company_name.toLowerCase().includes(q);
+        if (matchesSearch)
+          products.push({
+            service: { service_name: cp.name, service_description: /^cost of sales/i.test(cp.description || "") ? "" : (cp.description || ""), service_category: cp.type || "product" },
+            listing,
+            _key: `cat-${listing.workspace_id}-${cp.id || cp.name}`,
+          });
+      }
+    }
+    // Deduplicate: if a catalogue product and a profile service share the same name for the same workspace,
+    // keep the catalogue product (richer data) and drop the service duplicate.
+    // Build a lookup of profile service descriptions so catalogue products can fall back to them.
+    const profileDescMap = new Map();
+    for (const p of products) {
+      if (!p._key.startsWith("cat-") && p.service.service_description) {
+        profileDescMap.set(`${p.listing.workspace_id}||${p.service.service_name.toLowerCase().trim()}`, p.service.service_description);
+      }
+    }
+    const catalogueKeys = new Set(
+      products.filter((p) => p._key.startsWith("cat-"))
+        .map((p) => `${p.listing.workspace_id}||${p.service.service_name.toLowerCase().trim()}`)
+    );
+    const deduped = products
+      .filter(
+        (p) => p._key.startsWith("cat-") ||
+          !catalogueKeys.has(`${p.listing.workspace_id}||${p.service.service_name.toLowerCase().trim()}`)
+      )
+      .map((p) => {
+        if (!p._key.startsWith("cat-") || p.service.service_description) return p;
+        const fallback = profileDescMap.get(`${p.listing.workspace_id}||${p.service.service_name.toLowerCase().trim()}`);
+        if (!fallback) return p;
+        return { ...p, service: { ...p.service, service_description: fallback } };
+      });
+
+    if (sortBy === "rating")   deduped.sort((a, b) => (b.listing.avg_rating ?? 0) - (a.listing.avg_rating ?? 0));
+    else if (sortBy === "reviews") deduped.sort((a, b) => (b.listing.rating_count ?? 0) - (a.listing.rating_count ?? 0));
+    else if (sortBy === "az")  deduped.sort((a, b) => (a.service.service_name || "").localeCompare(b.service.service_name || ""));
+    // default "az": listings are shown alphabetically by service name
+    // Featured listings always lead; order within each group is kept.
+    deduped.sort((a, b) => Number(!!b.listing.is_featured) - Number(!!a.listing.is_featured));
+    return deduped;
+  }, [listings, debouncedSearch, filterCategory, sortBy]);
+
+  function clearFilters() { setFilterIndustry(""); setFilterType(""); setFilterCategory(""); setSearch(""); onQuery?.(""); setPage(1); }
+  const hasFilters = filterIndustry || filterType || filterCategory || debouncedSearch;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  // Listing, publishing and unpublishing happen on the Marketplace profile page, where the
+  // activation checklist and the "is this your business?" check apply.
+  function openMarketplaceProfile() {
+    if (triggerDemoGate?.("marketplace")) return;
+    navigate("/marketplace/profile");
+  }
+
+  return (
+    <div className="flex flex-1 flex-col">
+      {/* Main content */}
+      <div className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
+        {/* Publish banner */}
+        {isLoggedIn && myStatus && !myStatus.is_published && (
+          <div className="mb-5 flex items-center justify-between gap-4 rounded-2xl border border-brand-200 bg-gradient-to-r from-brand-50 to-accent-50 px-5 py-4 dark:border-brand-800 dark:from-brand-900/20 dark:to-accent-900/20">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-900/50 dark:text-brand-400">
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9" /></svg>
+              </div>
+              <div>
+                <div className="text-[13px] font-bold text-brand-800 dark:text-brand-300">Your business isn't listed yet</div>
+                <div className="text-[12px] text-brand-600 dark:text-brand-400">
+                  Say what the public should see and which opportunities you want, then publish.
+                </div>
+              </div>
+            </div>
+            <button onClick={openMarketplaceProfile}
+              className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-[12px] font-bold text-white hover:bg-brand-700 transition">
+              Set up your Marketplace profile
+            </button>
+          </div>
+        )}
+        {/* Listed: featuring lives here now that the header is shared across the Marketplace */}
+        {isLoggedIn && myStatus?.is_published && featured && (
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-[13px] text-slate-600 dark:text-slate-300"><span className="font-semibold text-emerald-700 dark:text-emerald-400">Your business is listed.</span> Featured listings are shown first.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={boostListing} disabled={boosting || featured.has_featured_slot}
+                title={featured.boost_until ? `Featured until ${new Date(featured.boost_until).toLocaleString()}` : `Each boost features your listing for ${featured.boost_hours || 24} hours`}
+                className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-1.5 text-[12px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:cursor-default disabled:opacity-80 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                {featured.has_featured_slot
+                  ? "★ Featured"
+                  : boosting
+                    ? "Boosting…"
+                    : featured.boosts_remaining > 0
+                      ? `${featured.is_featured ? "★ Featured · extend" : "Boost listing"} (${featured.boosts_remaining} left)`
+                      : featured.is_featured
+                        ? `★ Featured until ${new Date(featured.boost_until).toLocaleDateString()}`
+                        : "Get featured"}
+              </button>
+              <button type="button" onClick={openMarketplaceProfile} className="rounded-xl border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">Manage Marketplace profile</button>
+            </div>
+          </div>
+        )}
+
+        {/* Filter bar */}
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          <button onClick={() => setShowFilters((p) => !p)}
+            className={`inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] font-medium transition ${hasFilters
+              ? "border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-900/30 dark:text-brand-300"
+              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="21" y1="4" x2="14" y2="4" /><line x1="10" y1="4" x2="3" y2="4" />
+              <line x1="21" y1="12" x2="12" y2="12" /><line x1="8" y1="12" x2="3" y2="12" />
+              <line x1="21" y1="20" x2="16" y2="20" /><line x1="12" y1="20" x2="3" y2="20" />
+              <line x1="14" y1="2" x2="14" y2="6" /><line x1="8" y1="10" x2="8" y2="14" /><line x1="16" y1="18" x2="16" y2="22" />
+            </svg>
+            Filters
+            {[filterIndustry, filterType, filterCategory].filter(Boolean).length > 0 && (
+              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-brand-500 text-[9px] font-bold text-white">
+                {[filterIndustry, filterType, filterCategory].filter(Boolean).length}
+              </span>
+            )}
+          </button>
+
+          {/* Sort button */}
+          <div className="relative">
+            <button
+              onClick={() => setShowSort((p) => !p)}
+              className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] font-medium transition ${sortBy !== "recency"
+                ? "border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-900/30 dark:text-brand-300"
+                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18M7 12h10M11 18h2" />
+              </svg>
+              {{ recency: "Newest first", rating: "Highest rated", reviews: "Most reviewed", az: "A-Z" }[sortBy]}
+              <svg className={`h-3 w-3 transition-transform ${showSort ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9l6 6 6-6" /></svg>
+            </button>
+            {showSort && (
+              <div className="absolute left-0 top-full z-20 mt-1.5 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                {[
+                  { key: "recency",  label: "Newest first" },
+                  { key: "rating",   label: "Highest rated" },
+                  { key: "reviews",  label: "Most reviewed" },
+                  { key: "az",       label: "Name A-Z" },
+                ].map(({ key, label }) => (
+                  <button key={key} onClick={() => { setSortBy(key); setShowSort(false); }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-[13px] transition hover:bg-slate-50 dark:hover:bg-slate-800 ${sortBy === key ? "font-semibold text-brand-600 dark:text-brand-400" : "text-slate-700 dark:text-slate-300"}`}>
+                    {sortBy === key && <svg className="h-3.5 w-3.5 shrink-0 text-brand-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" /></svg>}
+                    {sortBy !== key && <span className="w-3.5" />}
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {hasFilters && (
+            <button onClick={clearFilters} className="text-[12px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition">Clear all</button>
+          )}
+          {activeTab === "products" && (
+            <span className="ml-auto text-[12px] text-slate-400 dark:text-slate-500">
+              {allProducts.length} product{allProducts.length !== 1 ? "s" : ""}
+            </span>
+          )}
+          {activeTab === "profiles" && !loading && (
+            <span className="ml-auto text-[12px] text-slate-400 dark:text-slate-500">
+              {total} business{total !== 1 ? "es" : ""}
+            </span>
+          )}
+          {activeTab === "requests" && !propReqLoading && (
+            <span className="ml-auto text-[12px] text-slate-400 dark:text-slate-500">
+              {propReqTotal} request{propReqTotal !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+
+        {/* Filter panel */}
+        {showFilters && (
+          <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Industry</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {INDUSTRIES.map((ind) => (
+                    <FilterChip key={ind} label={fmt(ind)} active={filterIndustry === ind}
+                      onClick={() => { setFilterIndustry(filterIndustry === ind ? "" : ind); setPage(1); }} />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Business Type</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {BIZ_TYPES.map((t) => (
+                    <FilterChip key={t} label={fmt(t)} active={filterType === t}
+                      onClick={() => { setFilterType(filterType === t ? "" : t); setPage(1); }} />
+                  ))}
+                </div>
+              </div>
+              {activeTab === "products" && (
+                <div>
+                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Category</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SERVICE_CATEGORIES.map((c) => (
+                      <FilterChip key={c} label={fmt(c)} active={filterCategory === c}
+                        onClick={() => setFilterCategory(filterCategory === c ? "" : c)} />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Content */}
+        {error ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">{error}</div>
+        ) : activeTab === "requests" ? (
+          /* ── Proposal Requests tab ── */
+          propReqLoading ? (
+            <div className="flex flex-col items-center justify-center py-24 gap-4">
+              <Spinner size={24} />
+              <p className="text-sm text-slate-500 dark:text-slate-400">Loading proposal requests…</p>
+            </div>
+          ) : propRequests.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800">
+                <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14,2 14,8 20,8" />
+                  <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
+                </svg>
+              </div>
+              <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">
+                {debouncedPropReqSearch ? "No requests match your search" : "No proposal requests yet"}
+              </h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                {debouncedPropReqSearch ? "Try a different search term." : "Businesses post requests when they're looking for proposals. Check back soon."}
+              </p>
+              {debouncedPropReqSearch && (
+                <button onClick={() => { setPropReqSearch(""); onQuery?.(""); }} className="mt-4 text-[13px] font-semibold text-brand-600 hover:underline dark:text-brand-400">Clear search</button>
+              )}
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {propRequests.map((req) => (
+                <ProposalRequestCard
+                  key={req.id}
+                  req={req}
+                  isLoggedIn={isLoggedIn}
+                  isOwn={isLoggedIn && req.workspace_id === workspaceId}
+                  isApplied={appliedWorkspaceIds.has(req.workspace_id)}
+                  onApply={() => setApplyTarget({ workspace_id: req.workspace_id, company_name: req.company_name, logo_data_url: req.company_logo, _request: req })}
+                  onCompanyClick={() => apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {})}
+                  onViewDetail={() => navigate(`/marketplace/request/${req.id}`)}
+                />
+              ))}
+            </div>
+          )
+        ) : loading ? (
+          <SkeletonRegion label="the Marketplace">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" data-listing-skeleton>
+              {Array.from({ length: 8 }, (_, n) => <SkeletonCard key={n} className="h-[220px] p-4" lines={4} />)}
+            </div>
+          </SkeletonRegion>
+        ) : activeTab === "products" ? (
+          /* ── Products tab ── */
+          allProducts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800">
+                <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" /><line x1="3" y1="6" x2="21" y2="6" /><path d="M16 10a4 4 0 0 1-8 0" />
+                </svg>
+              </div>
+              <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">
+                {hasFilters ? "No products match your search" : "No products listed yet"}
+              </h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                {hasFilters ? "Try adjusting your search or filters." : "Businesses with services will appear here."}
+              </p>
+              {hasFilters && <button onClick={clearFilters} className="mt-4 text-[13px] font-semibold text-brand-600 hover:underline dark:text-brand-400">Clear filters</button>}
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {allProducts.map((product) => {
+                const isOwn = isLoggedIn && (myStatus?.workspace_id || workspaceId) === product.listing.workspace_id;
+                return (
+                  <ProductCard
+                    key={product._key}
+                    product={product}
+                    onOpen={setServiceDetail}
+                    onCompanyClick={setSelected}
+                    onRequestQuote={(listing, productName) => setRfqTarget({ listing, productName })}
+                    isOwn={isOwn}
+                  />
+                );
+              })}
+            </div>
+          )
+        ) : (
+          /* ── Profiles tab ── */
+          listings.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800">
+                <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9ZM3 9l2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9M12 3v6" />
+                </svg>
+              </div>
+              <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">
+                {hasFilters ? "No businesses match your filters" : "No businesses listed yet"}
+              </h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                {hasFilters ? "Try adjusting your search or filters." : "Be the first to list your business!"}
+              </p>
+              {hasFilters ? (
+                <button onClick={clearFilters} className="mt-4 text-[13px] font-semibold text-brand-600 hover:underline dark:text-brand-400">Clear filters</button>
+              ) : !isLoggedIn ? (
+                <button onClick={() => setGateAction("publish")} className="mt-4 rounded-xl bg-brand-600 px-5 py-2 text-[13px] font-bold text-white hover:bg-brand-700 transition">
+                  List Your Business →
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {listings.map((l) => {
+                  const isOwn = isLoggedIn && myStatus?.is_published && l.workspace_id === (myStatus?.workspace_id || workspaceId);
+                  return (
+                    <BusinessCard key={l.workspace_id} listing={l} onClick={setSelected} isOwn={isOwn}
+                      viewCount={isOwn ? profileViews?.total : null} onViewsClick={() => setShowViews(true)}
+                      onApply={(listing) => isLoggedIn ? setApplyTarget(listing) : setGateAction("apply")} />
+                  );
+                })}
+              </div>
+              {totalPages > 1 && (
+                <div className="mt-8 flex items-center justify-center gap-2">
+                  <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 2)
+                    .reduce((acc, p, i, arr) => { if (i > 0 && p - arr[i - 1] > 1) acc.push("..."); acc.push(p); return acc; }, [])
+                    .map((p, i) => p === "..." ? (
+                      <span key={`e${i}`} className="px-1 text-slate-400">…</span>
+                    ) : (
+                      <button key={p} onClick={() => setPage(p)}
+                        className={`flex h-9 w-9 items-center justify-center rounded-xl border text-[13px] font-medium transition ${p === page ? "border-brand-500 bg-brand-500 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"}`}>
+                        {p}
+                      </button>
+                    ))}
+                  <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
+                  </button>
+                </div>
+              )}
+            </>
+          )
+        )}
+
+        {/* Footer CTA */}
+        {!isLoggedIn && !loading && (listings.length > 0 || allProducts.length > 0) && (
+          <div className="mt-12 rounded-3xl bg-gradient-to-br from-brand-600 to-accent-700 p-8 text-center">
+            <h2 className="text-2xl font-extrabold text-white">Is your business here?</h2>
+            <p className="mt-2 text-white/70">Validate your idea on EnterprateAI and list your business for free.</p>
+            <button onClick={() => setGateAction("publish")} className="mt-5 inline-block rounded-xl bg-white px-6 py-3 text-[13px] font-bold text-brand-700 transition hover:bg-brand-50">
+              Get Started. It's Free
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Modals */}
+      {serviceDetail && (
+        <ServiceDetailModal
+          product={serviceDetail}
+          onClose={() => setServiceDetail(null)}
+          onRequestQuote={(listing, productName) => { setServiceDetail(null); setRfqTarget({ listing, productName }); }}
+          onCompanyClick={(listing) => { setServiceDetail(null); setSelected(listing); }}
+          isOwnListing={isLoggedIn && (myStatus?.workspace_id || workspaceId) === serviceDetail.listing.workspace_id}
+          userEmail={userEmail}
+        />
+      )}
+      {selected && !rfqTarget && (
+        <BusinessProfileModal listing={selected} onClose={() => setSelected(null)} isLoggedIn={isLoggedIn}
+          userEmail={userEmail} ownWorkspaceId={myStatus?.workspace_id || workspaceId}
+          onNeedAuth={(action) => { setSelected(null); setGateAction(action); }}
+          onRequestQuote={(listing) => setRfqTarget({ listing, productName: null })} />
+      )}
+      {rfqTarget && <RFQModal listing={rfqTarget.listing} prefilledProduct={rfqTarget.productName} onClose={() => setRfqTarget(null)} />}
+      {applyTarget && <ApplyModal listing={applyTarget} request={applyTarget._request || null} onClose={() => setApplyTarget(null)} onSuccess={(wsId) => setAppliedWorkspaceIds(prev => new Set([...prev, wsId]))} />}
+      {gateAction && <SignUpGateModal action={gateAction} onClose={() => setGateAction(null)} />}
+
+      {/* Profile views modal */}
+      {showViews && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowViews(false)}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div className="relative w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-[14px] font-semibold text-slate-800 dark:text-slate-200">Who viewed your profile</h3>
+              <button type="button" onClick={() => setShowViews(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+            {viewsLoading ? (
+              <div className="flex items-center gap-2 text-[13px] text-slate-400 dark:text-slate-500"><Spinner size={14} /> Loading views…</div>
+            ) : profileViews?.views?.length ? (
+              <div className="flex flex-col gap-2 max-h-80 overflow-y-auto">
+                {profileViews.views.slice(0, 12).map((v) => {
+                  const isRegistered = !!(v.viewer_workspace_id || v.viewer_email);
+                  const label = v.viewer_company || v.viewer_email || (v.viewer_workspace_id ? "Platform user" : "Marketplace visitor");
+                  const sublabel = v.viewer_company && v.viewer_email ? v.viewer_email : null;
+                  const grad = avatarGradient(v.viewer_company || v.viewer_email || v.viewer_workspace_id || "anon");
+                  const avatarText = v.viewer_company ? initials(v.viewer_company) : v.viewer_email ? v.viewer_email[0].toUpperCase() : null;
+                  const date = new Date(v.viewed_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+                  const time = new Date(v.viewed_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+                  return (
+                    <div key={v.view_id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-800/50">
+                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[11px] font-bold text-white ${isRegistered ? `bg-gradient-to-br ${grad}` : "bg-slate-200 dark:bg-slate-700"}`}>
+                        {avatarText ?? <svg className="h-3.5 w-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[12px] font-semibold text-slate-800 dark:text-slate-200">{label}</div>
+                        <div className="text-[10px] text-slate-400 dark:text-slate-500">
+                          {sublabel && <span className="mr-1">{sublabel} ·</span>}{date} · {time}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-[13px] italic text-slate-400 dark:text-slate-500">No profile views yet.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

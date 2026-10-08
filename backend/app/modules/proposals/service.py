@@ -75,15 +75,23 @@ async def save_preferences(user_id: str, workspace_id: str | None, payload: dict
         raise HTTPException(status_code=404, detail="Workspace not found")
     ws_id, data = _ws_fields(ws)
     merged = dict(data)
-    now = _now()
+    apply_proposal_preferences(merged, payload, _now())
+    await _save_data(ws_id, user_id, merged)
+    return merged["proposal_preferences"]
+
+
+def apply_proposal_preferences(data: dict, payload: dict, now: str, *, auto_publish: bool = True) -> dict:
+    """Write "Open for Proposals" settings into a business's data, in place. The only writer of
+    these fields: Business Blueprints and the Marketplace opportunity settings both call it,
+    so there is one set of proposal modes and one status model."""
     existing = data.get("proposal_preferences") or {}
-    merged["proposal_preferences"] = {
+    data["proposal_preferences"] = {
         **existing,
         "enabled": bool(payload.get("enabled", False)),
-        "accepted_modes": payload.get("accepted_modes") or ["general"],
-        "accepted_categories": payload.get("accepted_categories"),
-        "proposal_cap": payload.get("proposal_cap"),
-        "visibility": payload.get("visibility") or "marketplace",
+        "accepted_modes": payload.get("accepted_modes") or existing.get("accepted_modes") or ["general"],
+        "accepted_categories": payload.get("accepted_categories", existing.get("accepted_categories")),
+        "proposal_cap": payload.get("proposal_cap", existing.get("proposal_cap")),
+        "visibility": payload.get("visibility") or existing.get("visibility") or "marketplace",
         "updated_at": now,
     }
     # Sync open_for_proposals flag into the marketplace data block so the
@@ -91,12 +99,11 @@ async def save_preferences(user_id: str, workspace_id: str | None, payload: dict
     marketplace = dict(data.get("marketplace") or {})
     marketplace["open_for_proposals"] = bool(payload.get("enabled", False))
     # Auto-publish workspace to marketplace when enabling proposals (if profile exists)
-    if bool(payload.get("enabled", False)) and data.get("workspace_profile") and not marketplace.get("is_active"):
+    if auto_publish and bool(payload.get("enabled", False)) and data.get("workspace_profile") and not marketplace.get("is_active"):
         marketplace["is_active"] = True
         marketplace.setdefault("published_at", now)
-    merged["marketplace"] = marketplace
-    await _save_data(ws_id, user_id, merged)
-    return merged["proposal_preferences"]
+    data["marketplace"] = marketplace
+    return data["proposal_preferences"]
 
 
 # ─── Proposal Requests ────────────────────────────────────────────────────────

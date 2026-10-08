@@ -17,6 +17,52 @@ import { useWorkspaceStore } from "../store/workspace";
 import { hasFeatureAccess } from "../lib/permissions";
 import ConfirmDialog from "../components/ConfirmDialog";
 
+const _key = (v) => String(v || "").trim().toLowerCase();
+const _received = (inv) => {
+  const paid = (inv.payments || []).reduce((sum, p) => sum + Number(p?.amount || 0), 0);
+  if (paid > 0) return paid;
+  const status = _key(inv.status);
+  if (status === "paid") return Number(inv.total_amount || inv.amount || 0);
+  return inv.payment_type === "partial" && inv.paid_amount != null ? Number(inv.paid_amount) : 0;
+};
+
+/**
+ * Per customer: how many invoices they have been sent, what they have paid, and what they still owe.
+ * (It used to count only invoices marked fully paid, and showed 0 for everyone else: a customer who
+ * had been invoiced, or had part-paid, looked as if nothing had happened.)
+ *   Invoices: issued to them, i.e. not a draft and not voided or cancelled.
+ *   Revenue earned: money received, including part payments.
+ *   Outstanding: what is left on invoices that are out with them (not drafts, voided, cancelled, credited or disputed).
+ * An invoice belongs to a customer by its customer id, else by name (case and spacing don't matter).
+ */
+export function customerFigures(invoices, customers) {
+  const rows = new Map();
+  const byId = new Map();
+  for (const c of customers || []) {
+    const row = { name: c.name, payment_terms: c.payment_terms, invoices: 0, revenue: 0, outstanding: 0 };
+    rows.set(_key(c.name), row);
+    if (c.id) byId.set(String(c.id), row);
+  }
+  for (const inv of invoices || []) {
+    if (!inv || inv.archived) continue;
+    const status = _key(inv.status);
+    if (["draft", "void", "voided", "cancelled", "canceled"].includes(status)) continue;
+    const name = inv.customer_name || inv.recipient || "";
+    let row = (inv.customer_id && byId.get(String(inv.customer_id))) || rows.get(_key(name));
+    if (!row) {
+      if (!_key(name)) continue;
+      row = { name, payment_terms: null, invoices: 0, revenue: 0, outstanding: 0 };      // invoiced, though not (or no longer) in the catalogue
+      rows.set(_key(name), row);
+    }
+    const total = Number(inv.total_amount || inv.amount || 0);
+    const received = _received(inv);
+    row.invoices += 1;
+    row.revenue += received;
+    if (!["credited", "disputed"].includes(status)) row.outstanding += Math.max(0, total - received - Number(inv.credited_amount || 0));
+  }
+  return [...rows.values()].map((r) => ({ ...r, revenue: Math.round(r.revenue * 100) / 100, outstanding: Math.round(r.outstanding * 100) / 100 }));
+}
+
 export default function CataloguePage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
@@ -98,19 +144,9 @@ export default function CataloguePage() {
     const activeProducts = products.filter(p => !p.archived);
     const activeCustomers = customers.filter(c => !c.archived);
     const activeVendors = vendors.filter(v => !v.archived);
-    const paidInvoices = (reportFinancials.invoices || []).filter(i => String(i.status || "").toLowerCase() === "paid");
     const paidExpenses = (reportFinancials.expenses || []).filter(e => String(e.status || "").toLowerCase() === "paid");
-    const customerRevMap = new Map();
-    paidInvoices.forEach(inv => {
-      const key = inv.customer_name || inv.customer_id || "unknown";
-      const prev = customerRevMap.get(key) || { name: key, revenue: 0, invoices: 0 };
-      customerRevMap.set(key, { ...prev, revenue: prev.revenue + Number(inv.total_amount || 0), invoices: prev.invoices + 1 });
-    });
-    const customerPendingMap = new Map();
-    (reportFinancials.invoices || []).filter(i => String(i.status || "").toLowerCase() !== "paid").forEach(inv => {
-      const key = inv.customer_name || inv.customer_id || "unknown";
-      customerPendingMap.set(key, (customerPendingMap.get(key) || 0) + Number(inv.total_amount || 0));
-    });
+    // Each customer's invoices, what they have paid and what they still owe (see customerFigures).
+    const figures = customerFigures(reportFinancials.invoices || [], activeCustomers);
     const vendorSpendMap = new Map();
     paidExpenses.forEach(e => {
       const key = e.vendor_name || e.counterparty_name || "unknown";
@@ -122,17 +158,10 @@ export default function CataloguePage() {
       const margin = sellPrice > 0 ? (((sellPrice - cos) / sellPrice) * 100).toFixed(1) : null;
       return { name: p.name || "—", category: p.category || p.product_type || "—", price: formatCurrency(sellPrice, cur), cos: formatCurrency(cos, cur), margin: margin != null ? `${margin}%` : "—" };
     });
-    const customerRows = [...customerRevMap.entries()]
-      .sort((a, b) => b[1].revenue - a[1].revenue)
-      .map(([key, c]) => {
-        const cat = activeCustomers.find(x => x.name === key);
-        return { name: c.name, invoices: c.invoices, revenue: formatCurrency(c.revenue, cur), outstanding: formatCurrency(customerPendingMap.get(key) || 0, cur), terms: cat?.payment_terms ? `${cat.payment_terms}d` : "—" };
-      });
-    activeCustomers.forEach(c => {
-      if (!customerRows.some(r => r.name === c.name)) {
-        customerRows.push({ name: c.name || "—", invoices: 0, revenue: formatCurrency(0, cur), outstanding: formatCurrency(0, cur), terms: c.payment_terms ? `${c.payment_terms}d` : "—" });
-      }
-    });
+    const customerRows = figures
+      .sort((a, b) => b.revenue - a.revenue || b.outstanding - a.outstanding)
+      .map((c) => ({ name: c.name || "—", invoices: c.invoices, revenue: formatCurrency(c.revenue, cur), outstanding: formatCurrency(c.outstanding, cur),
+        terms: c.payment_terms ? `${c.payment_terms}d` : "—" }));
     const vendorRows = activeVendors.map(v => ({
       name: v.name || "—", category: v.vendor_type || v.category || "—",
       terms: v.payment_terms ? `${v.payment_terms}d` : "—",
@@ -543,6 +572,20 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       }
     });
   }
+
+  // The copy the app already holds is shown at once, then checked against the server: a customer or
+  // item the Agent added since that copy was loaded appears, and is never saved over.
+  useEffect(() => {
+    if (!workspaceId) return undefined;
+    let alive = true;
+    invalidateWorkspaceCache();
+    apiRequestCached(`/validation/${workspaceId}`).then((ws) => {
+      if (!alive || !ws?.id) return;
+      const held = useWorkspaceStore.getState().wsDoc;
+      if (!held || held.id !== ws.id || held.updated_at !== ws.updated_at) useWorkspaceStore.getState().setWsDoc(ws);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [workspaceId]);
 
   useEffect(() => {
     // If Layout already fetched workspace data this session, use it immediately.

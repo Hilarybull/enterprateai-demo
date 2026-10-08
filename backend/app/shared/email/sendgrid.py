@@ -18,7 +18,21 @@ SENDGRID_MAIL_SEND_URL = "https://api.sendgrid.com/v3/mail/send"
 @dataclass
 class EmailDeliveryResult:
     sent: bool
-    error: str | None = None
+    error: str | None = None      # safe to show customers; provider detail is only logged
+    recipient_rejected: bool = False
+
+
+# What a customer may see when an email can't be sent. Never the provider's name or raw text.
+MSG_NOT_CONFIGURED = "Email sending isn't set up for this workspace yet, so nothing was sent."
+MSG_UNREACHABLE = "We couldn't reach our email service just now, so nothing was sent. Please try again in a few minutes."
+MSG_UNCERTAIN = "We couldn't confirm whether the email was delivered."
+MSG_BAD_RECIPIENT = "This email address can't receive messages, so nothing was sent. Check the address and try again."
+MSG_REJECTED = "The email couldn't be sent just now, so nothing was sent. Please try again later."
+
+
+def _refused_recipient(status_code: int, message: str) -> bool:
+    text = (message or "").lower()
+    return status_code in (400, 403, 422) and any(w in text for w in ("`to`", " to ", "to field", "recipient", "testing email", "domain", "invalid email", "email address"))
 
 
 def _email_ready() -> tuple[bool, str | None]:
@@ -57,7 +71,8 @@ async def send_email_via_sendgrid(
 ) -> EmailDeliveryResult:
     ready, reason = _email_ready()
     if not ready:
-        return EmailDeliveryResult(sent=False, error=reason)
+        logger.error("Email not sent: %s", reason)
+        return EmailDeliveryResult(sent=False, error=MSG_NOT_CONFIGURED)
 
     settings = get_settings(refresh=True)
     from_email = settings.sendgrid_from_email
@@ -98,7 +113,7 @@ async def send_email_via_sendgrid(
             )
     except httpx.HTTPError as exc:
         logger.error("SendGrid request failed: %s", exc)
-        return EmailDeliveryResult(sent=False, error=f"SendGrid request failed: {exc}")
+        return EmailDeliveryResult(sent=False, error=MSG_UNREACHABLE)
 
     if response.status_code == 202:
         logger.info("SendGrid accepted email to=%s", to_email)
@@ -114,11 +129,9 @@ async def send_email_via_sendgrid(
     except Exception:
         pass
 
-    logger.error("SendGrid rejected email (%s): %s", response.status_code, error_message)
-    return EmailDeliveryResult(
-        sent=False,
-        error=f"SendGrid rejected the email ({response.status_code}): {error_message}",
-    )
+    logger.error("SendGrid rejected email (%s) to=%s: %s", response.status_code, to_email, error_message)
+    refused = _refused_recipient(response.status_code, str(error_message))
+    return EmailDeliveryResult(sent=False, error=MSG_BAD_RECIPIENT if refused else MSG_REJECTED, recipient_rejected=refused)
 
 
 async def send_workspace_invitation_email_with_link(

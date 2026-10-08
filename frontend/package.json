@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "echo \"(optional) add eslint\""
+    "lint": "echo \"(optional) add eslint\"",
+    "test": "vitest run",
+    "check:overflow": "node scripts/check-overflow.mjs"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.3.0",
@@ -16,15 +18,18 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
-    "xlsx": "^0.18.5",
     "recharts": "^3.9.0",
+    "xlsx": "^0.18.5",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.3",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "jsdom": "^25.0.1",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
   }
 }

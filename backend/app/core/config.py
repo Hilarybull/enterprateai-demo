@@ -24,6 +24,50 @@ class Settings(BaseSettings):
 
     app_name: str = "EnterprateAI"
     environment: str = "development"
+    # Development and test only (ignored when ENVIRONMENT is production): raise the Agent's
+    # plan limits so QA can run many tasks on a free workspace.
+    agent_monthly_runs_override: int | None = Field(default=None, validation_alias=AliasChoices("AGENT_MONTHLY_RUNS_OVERRIDE",))
+    agent_max_active_runs_override: int | None = Field(default=None, validation_alias=AliasChoices("AGENT_MAX_ACTIVE_RUNS_OVERRIDE",))
+    # Adaptive Dashboard (PRD-AD-001). Off = the dashboard falls back to its previous
+    # behaviour; nothing is migrated either way, so it can be switched back at any time.
+    adaptive_dashboard_enabled: bool = Field(default=True, validation_alias=AliasChoices("ADAPTIVE_DASHBOARD_ENABLED",))
+    # Funding Readiness and Launch Readiness. Off = the entry points disappear; drafts and
+    # assessment history stay in the database, so either can be switched back on at any time.
+    funding_readiness_enabled: bool = Field(default=True, validation_alias=AliasChoices("FUNDING_READINESS_ENABLED",))
+    launch_readiness_enabled: bool = Field(default=True, validation_alias=AliasChoices("LAUNCH_READINESS_ENABLED",))
+    # Marketplace Business Index and Claim (PRD-MKT-GTM-001). Off = the directory, claim and
+    # profile-settings entry points close; verified links, businesses and audit history stay.
+    marketplace_claim_enabled: bool = Field(default=True, validation_alias=AliasChoices("MARKETPLACE_CLAIM_ENABLED",))
+    # Sending claim invitations by email. Off by default: outreach channels, templates and
+    # cadence are a policy decision. Invitation links can still be created and shared by hand.
+    marketplace_claim_invites_enabled: bool = Field(default=False, validation_alias=AliasChoices("MARKETPLACE_CLAIM_INVITES_ENABLED",))
+    # Who can see a directory profile nobody has claimed yet: admin_only | invite_only | public.
+    # This is the starting value; a moderator can change it on the moderation page, and that
+    # choice (kept with who made it and when) then wins. Claimed profiles are never affected.
+    marketplace_unclaimed_visibility: str = Field(default="invite_only", validation_alias=AliasChoices("MARKETPLACE_UNCLAIMED_VISIBILITY",))
+    # Activation and education emails (journeys A, B and C). Off by default; when first switched on
+    # it still only reports what it would send (dry run) to an internal cohort.
+    activation_emails_enabled: bool = Field(default=False, validation_alias=AliasChoices("ACTIVATION_EMAILS_ENABLED",))
+    activation_dry_run: bool = Field(default=True, validation_alias=AliasChoices("ACTIVATION_DRY_RUN",))
+    activation_cohort: str = Field(default="internal", validation_alias=AliasChoices("ACTIVATION_COHORT",))      # internal | sample | all
+    activation_internal_emails: str = Field(default="", validation_alias=AliasChoices("ACTIVATION_INTERNAL_EMAILS",))
+    activation_sample_percent: int = Field(default=10, validation_alias=AliasChoices("ACTIVATION_SAMPLE_PERCENT",))
+    activation_holdout_percent: int = Field(default=10, validation_alias=AliasChoices("ACTIVATION_HOLDOUT_PERCENT",))
+    # Accounts verified before this date are historical: enrolled in small batches, and only with permission on record.
+    activation_start_at: str = Field(default="", validation_alias=AliasChoices("ACTIVATION_START_AT",))
+    activation_backlog_batch: int = Field(default=25, validation_alias=AliasChoices("ACTIVATION_BACKLOG_BATCH",))
+    activation_api_base_url: str = Field(default="", validation_alias=AliasChoices("ACTIVATION_API_BASE_URL",))      # public API address, for one-click unsubscribe
+    activation_reply_to: str = Field(default="", validation_alias=AliasChoices("ACTIVATION_REPLY_TO",))            # a monitored address: two emails ask for a reply
+    activation_postal_address: str = Field(default="", validation_alias=AliasChoices("ACTIVATION_POSTAL_ADDRESS",))
+    resend_webhook_secret: str = Field(default="", validation_alias=AliasChoices("RESEND_WEBHOOK_SECRET",))
+    # A person looks at each newly published profile a business made itself: off | post_publish
+    # (live at once, then reviewed) | pre_publish (not public until approved).
+    marketplace_self_created_review: str = Field(default="post_publish", validation_alias=AliasChoices("MARKETPLACE_SELF_CREATED_REVIEW",))
+    # Development and test only (ignored when ENVIRONMENT is production): extra accounts that may
+    # index records, review claims and read the funnel. Comma-separated email addresses.
+    marketplace_moderators: str = Field(default="", validation_alias=AliasChoices("MARKETPLACE_MODERATORS",))
+    # Funding and launch scenarios (FR10 / LR10). Off = the checks work and scenarios say they are unavailable.
+    readiness_scenarios_enabled: bool = Field(default=True, validation_alias=AliasChoices("READINESS_SCENARIOS_ENABLED",))
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     backend_url: str | None = Field(default=None, validation_alias=AliasChoices("BACKEND_URL", "API_URL"))

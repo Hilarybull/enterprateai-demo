@@ -10,7 +10,7 @@ import { SimulationIllustration } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
-import { formatCurrency, formatNumber } from "../lib/format";
+import { formatCurrency, formatNumber, invoiceNumbers, shortDate } from "../lib/format";
 import InfoTip from "../components/InfoTip";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
@@ -180,6 +180,7 @@ export default function SimulationPage() {
     return "adaptive";
   }); // adaptive | manual
   const [templates, setTemplates] = useState([]);
+  const [pendingPrefill, setPendingPrefill] = useState(null);
   const [riskSignals, setRiskSignals] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
   const [history, setHistory] = useState([]);
@@ -241,19 +242,21 @@ export default function SimulationPage() {
   }, [activeInvoices, activeProducts]);
 
   const pendingScenarioOptions = useMemo(() => {
-    const pendingInvoices = activeInvoices.filter((item) => String(item?.status || "").toLowerCase() !== "paid");
+    const pendingInvoices = activeInvoices.filter(isCollectable);
+    // Named by invoice number, as on the dashboard and in Business Operations.
+    const numbers = invoiceNumbers(Array.isArray(financialsData?.invoices) ? financialsData.invoices : []);
     return pendingInvoices.map((item) => ({
-      id: item.id,
-      label: `${item.customer_name || "Customer"} • ${Array.isArray(item?.product_names) && item.product_names.length ? item.product_names.join(", ") : item.product_name || "Invoice"} • ${formatCurrency(Number(item?.total_amount || 0), currency || "GBP")}`,
-      detail: item?.due_date ? `Due ${new Date(item.due_date).toLocaleDateString()}` : "Awaiting due date",
+      id: String(item.id),
+      label: `${item.customer_name || "Customer"} • ${numbers.get(item.id) || "Invoice (no number)"} • ${formatCurrency(Number(item?.total_amount || 0), currency || "GBP")}`,
+      detail: item?.due_date ? `Due ${shortDate(item.due_date)}` : "Awaiting due date",
       amount: Number(item?.total_amount || 0),
     }));
-  }, [activeInvoices, currency]);
+  }, [activeInvoices, financialsData, currency]);
 
   const pendingScenarioLineOptions = useMemo(() => {
-    const pendingInvoices = activeInvoices.filter((item) => String(item?.status || "").toLowerCase() !== "paid");
+    const pendingInvoices = activeInvoices.filter(isCollectable);
     return pendingInvoices.flatMap((item) => {
-      const dueDetail = item?.due_date ? `Due ${new Date(item.due_date).toLocaleDateString()}` : "Awaiting due date";
+      const dueDetail = item?.due_date ? `Due ${shortDate(item.due_date)}` : "Awaiting due date";
       return getRecordItems(item).map((lineItem, index) => {
         const amount = getLineGrandTotal(lineItem);
         return {
@@ -585,10 +588,22 @@ export default function SimulationPage() {
     const template = templates.find((t) => t.scenario_template_id === templateId);
     if (template) {
       openManualScenario(templateId, template.title);
+      // ?pending=a,b: the receivables a late-payment scenario was opened for are selected once the
+      // list of pending items has loaded (see the effect below).
+      const pending = (params.get("pending") || "").split(",").filter(Boolean);
+      if (pending.length) setPendingPrefill(pending);
       setTab("manual");
     }
     setPrefillDone(true);
   }, [prefillDone, templates]);
+
+  // Applied after the list exists and after any default parameters are set, so nothing resets it.
+  useEffect(() => {
+    if (!pendingPrefill || manualTemplate?.scenario_type !== "payment_delay" || !pendingScenarioOptions.length) return;
+    const known = pendingPrefill.filter((id) => pendingScenarioOptions.some((o) => o.id === id));
+    setManualParams((p) => ({ ...p, selected_pending_ids: known }));
+    setPendingPrefill(null);
+  }, [pendingPrefill, manualTemplate, pendingScenarioOptions]);
 
   function describeRisk(risk) {
     const code = risk?.reason_code;
@@ -1420,6 +1435,13 @@ export default function SimulationPage() {
 
 // Confirm dialog is shown from the SimulationPage scope (where confirmDialog state exists)
 
+// Receivables that can still be collected: not paid, and not disputed, voided, cancelled or credited.
+const NOT_COLLECTABLE = new Set(["paid", "disputed", "void", "voided", "cancelled", "canceled", "credited", "written_off", "draft"]);
+export function isCollectable(invoice) {
+  if (NOT_COLLECTABLE.has(String(invoice?.status || "").toLowerCase())) return false;
+  return !(invoice?.disputed || ["open", "disputed"].includes(invoice?.dispute_status));
+}
+
 function buildDefaultParams(template, stateSnapshot, largestClient) {
   if (!template) return {};
   const defaults = {
@@ -1787,6 +1809,7 @@ function MultiSelectChecklist({ label, info, items, selectedIds, onToggle, empty
               <input
                 type="checkbox"
                 className="mt-0.5"
+                value={item.id}
                 checked={selectedIds.includes(item.id)}
                 onChange={() => onToggle(item.id)}
               />

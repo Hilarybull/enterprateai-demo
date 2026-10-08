@@ -262,3 +262,165 @@
     transform: translateX(0);
   }
 }
+
+/* Skeleton loading states (components/Skeleton.jsx): soft grey with a gentle left-to-right shimmer. */
+.ea-skeleton {
+  background-color: #EEF0F6;
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.75) 50%, rgba(255, 255, 255, 0) 100%);
+  background-repeat: no-repeat;
+  background-size: 60% 100%;
+  background-position: -160% 0;
+  animation: ea-shimmer 1.2s ease-in-out infinite;
+}
+.dark .ea-skeleton {
+  background-color: #1e293b;
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.07) 50%, rgba(255, 255, 255, 0) 100%);
+}
+@keyframes ea-shimmer {
+  to {
+    background-position: 260% 0;
+  }
+}
+
+/* The thin bar along the top of the window while the app starts. */
+.ea-top-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(79, 70, 229, 0.12);
+}
+.ea-top-progress > span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: #4F46E5;
+  animation: ea-top-progress 1.4s ease-in-out infinite;
+}
+@keyframes ea-top-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ea-skeleton {
+    animation: none;
+    background-image: none;
+  }
+  .ea-top-progress > span {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+
+
+/* A sheet rising from the bottom edge (the goal card and the Agent's dialog on a phone). Used with motion-safe only. */
+@keyframes ea-sheet-up {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Touch: everything tappable in the goal flow and the pager is at least 44px tall. */
+@media (pointer: coarse) {
+  [data-goal-launcher] button, [data-task-card] button, [data-task-card] label:has(> input[type="radio"]), [data-pagination] button, [data-hero-buttons] > * {
+    min-height: 44px;
+  }
+  [data-goal-launcher] [data-chip-row] button, [data-task-card] [data-said-chip], [data-task-card] [data-clarify] button { padding-top: 0.6rem; padding-bottom: 0.6rem; }
+}
+
+/* ── Motion (the values match src/lib/motion.js) ─────────────────────────────
+   transform and opacity only (and stroke-dashoffset for drawn lines), written with the separate
+   translate / scale / rotate properties so an element's own transform is never disturbed.
+   Everything here is inside "no-preference": with reduced motion the page is simply at rest. */
+:root { --m-ease: cubic-bezier(.2,.8,.2,1); --m-fast: 150ms; --m-base: 250ms; --m-slow: 400ms; }
+
+@keyframes m-fade-up { from { opacity: 0; translate: 0 12px; } to { opacity: 1; translate: 0 0; } }
+@keyframes m-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes m-scale-in { from { opacity: 0; scale: .96; } to { opacity: 1; scale: 1; } }
+@keyframes m-slide-in-right { from { opacity: 0; translate: 24px 0; } to { opacity: 1; translate: 0 0; } }
+@keyframes m-slide-down { from { opacity: 0; translate: 0 -10px; } to { opacity: 1; translate: 0 0; } }
+@keyframes m-float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -8px; } }
+@keyframes m-drift { 0%, 100% { translate: 0 0; scale: 1; } 50% { translate: -28px 18px; scale: 1.06; } }
+@keyframes m-spin { to { rotate: 360deg; } }
+@keyframes m-shake { 0%, 100% { translate: 0 0; } 20% { translate: -6px 0; } 40% { translate: 5px 0; } 60% { translate: -3px 0; } 80% { translate: 2px 0; } }
+@keyframes m-chip-pulse { 0% { scale: 1; } 40% { scale: 1.08; } 100% { scale: 1; } }
+@keyframes m-pulse-ring { 0% { box-shadow: 0 0 0 0 rgb(167 139 250 / .55); } 100% { box-shadow: 0 0 0 10px rgb(167 139 250 / 0); } }
+@keyframes m-check-draw { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
+@keyframes m-bump { 0% { scale: 1; } 40% { scale: 1.25; } 100% { scale: 1; } }
+@keyframes m-flash { from { background-color: rgb(224 231 255); } to { background-color: transparent; } }
+@keyframes m-bar-fill { from { scale: 0 1; } to { scale: 1 1; } }
+@keyframes m-line-draw { from { stroke-dashoffset: var(--m-length, 300); } to { stroke-dashoffset: 0; } }
+@keyframes m-drawer-out { from { translate: 0 0; } to { translate: 100% 0; } }
+@keyframes m-glow-soft { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes m-drawer-in { from { translate: 100% 0; } 85% { translate: -4px 0; } to { translate: 0 0; } }
+
+/* The launcher's border: a still purple-to-pink gradient, which turns slowly where motion is welcome. */
+.m-agent-card { background: linear-gradient(135deg, #7c3aed, #ec4899); }
+.m-agent-border { position: absolute; inset: -75%; display: none; background: conic-gradient(from 0deg, #7c3aed, #ec4899, #6366f1, #a855f7, #ec4899, #7c3aed); }
+
+/* The floating "Ask the Agent" pill: there or not there, by scale and opacity. */
+.m-pill { opacity: 0; scale: .9; pointer-events: none; }
+.m-pill[data-shown="true"] { opacity: 1; scale: 1; pointer-events: auto; }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Entrances: <div data-m="fadeUp" style="--m-delay: 120ms">. */
+  [data-m] { animation: m-fade-up var(--m-slow) var(--m-ease) var(--m-delay, 0ms) both; }
+  [data-m="fadeIn"] { animation-name: m-fade-in; }
+  [data-m="scaleIn"] { animation-name: m-scale-in; }
+  [data-m="slideInRight"] { animation-name: m-slide-in-right; }
+  [data-m="slideDown"] { animation-name: m-slide-down; animation-duration: var(--m-base); }
+
+  /* Scroll reveals: the classes are added by useScrollReveal, so nothing is hidden without it. */
+  .m-reveal { opacity: 0; translate: 0 12px; transition: opacity var(--m-slow) var(--m-ease) var(--m-delay, 0ms), translate var(--m-slow) var(--m-ease) var(--m-delay, 0ms); }
+  .m-reveal.m-in { opacity: 1; translate: 0 0; }
+  /* How it works: each number pops in, and the link to the next step draws across. */
+  .m-reveal [data-step-num] { scale: 0; transition: scale var(--m-slow) var(--m-ease) calc(var(--m-delay, 0ms) + 150ms); }
+  .m-reveal.m-in [data-step-num] { scale: 1; }
+  .m-reveal [data-step-link] { scale: 0 1; transform-origin: left center; transition: scale var(--m-slow) var(--m-ease) calc(var(--m-delay, 0ms) + 300ms); }
+  .m-reveal.m-in [data-step-link] { scale: 1 1; }
+
+  /* Cards that lift under the pointer, with a small turn of their icon. */
+  .m-lift { transition: translate 200ms var(--m-ease), box-shadow 200ms var(--m-ease); }
+  .m-lift:hover { translate: 0 -4px; box-shadow: 0 16px 32px -12px rgb(49 46 129 / .22); }
+  .m-lift svg { transition: rotate 200ms var(--m-ease), scale 200ms var(--m-ease); }
+  .m-lift:hover svg { rotate: -6deg; scale: 1.08; }
+
+  .m-float { animation: m-float 6s ease-in-out infinite; }
+  .m-drift { animation: m-drift 14s ease-in-out infinite; }
+  .m-drift-slow { animation: m-drift 20s ease-in-out infinite; }
+  .m-agent-border { display: block; animation: m-spin 6s linear infinite; }
+  .m-shake { animation: m-shake 400ms var(--m-ease); }
+  .m-chip-pulse { animation: m-chip-pulse var(--m-base) var(--m-ease); }
+  .m-pulse-ring { animation: m-pulse-ring 1.4s ease-out infinite; }
+  .m-check-draw { stroke-dasharray: 24; animation: m-check-draw var(--m-base) var(--m-ease) both; }
+  .m-bump { animation: m-bump var(--m-base) var(--m-ease); }
+  .m-flash { animation: m-flash 1.5s ease-out; }
+  .m-list-shift { animation: m-slide-down var(--m-slow) var(--m-ease); }
+  .m-bar-fill { transform-origin: left center; animation: m-bar-fill 700ms var(--m-ease) both; }
+  .m-line-draw { stroke-dasharray: var(--m-length, 300); animation: m-line-draw 900ms var(--m-ease) both; }
+  .m-ring { transition: stroke-dashoffset 1s var(--m-ease); }
+  .m-pill { transition: opacity var(--m-base) var(--m-ease), scale var(--m-base) var(--m-ease); }
+  .m-crossfade { animation: m-fade-in var(--m-fast) ease-out; }
+  .m-modal { animation: m-scale-in var(--m-base) var(--m-ease) both; }
+  .m-backdrop { animation: m-fade-in var(--m-base) ease-out both; }
+  .m-drawer { animation: m-drawer-in 360ms var(--m-ease) both; }
+  .m-nav-inner { transition: padding 200ms var(--m-ease); }
+  /* Leaving: the way in, backwards. */
+  .m-leaving.m-backdrop { animation: m-fade-in var(--m-fast) ease-in reverse both; }
+  .m-leaving .m-modal, .m-leaving [data-sheet] { animation: m-scale-in var(--m-fast) ease-in reverse both; }
+  .m-leaving .m-drawer { animation: m-drawer-out var(--m-fast) ease-in both; }
+  .m-glow-soft { animation: m-glow-soft 20s ease-in-out infinite; }
+
+  /* Loops stand still when their part of the page is off screen, or the tab is not the one in view. */
+  [data-m-idle="true"] .m-float, [data-m-idle="true"] .m-drift, [data-m-idle="true"] .m-drift-slow,
+  [data-m-idle="true"] .m-agent-border, [data-m-idle="true"] .m-pulse-ring, [data-m-idle="true"] .m-glow-soft ,
+  [data-agent-shell][data-m-idle="true"] > .m-agent-border { animation-play-state: paused; }
+}

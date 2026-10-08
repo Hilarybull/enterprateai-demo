@@ -1,10 +1,59 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { apiRequest, apiRequestCached } from "../api/client";
+
+// Dedupes concurrent callers (e.g. StrictMode's double effect, or two gated
+// pages mounting together) so one navigation never creates two workspaces.
+let ensureInFlight = null;
+
+// Creates a default workspace for the current user if they don't have one yet
+// and makes it active, so feature pages work immediately instead of forcing a
+// "set up your workspace" step first.
+export async function ensureWorkspaceId() {
+  const state = useWorkspaceStore.getState();
+  if (state.workspaceId) return state.workspaceId;
+  if (ensureInFlight) return ensureInFlight;
+  ensureInFlight = (async () => {
+    // Usually the workspace already exists and simply hasn't been loaded yet (e.g. straight
+    // after sign-in). Use it, quietly. Only create one, and say so, when there is none.
+    const existing = await apiRequestCached("/validation/me").catch(() => null);
+    if (existing?.id) {
+      useWorkspaceStore.getState().setWorkspaceId(existing.id);
+      useWorkspaceStore.getState().setWorkspaceName(existing.name || null);
+      return existing.id;
+    }
+    return apiRequest("/validation/me", "PATCH", { name: "My workspace", data: {} }).then((ws) => {
+      useWorkspaceStore.getState().setWorkspaceId(ws.id);
+      useWorkspaceStore.getState().setWorkspaceName(ws.name || "My workspace");
+      try {
+        window.dispatchEvent(new CustomEvent("ea:toast", {
+          detail: {
+            kind: "info",
+            title: "Workspace created",
+            message: "We set up a workspace so this is saved. Rename it anytime from the sidebar.",
+          },
+        }));
+      } catch {
+        // Toast is a nicety, never block on it.
+      }
+      return ws.id;
+    });
+  })().finally(() => {
+    ensureInFlight = null;
+  });
+  return ensureInFlight;
+}
 
 export const useWorkspaceStore = create(
   persist(
     (set) => ({
       workspaceId: null,
+      // Whether the workspace is still being confirmed with the server (never persisted).
+      // Pages that depend on the business wait for this instead of guessing: see workspaceStatusOf.
+      workspaceChecks: 0,
+      workspaceCheckedOnce: false,
+      beginWorkspaceCheck: () => set((s) => ({ workspaceChecks: s.workspaceChecks + 1 })),
+      endWorkspaceCheck: () => set((s) => ({ workspaceChecks: Math.max(0, s.workspaceChecks - 1), workspaceCheckedOnce: true })),
       workspaceName: null,
       workspaceLogo: null,
       workspaceCompanyName: null,
@@ -68,14 +117,16 @@ export const useWorkspaceStore = create(
         }),
 
       resetForUser: (email) =>
-        set(() => ({
-          // Clear workspace identity on auth hydration so we always reload the
-          // authoritative workspace from the server instead of reusing a stale
-          // pinned workspace from a previous session.
-          workspaceId: null,
-          workspaceName: null,
-          workspaceLogo: null,
-          workspaceCompanyName: null,
+        set((s) => {
+          // The same user as last time (a refresh, a new tab): keep the workspace they had
+          // while the server confirms it, so pages never pass through a moment with no
+          // business. Anyone else starts clean: a previous user's workspace is never reused.
+          const same = Boolean(email) && s.workspaceOwnerEmail === email && Boolean(s.workspaceId);
+          return {
+          workspaceId: same ? s.workspaceId : null,
+          workspaceName: same ? s.workspaceName : null,
+          workspaceLogo: same ? s.workspaceLogo : null,
+          workspaceCompanyName: same ? s.workspaceCompanyName : null,
           workspaceOwnerEmail: email || null,
           decisionStatus: null,
           serviceDecisionStatus: null,
@@ -92,7 +143,8 @@ export const useWorkspaceStore = create(
           memberPermissionType: null,
           memberPermissions: null,
           memberWorkspaceName: null,
-        }))
+          };
+        })
     }),
     {
       name: "ea_workspace",
@@ -117,3 +169,9 @@ export const useWorkspaceStore = create(
     }
   )
 );
+
+/** "ready" (a business is selected), "checking" (still being confirmed) or "none" (confirmed: there isn't one). */
+export function workspaceStatusOf(state) {
+  if (state.workspaceId) return "ready";
+  return !state.workspaceCheckedOnce || state.workspaceChecks > 0 ? "checking" : "none";
+}

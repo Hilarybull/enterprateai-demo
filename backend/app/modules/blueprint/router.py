@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -341,6 +341,15 @@ async def blueprint_shared_document_get(token: str, email: str | None = Query(de
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This share link is restricted to a different email address.")
         raise
     if not doc:
+        from app.modules.blueprint.share_repository import is_revoked_token
+        try:
+            revoked = await is_revoked_token(token)
+        except Exception:      # noqa: BLE001 - the plain "not found" below still applies
+            revoked = False
+        if revoked:
+            raise HTTPException(status_code=status.HTTP_410_GONE,
+                                detail="This link is no longer active. If you were sent a newer version, "
+                                       "please use the link in the most recent email, or contact the sender.")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
     return doc
 
@@ -393,18 +402,55 @@ async def blueprint_shared_document_export(
     )
 
 
+@router.get("/share/{token}/quote")
+async def blueprint_quotation_status(token: str, email: str | None = Query(default=None)):
+    """Public: the quotation's state for its customer (accepted, expired...), seller and thread."""
+    from app.modules.marketplace.service import quote_status_for_customer
+    return await quote_status_for_customer(token=token, viewer_email=str(email or "").strip())
+
+
+@router.get("/public/logo/{business_id}")
+async def blueprint_public_logo(business_id: str):
+    """Public: a business's logo, so email clients (which block embedded images) can show it."""
+    import base64
+    import uuid as _uuid
+    try:
+        _uuid.UUID(business_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    from app.core.supabase import sb_select as _sel
+    ws = await _sel("workspaces", filters=[("id", "eq", business_id)], columns="data", single=True)
+    logo = str(((ws or {}).get("data") or {}).get("workspace_profile", {}).get("logo_data_url") or "")
+    if not logo.startswith("data:image/") or ";base64," not in logo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    media = logo[5:logo.index(";")]
+    if media not in ("image/png", "image/jpeg", "image/gif", "image/webp"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return Response(content=base64.b64decode(logo.split(",", 1)[1]), media_type=media,
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 @router.post("/share/{token}/respond")
 async def blueprint_quotation_respond(
     token: str,
     payload: QuotationRespondRequest,
+    request: Request,
     email: str | None = Query(default=None),
 ):
-    """Public: customer accepts or rejects a shared quotation."""
-    if payload.action not in ("accept", "reject"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="action must be 'accept' or 'reject'")
+    """Public: the customer accepts a shared quotation, declines it, or asks a question first."""
+    if payload.action not in ("accept", "reject", "question"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose accept, decline or ask a question.")
     viewer_email = str(payload.email or email or "").strip()
-    from app.modules.marketplace.service import respond_to_quote
-    return await respond_to_quote(token=token, viewer_email=viewer_email, action=payload.action)
+    from app.modules.marketplace.service import ask_about_quote, respond_to_quote
+    if payload.action == "question":
+        return await ask_about_quote(token=token, viewer_email=viewer_email, message=payload.message or "")
+    forwarded = str(request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return await respond_to_quote(
+        token=token, viewer_email=viewer_email, action=payload.action,
+        signer_name=payload.signer_name, accepted_terms=payload.accepted_terms, reason=payload.reason,
+        client_ip=forwarded or (request.client.host if request.client else None),
+        user_agent=request.headers.get("user-agent"),
+    )
 
 
 @router.get("/documents/{document_id}/export")

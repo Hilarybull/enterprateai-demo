@@ -5,7 +5,7 @@ import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 import logoUrl from "../enterprate-logo.png";
 import Spinner from "../components/Spinner";
-import { ApplyModal, BusinessProfileModal } from "./MarketplacePage";
+import { ApplyModal, BusinessProfileModal } from "./MarketplaceListings";
 
 function fmt(str) {
   if (!str) return "";

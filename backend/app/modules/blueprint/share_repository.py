@@ -84,6 +84,36 @@ async def revoke_share_tokens(*, user_id: str, document_id: str) -> bool:
     return bool(rows)
 
 
+async def revoke_share_token(*, token: str, user_id: str) -> bool:
+    """Switch off one share link."""
+    rows = await sb_update(
+        "blueprint_document_shares",
+        filters=[("token", "eq", token), ("user_id", "eq", user_id)],
+        payload={"revoked": True, "updated_at": _now_iso()},
+    )
+    return bool(rows)
+
+
+async def revoke_shares_for_type(*, user_id: str, type: str, keep_token: str | None = None) -> int:
+    """Switch off every share link to documents of this exact type, except `keep_token`.
+    A quotation's documents share one type, so this leaves a single live link per quotation."""
+    docs = await sb_select("blueprint_documents", filters=[("user_id", "eq", user_id), ("type", "eq", type)], columns="id") or []
+    ids = [d["id"] for d in docs if d.get("id")]
+    if not ids:
+        return 0
+    filters = [("document_id", "in", ids), ("user_id", "eq", user_id), ("revoked", "eq", False)]
+    if keep_token:
+        filters.append(("token", "neq", keep_token))
+    rows = await sb_update("blueprint_document_shares", filters=filters, payload={"revoked": True, "updated_at": _now_iso()})
+    return len(rows or [])
+
+
+async def is_revoked_token(token: str) -> bool:
+    row = await sb_select("blueprint_document_shares", filters=[("token", "eq", token), ("revoked", "eq", True)],
+                          columns="token", single=True)
+    return bool(row)
+
+
 async def get_share_record_for_owner(*, token: str, user_id: str) -> dict[str, Any] | None:
     try:
         return await sb_select(

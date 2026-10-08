@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
@@ -8,6 +10,8 @@ import anyio
 from fastapi import HTTPException
 
 from app.core.supabase import get_supabase_client, sb_select
+
+logger = logging.getLogger(__name__)
 
 PLAN_ORDER = ("explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os")
 PLAN_RANK = {plan: index for index, plan in enumerate(PLAN_ORDER)}
@@ -52,7 +56,9 @@ def _rpc_sync(fn_name: str, params: dict) -> Any:
 
 
 async def _rpc(fn_name: str, params: dict) -> Any:
-    return await anyio.to_thread.run_sync(lambda: _rpc_sync(fn_name, params))
+    # On a pooled connection: a new client for each reserve, commit and release cost over a second apiece.
+    from app.core.supabase import sb_rpc
+    return await sb_rpc(fn_name, params)
 
 
 # ---------------------------------------------------------------------------
@@ -193,16 +199,23 @@ async def _initial_credits_for_user(user_id: str) -> tuple[int, str]:
 
 
 async def get_balance(user_id: str) -> int:
+    """The credits available. An account with no wallet yet is given its starting allocation here:
+    a brand-new account that goes straight to a task (from the homepage) must not be told it is out
+    of credits just because no page has opened its wallet yet."""
     wallet = await get_wallet(user_id)
+    if not wallet:
+        try:
+            wallet = await ensure_wallet(user_id)
+        except Exception:      # noqa: BLE001 - the balance is then reported as it stands
+            logger.warning("credit wallet could not be opened for %s", user_id, exc_info=True)
     return wallet["available_credits"] if wallet else 0
 
 
 async def get_balance_info(user_id: str) -> dict:
     """Return full credit info: balance + plan allocation + reset date."""
-    wallet = await get_wallet(user_id)
+    wallet, sub = await asyncio.gather(get_wallet(user_id), _get_subscription(user_id))
     if not wallet:
         wallet = await ensure_wallet(user_id)
-    sub = await _get_subscription(user_id)
     plan_code = normalise_plan_key((sub or {}).get("plan_key") or "explorer")
     plan_cfg = await _get_plan_config(plan_code)
     monthly_allocation = int((plan_cfg or {}).get("credits_per_period") or 0)
@@ -230,22 +243,45 @@ async def reset_monthly_credits(user_id: str, plan_code: str, next_reset_at: str
 # Feature config
 # ---------------------------------------------------------------------------
 
+# The smallest charge on the system. Anything that is charged at all costs at least this much;
+# a price of 0 still means free. Applied wherever a price is read, so the price list, the
+# checks before a charge and the charge itself always agree, whatever the stored row says.
+MIN_CREDIT_CHARGE = 2
+
+
+def charged(cost: Any) -> int:
+    """What a stored price actually costs: 0 stays free, anything else is at least the minimum."""
+    try:
+        cost = int(cost or 0)
+    except (TypeError, ValueError):
+        cost = 0
+    return 0 if cost <= 0 else max(MIN_CREDIT_CHARGE, cost)
+
+
+def _with_minimum(row: dict | None) -> dict | None:
+    if row and "credit_cost" in row:
+        row = {**row, "credit_cost": charged(row.get("credit_cost"))}
+    return row
+
+
 async def get_feature_config(feature_code: str) -> dict | None:
-    return await sb_select(
+    return _with_minimum(await sb_select(
         "credit_feature_config",
         filters=[("feature_code", "eq", feature_code)],
         single=True,
-    )
+    ))
 
 
 async def get_all_features() -> list[dict]:
-    return await sb_select("credit_feature_config", order="feature_code")
+    return [_with_minimum(r) for r in await sb_select("credit_feature_config", order="feature_code") or []]
 
 
 async def update_feature_config(feature_code: str, updates: dict) -> dict | None:
     from app.core.supabase import sb_update
     allowed = {"credit_cost", "feature_name", "enabled", "minimum_plan", "credit_controlled", "refundable_on_failure"}
     payload = {k: v for k, v in updates.items() if k in allowed}
+    if "credit_cost" in payload:
+        payload["credit_cost"] = charged(payload["credit_cost"])      # 0 (free) or at least the minimum, never 1
     if not payload:
         return None
     await sb_update("credit_feature_config", payload=payload, filters=[("feature_code", "eq", feature_code)])

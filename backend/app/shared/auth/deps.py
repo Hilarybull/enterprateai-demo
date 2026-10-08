@@ -31,6 +31,24 @@ def _cache_set(token: str, user: Dict[str, Any]) -> None:
     _user_cache[token] = (user, time.monotonic() + _USER_CACHE_TTL)
 
 
+def forget_user(user_id: str) -> None:
+    """Drop every cached sign-in for a user, so a change to their account applies on the next request."""
+    for token in [t for t, (u, _) in _user_cache.items() if u.get("id") == user_id]:
+        _user_cache.pop(token, None)
+
+
+def signed_out(payload: Dict[str, Any], user: Dict[str, Any]) -> bool:
+    """Whether this sign-in was issued before the user chose "sign out of other devices"."""
+    after = user.get("sessions_valid_after")
+    if not after:
+        return False
+    try:
+        from datetime import datetime
+        return int(payload.get("iat") or 0) < int(datetime.fromisoformat(str(after).replace("Z", "+00:00")).timestamp())
+    except (ValueError, TypeError):
+        return False
+
+
 async def get_optional_user(request: Request) -> Dict[str, Any] | None:
     """Like get_current_user but returns None instead of raising 401."""
     auth = request.headers.get("Authorization", "")
@@ -46,9 +64,9 @@ async def get_optional_user(request: Request) -> Dict[str, Any] | None:
         return None
     cached = _cache_get(token)
     if cached is not None:
-        return None if cached.get("is_blocked") else cached
+        return None if cached.get("is_blocked") or signed_out(payload, cached) else cached
     user = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
-    if not user or user.get("is_blocked"):
+    if not user or user.get("is_blocked") or signed_out(payload, user):
         return None
     _cache_set(token, user)
     return user
@@ -70,11 +88,15 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
     if cached is not None:
         if cached.get("is_blocked"):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account suspended. Contact support at tech.support@enterprateai.com")
+        if signed_out(payload, cached):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="You were signed out on this device. Please sign in again.")
         return cached
     user = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     if user.get("is_blocked"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account suspended. Contact support at tech.support@enterprateai.com")
+    if signed_out(payload, user):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="You were signed out on this device. Please sign in again.")
     _cache_set(token, user)
     return user

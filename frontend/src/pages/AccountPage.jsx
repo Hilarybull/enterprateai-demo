@@ -4,6 +4,8 @@ import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 import { useProposalStore } from "../store/proposal";
 import { apiRequest } from "../api/client";
+import { SavedBusinessMatch } from "../components/marketplace/MatchPrompt";
+import AccountSettings from "./AccountSettings";
 
 function initialsFromName(name, email) {
   const source = name?.trim() || email || "";
@@ -381,6 +383,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
   const [contactEmail, setContactEmail] = useState(p.email || "");
   const [phone, setPhone] = useState(p.phone_number || "");
   const [website, setWebsite] = useState(p.website || "");
+  const [regNumber, setRegNumber] = useState(p.registration_number || "");
   const [linkedin, setLinkedin] = useState(p.linkedin_url || "");
   const [twitter, setTwitter] = useState(p.twitter_url || "");
   const [instagram, setInstagram] = useState(p.instagram_url || "");
@@ -446,6 +449,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
       ...(stateOrRegion.trim() ? { state_or_region: stateOrRegion.trim() } : {}),
       ...(phone.trim() ? { phone_number: phone.trim() } : {}),
       ...(website.trim() ? { website: website.trim() } : {}),
+      ...(regNumber.trim() ? { registration_number: regNumber.trim() } : {}),
       ...(linkedin.trim() ? { linkedin_url: linkedin.trim() } : {}),
       ...(twitter.trim() ? { twitter_url: twitter.trim() } : {}),
       ...(instagram.trim() ? { instagram_url: instagram.trim() } : {}),
@@ -665,6 +669,10 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
           </Field>
           <Field label="Website">
             <Input type="text" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="yourcompany.com" maxLength={200} />
+          </Field>
+          <Field label="Company number">
+            <Input type="text" value={regNumber} onChange={(e) => setRegNumber(e.target.value)} placeholder="Optional" maxLength={64} />
+            <p className="mt-1 text-[12px] text-slate-500 dark:text-slate-400">Helps customers find you and stops your business appearing twice.</p>
           </Field>
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -896,6 +904,8 @@ function WorkspaceTab({ workspaceId }) {
 
   return (
     <>
+    {/* A Marketplace profile that may be this business: asked again whenever the company number or website changes. */}
+    <SavedBusinessMatch businessId={workspaceId} companyNumber={p.registration_number || ""} website={p.website || ""} />
     <Card className="overflow-hidden">
       {/* Company banner */}
       <div className="bg-slate-50 px-6 py-5 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-800">
@@ -1044,319 +1054,7 @@ function WorkspaceTab({ workspaceId }) {
 /* ── main page ── */
 
 export default function AccountPage() {
-  const email = useAuthStore((s) => s.email);
-  const name = useAuthStore((s) => s.name);
-  const picture = useAuthStore((s) => s.picture);
-  const authProvider = useAuthStore((s) => s.authProvider);
-  const hasPassword = useAuthStore((s) => s.hasPassword);
-  const setProfile = useAuthStore((s) => s.setProfile);
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
-
-  const [tab, setTab] = useState("workspace");
-  const [displayName, setDisplayName] = useState(name || "");
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [profileMsg, setProfileMsg] = useState(null);
-
-  // OTP-gated password change: null | "request" | "otp" | "form"
-  const [pwStep, setPwStep] = useState(null);
-  const [otpInput, setOtpInput] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [passwordLoading, setPasswordLoading] = useState(false);
-  const [passwordMsg, setPasswordMsg] = useState(null);
-
-  const initials = initialsFromName(name, email);
-  const isGoogleOnly = !hasPassword;
-
-  async function handleProfileSave(e) {
-    e.preventDefault();
-    setProfileLoading(true);
-    setProfileMsg(null);
-    try {
-      const updated = await apiRequest("/auth/me", "PATCH", { name: displayName || null });
-      setProfile({ name: updated.name ?? null, picture: updated.picture ?? null, authProvider: updated.auth_provider ?? null, hasPassword: updated.has_password ?? false });
-      setProfileMsg({ type: "success", text: "Profile updated." });
-    } catch (err) {
-      setProfileMsg({ type: "error", text: err?.message || "Failed to update profile." });
-    } finally {
-      setProfileLoading(false);
-    }
-  }
-
-  async function handleSendOTP() {
-    setPasswordLoading(true);
-    setPasswordMsg(null);
-    try {
-      await apiRequest("/auth/me/send-password-otp", "POST");
-      setPwStep("otp");
-      setPasswordMsg({ type: "success", text: `Verification code sent to ${email}.` });
-    } catch (err) {
-      setPasswordMsg({ type: "error", text: err?.message || "Failed to send code." });
-    } finally {
-      setPasswordLoading(false);
-    }
-  }
-
-  async function handleVerifyOTP() {
-    if (otpInput.length !== 6) {
-      setPasswordMsg({ type: "error", text: "Enter the 6-digit code from your email." });
-      return;
-    }
-    setPwStep("form");
-    setPasswordMsg(null);
-  }
-
-  async function handlePasswordSave(e) {
-    e.preventDefault();
-    setPasswordMsg(null);
-    if (newPassword !== confirmPassword) {
-      setPasswordMsg({ type: "error", text: "Passwords do not match." });
-      return;
-    }
-    if (newPassword.length < 8) {
-      setPasswordMsg({ type: "error", text: "Password must be at least 8 characters." });
-      return;
-    }
-    setPasswordLoading(true);
-    try {
-      await apiRequest("/auth/me/change-password-otp", "POST", { otp_code: otpInput, new_password: newPassword });
-      setOtpInput("");
-      setNewPassword("");
-      setConfirmPassword("");
-      setPwStep(null);
-      setPasswordMsg({ type: "success", text: "Password updated successfully." });
-    } catch (err) {
-      setPasswordMsg({ type: "error", text: err?.message || "Failed to update password." });
-    } finally {
-      setPasswordLoading(false);
-    }
-  }
-
-  return (
-    <div className="mx-auto max-w-4xl pb-12">
-
-      <div className="mb-5">
-        <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Account settings</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage your personal details, security, and workspace.</p>
-      </div>
-
-      <TabBar active={tab} onChange={setTab} />
-
-      <div className="mt-6">
-
-        {/* ── Account tab ── */}
-        {tab === "account" && (
-          <div className="max-w-xl mx-auto">
-
-            {/* Profile card */}
-            <Card>
-              <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800">
-                <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Profile</h2>
-                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Your name and email address.</p>
-              </div>
-
-              {/* Avatar + identity row */}
-              <div className="px-6 py-5 flex items-center gap-4 border-b border-slate-100 dark:border-slate-800">
-                {picture ? (
-                  <img src={picture} alt={name || email} className="h-14 w-14 shrink-0 rounded-full object-cover ring-2 ring-white shadow dark:ring-slate-700" />
-                ) : (
-                  <div className="h-14 w-14 shrink-0 flex items-center justify-center rounded-full bg-brand-600 text-lg font-bold text-white shadow">
-                    {initials}
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
-                    {name || <span className="italic text-slate-400">No display name</span>}
-                  </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{email}</div>
-                  {authProvider === "google" && (
-                    <span className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700">
-                      <svg className="h-3 w-3" viewBox="0 0 24 24">
-                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                      </svg>
-                      Google account
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Form */}
-              <div className="flex-1 px-6 py-5 flex flex-col">
-                <form onSubmit={handleProfileSave} className="flex flex-col flex-1">
-                  <div className="space-y-4">
-                    <Field label="Display name">
-                      <Input
-                        type="text"
-                        placeholder="Your full name"
-                        value={displayName}
-                        onChange={(e) => setDisplayName(e.target.value)}
-                        maxLength={100}
-                      />
-                    </Field>
-                    <Field label="Email address">
-                      <Input type="email" value={email || ""} disabled />
-                      <p className="text-[11px] text-slate-400 dark:text-slate-500">Email cannot be changed.</p>
-                    </Field>
-                  </div>
-                  <div className="mt-5 flex items-center gap-3">
-                    <SubmitButton loading={profileLoading}>Save profile</SubmitButton>
-                    {profileMsg && <Alert type={profileMsg?.type} message={profileMsg?.text} />}
-                  </div>
-                </form>
-
-                {/* Password section */}
-                <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Password</p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {isGoogleOnly ? "Google account · no password set." : "Email & password login active."}
-                      </p>
-                    </div>
-                    {!pwStep && !isGoogleOnly && (
-                      <button
-                        type="button"
-                        onClick={() => { setPwStep("request"); setPasswordMsg(null); }}
-                        className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-400"
-                      >
-                        Change password
-                      </button>
-                    )}
-                    {!pwStep && isGoogleOnly && (
-                      <Link
-                        to={`/forgot-password?setup=1${email ? `&email=${encodeURIComponent(email)}` : ""}`}
-                        className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-400"
-                      >
-                        Set a password
-                      </Link>
-                    )}
-                  </div>
-
-                  {pwStep === "request" && (
-                    <div className="space-y-3">
-                      <p className="text-[12px] text-slate-500 dark:text-slate-400">
-                        We'll send a 6-digit verification code to <strong>{email}</strong> before you can update your password.
-                      </p>
-                      <Alert type={passwordMsg?.type} message={passwordMsg?.text} />
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          disabled={passwordLoading}
-                          onClick={handleSendOTP}
-                          className="flex-1 rounded-lg bg-brand-600 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-                        >
-                          {passwordLoading ? "Sending…" : "Send verification code"}
-                        </button>
-                        <button type="button" onClick={() => { setPwStep(null); setPasswordMsg(null); }} className="text-xs text-slate-400 hover:text-slate-600 px-3">
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {pwStep === "otp" && (
-                    <div className="space-y-3">
-                      <Alert type={passwordMsg?.type} message={passwordMsg?.text} />
-                      <Field label="Enter the 6-digit code from your email">
-                        <Input
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={6}
-                          placeholder="000000"
-                          value={otpInput}
-                          onChange={(e) => setOtpInput(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                        />
-                      </Field>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          disabled={otpInput.length !== 6}
-                          onClick={handleVerifyOTP}
-                          className="flex-1 rounded-lg bg-brand-600 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-                        >
-                          Verify code
-                        </button>
-                        <button type="button" onClick={handleSendOTP} disabled={passwordLoading} className="text-xs text-slate-400 hover:text-slate-600 px-3">
-                          Resend
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {pwStep === "form" && (
-                    <form onSubmit={handlePasswordSave} className="space-y-3">
-                      <Field label="New password">
-                        <Input
-                          type="password"
-                          placeholder="At least 8 characters"
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                          required
-                        />
-                      </Field>
-                      <Field label="Confirm new password">
-                        <Input
-                          type="password"
-                          placeholder="Repeat new password"
-                          value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
-                          required
-                        />
-                      </Field>
-                      <Alert type={passwordMsg?.type} message={passwordMsg?.text} />
-                      <SubmitButton loading={passwordLoading}>Update password</SubmitButton>
-                    </form>
-                  )}
-
-                  {!pwStep && passwordMsg && (
-                    <Alert type={passwordMsg.type} message={passwordMsg.text} />
-                  )}
-                </div>
-              </div>
-            </Card>
-
-            {/* ── Privacy & Cookies ── */}
-            <Card>
-              <div className="border-b border-slate-100 px-5 py-4 dark:border-slate-800">
-                <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Privacy &amp; Cookies</h2>
-                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Manage your cookie consent preferences.</p>
-              </div>
-              <div className="px-5 py-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">Cookie consent</p>
-                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                      You have accepted cookies on this site. You can withdraw your consent at any time. You will be asked again on your next visit.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      try { localStorage.removeItem("ea_cookie_consent"); } catch {}
-                      window.location.reload();
-                    }}
-                    className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                  >
-                    Withdraw consent
-                  </button>
-                </div>
-              </div>
-            </Card>
-
-          </div>
-        )}
-
-        {/* ── Workspace tab ── */}
-        {tab === "workspace" && (
-          <>
-            <WorkspaceTab workspaceId={workspaceId} />
-          </>
-        )}
-
-      </div>
-    </div>
-  );
+  // The layout and the personal sections live in AccountSettings; the workspace profile is this file's own.
+  return <AccountSettings workspace={<WorkspaceTab workspaceId={workspaceId} />} />;
 }

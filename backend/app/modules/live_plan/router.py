@@ -47,7 +47,20 @@ from app.modules.live_plan.service import (
     upsert_kpi,
 )
 
-router = APIRouter(prefix="/businesses/{business_id}/live-plan", tags=["live-plan"])
+async def _require_live_plan_access(user=Depends(get_current_user)) -> None:
+    from app.modules.plans.access import plan_meets
+    if not await plan_meets(user["id"], "decision_engine", grant_module="live_plan"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Live Business Plan Intelligence is available on the Decision Engine plan.",
+        )
+
+
+router = APIRouter(
+    prefix="/businesses/{business_id}/live-plan",
+    tags=["live-plan"],
+    dependencies=[Depends(_require_live_plan_access)],
+)
 
 
 @router.post("", response_model=LivePlanResponse)

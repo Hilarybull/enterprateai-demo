@@ -166,12 +166,26 @@ async def marketplace_status(
     return await get_listing_status(user_id=user["id"], workspace_id=workspace_id)
 
 
+async def _sync_directory(result: dict, user_id: str) -> None:
+    """Listing and directory are one public profile: publishing here shows the business in the
+    Business Directory, unpublishing removes it. The listing change stands if this can't run."""
+    try:
+        from app.modules.marketplace import directory_router
+        if directory_router.enabled():
+            await directory_router.get_service().sync_listing(str(result["workspace_id"]), actor=user_id)
+    except Exception:      # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("marketplace directory could not be synced for %s", result.get("workspace_id"))
+
+
 @router.post("/publish", response_model=MarketplaceStatusResponse)
 async def publish_to_marketplace(
     payload: MarketplacePublishRequest,
     user=Depends(get_current_user),
 ):
-    return await publish_workspace(user_id=user["id"], workspace_id=payload.workspace_id)
+    result = await publish_workspace(user_id=user["id"], workspace_id=payload.workspace_id)
+    await _sync_directory(result, user["id"])
+    return result
 
 
 @router.post("/unpublish", response_model=MarketplaceStatusResponse)
@@ -179,7 +193,9 @@ async def unpublish_from_marketplace(
     payload: MarketplaceUnpublishRequest,
     user=Depends(get_current_user),
 ):
-    return await unpublish_workspace(user_id=user["id"], workspace_id=payload.workspace_id)
+    result = await unpublish_workspace(user_id=user["id"], workspace_id=payload.workspace_id)
+    await _sync_directory(result, user["id"])
+    return result
 
 
 @router.get("/ratings/{workspace_id}", response_model=RatingResponse)
@@ -241,6 +257,9 @@ async def submit_rfq_endpoint(
         message=payload.message,
         sender_user_id=sender_user_id,
         sender_workspace_id=sender_workspace_id,
+        customer_company=payload.customer_company,
+        needed_by=payload.needed_by,
+        listing=payload.listing,
     )
 
 

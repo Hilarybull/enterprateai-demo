@@ -58,9 +58,7 @@ export const STATUS_COLORS = {
 };
 
 // Entitlement check — Starter Insight or higher required to submit/generate
-export function hasPaidAccess(planKey) {
-  return ["starter_insight", "growth", "scale", "enterprise"].includes(planKey);
-}
+export { hasPaidAccess } from "../lib/plans";
 
 export const useProposalStore = create((set, get) => ({
   // Preferences

@@ -1235,10 +1235,26 @@ async def update_workspace(
 
     merged = dict(ws.data or {})
     data_patch = _augment_workspace_patch(data_patch or {}, existing=merged)
+    if isinstance((data_patch or {}).get("financials"), dict):
+        # Invoice numbers are unique per business and issued by the server; a duplicate typed
+        # by hand is refused here (409), before anything is saved.
+        from app.shared.invoice_numbers import prepare_invoices_for_save
+        from app.modules.agent.business import local_now
+        await prepare_invoices_for_save(str(ws.id), data_patch["financials"],
+                                        merged.get("financials") if isinstance(merged.get("financials"), dict) else {},
+                                        local_now(merged, now))
     for k, v in (data_patch or {}).items():
+        if k == "financials" and v is None:
+            # Never let a patch null out all invoices, quotes, contracts and RFQs.
+            continue
         # Deep-merge financials so keys written by other endpoints (e.g. rfq_requests)
         # are never wiped by a frontend patch that doesn't include them.
         if k == "financials" and isinstance(v, dict) and isinstance(merged.get("financials"), dict):
+            if isinstance(v.get("rfq_requests"), list):
+                # Free-plan clients only ever see redacted RFQs; never let a
+                # save write those placeholders over the real requests.
+                from app.modules.addons.service import restore_locked_rfqs
+                v = {**v, "rfq_requests": restore_locked_rfqs(v["rfq_requests"], merged[k].get("rfq_requests") or [])}
             merged[k] = {**merged[k], **v}
         else:
             merged[k] = v

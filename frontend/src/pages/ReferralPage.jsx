@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { confirmDialog } from "../lib/dialog";
 import { apiRequest } from "../api/client";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
@@ -136,7 +137,8 @@ export default function ReferralPage() {
   }
 
   async function optOut() {
-    if (!window.confirm("Are you sure you want to leave the referral programme? Your existing balances will be preserved.")) return;
+    if (!(await confirmDialog("Are you sure you want to leave the referral programme? Your existing balances will be preserved.",
+      { title: "Leave the referral programme", confirmLabel: "Leave programme", danger: true }))) return;
     setOptingOut(true);
     try {
       await apiRequest("/referrals/opt-out", "POST", {});

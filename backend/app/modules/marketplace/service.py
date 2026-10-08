@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from html import escape
@@ -12,6 +14,9 @@ from fastapi import HTTPException, status
 from app.modules.idea_validation.service import get_user_workspace, get_workspace
 from app.core.supabase import sb_select, sb_update, sb_upsert
 from app.shared.email.resend import send_email_via_resend
+from app.modules.addons.service import featured_workspace_ids, redact_rfqs, require_rfq_access
+from app.modules.credits.service import credit_guard
+from app.modules.plans.access import has_paid_access
 
 
 def _build_quotation_pdf(quote: dict, company_name: str, currency_symbol: str = "£") -> bytes:
@@ -99,6 +104,9 @@ def _build_listing_item(ws: dict) -> dict | None:
     marketplace = data.get("marketplace") or {}
     if not marketplace.get("is_active"):
         return None
+    from app.modules.marketplace.directory import listing_quality, marketplace_settings
+    if listing_quality(marketplace_settings(data)):
+        return None      # kept off the Marketplace until its description and offerings are real
     profile = data.get("workspace_profile")
     if not profile:
         return None
@@ -108,11 +116,22 @@ def _build_listing_item(ws: dict) -> dict | None:
         profile.get("services") or [],
         key=lambda s: (str(s.get("service_name") or "").strip().lower(), str(s.get("service_category") or "").strip().lower()),
     )
+    # One public profile: the description, website, services and contact route are the ones the owner
+    # saved for the Marketplace. The account and workspace email addresses are never shown (AC-12).
+    from app.modules.marketplace.directory import marketplace_settings, public_contact
+    saved = marketplace_settings(data)["profile"]
+    contact = public_contact(data)
+    if saved["service_tags"]:
+        known = {str(s.get("service_name") or "").strip().lower(): s for s in services}
+        services = [known.get(t.strip().lower()) or {"service_name": t, "service_category": profile.get("primary_industry") or "", "service_description": None}
+                    for t in saved["service_tags"]]
     return {
         "workspace_id": str(ws["id"]),
         "company_name": profile.get("company_name", ""),
         "tagline": profile.get("tagline"),
-        "about_company": profile.get("about_company", ""),
+        "about_company": saved["description"],
+        "service_area": saved["service_area"],
+        "directory_profile_id": marketplace.get("directory_profile_id"),
         "primary_industry": profile.get("primary_industry", ""),
         "secondary_industries": profile.get("secondary_industries") or [],
         "business_type": profile.get("business_type", ""),
@@ -130,9 +149,10 @@ def _build_listing_item(ws: dict) -> dict | None:
             if p.get("name") and not p.get("archived") and p.get("marketplace_listed", True)
         ],
         "logo_data_url": profile.get("logo_data_url"),
-        "website": profile.get("website"),
-        "email": profile.get("email", ""),
-        "phone_number": profile.get("phone_number"),
+        "website": saved["website"] or None,
+        "contact_method": contact["method"],
+        "email": contact["email"] or "",
+        "phone_number": contact["phone"],
         "linkedin_url": profile.get("linkedin_url"),
         "twitter_url": profile.get("twitter_url"),
         "instagram_url": profile.get("instagram_url"),
@@ -154,6 +174,10 @@ def _ws_fields(ws) -> tuple[str, dict]:
     if isinstance(ws, dict):
         return str(ws.get("id", "")), ws.get("data") or {}
     return str(ws.id), ws.data or {}
+
+
+def _ws_owner(ws) -> str:
+    return str(ws.get("user_id", "") if isinstance(ws, dict) else getattr(ws, "user_id", ""))
 
 
 async def _attach_ratings(items: list[dict]) -> None:
@@ -202,6 +226,17 @@ async def publish_workspace(*, user_id: str, workspace_id: str | None = None) ->
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Complete your workspace profile before publishing to the marketplace",
         )
+    if not await has_paid_access(user_id):
+        published = await sb_select(
+            "workspaces",
+            filters=[("user_id", "eq", user_id), ("data", "cs", {"marketplace": {"is_active": True}})],
+            columns="id",
+        )
+        if any(str(w["id"]) != ws_id for w in (published or [])):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="The Explorer plan includes 1 marketplace listing. Unlist your other business or upgrade for multiple listings.",
+            )
     now = datetime.now(timezone.utc).isoformat()
     existing_marketplace = data.get("marketplace") or {}
     marketplace_data = {
@@ -266,11 +301,13 @@ async def list_marketplace(
         desc=True,
         limit=200,
     )
+    featured = await featured_workspace_ids(list(all_workspaces or []))
     items = []
     for ws in (all_workspaces or []):
         item = _build_listing_item(ws)
         if not item:
             continue
+        item["is_featured"] = item["workspace_id"] in featured
         if industry and item["primary_industry"] != industry:
             continue
         if business_type and item["business_type"] != business_type:
@@ -301,6 +338,8 @@ async def list_marketplace(
         items.append(item)
 
     await _attach_ratings(items)
+    # Featured listings first; order within each group is unchanged.
+    items.sort(key=lambda i: not i.get("is_featured"))
 
     total = len(items)
     start = (page - 1) * page_size
@@ -405,6 +444,7 @@ async def get_listing(*, workspace_id: str) -> dict:
     item = _build_listing_item(ws)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
+    item["is_featured"] = item["workspace_id"] in await featured_workspace_ids([ws])
     await _attach_ratings([item])
     return item
 
@@ -511,6 +551,9 @@ async def submit_rfq(
     message: str | None,
     sender_user_id: str | None = None,
     sender_workspace_id: str | None = None,
+    customer_company: str | None = None,
+    needed_by: str | None = None,
+    listing: str | None = None,
 ) -> dict:
     ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
     if not ws:
@@ -525,6 +568,16 @@ async def submit_rfq(
     financials = data.get("financials") or {}
     rfq_requests = list(financials.get("rfq_requests") or [])
     now = datetime.now(timezone.utc).isoformat()
+    # The same request sent again within a few minutes (a double click, a retry after a slow
+    # reply) is the request already on record, not a second one.
+    recent = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    again = next((r for r in rfq_requests if isinstance(r, dict) and r.get("status") == "pending"
+                  and str(r.get("created_at") or "") >= recent
+                  and str(r.get("customer_email") or "").strip().lower() == str(customer_email or "").strip().lower()
+                  and r.get("items") == items and (r.get("message") or "") == (message or "")), None)
+    if again:
+        await _hand_rfq_to_agent(workspace_id, again["id"])      # safe to repeat: still one task
+        return again
     rfq_id = str(uuid4())
     rfq = {
         "id": rfq_id,
@@ -537,6 +590,9 @@ async def submit_rfq(
         "created_at": now,
         "quote_id": None,
         "sender_workspace_id": sender_workspace_id,
+        "customer_company": (customer_company or "").strip() or None,
+        "needed_by": (needed_by or "").strip() or None,
+        "listing": (listing or "").strip() or None,
     }
     rfq_requests.append(rfq)
     merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
@@ -564,7 +620,36 @@ async def submit_rfq(
         except Exception:
             pass  # outbound tracking failure must not break the submission
 
+    await _hand_rfq_to_agent(workspace_id, rfq_id)
     return rfq
+
+
+async def _hand_rfq_to_agent(workspace_id: str, rfq_id: str) -> None:
+    """Let the seller's Agent start drafting a reply, if the business has that switched on.
+    The buyer's request is already saved; whatever happens here never fails it."""
+    try:
+        from app.modules.agent import rfq as agent_rfq
+        from app.modules.agent.router import get_orchestrator
+        await agent_rfq.received(get_orchestrator(), workspace_id, rfq_id)
+    except Exception:      # noqa: BLE001
+        logging.getLogger(__name__).warning("could not hand request %s to the Agent", rfq_id, exc_info=True)
+
+
+async def _stop_rfq_task(workspace_id: str, rfq_id: str, user_id: str, reason: str) -> None:
+    """A person has answered, declined or removed the request: the Agent's task for it stops."""
+    try:
+        from app.modules.agent import rfq as agent_rfq
+        from app.modules.agent.router import get_orchestrator
+        await agent_rfq.stop(get_orchestrator(), workspace_id, rfq_id, user_id, reason)
+    except Exception:      # noqa: BLE001
+        logging.getLogger(__name__).warning("could not stop the Agent task for request %s", rfq_id, exc_info=True)
+
+
+async def _rfqs_unlocked(owner_id: str) -> bool:
+    if await has_paid_access(owner_id):
+        return True
+    from app.modules.plans.access import has_grant
+    return await has_grant(owner_id, "marketplace_rfq")
 
 
 async def list_rfqs(*, user_id: str, workspace_id: str | None = None) -> dict:
@@ -574,10 +659,52 @@ async def list_rfqs(*, user_id: str, workspace_id: str | None = None) -> dict:
     _, data = _ws_fields(ws)
     financials = data.get("financials") or {}
     items = list(financials.get("rfq_requests") or [])
+    if items and not await _rfqs_unlocked(_ws_owner(ws)):
+        # Free plan: RFQs are received but locked until the owner upgrades.
+        return {"items": redact_rfqs(items), "total": len(items), "locked": True}
+    # Where the Agent has got to with each request, read from its tasks as they are now.
+    try:
+        from app.modules.agent import rfq as agent_rfq
+        from app.modules.agent.router import get_orchestrator
+        at = await agent_rfq.states(get_orchestrator(), _ws_fields(ws)[0]) if items else {}
+    except Exception:      # noqa: BLE001 - the list is still worth showing without it
+        logging.getLogger(__name__).warning("could not read Agent tasks for requests", exc_info=True)
+        at = {}
+    items = [{**r, "agent": at.get(str(r.get("id"))),
+              "can_ask_agent": r.get("status") == "pending" and not at.get(str(r.get("id")))} for r in items]
     return {"items": items, "total": len(items)}
 
 
 async def approve_rfq(
+    *,
+    user_id: str,
+    workspace_id: str | None = None,
+    rfq_id: str,
+    validity_days: int = 30,
+    item_prices: list[dict] | None = None,
+) -> dict:
+    """Respond to an RFQ: paid plans only, costs 1 AI credit (refunded on failure)."""
+    ws = await _load_workspace(user_id, workspace_id)
+    if not ws:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await require_rfq_access(_ws_owner(ws))
+    _, data = _ws_fields(ws)
+    rfq = next((r for r in ((data.get("financials") or {}).get("rfq_requests") or []) if r.get("id") == rfq_id), None)
+    if not rfq:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RFQ not found")
+    if rfq.get("status") != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="RFQ is not pending")
+    async with credit_guard(user_id, "rfq_response"):
+        return await _approve_rfq(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            rfq_id=rfq_id,
+            validity_days=validity_days,
+            item_prices=item_prices,
+        )
+
+
+async def _approve_rfq(
     *,
     user_id: str,
     workspace_id: str | None = None,
@@ -686,6 +813,8 @@ async def approve_rfq(
     rfq["status"] = "approved"
     rfq["quote_id"] = quote_id
     rfq["approved_at"] = now
+    rfq["responded_by"] = "manual"
+    rfq.pop("draft_quote_id", None)
 
     merged = {**data, "financials": {**financials, "quotes": quotes, "rfq_requests": rfq_requests}}
     await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
@@ -757,6 +886,9 @@ async def approve_rfq(
         except Exception:
             pass
 
+    # Answered by hand: the Agent's task for this request stops, and its unsent draft is closed.
+    await _stop_rfq_task(ws_id, rfq_id, user_id, "rfq_answered_manually")
+
     return {
         "rfq": rfq,
         "quote": quote,
@@ -769,6 +901,7 @@ async def reject_rfq(*, user_id: str, workspace_id: str | None = None, rfq_id: s
     ws = await _load_workspace(user_id, workspace_id)
     if not ws:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await require_rfq_access(_ws_owner(ws))
     ws_id, data = _ws_fields(ws)
     financials = data.get("financials") or {}
     rfq_requests = list(financials.get("rfq_requests") or [])
@@ -785,6 +918,7 @@ async def reject_rfq(*, user_id: str, workspace_id: str | None = None, rfq_id: s
 
     merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
     await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
+    await _stop_rfq_task(ws_id, rfq_id, user_id, "rfq_rejected")
     return rfq
 
 
@@ -798,6 +932,7 @@ async def delete_rfq(*, user_id: str, workspace_id: str | None = None, rfq_id: s
     merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
     now = datetime.now(timezone.utc).isoformat()
     await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
+    await _stop_rfq_task(ws_id, rfq_id, user_id, "rfq_deleted")
 
 
 async def record_profile_view(
@@ -891,10 +1026,96 @@ async def get_profile_views(*, user_id: str, workspace_id: str | None = None) ->
     return {"views": recent, "total": len(views)}
 
 
-async def respond_to_quote(*, token: str, viewer_email: str, action: str) -> dict:
-    """Called when a customer accepts or rejects a shared quotation."""
+_MAX_QUESTIONS_PER_QUOTE = 10
+
+logger = logging.getLogger(__name__)
+_background: set[asyncio.Task] = set()
+
+
+def _in_background(coro) -> None:
+    """Send a notification without making the customer wait for it. Their response is
+    already saved; a notification that fails is logged."""
+    async def _run() -> None:
+        try:
+            await coro
+        except Exception:      # noqa: BLE001
+            logger.warning("quotation notification failed", exc_info=True)
+
+    task = asyncio.create_task(_run())
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+async def drain_background() -> None:
+    """Wait for notifications still being sent (tests, shutdown)."""
+    while _background:
+        await asyncio.gather(*list(_background), return_exceptions=True)
+
+
+async def ask_about_quote(*, token: str, viewer_email: str, message: str) -> dict:
+    """The customer has a question before deciding. The quotation stays open; the question is
+    kept on the quotation and emailed to the business, with replies going to the customer."""
+    from app.core.config import get_settings
+    from app.modules.agent.documents import _email
+
+    text = str(message or "").strip()
+    if len(text) < 3:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please write your question.")
+    ws_id, quote_id, ws, data, quote = await _shared_quote(token, viewer_email)
+    state = quote_state(quote)
+    if state != "open":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_CLOSED_MESSAGE[state])
+    questions = list(quote.get("customer_questions") or [])
+    if len(questions) >= _MAX_QUESTIONS_PER_QUOTE:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="You've sent several questions already. The business will reply by email.")
+    now = datetime.now(timezone.utc).isoformat()
+    sender = viewer_email or str(quote.get("customer_email") or "")
+    questions.append({"id": uuid4().hex[:12], "message": text[:2000], "from_email": sender, "asked_at": now})
+    quote["customer_questions"] = questions
+    quote["has_open_question"] = True
+    quote["last_question_at"] = now
+    financials = data.get("financials") or {}
+    await sb_update("workspaces", filters=[("id", "eq", ws_id)],
+                    payload={"data": {**data, "financials": {**financials, "quotes": financials["quotes"]}}, "updated_at": now})
+
+    # Tell the business. Replying to this email answers the customer directly.
+    profile = data.get("workspace_profile") or {}
+    company = str(profile.get("company_name") or ws.get("name") or "your business").strip()
+    owner_email = str(profile.get("email") or ws.get("user_id") or "").strip()
+    ref = quote.get("reference") or quote.get("quotation_id") or quote_id[:8]
+    customer = quote.get("customer_name") or sender or "Your customer"
+    link = f"{get_settings().frontend_url.rstrip('/')}/operations?tab=Sales"
+    notifying = "@" in owner_email
+
+    async def _tell_business() -> None:
+        safe = escape(text).replace("\n", "<br>")
+        html = _email(
+            company=company, title=f"Question about quotation {ref}",
+            preheader=f"{customer} asked a question before deciding",
+            intro=f"{escape(customer)} has a question about quotation <strong>{escape(str(ref))}</strong> before deciding:",
+            blocks=[f'<div style="margin:0 0 20px;padding:14px 16px;border-left:3px solid #4f46e5;background:#f8fafc;'
+                    f'border-radius:8px;font-size:15px;line-height:1.6;color:#0f172a;">{safe}</div>'],
+            cta=("Open the quotation", link),
+            note=f"Reply to this email to answer {escape(customer)} directly. The quotation stays open until they accept or decline it.",
+        )
+        await send_email_via_resend(
+            to_email=owner_email, subject=f"Question about quotation {ref} from {customer}",
+            text_content=(f"{customer} has a question about quotation {ref}:\n\n{text}\n\n"
+                          f"Reply to this email to answer them directly.\n{link}\n"),
+            html_content=html, sender_name="EnterprateAI", reply_to_email=sender if "@" in sender else None,
+        )
+
+    if notifying:
+        _in_background(_tell_business())
+    return {"action": "question", "quote_id": quote_id, "notified": notifying, "company": company,
+            "questions": [{"message": q.get("message"), "asked_at": q.get("asked_at")} for q in questions]}
+
+
+async def _shared_quote(token: str, viewer_email: str, *, with_rfq: bool = False):
+    """The quotation behind a customer's share link: (workspace id, quote id, workspace row, data, quote),
+    plus the id of the marketplace RFQ it answers (or "") when `with_rfq` is set."""
     from app.modules.blueprint.share_repository import get_shared_document_by_token
-    from app.core.supabase import sb_select as _sel
 
     try:
         doc = await get_shared_document_by_token(token=token, viewer_email=viewer_email)
@@ -909,44 +1130,174 @@ async def respond_to_quote(*, token: str, viewer_email: str, action: str) -> dic
         if str(exc) == "EXPIRED":
             raise HTTPException(status_code=status.HTTP_410_GONE, detail="This quotation link has expired.")
         raise
-
     if not doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quotation link not found.")
-
-    doc_type = str(doc.type or "")
-    if not doc_type.startswith("quotation_acceptance::"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This link is not a quotation acceptance link.")
-
-    parts = doc_type.split("::")
-    if len(parts) < 4:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid quotation link format.")
-
-    ws_id, rfq_id, quote_id = parts[1], parts[2], parts[3]
-
-    ws = await _sel("workspaces", filters=[("id", "eq", ws_id)], single=True)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="This quotation link is no longer active. Please use the link in the most recent email, or contact the business.")
+    parts = str(doc.type or "").split("::")
+    if len(parts) < 4 or parts[0] != "quotation_acceptance":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This link is not a quotation link.")
+    ws_id, quote_id = parts[1], parts[3]
+    ws = await sb_select("workspaces", filters=[("id", "eq", ws_id)], single=True)
     if not ws:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found.")
-
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quotation not found.")
     data = ws.get("data") or {}
-    financials = data.get("financials") or {}
-    now = datetime.now(timezone.utc).isoformat()
-
-    quotes = list(financials.get("quotes") or [])
-    rfq_requests = list(financials.get("rfq_requests") or [])
-
-    new_status = "accepted" if action == "accept" else "rejected"
+    quotes = list((data.get("financials") or {}).get("quotes") or [])
     quote = next((q for q in quotes if q.get("id") == quote_id), None)
-    rfq = next((r for r in rfq_requests if r.get("id") == rfq_id), None)
-
     if not quote:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quotation not found.")
+    data = {**data, "financials": {**(data.get("financials") or {}), "quotes": quotes}}
+    if with_rfq:
+        return ws_id, quote_id, ws, data, quote, parts[2]
+    return ws_id, quote_id, ws, data, quote
 
-    quote["status"] = new_status
-    quote["responded_at"] = now
+
+def quote_state(quote: dict, today: str | None = None) -> str:
+    """Where a quotation stands for its customer: open, accepted, declined, expired,
+    cancelled or superseded."""
+    st = str(quote.get("status") or "").lower()
+    if quote.get("superseded_by"):
+        return "superseded"
+    if st in ("accepted", "won"):
+        return "accepted"
+    if st in ("rejected", "declined", "lost"):
+        return "declined"
+    if st in ("cancelled", "canceled", "void", "withdrawn"):
+        return "cancelled"
+    if st == "expired":
+        return "expired"
+    today = today or datetime.now(timezone.utc).date().isoformat()
+    valid = str(quote.get("valid_until") or "")[:10]
+    if valid and valid < today:
+        return "expired"
+    return "open"
+
+
+_CLOSED_MESSAGE = {
+    "accepted": "This quotation has already been accepted.",
+    "declined": "This quotation has already been declined.",
+    "expired": "This quotation has expired. Please contact the business for an updated quote.",
+    "cancelled": "This quotation has been withdrawn by the business.",
+    "superseded": "This quotation has been replaced by a newer version.",
+}
+
+
+async def quote_status_for_customer(*, token: str, viewer_email: str = "") -> dict:
+    """What the customer's quotation page needs to know beyond the document itself."""
+    ws_id, quote_id, ws, data, quote = await _shared_quote(token, viewer_email)
+    from app.modules.agent.business import company_of
+    from app.modules.agent.tools import _amounts, _currency
+    seller = company_of(data)
+    logo = str((data.get("workspace_profile") or {}).get("logo_data_url") or "")
+    amounts = _amounts(quote)
+    valid = str(quote.get("valid_until") or "")[:10]
+    days_left = None
+    if valid:
+        try:
+            days_left = (datetime.fromisoformat(valid).date() - datetime.now(timezone.utc).date()).days
+        except ValueError:
+            days_left = None
+    acceptance = quote.get("acceptance") or {}
+    return {
+        "state": quote_state(quote),
+        "reference": quote.get("reference") or quote.get("quotation_id"),
+        "version": int(quote.get("version") or 1),
+        "total": amounts["total"], "currency": _currency(quote, data),
+        "valid_until": valid or None, "days_left": days_left,
+        "issued_at": str(quote.get("issued_at") or quote.get("created_at") or "")[:10] or None,
+        "responded_at": quote.get("responded_at"),
+        "acceptance": {"name": acceptance.get("name"), "accepted_at": acceptance.get("accepted_at")} if acceptance else None,
+        "declined_reason": quote.get("declined_reason"),
+        "superseded_by": quote.get("superseded_by"),
+        "seller": {**{k: seller.get(k) for k in ("name", "email", "phone", "website", "address", "vat_number")},
+                   "logo": logo if logo.startswith("data:image/") else None},
+        "customer": {"name": quote.get("customer_name"), "contact_name": quote.get("contact_name") or None},
+        "questions": [{"message": q.get("message"), "asked_at": q.get("asked_at")} for q in quote.get("customer_questions") or []],
+    }
+
+
+async def _notify_seller(ws: dict, data: dict, quote: dict, *, subject: str, title: str, intro: str, body_html: str = "",
+                         reply_to: str | None = None) -> bool:
+    """Tell the business what its customer did. Replies go to the customer where known."""
+    from app.core.config import get_settings
+    from app.modules.agent.documents import _email
+    profile = data.get("workspace_profile") or {}
+    company = str(profile.get("company_name") or ws.get("name") or "your business").strip()
+    owner = str(profile.get("email") or ws.get("user_id") or "").strip()
+    if "@" not in owner:
+        return False
+    link = f"{get_settings().frontend_url.rstrip('/')}/operations?tab=Sales"
+    html = _email(company=company, title=title, preheader=intro, intro=intro, blocks=[body_html] if body_html else [],
+                  cta=("Open in Business Operations", link))
+    res = await send_email_via_resend(to_email=owner, subject=subject, text_content=f"{intro}\n\n{link}\n",
+                                      html_content=html, sender_name="EnterprateAI",
+                                      reply_to_email=reply_to if reply_to and "@" in reply_to else None)
+    return bool(res.sent)
+
+
+async def respond_to_quote(*, token: str, viewer_email: str, action: str, signer_name: str | None = None,
+                           accepted_terms: bool = False, reason: str | None = None,
+                           client_ip: str | None = None, user_agent: str | None = None) -> dict:
+    """The customer accepts or declines a shared quotation.
+
+    Accepting is a trusted acceptance (s16.1): the signer's name, their agreement to the terms,
+    the time, IP address, browser and the quotation version are recorded. It is idempotent: a
+    second accept returns the first acceptance and changes nothing."""
+    ws_id, quote_id, ws, data, quote, rfq_ref = await _shared_quote(token, viewer_email, with_rfq=True)
+    state = quote_state(quote)
+    now = datetime.now(timezone.utc).isoformat()
+    if action == "accept":
+        if state == "accepted":
+            return {"action": "accepted", "already": True, "quote_id": quote_id,
+                    "acceptance": {k: (quote.get("acceptance") or {}).get(k) for k in ("name", "accepted_at")}}
+        if state != "open":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_CLOSED_MESSAGE[state])
+        name = " ".join(str(signer_name or "").split())
+        if len(name) < 2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please enter your full name to accept.")
+        if not accepted_terms:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please confirm that you accept the quotation and its terms.")
+        from app.modules.agent.tools import _amounts
+        quote.update({
+            "status": "accepted", "responded_at": now, "has_open_question": False,
+            "acceptance": {"name": name[:120], "accepted_at": now, "ip": (client_ip or "")[:64], "user_agent": (user_agent or "")[:300],
+                           "version": int(quote.get("version") or 1), "total": _amounts(quote)["total"],
+                           "email": viewer_email or quote.get("customer_email") or None, "source": "customer_link"},
+        })
+        new_status = "accepted"
+    else:
+        if state == "declined":
+            return {"action": "rejected", "already": True, "quote_id": quote_id}
+        if state != "open":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_CLOSED_MESSAGE[state])
+        quote.update({"status": "rejected", "responded_at": now, "has_open_question": False,
+                      "declined_reason": (str(reason or "").strip()[:1000] or None)})
+        new_status = "rejected"
+
+    financials = data.get("financials") or {}
+    rfq_requests = list(financials.get("rfq_requests") or [])
+    rfq_id = quote.get("rfq_id") or rfq_ref
+    rfq = next((r for r in rfq_requests if rfq_id and r.get("id") == rfq_id), None)
     if rfq:
         rfq["customer_response"] = new_status
         rfq["responded_at"] = now
-
-    merged = {**data, "financials": {**financials, "quotes": quotes, "rfq_requests": rfq_requests}}
+    merged = {**data, "financials": {**financials, "quotes": financials["quotes"], "rfq_requests": rfq_requests}}
     await sb_update("workspaces", filters=[("id", "eq", ws_id)], payload={"data": merged, "updated_at": now})
+
+    ref = quote.get("reference") or quote.get("quotation_id") or quote_id[:8]
+    customer = quote.get("customer_name") or "Your customer"
+    # The answer is saved; the business is told in the background.
+    if new_status == "accepted":
+        try:      # an accepted quotation may be the Agent's cue to prepare the invoice
+            from app.modules.agent import autostart
+            autostart.later(str(ws_id))
+        except Exception:      # noqa: BLE001
+            pass
+        _in_background(_notify_seller(ws, data, quote, subject=f"{customer} accepted quotation {ref}", title=f"Quotation {ref} accepted",
+                                      intro=f"{escape(customer)} accepted quotation {escape(str(ref))}, signed by {escape(quote['acceptance']['name'])}.",
+                                      reply_to=quote.get("customer_email")))
+    else:
+        why = quote.get("declined_reason")
+        _in_background(_notify_seller(ws, data, quote, subject=f"{customer} declined quotation {ref}", title=f"Quotation {ref} declined",
+                                      intro=f"{escape(customer)} declined quotation {escape(str(ref))}." + (f" Their reason: {escape(why)}" if why else ""),
+                                      reply_to=quote.get("customer_email")))
     return {"action": new_status, "quote_id": quote_id}

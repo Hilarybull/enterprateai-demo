@@ -1,12 +1,18 @@
+import Pagination, { pageSlice, useUrlValue } from "../components/Pagination";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { formatCurrency } from "../lib/format";
+import { alertDialog } from "../lib/dialog";
+import { formatCurrency, newRecordId, todayLocal } from "../lib/format";
 import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
 import { createPortal } from "react-dom";
-import { useNavigate, useLocation } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useWorkspaceStore } from "../store/workspace";
 import { apiRequest, apiRequestCached, invalidateWorkspaceCache } from "../api/client";
 import PageHeader from "../components/PageHeader";
+import ErrorBoundary, { Guarded } from "../components/ErrorBoundary";
 import Spinner from "../components/Spinner";
+import { SkeletonKpi, SkeletonRegion, SkeletonTable } from "../components/Skeleton";
+import FinancialOverviewCards from "../components/FinancialOverviewCards";
+import { AGENT_CHANGED_EVENT, agentErrorMessage, ensureBusinessTimezone, setInvoiceState, submitAgentRequest, wakeAgent } from "../lib/agent";
 import { InboxTab, ActivityTab, RequestsTab } from "./ProposalsPage";
 import { useProposalStore } from "../store/proposal";
 
@@ -22,10 +28,61 @@ function fmtDate(s) {
   const d = new Date(s);
   if (isNaN(d)) return s;
   const diff = Date.now() - d.getTime();
-  if (diff < 86400000) return "Today";
-  if (diff < 172800000) return "Yesterday";
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  // "Today"/"Yesterday" only describe the past; a future date is always shown as a date.
+  if (diff >= 0 && diff < 86400000) return "Today";
+  if (diff >= 0 && diff < 172800000) return "Yesterday";
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
 }
+
+// A calendar date exactly as stored (e.g. a due date): "17 Oct 2026", never relative.
+function fmtDay(s) {
+  if (!s) return "—";
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(s);
+  if (isNaN(d)) return String(s);
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function invoiceTotal(i) {
+  return Number(i?.total_amount || i?.amount || i?.subtotal_amount || 0);
+}
+
+// Received so far: the recorded payments; for older invoices without payment records,
+// the stored paid amount (partial) or the full total (marked paid).
+function invoiceReceived(i) {
+  if (Array.isArray(i?.payments) && i.payments.length) return i.payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+  const st = String(i?.status || "").toLowerCase();
+  if (st === "paid" && i?.payment_type === "partial") return Number(i?.paid_amount || 0);
+  if (st === "paid") return invoiceTotal(i);
+  return 0;
+}
+
+function invoiceOutstanding(i) {
+  const st = String(i?.status || "").toLowerCase();
+  if (["draft", "cancelled", "canceled", "void", "voided", "credited"].includes(st)) return 0;
+  return Math.max(0, Math.round((invoiceTotal(i) - invoiceReceived(i)) * 100) / 100);
+}
+
+function isFullyPaid(i) {
+  return invoiceTotal(i) > 0 && invoiceReceived(i) >= invoiceTotal(i) - 0.005;
+}
+
+function isOverdue(i) {
+  if (!i?.due_date || invoiceOutstanding(i) <= 0) return false;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const m = String(i.due_date).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const due = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(i.due_date);
+  return !isNaN(due) && due < today;
+}
+
+// How often the page re-reads the workspace while it is open and visible, so changes made
+// elsewhere (the Agent sending a receipt, a customer accepting a quotation) show up.
+export const LIVE_REFRESH_MS = 30000;
+
+// One status normaliser for the whole page ("Sent " -> "sent").
+const statusOf = (value) => String(value || "").toLowerCase().trim();
+
+const SENT_QUOTE_STATUSES = ["sent", "viewed", "submitted", "accepted", "won", "negotiation", "in_negotiation"];
 
 function StatusPill({ status, paymentType }) {
   const s = (status || "").toLowerCase();
@@ -58,6 +115,11 @@ function StatusPill({ status, paymentType }) {
     overdue: "text-rose-600 bg-rose-50",
     expired: "text-rose-600 bg-rose-50",
     draft: "text-slate-500 bg-slate-100",
+    disputed: "text-amber-700 bg-amber-100",
+    voided: "text-slate-600 bg-slate-200",
+    void: "text-slate-600 bg-slate-200",
+    cancelled: "text-slate-600 bg-slate-200",
+    credited: "text-indigo-600 bg-indigo-50",
     won: "text-emerald-600 bg-emerald-50",
     "awaiting approval": "text-amber-600 bg-amber-50",
     customer: "text-blue-600 bg-blue-50",
@@ -74,9 +136,24 @@ function StatusPill({ status, paymentType }) {
   );
 }
 
+// Where a row's action menu opens: below the row if it fits, otherwise above, and never
+// above the top of the table (so it can't cover the page header's Create button). When
+// neither side has room for the whole menu it takes the roomier side and scrolls.
+export function menuPlacement({ rowTop, rowBottom, areaTop, viewportHeight, menuHeight }) {
+  const gap = 4;
+  const edge = 8;
+  const below = viewportHeight - rowBottom - gap - edge;
+  const above = rowTop - gap - Math.max(areaTop, edge);
+  if (menuHeight <= below) return { top: rowBottom + gap, maxHeight: null, side: "below" };
+  if (menuHeight <= above) return { top: rowTop - gap - menuHeight, maxHeight: null, side: "above" };
+  if (below >= above) return { top: rowBottom + gap, maxHeight: Math.max(below, 120), side: "below" };
+  const height = Math.max(above, 120);
+  return { top: Math.max(rowTop - gap - height, Math.max(areaTop, edge)), maxHeight: height, side: "above" };
+}
+
 function ActionMenu({ items }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState({ top: 0, right: 0 });
+  const [pos, setPos] = useState({ top: 0, right: 0, maxHeight: null });
   const btnRef = useRef(null);
   const dropRef = useRef(null);
 
@@ -93,13 +170,12 @@ function ActionMenu({ items }) {
   function handleToggle() {
     if (!open && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      const dropH = items.length * 36 + 8; // estimate dropdown height
-      const spaceBelow = window.innerHeight - r.bottom;
-      const flipUp = spaceBelow < dropH + 8 && r.top > dropH + 8;
-      setPos({
-        top: flipUp ? r.top - dropH - 4 : r.bottom + 4,
-        right: window.innerWidth - r.right,
+      const area = btnRef.current.closest("table") || btnRef.current.closest("[data-table-area]");
+      const place = menuPlacement({
+        rowTop: r.top, rowBottom: r.bottom, areaTop: area ? area.getBoundingClientRect().top : 0,
+        viewportHeight: window.innerHeight, menuHeight: items.length * 36 + 10,
       });
+      setPos({ top: place.top, right: window.innerWidth - r.right, maxHeight: place.maxHeight });
     }
     setOpen(v => !v);
   }
@@ -115,8 +191,9 @@ function ActionMenu({ items }) {
       </button>
       {open && createPortal(
         <div ref={dropRef}
-          style={{ position: "fixed", top: pos.top, right: pos.right, zIndex: 9999 }}
-          className="w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+          style={{ position: "fixed", top: pos.top, right: pos.right, zIndex: 9999, maxHeight: pos.maxHeight || undefined }}
+          role="menu"
+          className={`w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-xl ${pos.maxHeight ? "overflow-y-auto overscroll-contain" : ""}`}>
           {items.map(item => (
             <button key={item.label} type="button"
               onClick={() => { setOpen(false); item.onClick?.(); }}
@@ -192,12 +269,20 @@ function IntelBox({ message, btnLabel, onBtn }) {
   );
 }
 
-function TableSection({ title, cols, rows, searchPlaceholder, emptyText = "No data yet", filterValues }) {
-  const [q, setQ] = useState("");
-  const [activeFilter, setActiveFilter] = useState("");
+export function TableSection({ title, cols, rows, searchPlaceholder, emptyText = "No data yet", filterValues }) {
+  // Search, filter and page are kept in the address under the table's own name, so a refresh or Back keeps your place.
+  const slug = String(title || "table").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const [q, setUrlQ] = useUrlValue(`${slug}.q`);
+  const [activeFilter, setUrlFilter] = useUrlValue(`${slug}.filter`);
+  const [pageParam, setPageParam] = useUrlValue(`${slug}.page`, "1");
+  const [more, setMore] = useState(1);      // phone: "Load more" adds the next page below
+  const setQ = (v) => { setMore(1); setUrlQ(v, { [`${slug}.page`]: "" }); };
+  const setActiveFilter = (v) => { setMore(1); setUrlFilter(v, { [`${slug}.page`]: "" }); };
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   let filtered = q ? rows.filter(r => Object.values(r).some(v => typeof v === "string" && v.toLowerCase().includes(q.toLowerCase()))) : rows;
   if (activeFilter) filtered = filtered.filter(r => (r._filter || "").toLowerCase() === activeFilter.toLowerCase());
+  const at = pageSlice(filtered.length, pageParam, more);
+  const shownRows = filtered.slice(at.offset, at.offset + at.limit);
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
@@ -235,16 +320,18 @@ function TableSection({ title, cols, rows, searchPlaceholder, emptyText = "No da
               {cols.map(c => <th key={c} className="px-4 py-2.5 text-left font-semibold text-slate-500">{c}</th>)}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody key={at.page} className="m-crossfade divide-y divide-slate-100">
             {filtered.length === 0 ? (
               <tr><td colSpan={cols.length} className="px-4 py-8 text-center text-slate-400">{emptyText}</td></tr>
-            ) : filtered.map((r, i) => (
-              <tr key={i} className="hover:bg-slate-50/60">
+            ) : shownRows.map((r, i) => (
+              <tr key={at.offset + i} className="hover:bg-slate-50/60">
                 {cols.map(c => <td key={c} className="px-4 py-2.5 text-slate-700">{r[c]}</td>)}
               </tr>
             ))}
           </tbody>
         </table>
+        <Pagination total={filtered.length} page={at.page} more={at.more} noun={String(title || "rows").toLowerCase()} className="border-t border-slate-100 !px-4"
+          onPage={(n) => { setMore(1); setPageParam(n === 1 ? "" : n); }} onMore={setMore} />
       </div>
     </div>
   );
@@ -443,6 +530,19 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
   );
 }
 
+// Readable message from an RFQ API error (credit and plan errors carry a JSON detail).
+function rfqErrorMessage(e, fallback) {
+  const raw = e instanceof Error ? e.message : String(e || "");
+  const m = raw.match(/^HTTP (\d+):\s*(.*)$/s);
+  if (!m) return raw || fallback;
+  try {
+    const d = JSON.parse(m[2])?.detail;
+    if (d?.error === "INSUFFICIENT_CREDITS") return "Not enough credits. Replying to an RFQ costs 2 credits. Buy an RFQ credit pack on the pricing page.";
+    if (d?.message) return d.message;
+  } catch { /* plain-text detail */ }
+  return m[2] || fallback;
+}
+
 function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
   const [prices, setPrices] = useState(() => (rfq.items || []).map(item => ({ ...item, unit_price: "" })));
   const [validityDays, setValidityDays] = useState("30");
@@ -464,7 +564,7 @@ function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
       });
       onDone && onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to respond to RFQ.");
+      setError(rfqErrorMessage(e, "Failed to respond to RFQ."));
       setSubmitting(false);
     }
   }
@@ -528,7 +628,8 @@ function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
           </div>
           {error && <p className="text-[12px] text-red-500">{error}</p>}
         </div>
-        <div className="flex justify-end gap-3 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
+        <div className="flex items-center justify-end gap-3 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
+          <span className="mr-auto text-[11px] text-slate-400">Sending a quote uses 2 credits.</span>
           <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">Cancel</button>
           <button disabled={submitting} onClick={handleRespond}
             className="rounded-xl bg-brand-600 px-4 py-2 text-[13px] font-bold text-white hover:bg-brand-700 disabled:opacity-50">
@@ -541,6 +642,83 @@ function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
   );
 }
 
+// Invoice states in which nothing is chased: no reminders, and any Agent follow-up pauses.
+export const INVOICE_HOLD_STATES = [
+  { key: "disputed", label: "Mark as Disputed", title: "Mark invoice as disputed", verb: "Mark as disputed", ask: "What is the customer disputing?" },
+  { key: "voided", label: "Void Invoice", title: "Void this invoice", verb: "Void invoice", ask: "Why is this invoice being voided?" },
+  { key: "cancelled", label: "Cancel Invoice", title: "Cancel this invoice", verb: "Cancel invoice", ask: "Why is this invoice being cancelled?" },
+  { key: "credited", label: "Mark as Credited", title: "Mark invoice as credited", verb: "Mark as credited", ask: "What was credited, and why?" },
+];
+const invoiceHoldState = (inv) => {
+  const st = statusOf(inv?.status);
+  const state = { void: "voided", canceled: "cancelled" }[st] || st;
+  return INVOICE_HOLD_STATES.some((s) => s.key === state) ? state : (inv?.disputed ? "disputed" : null);
+};
+
+function InvoiceStateModal({ invoice, state, refLabel, amountLabel, onSubmit, onClose }) {
+  const def = INVOICE_HOLD_STATES.find((s) => s.key === state);
+  const [reason, setReason] = React.useState("");
+  const [date, setDate] = React.useState(todayLocal());
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState("");
+  async function submit(e) {
+    e.preventDefault();
+    if (reason.trim().length < 3) { setErr("Please give a reason."); return; }
+    setBusy(true);
+    setErr("");
+    try {
+      await onSubmit(invoice, state, reason.trim(), date);
+      onClose();
+    } catch (ex) {
+      setErr(agentErrorMessage(ex, "That couldn't be saved. Please try again."));
+      setBusy(false);
+    }
+  }
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+      onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+      <form onSubmit={submit} role="dialog" aria-modal="true" aria-label={def.title}
+        className="w-full max-w-md overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div className="text-base font-bold text-slate-900">{def.title}</div>
+          <button type="button" onClick={onClose} aria-label="Close" className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100">
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div className="space-y-4 px-6 py-5">
+          <div className="rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5" aria-label="Invoice">
+              <dt className="text-slate-500">Invoice</dt><dd className="font-semibold text-slate-900">{refLabel || "—"}</dd>
+              <dt className="text-slate-500">Amount</dt><dd className="font-semibold tabular-nums text-slate-900">{amountLabel || "—"}</dd>
+              <dt className="text-slate-500">For</dt>
+              <dd className="min-w-0 break-words text-slate-800">{invoice.description || invoice.title || "—"}</dd>
+              <dt className="text-slate-500">Customer</dt><dd className="text-slate-800">{invoice.customer_name || invoice.recipient || "—"}</dd>
+            </dl>
+            <p className="mt-1 text-[12px] text-slate-500">No payment reminders will be sent while the invoice is {state}, and any Agent follow-up on it pauses. You can reopen it later.</p>
+          </div>
+          <label className="block text-sm font-semibold text-slate-800">
+            Reason
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={500} autoFocus required placeholder={def.ask}
+              className="mt-1.5 block w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" />
+          </label>
+          <label className="block text-sm font-semibold text-slate-800">
+            Date
+            <input type="date" value={date} max={todayLocal()} onChange={(e) => setDate(e.target.value)} required
+              className="mt-1.5 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" />
+          </label>
+          {err && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{err}</p>}
+        </div>
+        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 px-6 py-4 sm:flex-row sm:justify-end">
+          <button type="button" onClick={onClose} disabled={busy} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Keep as it is</button>
+          <button type="submit" disabled={busy || reason.trim().length < 3}
+            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">{busy ? "Saving…" : def.verb}</button>
+        </div>
+      </form>
+    </div>,
+    document.body,
+  );
+}
+
 function RecordPaymentModal({ invoice, onRecord, onClose }) {
   const total = Number(invoice?.total_amount || invoice?.amount || 0);
   const paymentsTotal = (invoice?.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
@@ -548,7 +726,7 @@ function RecordPaymentModal({ invoice, onRecord, onClose }) {
   const alreadyPaid = paymentsTotal + legacyPaid;
   const remaining = Math.max(0, total - alreadyPaid);
   const [amount, setAmount] = React.useState(String(remaining > 0 ? remaining : ""));
-  const [paidAt, setPaidAt] = React.useState(new Date().toISOString().slice(0, 10));
+  const [paidAt, setPaidAt] = React.useState(todayLocal());
   const [note, setNote] = React.useState("");
   const [err, setErr] = React.useState("");
   function handleSubmit() {
@@ -623,7 +801,7 @@ function RecordPaymentModal({ invoice, onRecord, onClose }) {
 }
 
 function RecordDeliveryModal({ invoice, onRecord, onClose }) {
-  const [deliveredAt, setDeliveredAt] = React.useState(new Date().toISOString().slice(0, 10));
+  const [deliveredAt, setDeliveredAt] = React.useState(todayLocal());
   return createPortal(
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -656,7 +834,7 @@ function RecordDeliveryModal({ invoice, onRecord, onClose }) {
   );
 }
 
-function RecordModal({ mode, type, record, customers, catalogueProducts = [], allKnownCustomers, workspaceName, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType }) {
+function RecordModal({ mode, type, record, customers, catalogueProducts = [], allKnownCustomers, workspaceName, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
   const isView = mode === "view";
   const title = isView ? "View " : (mode === "edit" ? "Edit " : "New ");
   const typeLabel = receiptMode ? "Receipt" : type === "invoice" ? "Invoice" : type === "quote" ? "Quotation" : type === "expense" ? "Expense" : "Contract";
@@ -669,7 +847,7 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
       : (record?.product_name || record?.description || record?.title || record?.service_name || "");
     const amt = record?.total_amount || record?.amount || record?.price || record?.subtotal_amount || "";
     return {
-      id: record?.id || ("local:" + Math.random().toString(36).slice(2)),
+      id: record?.id || newRecordId(),
       customer_name: record?.customer_name || record?.recipient || record?.counterparty_name || "",
       vendor_name: record?.vendor_name || record?.party_name || record?.counterparty_name || "",
       party_name: record?.party_name || record?.customer_name || record?.vendor_name || "",
@@ -679,9 +857,9 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
       amount: amt,
       status: record?.status || (type === "invoice" ? "draft" : type === "quote" ? "draft" : type === "expense" ? "pending" : "draft"),
       due_date: record?.due_date || "",
-      issued_at: record?.issued_at || record?.issue_date || record?.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+      issued_at: record?.issued_at || record?.issue_date || record?.created_at?.slice(0, 10) || todayLocal(),
       validity_days: record?.validity_days || "30",
-      date: record?.date || record?.expense_date || new Date().toISOString().slice(0, 10),
+      date: record?.date || record?.expense_date || todayLocal(),
       end_date: record?.end_date || "",
       payments: record?.payments || [],
       currency: record?.currency || record?.source_currency || "",
@@ -699,7 +877,7 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
   });
 
   const [showPaymentModal, setShowPaymentModal] = React.useState(false);
-  const [validationError, setValidationError] = React.useState(null);
+  const [validationError, setValidationError] = React.useState(saveError || null);
 
   function set(k) { return v => setForm(f => ({ ...f, [k]: v })); }
 
@@ -752,7 +930,12 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
       saved.total_amount = saved.amount;
       saved.cost_of_sales = items.reduce((s, i) => s + (Number(i.qty) || 1) * (Number(i.cost_of_sales) || 0), 0);
       saved.description = items.map(i => i.description).filter(Boolean).join(", ") || saved.description || "";
-      if (type === "invoice") saved.invoice_number = saved.reference || "";
+      if (type === "invoice") {
+        saved.reference = String(saved.reference || "").trim();
+        saved.invoice_number = saved.reference;
+        // Blank on a new invoice: the server gives it the next number in the business's sequence.
+        if (mode === "create" && !saved.reference) saved.number_auto = true;
+      }
     } else {
       saved.total_amount = Number(saved.amount) || 0;
       saved.price = saved.total_amount;
@@ -1070,7 +1253,10 @@ ${form.notes ? `<!-- NOTES -->
               </>
             </Field>
             <Field label="Invoice No. / Reference">
-              <TextInput value={form.reference} onChange={set("reference")} placeholder="INV-001" />
+              <TextInput value={form.reference} onChange={set("reference")} placeholder={mode === "create" ? "Assigned automatically when saved" : "INV-001"} />
+              {mode === "create" && !isView && (
+                <p className="mt-1 text-[11px] text-slate-400">Leave blank for the next number, or type your own. Each invoice number can be used once.</p>
+              )}
             </Field>
             <Field label="Currency">
               <select value={form.currency || "GBP"} onChange={e => set("currency")(e.target.value)}
@@ -1567,6 +1753,7 @@ function dayRef(prefix, createdAt, existingRecords) {
   }).length;
   return `${prefix}-${sameDay + 1}${suffix}`;
 }
+export const ASSIGNING = "Assigning…";
 // Build a stable id→label map sorted by creation date (oldest first)
 function buildRefMap(records, prefix) {
   const sorted = [...records].sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
@@ -1575,6 +1762,8 @@ function buildRefMap(records, prefix) {
   sorted.forEach(r => {
     const stored = r.invoice_number || r.reference;
     if (!isUuidLike(stored) && stored) { map.set(r.id, stored); return; }
+    // Saved a moment ago and waiting for the server's number: never show a guessed one.
+    if (r.number_auto) { map.set(r.id, ASSIGNING); return; }
     const suffix = dateSuffix(new Date(r.created_at || Date.now()));
     dayCounts[suffix] = (dayCounts[suffix] || 0) + 1;
     map.set(r.id, `${prefix}-${dayCounts[suffix]}${suffix}`);
@@ -1617,6 +1806,7 @@ export default function BusinessOperationsPage() {
   const [rfqRequests, setRfqRequests] = useState([]);
   const [sentRfqs, setSentRfqs] = useState([]);
   const [rfqRespondTarget, setRfqRespondTarget] = useState(null);
+  const [rfqAgent, setRfqAgent] = useState({});      // request id -> where the Agent has got to with it
   const [customers, setCustomers] = useState([]);
   const [catalogueProducts, setCatalogueProducts] = useState([]);
   const [recordModal, setRecordModal] = useState(null);
@@ -1625,6 +1815,7 @@ export default function BusinessOperationsPage() {
   const quoteRefMap = useMemo(() => buildRefMap(quotes, "QUO"), [quotes]);
   const contractRefMap = useMemo(() => buildRefMap(contracts, "CON"), [contracts]);
   const [paymentInvoice, setPaymentInvoice] = useState(null); // invoice to record payment for
+  const [invoiceStateTarget, setInvoiceStateTarget] = useState(null); // { invoice, state }
   const [deliveryInvoice, setDeliveryInvoice] = useState(null); // invoice to mark as delivered
   const [shareItem, setShareItem] = useState(null); // { record, type }
   const [shareToast, setShareToast] = useState("");
@@ -1682,6 +1873,7 @@ export default function BusinessOperationsPage() {
   }, [workspaceId, fetchProposalRequests, fetchProposalInbox]);
 
   function _applyWsDoc(ws) {
+    ensureBusinessTimezone(workspaceId, ws);
     const fin = ws?.data?.financials || {};
     const cat = ws?.data?.catalogue || ws?.data || {};
     setInvoices(Array.isArray(fin.invoices) ? fin.invoices : []);
@@ -1703,12 +1895,63 @@ export default function BusinessOperationsPage() {
       return;
     }
     let alive = true;
+    setLoading(true);
     apiRequestCached(`/validation/${workspaceId}`)
       .then(ws => { if (alive) _applyWsDoc(ws); })
       .catch(() => {})
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [workspaceId, wsDoc]); // eslint-disable-line
+
+  // Keep the records current while the page is open: after any Agent action, when the tab
+  // comes back into view, and every 30 seconds. It never reloads under an open dialog or
+  // during a save, and it only redraws when the workspace has actually changed.
+  const holdRefresh = useRef(false);
+  const savingRef = useRef(0);
+  const loadedStamp = useRef(null);
+  holdRefresh.current = Boolean(recordModal || paymentInvoice || deliveryInvoice || shareItem || confirmDialog || rfqRespondTarget || invoiceStateTarget);
+  useEffect(() => {
+    if (wsDoc && wsDoc.id === workspaceId) loadedStamp.current = wsDoc.updated_at || null;
+  }, [wsDoc, workspaceId]);
+  useEffect(() => {
+    if (!workspaceId) return undefined;
+    let alive = true;
+    let last = Date.now();
+    let inFlight = false;
+    async function reload() {
+      if (!alive || inFlight || holdRefresh.current || savingRef.current > 0) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      inFlight = true;
+      last = Date.now();
+      try {
+        invalidateWorkspaceCache();
+        const ws = await apiRequestCached(`/validation/${workspaceId}`);
+        // Skip if a dialog opened or a save began while this was loading: their copy is newer.
+        if (!alive || !ws || holdRefresh.current || savingRef.current > 0) return;
+        if (ws.updated_at && ws.updated_at === loadedStamp.current) return;
+        loadedStamp.current = ws.updated_at || null;
+        _applyWsDoc(ws);
+      } catch {
+        // A missed refresh is harmless: the next one catches up.
+      } finally {
+        inFlight = false;
+      }
+    }
+    // Opened from the copy the app already had: checked against the server straight away, so what the Agent has just made is here.
+    reload();
+    const timer = setInterval(reload, LIVE_REFRESH_MS);
+    const onReturn = () => { if (Date.now() - last > 5000) reload(); };
+    window.addEventListener(AGENT_CHANGED_EVENT, reload);
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      window.removeEventListener(AGENT_CHANGED_EVENT, reload);
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
+  }, [workspaceId]); // eslint-disable-line
 
 
   // Fetch exchange rates for foreign-currency records
@@ -1740,7 +1983,7 @@ export default function BusinessOperationsPage() {
 
   const m = useMemo(() => {
     // Helpers
-    const st = v => String(v || "").toLowerCase().trim();
+    const st = statusOf;
     const rawAmt = r => Number(r?.total_amount || r?.amount || r?.price || r?.subtotal_amount || 0);
 
     // Currency helpers
@@ -1785,17 +2028,9 @@ export default function BusinessOperationsPage() {
     const paidInvoices = invoices.filter(i => st(i.status) === "paid" && inRange(invAnchor(i)));
     const deliveredInvoices = invoices.filter(i => st(i.status) === "delivered" && inRange(invAnchor(i)));
     const cashIn = paidInvoices.reduce((s, i) => s + toWs(receivedAmt(i), i.currency), 0);
-    const receivables = deliveredInvoices.reduce((s, i) => s + toWs(rawAmt(i), i.currency), 0)
-      + paidInvoices.filter(i => receivedAmt(i) < rawAmt(i)).reduce((s, i) => s + toWs(Math.max(0, rawAmt(i) - receivedAmt(i)), i.currency), 0);
-    const today = new Date(); today.setHours(0,0,0,0);
-    const overdueInvoices = invoices.filter(i => {
-      const s = st(i.status);
-      if (s === "paid" && i.payment_type !== "partial") return false;
-      if (s === "cancelled") return false;
-      if (s === "delivered") return false;
-      const due = i.due_date ? new Date(i.due_date) : null;
-      return due && due < today;
-    }).length;
+    // Everything still owed on issued invoices (unpaid and part-paid), whatever their date.
+    const receivables = invoices.reduce((s, i) => s + toWs(invoiceOutstanding(i), i.currency), 0);
+    const overdueInvoices = invoices.filter(isOverdue).length;
     const totalRevenue = [...paidInvoices, ...deliveredInvoices].reduce((s, i) => s + toWs(rawAmt(i), i.currency), 0);
 
     // Expenses (filtered by range)
@@ -1815,7 +2050,7 @@ export default function BusinessOperationsPage() {
     // Quotes (filtered by range)
     const rangeQuotes = quotes.filter(q => inRange(qAnchor(q)));
     const proposalsSubmitted = rangeQuotes.filter(q => ["sent","viewed","submitted"].includes(st(q.status))).length;
-    const quotationsSent = rangeQuotes.filter(q => st(q.status) === "sent").length;
+    const quotationsSent = rangeQuotes.filter(q => SENT_QUOTE_STATUSES.includes(st(q.status))).length;
     const quotationsViewed = rangeQuotes.filter(q => st(q.status) === "viewed").length;
     const awaitingResponse = rangeQuotes.filter(q => ["pending","awaiting_response"].includes(st(q.status))).length;
     const wonQuotes = rangeQuotes.filter(q => ["won","accepted"].includes(st(q.status))).length;
@@ -1878,9 +2113,52 @@ export default function BusinessOperationsPage() {
     return (i.payment_type === "partial" && i.paid_amount != null) ? Number(i.paid_amount) : Number(i.total_amount || i.amount || 0);
   }
 
-  async function persist(next) {
+  async function persist(next, deletedId = null) {
     if (!workspaceId) return;
-    await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: next } });
+    savingRef.current += 1;      // a background refresh must not replace what is being saved
+    try {
+      // What was deleted is named, so the server can tell a deletion from a record this copy of the page never saw (and keep that one).
+      await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { financials: deletedId ? { ...next, deleted_ids: [deletedId] } : next } });
+    } finally {
+      savingRef.current -= 1;
+    }
+    wakeAgent(workspaceId);
+    refreshWorkspace();
+  }
+
+  // Disputed / voided / cancelled / credited are recorded by the server (with reason and date),
+  // which also pauses any Agent follow-up on the invoice.
+  async function changeInvoiceState(inv, state, reason, date) {
+    await setInvoiceState(workspaceId, inv.id, state, reason, date);
+    refreshWorkspace();
+  }
+  async function reopenInvoice(inv) {
+    try {
+      await changeInvoiceState(inv, "reopen");
+    } catch (e) {
+      alertDialog(agentErrorMessage(e, "The invoice couldn't be reopened."));
+    }
+  }
+  const invoiceStateItems = (inv) => (invoiceHoldState(inv)
+    ? [{ label: "Reopen Invoice", onClick: () => reopenInvoice(inv) }]
+    : INVOICE_HOLD_STATES.map((s) => ({ label: s.label, onClick: () => setInvoiceStateTarget({ invoice: inv, state: s.key }) })));
+
+  // Where the Agent has got to with each inbound request, read from its tasks as they are now:
+  // when the requests change, and whenever an Agent action completes.
+  const rfqSignature = rfqRequests.map((r) => `${r.id}:${r.status}`).join("|");
+  useEffect(() => {
+    if (!workspaceId || !rfqSignature) return undefined;
+    let alive = true;
+    const load = () => apiRequest(`/marketplace/rfq?workspace_id=${encodeURIComponent(workspaceId)}`, "GET")
+      .then((res) => { if (alive) setRfqAgent(Object.fromEntries((res?.items || []).filter((r) => r.agent).map((r) => [r.id, r.agent]))); })
+      .catch(() => {});      // the requests still show without it
+    load();
+    window.addEventListener(AGENT_CHANGED_EVENT, load);
+    return () => { alive = false; window.removeEventListener(AGENT_CHANGED_EVENT, load); };
+  }, [workspaceId, rfqSignature]);
+
+  // Reload workspace data after a server-side change (e.g. an RFQ reply).
+  function refreshWorkspace() {
     invalidateWorkspaceCache();
     useWorkspaceStore.getState().clearWsDoc();
     window.dispatchEvent(new CustomEvent("ea:workspace:refresh"));
@@ -1894,19 +2172,19 @@ export default function BusinessOperationsPage() {
         if (type === "invoice") {
           const next = invoices.filter(i => i.id !== id);
           setInvoices(next);
-          await persist({ invoices: next, quotes, expenses, contracts });
+          await persist({ invoices: next, quotes, expenses, contracts }, id);
         } else if (type === "quote") {
           const next = quotes.filter(q => q.id !== id);
           setQuotes(next);
-          await persist({ invoices, quotes: next, expenses, contracts });
+          await persist({ invoices, quotes: next, expenses, contracts }, id);
         } else if (type === "expense") {
           const next = expenses.filter(e => e.id !== id);
           setExpenses(next);
-          await persist({ invoices, quotes, expenses: next, contracts });
+          await persist({ invoices, quotes, expenses: next, contracts }, id);
         } else if (type === "contract") {
           const next = contracts.filter(c => c.id !== id);
           setContracts(next);
-          await persist({ invoices, quotes, expenses, contracts: next });
+          await persist({ invoices, quotes, expenses, contracts: next }, id);
         }
       },
       onCancel: () => setConfirmDialog(null),
@@ -2071,13 +2349,15 @@ export default function BusinessOperationsPage() {
   function openCreate(type, initialData = null) {
     const prefix = type === "invoice" ? "INV" : type === "quote" ? "QUO" : type === "expense" ? "EXP" : "CON";
     const existingList = type === "invoice" ? invoices : type === "quote" ? quotes : type === "expense" ? expenses : contracts;
-    const nextRef = dayRef(prefix, Date.now(), existingList);
+    // Invoice numbers are issued by the server when the invoice is saved (unique per business).
+    const nextRef = type === "invoice" ? "" : dayRef(prefix, Date.now(), existingList);
     setRecordModal({ mode: "create", type, record: initialData, nextRef, lockedPartyType: initialData?.party_type || null });
   }
 
   function _withComputedRef(type, record) {
     const stored = record?.reference || record?.invoice_number || record?.quote_number || "";
     if (!isUuidLike(stored) && stored) return record;
+    if (record?.number_auto) return record;      // its number is still being assigned by the server
     const map = type === "invoice" ? invoiceRefMap : type === "quote" ? quoteRefMap : type === "contract" ? contractRefMap : null;
     const computed = map?.get(record?.id);
     return computed ? { ...record, reference: computed } : record;
@@ -2127,7 +2407,7 @@ export default function BusinessOperationsPage() {
   async function convertQuoteToContract(quote) {
     const now = new Date().toISOString();
     const newContract = {
-      id: crypto.randomUUID(),
+      id: newRecordId(),
       party_type: "customer",
       party_name: quote.customer_name || quote.recipient || "",
       description: quote.description || quote.title || "",
@@ -2151,7 +2431,7 @@ export default function BusinessOperationsPage() {
   async function convertProposalToContract(proposal, requestTitle) {
     const now = new Date().toISOString();
     const newContract = {
-      id: crypto.randomUUID(),
+      id: newRecordId(),
       party_type: "vendor",
       party_name: proposal.proposer_name || proposal.company_name || "",
       description: requestTitle || proposal.request_title || proposal.title || "",
@@ -2172,10 +2452,37 @@ export default function BusinessOperationsPage() {
     openEdit("contract", newContract);
   }
 
+  async function askAgent(capability, params, reference) {
+    try {
+      const res = await submitAgentRequest({ businessId: workspaceId, capability, params, sourceChannel: "ui_action", sourceReference: reference });
+      if (res.run) navigate(`/agent/runs/${res.run.id}`);
+      else alertDialog(res.message || "The Agent couldn't start that.");
+    } catch (e) {
+      alertDialog(agentErrorMessage(e, "The Agent couldn't start that."));
+    }
+  }
+  const agentQuoteItems = (q) => (["accepted", "won", "sent"].includes(String(q.status || "").toLowerCase())
+    ? [{ label: "Ask Agent: turn into invoice", onClick: () => askAgent("quote_to_cash", { quote_id: q.id }, `quote:${q.id}`) }]
+    : []);
+  const agentInvoiceItems = (inv) => {
+    const status = String(inv.status || "").toLowerCase();
+    const total = Number(inv.total_amount || inv.amount || 0);
+    const received = (inv.payments || []).length
+      ? inv.payments.reduce((s, p) => s + Number(p.amount || 0), 0)
+      : status === "paid" ? (inv.payment_type === "partial" && inv.paid_amount != null ? Number(inv.paid_amount) : total) : 0;
+    const overdue = inv.due_date && new Date(inv.due_date) < new Date() && status !== "draft" && total - received > 0.005 && !invoiceHoldState(inv);
+    const items = [];
+    if (overdue) items.push({ label: "Ask Agent: payment follow-up", onClick: () => askAgent("payment_followup", { invoice_id: inv.id }, `invoice:${inv.id}`) });
+    if ((inv.payments || []).some((p) => !p.receipt?.sent_at)) {
+      items.push({ label: "Ask Agent: send receipt", onClick: () => askAgent("receipt_send", { invoice_id: inv.id }, `invoice:${inv.id}`) });
+    }
+    return items;
+  };
+
   async function convertQuoteToInvoice(quote) {
     const now = new Date().toISOString();
     const newInvoice = {
-      id: crypto.randomUUID(),
+      id: newRecordId(),
       customer_name: quote.customer_name || quote.recipient || "",
       recipient: quote.recipient || quote.customer_name || "",
       description: quote.description || quote.title || "",
@@ -2190,8 +2497,7 @@ export default function BusinessOperationsPage() {
       created_at: now,
       updated_at: now,
     };
-    newInvoice.reference = dayRef("INV", now, invoices);
-    newInvoice.invoice_number = newInvoice.reference;
+    newInvoice.number_auto = true;      // numbered by the server on save
     const next = [...invoices, newInvoice];
     setInvoices(next);
     await persist({ invoices: next, quotes, expenses, contracts });
@@ -2206,8 +2512,9 @@ export default function BusinessOperationsPage() {
     if (type === "invoice") {
       const existing = invoices.find(i => i.id === saved.id);
       if (!existing && (!saved.reference || isUuidLike(saved.reference))) {
-        saved.reference = dayRef("INV", new Date(), invoices);
-        saved.invoice_number = saved.reference;
+        saved.reference = "";
+        saved.invoice_number = "";
+        saved.number_auto = true;      // the server assigns the next number
       }
       const next = existing ? invoices.map(i => i.id === saved.id ? saved : i) : [...invoices, { ...saved, created_at: new Date().toISOString() }];
       setInvoices(next);
@@ -2237,12 +2544,22 @@ export default function BusinessOperationsPage() {
       setContracts(next);
       persistPayload = { invoices, quotes, expenses, contracts: next };
     }
+    const modal = recordModal;
+    const before = invoices;
     setRecordModal(null); // close immediately — persist happens in background
-    if (persistPayload) persist(persistPayload).catch(() => {});
+    if (persistPayload) persist(persistPayload).catch((e) => {
+      const detail = e?.data?.detail;
+      if (type === "invoice" && e?.status === 409 && detail?.code === "duplicate_invoice_number") {
+        // The number is already used: nothing was saved. Put the list back and reopen the form
+        // with what was entered, so the number can be changed.
+        setInvoices(before);
+        setRecordModal({ ...modal, record: { ...saved, number_auto: undefined }, saveError: detail.message });
+      }
+    });
   }
 
   async function recordPayment(invoiceId, amount, paidAt, note) {
-    const newPayment = { id: crypto.randomUUID(), amount: Number(amount), paid_at: paidAt || new Date().toISOString(), note: note || null };
+    const newPayment = { id: newRecordId(), amount: Number(amount), paid_at: paidAt || new Date().toISOString(), note: note || null };
     const next = invoices.map(inv => {
       if (inv.id !== invoiceId) return inv;
       const payments = [...(inv.payments || []), newPayment];
@@ -2275,6 +2592,13 @@ export default function BusinessOperationsPage() {
   const reportRangeLabel = { "30d": "Last 30 Days", "90d": "Last 90 Days", "6m": "Last 6 Months", "1y": "Last Year" };
 
   // --- Header action buttons per tab ---
+  // Renders a tab's content inside an error boundary (see components/ErrorBoundary).
+  const guarded = (name, render) => (
+    <ErrorBoundary key={name} label={name} resetKey={name}>
+      <Guarded render={render} />
+    </ErrorBoundary>
+  );
+
   const headerActions = {
     Sales: salesSub === "Receipts" ? null : <button type="button" onClick={() => {
       if (salesSub === "Invoices") openCreate("invoice");
@@ -2363,18 +2687,25 @@ export default function BusinessOperationsPage() {
         ))}
       </div>
 
-      <div className="mt-4 space-y-4">
+      {loading && (
+        <SkeletonRegion label="Business Operations" className="mt-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">{[0, 1, 2, 3, 4].map((i) => <SkeletonKpi key={i} />)}</div>
+          <SkeletonTable rows={5} widths={["7rem", "minmax(0,1fr)", "7rem", "6rem", "6rem"]} />
+        </SkeletonRegion>
+      )}
+      <div className={`mt-4 space-y-4 ${loading ? "hidden" : ""}`}>
 
         {/* ===== OVERVIEW ===== */}
-        {activeTab === "Overview" && (
+        {activeTab === "Overview" && guarded("Overview", () => (
           <>
-            <div className="grid grid-cols-3 gap-3 lg:grid-cols-6">
+            <FinancialOverviewCards invoices={invoices} expenses={expenses} fxRates={fxRates} wsCurrency={wsCurrency} formatMoney={formatMoney} />
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               <KpiCard icon={IDoc} label="Active Requests" value={m.activeRfqs} numColor="text-blue-600" iconBg="bg-blue-50" iconColor="text-blue-600" />
               <KpiCard icon={IDownload} label="Proposals Received" value={m.rfqProposalsReceived} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
               <KpiCard icon={ISend} label="Proposals Submitted" value={m.proposalsSubmitted} numColor="text-teal-600" iconBg="bg-teal-50" iconColor="text-teal-600" />
               <KpiCard icon={IClock} label="Awaiting Action" value={m.awaitingResponse + m.awaitingEvaluation} numColor="text-amber-500" iconBg="bg-amber-50" iconColor="text-amber-500" />
               <KpiCard icon={ICheck} label="Active Contracts" value={m.activeContracts} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
-              <KpiCard icon={IPound} label="Receivables" value={fmtMoney(m.receivables)} numColor="text-indigo-600" iconBg="bg-indigo-50" iconColor="text-indigo-600" />
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -2430,10 +2761,10 @@ export default function BusinessOperationsPage() {
               </div>
             </div>
           </>
-        )}
+        ))}
 
         {/* ===== SALES ===== */}
-        {activeTab === "Sales" && (
+        {activeTab === "Sales" && guarded("Sales", () => (
           <>
             <SubTabs tabs={["Pipeline", "Quotations", "Invoices", "Receipts"]} active={salesSub} onChange={setSalesSub} />
             {salesSub === "Pipeline" && (
@@ -2449,7 +2780,7 @@ export default function BusinessOperationsPage() {
                   <div className="mb-3 text-sm font-semibold text-slate-900">Sales Pipeline</div>
                   <Pipeline stages={[
                     { label: "Draft", value: quotes.filter(q => !q.status || q.status === "draft").length, bg: "bg-slate-100", textColor: "text-slate-500" },
-                    { label: "Submitted", value: quotes.filter(q => q.status === "sent").length, bg: "bg-blue-100", textColor: "text-blue-600" },
+                    { label: "Submitted", value: quotes.filter(q => ["sent", "submitted"].includes(statusOf(q.status))).length, bg: "bg-blue-100", textColor: "text-blue-600" },
                     { label: "Viewed", value: quotes.filter(q => q.status === "viewed").length, bg: "bg-teal-100", textColor: "text-teal-600" },
                     { label: "Negotiation", value: quotes.filter(q => q.status === "negotiation" || q.status === "in_negotiation").length, bg: "bg-amber-100", textColor: "text-amber-600" },
                     { label: "Won", value: m.wonQuotes, bg: "bg-emerald-100", textColor: "text-emerald-600" },
@@ -2473,7 +2804,7 @@ export default function BusinessOperationsPage() {
                     Value: (q.total_amount || q.amount) ? `£${Number(q.total_amount || q.amount).toLocaleString()}` : "—",
                     Status: <StatusPill status={q.status || "Draft"} />,
                     Updated: fmtDate(q.updated_at || q.created_at),
-                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
+                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...agentQuoteItems(q), ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
                   }))}
                   emptyText="No sales activity yet"
                 />
@@ -2482,7 +2813,7 @@ export default function BusinessOperationsPage() {
             {salesSub === "Quotations" && (
               <>
                 <div className="flex gap-3 overflow-x-auto">
-                  <KpiCard icon={IDoc} label="Sent Quotations" value={quotes.length} numColor="text-blue-600" iconBg="bg-blue-50" iconColor="text-blue-600" />
+                  <KpiCard icon={IDoc} label="Sent Quotations" value={quotes.filter(q => SENT_QUOTE_STATUSES.includes(String(q.status || "").toLowerCase())).length} numColor="text-blue-600" iconBg="bg-blue-50" iconColor="text-blue-600" />
                   <KpiCard icon={IClock} label="Awaiting Response" value={m.awaitingResponse} numColor="text-amber-500" iconBg="bg-amber-50" iconColor="text-amber-500" />
                   <KpiCard icon={ISend} label="Inbound RFQs" value={rfqRequests.length} numColor="text-rose-600" iconBg="bg-rose-50" iconColor="text-rose-600" />
                   <KpiCard icon={IPound} label="Total Value" value={fmtMoney(m.potentialValue)} numColor="text-indigo-600" iconBg="bg-indigo-50" iconColor="text-indigo-600" />
@@ -2498,25 +2829,55 @@ export default function BusinessOperationsPage() {
                     Amount: formatMoney(Number(q.total_amount || q.amount || 0), q.currency),
                     Status: <StatusPill status={q.status || "Draft"} />,
                     Date: fmtDate(q.created_at || q.updated_at),
-                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }, { label: "Convert to Contract", onClick: () => convertQuoteToContract(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
+                    Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...agentQuoteItems(q), ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }, { label: "Convert to Contract", onClick: () => convertQuoteToContract(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
                   }))}
                   emptyText="No quotations yet"
                 />
                 {/* Inbound RFQs — buyers who requested a quote from us via Marketplace */}
+                {rfqRequests.some(r => r.locked) && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+                    <p className="text-[13px] text-amber-800 dark:text-amber-300">
+                      <strong>{rfqRequests.filter(r => r.locked).length} buyer request{rfqRequests.filter(r => r.locked).length === 1 ? "" : "s"}</strong> waiting.
+                      Upgrade to a paid plan to see who sent them and respond with a quote.
+                    </p>
+                    <button type="button" onClick={() => navigate("/pricing")}
+                      className="rounded-xl bg-amber-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-amber-700">
+                      Upgrade to view
+                    </button>
+                  </div>
+                )}
                 <TableSection
                   title="Inbound RFQs"
                   searchPlaceholder="Search inbound requests..."
                   cols={["From", "Items", "Message", "Status", "Received", "Action"]}
-                  rows={[...rfqRequests].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(r => ({
+                  rows={[...rfqRequests].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(r => r.locked ? ({
+                    From: <span className="select-none blur-[4px]" aria-label="Locked">Hidden Buyer Ltd</span>,
+                    Items: <span className="select-none blur-[4px]" aria-hidden="true">{(r.items || []).length || 1}× requested items</span>,
+                    Message: <span className="select-none blur-[4px]" aria-hidden="true">Request details hidden</span>,
+                    Status: <StatusPill status={r.status === "approved" ? "Responded" : r.status === "rejected" ? "Declined" : "Pending"} />,
+                    Received: fmtDate(r.created_at),
+                    Action: <button type="button" onClick={() => navigate("/pricing")} className="text-[12px] font-semibold text-amber-700 hover:underline dark:text-amber-400">Upgrade</button>,
+                  }) : ({
                     From: r.customer_name || r.customer_email || "—",
                     Items: Array.isArray(r.items) ? r.items.map(i => `${i.quantity || 1}× ${i.name}`).join(", ") : "—",
                     Message: r.message || "—",
-                    Status: <StatusPill status={r.status === "approved" ? "Responded" : r.status === "rejected" ? "Declined" : "Pending"} />,
+                    Status: (
+                      <span className="flex flex-col items-start gap-1">
+                        <StatusPill status={r.status === "approved" ? "Responded" : r.status === "rejected" ? "Declined" : "Pending"} />
+                        {rfqAgent[r.id] && <Link to={rfqAgent[r.id].to} className="text-[12px] font-semibold text-brand-600 hover:underline dark:text-brand-400">{rfqAgent[r.id].label}</Link>}
+                      </span>
+                    ),
                     Received: fmtDate(r.created_at),
                     Action: <ActionMenu items={[
+                      ...(rfqAgent[r.id] ? [{ label: "Open the Agent's task", onClick: () => navigate(rfqAgent[r.id].to) }] : []),
+                      ...(r.status === "pending" && !rfqAgent[r.id]
+                        ? [{ label: "Let the Agent draft this", onClick: () => askAgent("enquiry_to_quote", { rfq_id: r.id }, `rfq:${r.id}`) }] : []),
                       ...(r.status === "pending" ? [
                         { label: "Respond with Quote", onClick: () => setRfqRespondTarget(r) },
-                        { label: "Decline", onClick: async () => { await apiRequest(`/marketplace/rfq/${r.id}/reject`, "POST"); persist(null); } },
+                        { label: "Decline", onClick: async () => {
+                          try { await apiRequest(`/marketplace/rfq/${r.id}/reject`, "POST"); refreshWorkspace(); }
+                          catch (e) { alertDialog(rfqErrorMessage(e, "Could not decline this RFQ.")); }
+                        } },
                       ] : []),
                       ...(r.quote_id ? [{ label: "View Quote", onClick: () => { const q = quotes.find(q => q.id === r.quote_id); if (q) openView("quote", q); } }] : []),
                     ]} />,
@@ -2529,14 +2890,14 @@ export default function BusinessOperationsPage() {
               <>
                 <div className="flex gap-3 overflow-x-auto">
                   <KpiCard icon={IDoc} label="Total Invoices" value={invoices.length} numColor="text-blue-600" iconBg="bg-blue-50" iconColor="text-blue-600" />
-                  <KpiCard icon={ICheck} label="Paid" value={invoices.filter(i => i.status === "paid").length} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+                  <KpiCard icon={ICheck} label="Paid" value={invoices.filter(isFullyPaid).length} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
                   <KpiCard icon={IClock} label="Overdue" value={m.overdueInvoices} numColor="text-rose-600" iconBg="bg-rose-50" iconColor="text-rose-600" />
                   <KpiCard icon={IPound} label="Receivables" value={fmtMoney(m.receivables)} numColor="text-indigo-600" iconBg="bg-indigo-50" iconColor="text-indigo-600" />
                 </div>
                 <TableSection
                   title="Invoices"
                   searchPlaceholder="Search invoices..."
-                  filterValues={["draft","sent","delivered","paid","overdue","partial"]}
+                  filterValues={["draft","sent","delivered","paid","overdue","partial","disputed","voided","cancelled","credited"]}
                   cols={["Customer", "Invoice #", "Description", "Amount", "Status", "Due Date", "Action"]}
                   rows={[...invoices].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(inv => ({
                     _filter: (inv.status || "draft").toLowerCase(),
@@ -2544,50 +2905,73 @@ export default function BusinessOperationsPage() {
                     "Invoice #": invoiceRefMap.get(inv.id) || "—",
                     Description: inv.description || inv.product_name || (Array.isArray(inv.product_names) ? inv.product_names.join(', ') : inv.product_names) || inv.title || "—",
                     Amount: formatMoney(Number(inv.total_amount || inv.amount || 0), inv.currency),
-                    Status: <StatusPill status={inv.status || "Draft"} paymentType={inv.payment_type} />,
-                    "Due Date": fmtDate(inv.due_date || inv.created_at),
-                    Action: <ActionMenu items={[{ label: "View Invoice", onClick: () => openView("invoice", inv) }, { label: "Edit", onClick: () => openEdit("invoice", inv) }, ...(  (inv.status||"").toLowerCase() !== "delivered" ? [{ label: "Mark as Delivered", onClick: () => setDeliveryInvoice(inv) }] : [{ label: "Mark as UnDelivered", onClick: () => markAsStatus("invoice", inv.id, "draft") }]), { label: "Record Payment", onClick: () => setPaymentInvoice(inv) }, { label: "Share", onClick: () => shareRecord(inv) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("invoice", inv.id) }]} />,
+                    Status: invoiceHoldState(inv) ? (
+                      <span className="block max-w-[240px]">
+                        <StatusPill status={invoiceHoldState(inv)} />
+                        {inv.status_date && (
+                          <span className="mt-1 block text-[11px] text-slate-500">
+                            <span className="capitalize">{invoiceHoldState(inv)}</span> on {fmtDay(inv.status_date)}
+                          </span>
+                        )}
+                        {inv.status_reason && (
+                          <span className="mt-0.5 block whitespace-normal break-words text-[11px] leading-4 text-slate-600" title={inv.status_reason}>
+                            <span className="font-semibold">Note:</span> {inv.status_reason}
+                          </span>
+                        )}
+                      </span>
+                    ) : <StatusPill status={inv.status || "Draft"} paymentType={inv.payment_type} />,
+                    "Due Date": inv.due_date ? (
+                      <span className={isOverdue(inv) && !invoiceHoldState(inv) ? "font-semibold text-rose-600" : undefined}>
+                        <span className="sr-only">Due </span>{fmtDay(inv.due_date)}{isOverdue(inv) && !invoiceHoldState(inv) ? " · overdue" : ""}
+                      </span>
+                    ) : "—",
+                    Action: <ActionMenu items={[{ label: "View Invoice", onClick: () => openView("invoice", inv) }, { label: "Edit", onClick: () => openEdit("invoice", inv) }, ...agentInvoiceItems(inv), ...(  (inv.status||"").toLowerCase() !== "delivered" ? [{ label: "Mark as Delivered", onClick: () => setDeliveryInvoice(inv) }] : [{ label: "Mark as UnDelivered", onClick: () => markAsStatus("invoice", inv.id, "draft") }]), { label: "Record Payment", onClick: () => setPaymentInvoice(inv) }, { label: "Share", onClick: () => shareRecord(inv) }, ...invoiceStateItems(inv), { label: "Delete", tone: "danger", onClick: () => deleteItem("invoice", inv.id) }]} />,
                   }))}
                   emptyText="No invoices yet"
                 />
               </>
             )}
             {salesSub === "Receipts" && (() => {
-              const paidInvoices = invoices.filter(i => i.status === "paid" || i.status === "partial").sort((a, b) => new Date(b.paid_at || b.created_at || 0) - new Date(a.paid_at || a.created_at || 0));
-              const totalReceived = paidInvoices.reduce((s, i) => {
-                const pmts = (i.payments || []).reduce((ps, p) => ps + toWsConverted(p.amount, i.currency), 0);
-                return s + (pmts > 0 ? pmts : toWsConverted(i.total_amount || i.amount, i.currency));
-              }, 0);
+              // One row per payment received, with the receipt issued for it (if any). Older
+              // invoices marked paid without payment records show as a single payment.
+              const receiptRows = invoices.flatMap((inv) => {
+                const pays = Array.isArray(inv.payments) && inv.payments.length ? inv.payments
+                  : (String(inv.status || "").toLowerCase() === "paid" ? [{ id: `legacy-${inv.id}`, amount: invoiceReceived(inv), paid_at: inv.paid_at || inv.date || inv.created_at, legacy: true }] : []);
+                return pays.map((p) => ({ inv, p }));
+              }).sort((a, b) => new Date(b.p.paid_at || 0) - new Date(a.p.paid_at || 0));
+              const totalReceived = receiptRows.reduce((s, { inv, p }) => s + toWsConverted(p.amount, inv.currency), 0);
+              const issued = receiptRows.filter(({ p }) => p.receipt?.number).length;
               return (
                 <>
                   <div className="flex gap-3 overflow-x-auto">
-                    <KpiCard icon={ICheck} label="Receipts Issued" value={paidInvoices.length} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
-                    <KpiCard icon={ICheck} label="Fully Paid" value={paidInvoices.filter(i => i.payment_type !== "partial").length} numColor="text-teal-600" iconBg="bg-teal-50" iconColor="text-teal-600" />
-                    <KpiCard icon={IClock} label="Partial Payments" value={paidInvoices.filter(i => i.payment_type === "partial").length} numColor="text-amber-500" iconBg="bg-amber-50" iconColor="text-amber-500" />
+                    <KpiCard icon={ICheck} label="Receipts Issued" value={issued} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+                    <KpiCard icon={ICheck} label="Fully Paid" value={invoices.filter(isFullyPaid).length} numColor="text-teal-600" iconBg="bg-teal-50" iconColor="text-teal-600" />
+                    <KpiCard icon={IClock} label="Partly Paid" value={invoices.filter(i => invoiceReceived(i) > 0 && !isFullyPaid(i)).length} numColor="text-amber-500" iconBg="bg-amber-50" iconColor="text-amber-500" />
                     <KpiCard icon={IPound} label="Total Received" value={fmtMoney(totalReceived)} numColor="text-indigo-600" iconBg="bg-indigo-50" iconColor="text-indigo-600" />
                   </div>
                   <TableSection
                     title="Receipts"
                     searchPlaceholder="Search receipts..."
-                    cols={["Customer", "Invoice #", "Amount", "Date Paid", "Status", "Action"]}
-                    rows={paidInvoices.map(r => ({
-                      Customer: r.customer_name || r.recipient || r.counterparty_name || "—",
-                      "Invoice #": invoiceRefMap.get(r.id) || "—",
-                      Amount: formatMoney(Number(r.total_amount || r.amount || 0), r.currency),
-                      "Date Paid": fmtDate(r.paid_at || r.date || r.created_at),
-                      Status: <StatusPill status={r.status} paymentType={r.payment_type} />,
-                      Action: <ActionMenu items={[{ label: "View Receipt", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "View Invoice", onClick: () => openView("invoice", r) }, { label: "Edit", onClick: () => openEdit("invoice", r, { receiptMode: true }) }, { label: "Share Receipt", onClick: () => setShareItem({ record: r, type: "invoice", receiptMode: true }) }]} />,
+                    cols={["Receipt #", "Customer", "Invoice #", "Amount", "Date Paid", "Receipt", "Action"]}
+                    rows={receiptRows.map(({ inv, p }) => ({
+                      "Receipt #": p.receipt?.number || "—",
+                      Customer: inv.customer_name || inv.recipient || inv.counterparty_name || "—",
+                      "Invoice #": invoiceRefMap.get(inv.id) || "—",
+                      Amount: formatMoney(Number(p.amount || 0), inv.currency),
+                      "Date Paid": fmtDay(p.paid_at),
+                      Receipt: <StatusPill status={p.receipt?.sent_at ? "Sent" : p.receipt?.number ? "Issued" : "Not issued"} />,
+                      Action: <ActionMenu items={[{ label: "View Receipt", onClick: () => openView("invoice", inv, { receiptMode: true }) }, { label: "View Invoice", onClick: () => openView("invoice", inv) }, ...agentInvoiceItems(inv), { label: "Share Receipt", onClick: () => setShareItem({ record: inv, type: "invoice", receiptMode: true }) }]} />,
                     }))}
-                    emptyText="No receipts yet"
+                    emptyText="No payments received yet"
                   />
                 </>
               );
             })()}
           </>
-        )}
+        ))}
 
         {/* ===== PROCUREMENT ===== */}
-        {activeTab === "Procurement" && (
+        {activeTab === "Procurement" && guarded("Procurement", () => (
           <>
             <SubTabs tabs={["Overview", "Proposal Requests", "Sent RFQs", "Inbox", "Activity", "Evaluations", "Awards"]} active={procSub} onChange={setProcSub} />
             {procSub === "Overview" && (() => {
@@ -2733,10 +3117,10 @@ export default function BusinessOperationsPage() {
               </>);
             })()}
           </>
-        )}
+        ))}
 
         {/* ===== CONTRACTS ===== */}
-        {activeTab === "Contracts" && (
+        {activeTab === "Contracts" && guarded("Contracts", () => (
           <>
             <SubTabs tabs={["All Contracts", "Customer Contracts", "Vendor Contracts", "Drafts & Approvals", "Renewals"]} active={contractSub} onChange={setContractSub} />
             {contractSub === "All Contracts" && (
@@ -2840,10 +3224,10 @@ export default function BusinessOperationsPage() {
               />
             )}
           </>
-        )}
+        ))}
 
         {/* ===== TRANSACTIONS ===== */}
-        {activeTab === "Transactions" && (
+        {activeTab === "Transactions" && guarded("Transactions", () => (
           <>
             <SubTabs tabs={["All Transactions", "Invoices", "Expenses", "Receipts", "Payments"]} active={txnSub} onChange={setTxnSub} />
             {txnSub === "All Transactions" && (
@@ -2905,21 +3289,39 @@ export default function BusinessOperationsPage() {
               <>
                 <div className="flex gap-3 overflow-x-auto">
                   <KpiCard icon={IDoc} label="Total Invoices" value={invoices.length} numColor="text-blue-600" iconBg="bg-blue-50" iconColor="text-blue-600" />
-                  <KpiCard icon={ICheck} label="Paid" value={invoices.filter(i => i.status === "paid").length} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+                  <KpiCard icon={ICheck} label="Paid" value={invoices.filter(isFullyPaid).length} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
                   <KpiCard icon={IClock} label="Overdue" value={m.overdueInvoices} numColor="text-rose-600" iconBg="bg-rose-50" iconColor="text-rose-600" />
                   <KpiCard icon={IPound} label="Outstanding" value={fmtMoney(m.receivables)} numColor="text-indigo-600" iconBg="bg-indigo-50" iconColor="text-indigo-600" />
                 </div>
                 <TableSection title="Invoices" searchPlaceholder="Search invoices..."
-                  filterValues={["draft","sent","delivered","paid","overdue","partial"]}
+                  filterValues={["draft","sent","delivered","paid","overdue","partial","disputed","voided","cancelled","credited"]}
                   cols={["Customer", "Invoice #", "Description", "Amount", "Status", "Due Date", "Action"]}
                   rows={[...invoices].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(inv => ({
                     Customer: inv.customer_name || inv.party_name || "—",
                     "Invoice #": invoiceRefMap.get(inv.id) || "—",
                     Description: inv.description || inv.product_name || (Array.isArray(inv.product_names) ? inv.product_names.join(', ') : inv.product_names) || inv.title || "—",
                     Amount: formatMoney(Number(inv.total_amount || inv.amount || 0), inv.currency),
-                    Status: <StatusPill status={inv.status || "Draft"} paymentType={inv.payment_type} />,
-                    "Due Date": fmtDate(inv.due_date || inv.created_at),
-                    Action: <ActionMenu items={[{ label: "View Invoice", onClick: () => openView("invoice", inv) }, { label: "Edit", onClick: () => openEdit("invoice", inv) }, ...(  (inv.status||"").toLowerCase() !== "delivered" ? [{ label: "Mark as Delivered", onClick: () => setDeliveryInvoice(inv) }] : [{ label: "Mark as UnDelivered", onClick: () => markAsStatus("invoice", inv.id, "draft") }]), { label: "Record Payment", onClick: () => setPaymentInvoice(inv) }, { label: "Share", onClick: () => shareRecord(inv) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("invoice", inv.id) }]} />,
+                    Status: invoiceHoldState(inv) ? (
+                      <span className="block max-w-[240px]">
+                        <StatusPill status={invoiceHoldState(inv)} />
+                        {inv.status_date && (
+                          <span className="mt-1 block text-[11px] text-slate-500">
+                            <span className="capitalize">{invoiceHoldState(inv)}</span> on {fmtDay(inv.status_date)}
+                          </span>
+                        )}
+                        {inv.status_reason && (
+                          <span className="mt-0.5 block whitespace-normal break-words text-[11px] leading-4 text-slate-600" title={inv.status_reason}>
+                            <span className="font-semibold">Note:</span> {inv.status_reason}
+                          </span>
+                        )}
+                      </span>
+                    ) : <StatusPill status={inv.status || "Draft"} paymentType={inv.payment_type} />,
+                    "Due Date": inv.due_date ? (
+                      <span className={isOverdue(inv) && !invoiceHoldState(inv) ? "font-semibold text-rose-600" : undefined}>
+                        <span className="sr-only">Due </span>{fmtDay(inv.due_date)}{isOverdue(inv) && !invoiceHoldState(inv) ? " · overdue" : ""}
+                      </span>
+                    ) : "—",
+                    Action: <ActionMenu items={[{ label: "View Invoice", onClick: () => openView("invoice", inv) }, { label: "Edit", onClick: () => openEdit("invoice", inv) }, ...agentInvoiceItems(inv), ...(  (inv.status||"").toLowerCase() !== "delivered" ? [{ label: "Mark as Delivered", onClick: () => setDeliveryInvoice(inv) }] : [{ label: "Mark as UnDelivered", onClick: () => markAsStatus("invoice", inv.id, "draft") }]), { label: "Record Payment", onClick: () => setPaymentInvoice(inv) }, { label: "Share", onClick: () => shareRecord(inv) }, ...invoiceStateItems(inv), { label: "Delete", tone: "danger", onClick: () => deleteItem("invoice", inv.id) }]} />,
                   }))}
                   emptyText="No invoices yet"
                 />
@@ -2977,10 +3379,10 @@ export default function BusinessOperationsPage() {
               />
             )}
           </>
-        )}
+        ))}
 
         {/* ===== REPORTS ===== */}
-        {activeTab === "Reports" && (
+        {activeTab === "Reports" && guarded("Reports", () => (
           <>
             <SubTabs tabs={["Summary", "Sales Performance", "Procurement", "Contracts", "Transactions"]} active={reportSub} onChange={setReportSub} />
             {reportSub === "Summary" && (() => {
@@ -3180,7 +3582,7 @@ export default function BusinessOperationsPage() {
               </>
             )}
           </>
-        )}
+        ))}
       </div>
 
       {shareToast && (
@@ -3208,6 +3610,17 @@ export default function BusinessOperationsPage() {
         />
       )}
 
+      {invoiceStateTarget && (
+        <InvoiceStateModal
+          invoice={invoiceStateTarget.invoice}
+          state={invoiceStateTarget.state}
+          refLabel={invoiceRefMap.get(invoiceStateTarget.invoice.id)}
+          amountLabel={formatMoney(Number(invoiceStateTarget.invoice.total_amount || invoiceStateTarget.invoice.amount || 0), invoiceStateTarget.invoice.currency)}
+          onSubmit={changeInvoiceState}
+          onClose={() => setInvoiceStateTarget(null)}
+        />
+      )}
+
       {paymentInvoice && (
         <RecordPaymentModal
           invoice={paymentInvoice}
@@ -3221,7 +3634,7 @@ export default function BusinessOperationsPage() {
           rfq={rfqRespondTarget}
           wsCurrency={wsCurrency}
           onClose={() => setRfqRespondTarget(null)}
-          onDone={() => { setRfqRespondTarget(null); persist(null); }}
+          onDone={() => { setRfqRespondTarget(null); refreshWorkspace(); }}
         />
       )}
 
@@ -3247,6 +3660,8 @@ export default function BusinessOperationsPage() {
             undefined
           }
           nextRef={recordModal.nextRef}
+          saveError={recordModal.saveError}
+          key={recordModal.saveError ? `retry-${recordModal.record?.id}` : undefined}
           receiptMode={recordModal.receiptMode}
           lockedPartyType={recordModal.lockedPartyType}
         />

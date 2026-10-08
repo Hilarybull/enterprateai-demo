@@ -13,11 +13,12 @@ export const PLANS = [
     features: [
       "50 one-time credits",
       "Basic Idea Validation",
-      "Business Plan",
-      "Unlimited products, customers & vendors",
-      "Unlimited invoices & quotations",
-      "Business Registration Guide",
-      "1 marketplace listing",
+      "AI Business Plan Generator",
+      "Invoices, Receipts, Contracts, Expense Tracker",
+      "Receive and Request for Quotations",
+      "Products, Customers, Vendors",
+      "Business Registration Guide, Verification",
+      "1 Marketplace listing",
     ],
   },
   {
@@ -33,14 +34,15 @@ export const PLANS = [
     ctaStyle: "outline",
     features: [
       "500 monthly credits",
-      "Basic & Comprehensive Idea Validation",
-      "Business Blueprints & Proposals",
-      "Scenario Simulation",
-      "Unlimited products, customers & vendors",
-      "Unlimited invoices & quotations",
+      "Everything on the Explorer Plan",
+      "Comprehensive Idea Validation",
+      "AI Business Proposals Generator",
+      "AI Sales Letters Generator",
+      "Manage, Receive and Request for Proposals, Quotations",
+      "4 Scenario simulations",
       "Fragility Index",
       "Adaptive Scenario Intelligence",
-      "1 marketplace listing",
+      "Multiple marketplace listings",
       "1 user",
     ],
   },
@@ -57,16 +59,10 @@ export const PLANS = [
     ctaStyle: "solid",
     features: [
       "2,000 monthly credits",
-      "Unlimited business plans",
-      "Business proposals & sales letters",
-      "Live plan intelligence",
-      "Unlimited invoices & quotations",
-      "Scenario intelligence",
-      "Fragility Index",
-      "Adaptive Scenario Intelligence",
-      "RFQ automation workflow",
-      "Marketplace boosts",
-      "Integrations access",
+      "Everything on the Starter Plan",
+      "3rd Party Integrations",
+      "Live Business Plan Intelligence",
+      "Multiple Scenario Simulations",
       "3 users included",
     ],
   },
@@ -130,24 +126,27 @@ export function normalisePlanKey(key) {
 
 // Which top-level modules each plan can access
 export const PLAN_MODULE_ACCESS = {
-  // Explorer: all modules included for development/trial optimization
-  explorer: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
-  // Starter (Insight): 2 scenario simulations included
+  // Explorer (free): core tools. Proposals, integrations and the live plan are paid.
+  explorer: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "operations"],
+  // Starter: everything on Explorer + proposals.
   starter_insight: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
-  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations"],
-  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
-  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
+  // Decision Engine: everything on Starter + integrations and Live Business Plan Intelligence.
+  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan"],
+  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan"],
+  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan"],
 };
 
 // Minimum plan needed to access a module (for upgrade prompts)
 export const MODULE_MIN_PLAN = {
   simulation: "explorer",
   integrations: "decision_engine",
+  live_plan: "decision_engine",
+  proposals: "starter_insight",
 };
 
 // Scenario templates available for manual runs on the Starter plan.
 // All other paid plans get every template.
-export const STARTER_ALLOWED_SCENARIOS = ["tmpl_client_loss", "tmpl_payment_delay"];
+export const STARTER_ALLOWED_SCENARIOS = ["tmpl_client_loss", "tmpl_payment_delay", "tmpl_revenue_drop", "tmpl_cost_increase"];
 
 /**
  * Returns true if the plan can run this scenario template manually.
@@ -197,4 +196,12 @@ export function planLabel(planKey, status) {
   if (normalised === "explorer" && status === "expired") return "Trial Expired";
   if (normalised === "explorer") return "Explorer";
   return getPlan(normalised)?.label ?? planKey;
+}
+
+// Paid features (proposals, RFQ replies, multiple listings) need Starter or above.
+// Mirrors has_paid_access() in backend/app/modules/plans/access.py.
+export function hasPaidAccess(planKey, status) {
+  if (status === "grandfathered") return true;
+  if (status === "trial" || status === "expired") return false;
+  return planRank(planKey) >= planRank("starter_insight");
 }

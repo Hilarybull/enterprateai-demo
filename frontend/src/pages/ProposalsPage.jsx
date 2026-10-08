@@ -94,7 +94,7 @@ const PROPOSAL_CATEGORIES = [
 export function SettingsTab() {
   const { preferences, preferencesLoading, preferencesError, fetchPreferences, savePreferences } = useProposalStore();
   const subscription = useAuthStore((s) => s.subscription);
-  const paid = hasPaidAccess(subscription?.plan_key);
+  const paid = hasPaidAccess(subscription?.plan_key, subscription?.status);
 
   const [enabled, setEnabled] = useState(false);
   const [modes, setModes] = useState(["general"]);
@@ -1305,7 +1305,7 @@ export function RequestsTab({ createTrigger }) {
             </div>
             <div className="px-6 py-4 space-y-2.5">
               <button
-                onClick={() => { setPublishGate(null); navigate("/account?tab=workspace"); }}
+                onClick={() => { setPublishGate(null); navigate("/account?section=workspace"); }}
                 className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-brand-700 transition">
                 Go to Account Settings
               </button>

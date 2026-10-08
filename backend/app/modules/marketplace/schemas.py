@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MarketplacePublishRequest(BaseModel):
@@ -37,8 +37,11 @@ class MarketplaceListingItem(BaseModel):
     catalogue_products: list[dict] = []
     logo_data_url: str | None = None
     website: str | None = None
-    email: str
+    email: str = ""                     # only a public address the owner chose to show; never the account email
     phone_number: str | None = None
+    contact_method: str | None = None
+    service_area: str | None = None
+    directory_profile_id: str | None = None
     linkedin_url: str | None = None
     twitter_url: str | None = None
     instagram_url: str | None = None
@@ -49,6 +52,7 @@ class MarketplaceListingItem(BaseModel):
     updated_at: str
     avg_rating: float | None = None
     rating_count: int = 0
+    is_featured: bool = False
 
 
 class MarketplaceListResponse(BaseModel):
@@ -89,6 +93,9 @@ class RFQSubmitRequest(BaseModel):
     customer_email: str
     items: list[RFQItemRequest]
     message: str | None = None
+    customer_company: str | None = Field(default=None, max_length=200)
+    needed_by: str | None = Field(default=None, max_length=40)       # a date, as the buyer gave it
+    listing: str | None = Field(default=None, max_length=200)        # the listing the request was made from
 
 
 class RFQOut(BaseModel):
@@ -101,11 +108,21 @@ class RFQOut(BaseModel):
     status: str
     created_at: str
     quote_id: str | None = None
+    locked: bool = False
+    customer_company: str | None = None
+    needed_by: str | None = None
+    listing: str | None = None
+    draft_quote_id: str | None = None
+    responded_by: str | None = None
+    # Where the Agent has got to with this request: {run_id, status, label, to}. None when it has no task.
+    agent: dict | None = None
+    can_ask_agent: bool = False
 
 
 class RFQListResponse(BaseModel):
     items: list[RFQOut]
     total: int
+    locked: bool = False
 
 
 class RFQApproveRequest(BaseModel):

@@ -19,6 +19,26 @@ RESEND_MAIL_SEND_URL = "https://api.resend.com/emails"
 class EmailDeliveryResult:
     sent: bool
     error: str | None = None
+    message_id: str | None = None
+    # True when the request may have reached the provider (e.g. timeout): the
+    # caller must reconcile, and may only retry with the same idempotency key.
+    uncertain: bool = False
+    # The provider refused the address itself: retrying the same address can't succeed.
+    recipient_rejected: bool = False
+    # `error` is safe to show customers; the provider's own wording is only logged.
+
+
+# What a customer may see when an email can't be sent. Never the provider's name or raw text.
+MSG_NOT_CONFIGURED = "Email sending isn't set up for this workspace yet, so nothing was sent."
+MSG_UNREACHABLE = "We couldn't reach our email service just now, so nothing was sent. Please try again in a few minutes."
+MSG_UNCERTAIN = "We couldn't confirm whether the email was delivered."
+MSG_BAD_RECIPIENT = "This email address can't receive messages, so nothing was sent. Check the address and try again."
+MSG_REJECTED = "The email couldn't be sent just now, so nothing was sent. Please try again later."
+
+
+def _refused_recipient(status_code: int, message: str) -> bool:
+    text = (message or "").lower()
+    return status_code in (400, 403, 422) and any(w in text for w in ("`to`", " to ", "to field", "recipient", "testing email", "domain", "invalid email", "email address"))
 
 
 def _email_ready() -> tuple[bool, str | None]:
@@ -54,10 +74,14 @@ async def send_email_via_resend(
     sender_name: str | None = None,
     reply_to_email: str | None = None,
     attachments: list[dict] | None = None,
+    idempotency_key: str | None = None,
+    headers: dict | None = None,
+    marketing: bool = False,
 ) -> EmailDeliveryResult:
     ready, reason = _email_ready()
     if not ready:
-        return EmailDeliveryResult(sent=False, error=reason)
+        logger.error("Email not sent: %s", reason)
+        return EmailDeliveryResult(sent=False, error=MSG_NOT_CONFIGURED)
 
     settings = get_settings(refresh=True)
     from_email = settings.resend_from_email
@@ -71,9 +95,11 @@ async def send_email_via_resend(
         "subject": subject,
         "text": text_content,
         "html": html_content,
+        # Promotional mail (product tips) is never labelled transactional, and brings its own unsubscribe headers.
         "headers": {
-            "Precedence": "transactional",
+            **({} if marketing else {"Precedence": "transactional"}),
             "X-Entity-Ref-ID": str(uuid.uuid4()),
+            **(headers or {}),
         },
     }
     if attachments:
@@ -87,16 +113,28 @@ async def send_email_via_resend(
                 headers={
                     "Authorization": f"Bearer {settings.resend_api_key}",
                     "Content-Type": "application/json",
+                    # Resend de-duplicates requests that reuse a key, so a retry
+                    # after a timeout can never deliver the same email twice.
+                    **({"Idempotency-Key": idempotency_key[:256]} if idempotency_key else {}),
                 },
                 json=payload,
             )
-    except httpx.HTTPError as exc:
+    except httpx.ConnectError as exc:
+        # Never reached the provider: safe to report as a plain failure.
         logger.error("Resend request failed: %s", exc)
-        return EmailDeliveryResult(sent=False, error=f"Resend request failed: {exc}")
+        return EmailDeliveryResult(sent=False, error=MSG_UNREACHABLE)
+    except httpx.HTTPError as exc:
+        logger.error("Resend request outcome unknown: %s", exc)
+        return EmailDeliveryResult(sent=False, error=MSG_UNCERTAIN, uncertain=True)
 
     if response.status_code in (200, 201):
         logger.info("Resend accepted email to=%s", to_email)
-        return EmailDeliveryResult(sent=True)
+        message_id = None
+        try:
+            message_id = (response.json() or {}).get("id")
+        except Exception:
+            pass
+        return EmailDeliveryResult(sent=True, message_id=message_id)
 
     error_message = response.text
     try:
@@ -105,11 +143,9 @@ async def send_email_via_resend(
     except Exception:
         pass
 
-    logger.error("Resend rejected email (%s): %s", response.status_code, error_message)
-    return EmailDeliveryResult(
-        sent=False,
-        error=f"Resend rejected the email ({response.status_code}): {error_message}",
-    )
+    logger.error("Resend rejected email (%s) to=%s: %s", response.status_code, to_email, error_message)
+    refused = _refused_recipient(response.status_code, str(error_message))
+    return EmailDeliveryResult(sent=False, error=MSG_BAD_RECIPIENT if refused else MSG_REJECTED, recipient_rejected=refused)
 
 
 async def send_workspace_invitation_email_with_link(
@@ -191,6 +227,34 @@ async def send_password_reset_email(
         text_content=text_content,
         html_content=html_content,
     )
+
+
+async def send_task_code_email(*, to_email: str, code: str, saving: str = "") -> EmailDeliveryResult:
+    """The 6-digit code that saves a task begun on the homepage (and signs its owner in)."""
+    app_name = get_settings().app_name
+    what = f" and carry on with: {saving}" if saving else ""
+    subject = f"{code} is your {app_name} code"
+    text_content = (
+        f"Your code is: {code}\n\n"
+        f"Enter it on the page where you started, to save your work{what}.\n"
+        f"This code expires in 10 minutes. If you didn't ask for it, you can ignore this email."
+        + _FOOTER_TEXT
+    )
+    html_content = (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+        "line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+        f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;color:#0f172a;\">Your code</h2>"
+        f"<p style=\"margin:0 0 20px;\">Enter this on the page where you started, to save your work{escape(what)}.</p>"
+        f"<div style=\"text-align:center;margin:28px 0;\">"
+        f"<span style=\"display:inline-block;padding:16px 32px;border-radius:12px;background:#f1f5f9;"
+        f"font-size:32px;font-weight:800;letter-spacing:8px;color:#0f172a;\">{escape(code)}</span>"
+        f"</div>"
+        f"<p style=\"color:#475569;font-size:13px;\">This code expires in <strong>10 minutes</strong>. "
+        f"If you didn't ask for it, you can ignore this email.</p>"
+        + _FOOTER_HTML
+        + "</div>"
+    )
+    return await send_email_via_resend(to_email=to_email, subject=subject, html_content=html_content, text_content=text_content)
 
 
 async def send_password_otp_email(

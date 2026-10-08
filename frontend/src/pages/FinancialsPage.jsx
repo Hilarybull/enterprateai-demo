@@ -2140,7 +2140,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
       await persist({ invoices, quotes: nextQuotes, expenses, contracts });
       window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
       if (shareRes?.email_sent === false) {
-        setError(`Quotation saved but email delivery failed: ${shareRes.email_error || "unknown error"}. Check your Resend configuration.`);
+        setError(`The quotation was saved, but the email wasn't sent. ${shareRes.email_error || "Please try again later."}`);
       }
     } catch (e) {
       setError(((e instanceof Error ? e.message : "") || "Failed to send quotation.").replace(/^HTTP \d+:\s*/i, "") || "Failed to send quotation.");

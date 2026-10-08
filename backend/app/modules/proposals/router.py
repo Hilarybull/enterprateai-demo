@@ -5,6 +5,16 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from app.shared.auth.deps import get_current_user
 from app.modules.credits.service import credit_guard
 from app.modules.proposals import service
+from app.modules.plans.access import plan_meets
+from fastapi import HTTPException, status as http_status
+
+
+async def _require_paid_for_proposals(user_id: str, action: str) -> None:
+    if not await plan_meets(user_id, "starter_insight", grant_module="marketplace"):
+        raise HTTPException(
+            status_code=http_status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"{action} requires the Starter plan or above.",
+        )
 from app.modules.proposals.schemas import (
     ProposalPreferencesIn,
     ProposalRequestIn,
@@ -52,6 +62,7 @@ async def create_request(
     workspace_id: str | None = Query(default=None),
     user=Depends(get_current_user),
 ):
+    await _require_paid_for_proposals(user["id"], "Posting a proposal request")
     return await service.create_request(user["id"], workspace_id, body.model_dump())
 
 
@@ -166,6 +177,7 @@ async def submit_proposal(
     workspace_id: str | None = Query(default=None),
     user=Depends(get_current_user),
 ):
+    await _require_paid_for_proposals(user["id"], "Submitting a proposal")
     payload = body.model_dump()
     payload["proposer_email"] = user.get("email")
     return await service.submit_proposal(user["id"], workspace_id, payload)

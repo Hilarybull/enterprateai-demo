@@ -1,3 +1,4 @@
+import { ContentSkeleton } from "./Skeleton";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useAuthStore } from "../store/auth";
@@ -5,13 +6,16 @@ import { apiRequest, apiRequestCached, getApiBaseUrl, invalidateWorkspaceCache }
 import logoUrl from "../enterprate-logo.png";
 import { useWorkspaceStore } from "../store/workspace";
 import BusinessAssistant from "./BusinessAssistant";
+import WorkspaceCompletion from "./WorkspaceCompletion";
+import { workspaceCompletion } from "../lib/workspaceCompletion";
 import InviteModal from "./InviteModal";
-import OnboardingModal, { hasSeenOnboarding } from "./OnboardingModal";
+import { ToastContainer } from "./Toast";
 import WorkspacePrompt from "./WorkspacePrompt";
 import { WorkspaceProfilePanel } from "./WorkspaceProfileCard";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 import { hasModuleAccess, isPlatformModuleGranted, isPlatformModuleRestricted } from "../lib/permissions";
 import { planHasModuleAccess, planLabel } from "../lib/plans";
+import { TipsPrompt } from "../pages/EmailPreferencesPage";
 import { useDemoTour } from "../context/DemoTourContext";
 
 const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
@@ -19,12 +23,13 @@ const IS_LIVE = typeof window !== "undefined" && window.location.hostname === "e
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", subtitle: "Overview & analytics", icon: "grid", moduleKey: "dashboard" },
+  { to: "/tools", label: "Tool Library", subtitle: "Browse every tool", icon: "tools", moduleKey: null, public: true },
   { to: "/validation", label: "Idea Validation", subtitle: "Validate your concept", icon: "bulb", moduleKey: "validation", public: true },
-  { to: "/simulation", label: "Simulation", subtitle: "Run what-if scenarios", icon: "beaker", moduleKey: "simulation", public: true },
-  { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
-  { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
-  { to: "/catalogue", label: "Catalogue", subtitle: "Products, customers & vendors", icon: "box", moduleKey: "catalogue" },
   { to: "/operations", label: "Business Operations", subtitle: "Sales, procurement & contracts", icon: "chart", moduleKey: "operations" },
+  { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
+  { to: "/simulation", label: "Simulation", subtitle: "Run what-if scenarios", icon: "beaker", moduleKey: "simulation", public: true },
+  { to: "/catalogue", label: "Catalogue", subtitle: "Products, customers & vendors", icon: "box", moduleKey: "catalogue" },
+  { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: "integrations" },
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
   { to: "/referrals", label: "Referrals", subtitle: "Earn 5% per referral", icon: "share", moduleKey: null, public: true },
@@ -106,6 +111,13 @@ function Icon({ name, className = "h-4 w-4" }) {
         <path d="M7 7v10" />
         <path d="M17 7v10" />
         <path d="M12 10a2 2 0 1 0 0 4a2 2 0 0 0 0-4Z" />
+      </svg>
+    );
+  if (name === "tools")
+    return (
+      <svg {...base}>
+        <path d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4z" />
+        <path d="M17 14v6M14 17h6" />
       </svg>
     );
   if (name === "store")
@@ -302,13 +314,18 @@ export default function Layout() {
   const token = useAuthStore((s) => s.token);
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
+  // With no known workspace (e.g. a brand-new sign-up), hold the page until the
+  // workspace check finishes so the dashboard doesn't flash before the
+  // onboarding redirect. Returning users have a remembered workspace and
+  // render immediately.
+  const [workspaceChecked, setWorkspaceChecked] = useState(() => !!useWorkspaceStore.getState().workspaceId);
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [apiStatus, setApiStatus] = useState("unknown"); // unknown | ok | down
   const [search, setSearch] = useState("");
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [onboardingOpen, setOnboardingOpen] = useState(true);
   const [theme, setTheme] = useState(() => localStorage.getItem("ea_theme") || "system");
   const profileRef = useRef(null);
   const notifRef = useRef(null);
@@ -317,6 +334,22 @@ export default function Layout() {
   const workspaceSwitcherRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [notifToasts, setNotifToasts] = useState([]);
+  useEffect(() => {
+    function onToast(e) {
+      const { kind, title, message } = e.detail || {};
+      if (!message) return;
+      setNotifToasts((t) => [...t, { id: `${Date.now()}-${Math.random()}`, kind, title, message }]);
+    }
+    window.addEventListener("ea:toast", onToast);
+    return () => window.removeEventListener("ea:toast", onToast);
+  }, []);
+  // Asked for from anywhere ("Name your business" on the Agent card): the business profile, where its name is.
+  useEffect(() => {
+    const open = () => setWorkspaceProfileOpen(true);
+    window.addEventListener("ea:workspace:profile", open);
+    return () => window.removeEventListener("ea:workspace:profile", open);
+  }, []);
   const dismissedNotifIds = useRef(new Set(JSON.parse(localStorage.getItem("ea_notif_dismissed") || "[]")));
   const [helpOpen, setHelpOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -354,6 +387,14 @@ export default function Layout() {
   const memberWorkspaceName = useWorkspaceStore((s) => s.memberWorkspaceName);
 
   const setWsDoc = useWorkspaceStore((s) => s.setWsDoc);
+  // Workspace profile completion for the workspace card. The shared document is cleared after
+  // every save, so the last measured value is kept until the fresh one arrives (no flicker).
+  const wsDocForCompletion = useWorkspaceStore((s) => s.wsDoc);
+  const [completion, setCompletion] = useState(null);
+  useEffect(() => {
+    if (!workspaceId) { setCompletion(null); return; }
+    if (wsDocForCompletion && wsDocForCompletion.id === workspaceId) setCompletion(workspaceCompletion(wsDocForCompletion.data));
+  }, [wsDocForCompletion, workspaceId]);
   const clearWsDoc = useWorkspaceStore((s) => s.clearWsDoc);
   const setWorkspaceId = useWorkspaceStore((s) => s.setWorkspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
@@ -382,9 +423,6 @@ export default function Layout() {
     : (workspaceCompanyName || workspaceName || "My workspace");
   const email = useAuthStore((s) => s.email);
 
-  useEffect(() => {
-    if (email && hasSeenOnboarding(email)) setOnboardingOpen(false);
-  }, [email]);
 
   useEffect(() => {
     if (!workspaceSwitcherOpen) return;
@@ -399,6 +437,9 @@ export default function Layout() {
 
   const userName = useAuthStore((s) => s.name);
   const userPicture = useAuthStore((s) => s.picture);
+  // If the avatar image fails to load, show the user's initials instead of broken alt text.
+  const [avatarFailedSrc, setAvatarFailedSrc] = useState(null);
+  const avatarSrc = useWorkspaceStore((st) => st.workspaceLogo) || userPicture || null;
   const platformRestrictions = useAuthStore((s) => s.platformRestrictions);
   const platformGrants = useAuthStore((s) => s.platformGrants);
   const refreshGrants = useAuthStore((s) => s.refreshGrants);
@@ -406,6 +447,17 @@ export default function Layout() {
   const profileInitials = userName
     ? (userName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || initialsFromEmail(email))
     : initialsFromEmail(email);
+
+  // Inside the app shell only the content area scrolls. If the browser ever scrolls the
+  // page itself (e.g. to bring a focused field into view), put it straight back so the
+  // top bar is never pushed out of sight.
+  useEffect(() => {
+    const keepPageAtTop = () => {
+      if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
+    };
+    window.addEventListener("scroll", keepPageAtTop, { passive: true });
+    return () => window.removeEventListener("scroll", keepPageAtTop);
+  }, []);
 
   useEffect(() => {
     if (theme === "dark") document.documentElement.classList.add("dark");
@@ -513,27 +565,9 @@ export default function Layout() {
     };
   }, [enableHealthCheck]);
 
-  useEffect(() => {
-    if (!token) return;
-    let cancelled = false;
-
-    async function validateSession() {
-      try {
-        await apiRequest("/auth/me", "GET");
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e || "");
-        if (!cancelled && msg.startsWith("HTTP 401:")) {
-          logout();
-          navigate("/login", { replace: true });
-        }
-      }
-    }
-
-    validateSession();
-    return () => {
-      cancelled = true;
-    };
-  }, [token, logout, navigate]);
+  // The session is confirmed once when the app starts (store/auth.js hydrate). After that,
+  // a 401 from any request re-checks /auth/me and signs out only if the server refuses it;
+  // the route guard in App.jsx then sends the user to /login.
 
   useEffect(() => {
     if (!token) return;
@@ -558,10 +592,6 @@ export default function Layout() {
       clearInterval(id);
       window.removeEventListener("ea:credits:refresh", fetchCredits);
     };
-  }, [token]);
-
-  useEffect(() => {
-    if (token) refreshGrants();
   }, [token]);
 
   useEffect(() => {
@@ -593,6 +623,7 @@ export default function Layout() {
         }
       }
 
+      const inboxRequest = apiRequest("/proposals/inbox", "GET").catch(() => null); // non-fatal
       try {
         // If user already has a workspace selected, reload that specific one.
         // Only fall back to /me (most-recently-updated) when nothing is pinned.
@@ -600,7 +631,18 @@ export default function Layout() {
         const ws = pinnedId
           ? await apiRequestCached(`/validation/${pinnedId}`)
           : await apiRequestCached("/validation/me");
-        if (cancelled || !ws) return;
+        if (cancelled) return;
+
+        // First sign-in (or a workspace that was never set up): show the
+        // stepped workspace form once. Finishing or skipping it records
+        // data.onboarding, so this never repeats.
+        const needsOnboarding = !ws || (!ws?.data?.workspace_profile && !ws?.data?.onboarding);
+        if (needsOnboarding && !demoTour?.active && !isDemoUser) {
+          const here = `${location.pathname}${location.search}`;
+          navigate(`/onboarding?next=${encodeURIComponent(here || "/dashboard")}`, { replace: true });
+          return;
+        }
+        if (!ws) return;
 
         // User has their own workspace — owner mode
         clearMemberMode();
@@ -622,21 +664,19 @@ export default function Layout() {
               .filter((i) => !i.archived && i.due_date && String(i.status || "").toLowerCase() !== "paid" && new Date(i.due_date) < today)
               .map((i) => ({ ...i, _notifType: "overdue" }))
           : [];
-        // Fetch proposal inbox for new submission notifications
-        let newProposals = [];
-        try {
-          const inboxData = await apiRequest("/proposals/inbox", "GET");
+        // New proposal submissions are added when they arrive (requested alongside the
+        // workspace, above), so the page never waits on them.
+        const dismissed = dismissedNotifIds.current;
+        const visible = (list) => list.filter((n) => !dismissed.has(`${n._notifType}-${n.id}`));
+        setNotifications(visible([...overdueInvoices, ...pendingRfqs]));
+        inboxRequest.then((inboxData) => {
+          if (cancelled || !inboxData) return;
           const inboxItems = Array.isArray(inboxData?.items) ? inboxData.items : Array.isArray(inboxData) ? inboxData : [];
-          newProposals = inboxItems
+          const newProposals = inboxItems
             .filter((p) => p.status === "SUBMITTED" && !p.viewed_at)
             .map((p) => ({ ...p, _notifType: "proposal" }));
-        } catch { /* non-fatal */ }
-        const dismissed = dismissedNotifIds.current;
-        setNotifications(
-          [...overdueInvoices, ...pendingRfqs, ...newProposals].filter(
-            (n) => !dismissed.has(`${n._notifType}-${n.id}`)
-          )
-        );
+          setNotifications(visible([...overdueInvoices, ...pendingRfqs, ...newProposals]));
+        });
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
         else setDecisionStatus(null);
@@ -701,7 +741,8 @@ export default function Layout() {
       }
     }
 
-    loadWorkspace();
+    useWorkspaceStore.getState().beginWorkspaceCheck();
+    loadWorkspace().finally(() => { useWorkspaceStore.getState().endWorkspaceCheck(); if (!cancelled) setWorkspaceChecked(true); });
     window.addEventListener("ea:workspace:refresh", loadWorkspace);
     return () => {
       cancelled = true;
@@ -742,6 +783,7 @@ export default function Layout() {
     if (path.startsWith("/registration")) return "registration";
     if (path.startsWith("/integrations")) return "integrations";
     if (path.startsWith("/reports")) return "reports";
+    if (path.startsWith("/business-plan") || path.startsWith("/live-plan")) return "live_plan";
     return null;
   }, [location.pathname]);
 
@@ -760,7 +802,7 @@ export default function Layout() {
     new URLSearchParams(location.search).get("from") === "module";
 
   const Sidebar = (
-    <aside className="flex h-full min-h-0 w-[300px] flex-col overflow-y-auto border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[320px] lg:px-5">
+    <aside className="flex h-full min-h-0 w-[300px] max-w-[85vw] flex-col overflow-y-auto border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[260px] lg:max-w-none xl:w-[320px] xl:px-5">
       <div className="mx-1 flex items-start justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -770,7 +812,7 @@ export default function Layout() {
             <span className="rounded-md bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-700">Beta</span>
           </div>
         </div>
-        <button className="md:hidden rounded-xl p-2 text-slate-600 hover:bg-slate-100" onClick={() => setMobileOpen(false)}>
+        <button className="lg:hidden rounded-xl p-2 text-slate-600 hover:bg-slate-100" aria-label="Close menu" onClick={() => setMobileOpen(false)}>
           <Icon name="x" />
         </button>
       </div>
@@ -798,17 +840,7 @@ export default function Layout() {
           <SidebarLink
             key={item.to}
             item={item}
-            onClick={(e) => {
-              const allowWithoutWorkspace = item.public && (item.to === "/marketplace" || item.to === "/referrals");
-              if (!workspaceId && !allowWithoutWorkspace) {
-                e.preventDefault();
-                setWorkspaceGateReturn(item.to);
-                setWorkspaceGateOpen(true);
-                setMobileOpen(false);
-                return;
-              }
-              setMobileOpen(false);
-            }}
+            onClick={() => setMobileOpen(false)}
             forceInactive={item.to === "/validation" && isCreateWorkspaceRoute}
             locked={item.locked}
             tourActive={
@@ -837,7 +869,7 @@ export default function Layout() {
             </div>
           ) : null}
         </div>
-        <div className="relative mt-2" ref={workspaceSwitcherRef}>
+        <div className="relative mt-2 flex items-center gap-2" ref={workspaceSwitcherRef}>
           <button
             type="button"
             onClick={async () => {
@@ -853,13 +885,16 @@ export default function Layout() {
               } catch { setAllWorkspaces([]); }
               setWorkspaceSwitcherOpen(true);
             }}
-            className="flex w-full items-center justify-between gap-1 text-left text-base font-semibold text-slate-900 dark:text-slate-100 hover:text-brand-600 dark:hover:text-brand-400 transition-colors"
+            className="flex min-w-0 flex-1 items-center justify-between gap-1 text-left text-base font-semibold text-slate-900 dark:text-slate-100 hover:text-brand-600 dark:hover:text-brand-400 transition-colors"
           >
             <span className="truncate">{workspaceDisplayName}</span>
             {workspaceId && (
               <svg className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9l6 6 6-6"/></svg>
             )}
           </button>
+          {workspaceId && !isMemberMode && (
+            <WorkspaceCompletion completion={completion} onClick={() => setMobileOpen(false)} />
+          )}
           {workspaceSwitcherOpen && (
             <div className="absolute bottom-full left-0 z-50 mb-1 w-full rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900 overflow-hidden">
               {allWorkspaces.length === 0 && (
@@ -1016,22 +1051,24 @@ export default function Layout() {
   );
 
   return (
-    <div className="relative h-[100dvh] overflow-hidden bg-slate-50 dark:bg-slate-950">
+    // overflow-clip (not hidden): these containers can't be scrolled even programmatically,
+    // e.g. by the browser bringing a focused field into view, so the top bar never shifts.
+    <div className="relative h-[100dvh] overflow-clip bg-slate-50 dark:bg-slate-950">
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-purple-50 via-blue-50 to-purple-50 dark:from-slate-900 dark:via-slate-950 dark:to-slate-900" />
       <div className="pointer-events-none absolute -top-24 left-1/3 h-72 w-72 -translate-x-1/2 rounded-full bg-purple-200/35 blur-3xl dark:bg-purple-900/30" />
       <div className="pointer-events-none absolute -bottom-24 left-2/3 h-72 w-72 -translate-x-1/2 rounded-full bg-blue-200/30 blur-3xl dark:bg-blue-900/20" />
 
-      <div className="relative flex h-full w-full overflow-hidden">
-        <div className="hidden h-full min-h-0 md:block">{Sidebar}</div>
+      <div className="relative flex h-full w-full overflow-clip">
+        <div className="hidden h-full min-h-0 lg:block">{Sidebar}</div>
 
         {mobileOpen ? (
-          <div className="fixed inset-0 z-50 md:hidden">
+          <div className="fixed inset-0 z-50 lg:hidden">
             <div className="absolute inset-0 bg-slate-900/40" onClick={() => setMobileOpen(false)} />
             <div className="absolute inset-y-0 left-0">{Sidebar}</div>
           </div>
         ) : null}
 
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-clip">
           <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
             {/* Sandbox mode banner */}
             {isDemoUser && (
@@ -1066,8 +1103,8 @@ export default function Layout() {
                 <span>You're viewing <strong>{memberWorkspaceName || "a shared workspace"}</strong> as a guest. Only your granted modules are accessible.</span>
               </div>
             )}
-            <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-6">
-              <div className="flex items-center gap-2 md:hidden">
+            <div className="relative flex items-center justify-between gap-3 px-4 py-3 md:px-6">
+              <div className="flex items-center gap-2 lg:hidden">
                 <button
                   className="rounded-xl p-2 text-slate-700 hover:bg-slate-100"
                   onClick={() => setMobileOpen(true)}
@@ -1078,15 +1115,60 @@ export default function Layout() {
               </div>
 
               <div className="flex min-w-0 flex-1 items-center gap-3">
-                <div className="w-full max-w-[220px] md:max-w-xs">
+                <button
+                  type="button"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 sm:hidden dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+                  aria-label="Search modules"
+                  onClick={() => setMobileSearchOpen(true)}
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+                </button>
+                <div className="hidden w-full max-w-xs sm:block">
                   <input
                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none ring-brand-200 focus:ring dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
                     placeholder="Search modules..."
+                    aria-label="Search modules"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
               </div>
+
+              {mobileSearchOpen && (
+                <div className="absolute inset-0 z-10 flex items-center gap-2 bg-white px-4 sm:hidden dark:bg-slate-950">
+                  <input
+                    autoFocus
+                    className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm outline-none ring-brand-200 focus:ring dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+                    placeholder="Search modules..."
+                    aria-label="Search modules"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Escape") { setSearch(""); setMobileSearchOpen(false); } }}
+                  />
+                  <button type="button" aria-label="Close search" onClick={() => { setSearch(""); setMobileSearchOpen(false); }}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+                    <Icon name="x" />
+                  </button>
+                </div>
+              )}
+
+              {/* While the sidebar is a drawer, matching modules are listed here instead. */}
+              {String(search || "").trim() && (
+                <ul className="absolute inset-x-4 top-full z-30 mt-1 max-h-[60vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl lg:hidden dark:border-slate-800 dark:bg-slate-900">
+                  {filteredNav.length === 0 ? (
+                    <li className="px-3 py-2.5 text-sm text-slate-500">No modules match "{search}".</li>
+                  ) : filteredNav.map((item) => (
+                    <li key={item.to}>
+                      <button type="button"
+                        onClick={() => { setSearch(""); setMobileSearchOpen(false); navigate(item.to); }}
+                        className="flex w-full flex-col rounded-xl px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800">
+                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{item.label}</span>
+                        <span className="text-[12px] text-slate-500">{item.subtitle}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
               {/* Feedback */}
               <div className="relative shrink-0" ref={feedbackRef}>
@@ -1353,24 +1435,22 @@ export default function Layout() {
                   onClick={() => setProfileOpen((v) => !v)}
                   className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
                 >
-                  {workspaceLogo ? (
+                  {avatarSrc && avatarFailedSrc !== avatarSrc ? (
                     <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white">
                       <img
-                        src={workspaceLogo}
-                        alt={workspaceDisplayName || "Workspace logo"}
-                        className="h-full w-full object-contain"
-                        onError={(e) => { e.currentTarget.style.display = "none"; e.currentTarget.parentElement.innerHTML = `<span class="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-white text-xs font-semibold">${profileInitials}</span>`; }}
+                        src={avatarSrc}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                        className={`h-full w-full ${workspaceLogo ? "object-contain" : "object-cover"}`}
+                        onError={() => setAvatarFailedSrc(avatarSrc)}
                       />
-                    </span>
-                  ) : userPicture ? (
-                    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white">
-                      <img src={userPicture} alt={userName || email} className="h-full w-full object-cover" />
                     </span>
                   ) : (
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-white">
                       {profileInitials}
                     </span>
                   )}
+                  <span className="sr-only">{userName || email || "Account"}</span>
                 </button>
                 {profileOpen ? (
                   <div className="absolute right-0 top-12 z-30 w-56 rounded-2xl border border-slate-200 bg-white p-2 text-xs shadow-xl dark:border-slate-800 dark:bg-slate-900">
@@ -1450,8 +1530,9 @@ export default function Layout() {
             </div>
           </header>
 
-          <div className="ea-scroll flex-1 overflow-auto" data-tour="content-area">
-            <div className="mx-auto w-full max-w-7xl p-4 pb-8 md:p-6 md:pb-10">
+          <div className="ea-scroll min-h-0 flex-1 overflow-auto overscroll-contain" data-tour="content-area">
+            {/* Bottom padding keeps the last row of content clear of the floating chat button. */}
+            <div className="mx-auto w-full max-w-7xl p-4 pb-24 md:p-6 md:pb-24">
               {isCurrentRouteLocked ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
                   <div className={
@@ -1506,12 +1587,18 @@ export default function Layout() {
                     </>
                   )}
                 </div>
+              ) : workspaceChecked ? (
+                <><Outlet /><TipsPrompt /></>
               ) : (
-                <Outlet />
+                <ContentSkeleton />
               )}
             </div>
           </div>
+          {/* The chat bubble is not shown where the Agent box already is the chat (the dashboard and
+              the Agent Centre). It is the same Agent either way.
           <BusinessAssistant />
+          */}
+          {!["/dashboard", "/agent"].some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`)) && <BusinessAssistant />}
         </main>
       </div>
       {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}
@@ -1525,9 +1612,7 @@ export default function Layout() {
           onClose={() => setWorkspaceGateOpen(false)}
         />
       )}
-      {onboardingOpen && !workspaceId && !demoTour?.active && (
-        <OnboardingModal onDismiss={() => setOnboardingOpen(false)} userId={email} />
-      )}
+      <ToastContainer toasts={notifToasts} onClose={(id) => setNotifToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
   );
 }

@@ -22,10 +22,52 @@
     <meta name="twitter:image" content="https://www.enterprate.ai/hero-section-1.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=Manrope:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&family=Caveat:wght@500;600&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   </head>
   <body class="bg-slate-50 text-slate-900">
-    <div id="root"></div>
+    <!-- Painted before the JavaScript loads: the background, and for someone signed in on an app
+         page the outline of the sidebar and top bar. React replaces everything inside #root. -->
+    <style>
+      html, body { background: #f8fafc; }
+      .ea-boot { display: none; min-height: 100vh; background: #f8fafc; }
+      .ea-boot-on .ea-boot { display: flex; }
+      .ea-boot-side { width: 260px; flex: none; border-right: 1px solid #e2e8f0; background: #fff; padding: 16px; }
+      .ea-boot-main { flex: 1; min-width: 0; }
+      .ea-boot-top { height: 64px; border-bottom: 1px solid #e2e8f0; background: #fff; display: flex; align-items: center; padding: 0 24px; }
+      .ea-boot-b { background: #EEF0F6; border-radius: 12px; }
+      .ea-boot-bar { position: fixed; top: 0; left: 0; right: 0; height: 3px; background: #4F46E5; opacity: .7; }
+      @media (max-width: 1023px) { .ea-boot-side { display: none; } }
+      @media (prefers-color-scheme: dark) { html.dark, html.dark body, html.dark .ea-boot { background: #020617; } }
+    </style>
+    <script>
+      try {
+        var p = location.pathname;
+        var app = /^\/(dashboard|agent|launch|funding|operations|tools|validation|results|simulation|blueprint|business-plan|registration|catalogue|team|account|credits|referrals|integrations|marketplace-profile)(\/|$)/.test(p);
+        if (app && localStorage.getItem("ea_token")) document.documentElement.classList.add("ea-boot-on");
+      } catch (e) {}
+    </script>
+    <div id="root">
+      <div class="ea-boot" aria-hidden="true">
+        <div class="ea-boot-bar"></div>
+        <div class="ea-boot-side">
+          <div class="ea-boot-b" style="height:32px;width:140px"></div>
+          <div class="ea-boot-b" style="height:72px;margin-top:20px;border-radius:16px"></div>
+          <div class="ea-boot-b" style="height:36px;margin-top:20px"></div>
+          <div class="ea-boot-b" style="height:36px;margin-top:10px"></div>
+          <div class="ea-boot-b" style="height:36px;margin-top:10px"></div>
+          <div class="ea-boot-b" style="height:36px;margin-top:10px"></div>
+          <div class="ea-boot-b" style="height:36px;margin-top:10px"></div>
+        </div>
+        <div class="ea-boot-main">
+          <div class="ea-boot-top"><div class="ea-boot-b" style="height:36px;width:min(420px,60%)"></div></div>
+          <div style="padding:24px">
+            <div class="ea-boot-b" style="height:28px;width:220px"></div>
+            <div class="ea-boot-b" style="height:220px;margin-top:20px;border-radius:16px"></div>
+            <div class="ea-boot-b" style="height:120px;margin-top:16px;border-radius:16px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
