@@ -1,3 +1,4 @@
+import UkDateInput from "../UkDateInput";
 import { useEffect, useState } from "react";
 import {
   ACTION_STATE, CHECK_STATE, CLASSIFICATION, FEATURES, contradiction, dateLabel, downloadMaterial, generateMaterial, getAssessment, getHistory, getMaterial,
@@ -214,7 +215,7 @@ function ActionRow({ businessId, feature, subject, action, rank, onChanged, onOp
                 <input className={`mt-1 ${inputClass}`} defaultValue={action.owner || ""} onBlur={(e) => e.target.value !== (action.owner || "") && send({ owner: e.target.value })} />
               </label>
               <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">Due date
-                <input type="date" className={`mt-1 ${inputClass}`} defaultValue={action.due_date || ""} onChange={(e) => send({ due_date: e.target.value })} />
+                <UkDateInput className={`mt-1 ${inputClass}`} defaultValue={action.due_date || ""} onChange={(v) => send({ due_date: v })} />
               </label>
               <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">State
                 <select className={`mt-1 ${inputClass}`} value={action.status} onChange={(e) => send({ status: e.target.value })}>
@@ -442,7 +443,7 @@ export function ScenarioPanel({ businessId, feature, subject, currency }) {
               <input type="text" inputMode="decimal" className={`mt-1 ${inputClass}`} value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
             </label>
             <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Received on
-              <input type="date" className={`mt-1 ${inputClass}`} value={form.receipt_date} onChange={(e) => setForm({ ...form, receipt_date: e.target.value })} />
+              <UkDateInput className={`mt-1 ${inputClass}`} value={form.receipt_date} onChange={(v) => setForm({ ...form, receipt_date: v })} />
             </label>
           </>
         ) : (
@@ -579,7 +580,7 @@ export function DecisionPanel({ businessId, subject, onChanged }) {
           <div className="mt-3 flex flex-wrap items-end gap-2">
             <Btn kind="primary" disabled={!can || busy} onClick={() => call(() => recordDecision(businessId, subject.id, { decision: "proceed", rationale, assessment_id: a?.id || null, acknowledged_risks: blockers.map((g) => g.label) }))}>Proceed</Btn>
             <label className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">New launch date
-              <input type="date" className={`mt-1 ${inputClass}`} disabled={!can} value={newDate} onChange={(e) => setNewDate(e.target.value)} />
+              <UkDateInput className={`mt-1 ${inputClass}`} disabled={!can} value={newDate} onChange={(v) => setNewDate(v)} />
             </label>
             <Btn disabled={!can || busy} onClick={() => call(() => recordDecision(businessId, subject.id, { decision: "defer", rationale, new_target_date: newDate || null }))}>Defer to this date</Btn>
             <Btn kind="danger" disabled={!can || busy} onClick={() => call(() => recordDecision(businessId, subject.id, { decision: "cancel", rationale }))}>Cancel the launch</Btn>
@@ -591,7 +592,7 @@ export function DecisionPanel({ businessId, subject, onChanged }) {
         <Panel title="Record that the launch happened" description="Only once it has. You can record it whatever the last check said; the check's result is kept as it was.">
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Date it launched
-              <input type="date" max={todayLocal()} className={`mt-1 ${inputClass}`} disabled={!can} value={actualDate} onChange={(e) => setActualDate(e.target.value)} />
+              <UkDateInput max={todayLocal()} className={`mt-1 ${inputClass}`} disabled={!can} value={actualDate} onChange={(v) => setActualDate(v)} />
             </label>
             <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">What actually launched
               <input className={`mt-1 ${inputClass}`} disabled={!can} value={scope} onChange={(e) => setScope(e.target.value)} placeholder="For example: two pilot clients" />

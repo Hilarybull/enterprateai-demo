@@ -1,3 +1,4 @@
+import { refusalMessage } from "../lib/entitlement";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import DocumentEditor, { markdownToHtml } from "../components/DocumentEditor";
@@ -602,6 +603,14 @@ export default function BlueprintPage() {
     if (docType === "sales_letter") return isSection ? 1 : 10;
     return 40;
   }
+  // QA PF1/PF2: the price list's code for what is generated (the server's _blueprint_feature_code): the confirmation
+  // asks the server for the plan and the price, so what is shown is what is charged.
+  function getBlueprintFeatureCode(docType, sections) {
+    const isSection = Array.isArray(sections) && sections.length === 1;
+    if (docType === "client_proposal") return isSection ? "proposal_section" : "proposal_full";
+    if (docType === "sales_letter") return isSection ? "sales_letter_section" : "sales_letter_full";
+    return isSection ? "business_plan_section" : "business_plan_full";
+  }
   function getBlueprintFeatureName(docType, sections) {
     const isSection = Array.isArray(sections) && sections.length === 1;
     if (docType === "business_plan") return isSection ? "Business Plan Section" : "Business Plan";
@@ -889,6 +898,7 @@ export default function BlueprintPage() {
     setCreditModal({
       featureName: getBlueprintFeatureName("business_plan", null),
       creditCost: getBlueprintCreditCost("business_plan", null),
+      featureCode: getBlueprintFeatureCode("business_plan", null),
       onConfirm: () => { setCreditModal(null); generateSelected(); },
     });
   }, [companyName, workspaceProfile]); // eslint-disable-line
@@ -2161,37 +2171,12 @@ export default function BlueprintPage() {
       const rawMsg = e instanceof Error ? e.message : String(e || "");
       const msg = rawMsg.toLowerCase();
       const isNetwork = msg.includes("network") || msg.includes("failed to fetch") || msg.includes("load");
-      const is403 = rawMsg.startsWith("HTTP 403:");
       let friendlyError = rawMsg || "Blueprint generation failed";
       if (isNetwork) {
         friendlyError = "Connection error. Check your internet and try again. Your inputs are saved.";
-      } else if (is403) {
-        friendlyError = rawMsg.replace(/^HTTP 403:\s*/i, "");
       } else {
-        // Parse structured API errors and show a human-readable message
-        const httpMatch = rawMsg.match(/^HTTP (\d+):\s*(.*)/s);
-        if (httpMatch) {
-          const statusCode = Number(httpMatch[1]);
-          try {
-            const detail = JSON.parse(httpMatch[2])?.detail || JSON.parse(httpMatch[2]);
-            const errCode = detail?.error || detail;
-            if (errCode === "FEATURE_NOT_ENTITLED") {
-              friendlyError = statusCode === 402
-                ? "Your account does not have access to this feature yet. Contact support if you believe this is a mistake."
-                : "You are not entitled to use this feature on your current plan.";
-            } else if (errCode === "INSUFFICIENT_CREDITS") {
-              friendlyError = "You do not have enough credits to generate this document. Top up your credits and try again.";
-            } else if (errCode === "FEATURE_DISABLED") {
-              friendlyError = "This feature is currently unavailable. Please try again later.";
-            } else if (typeof errCode === "string") {
-              friendlyError = errCode.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-            }
-          } catch {
-            if (statusCode === 402) friendlyError = "Access denied. Your account may not have the required plan for this feature.";
-            else if (statusCode === 429) friendlyError = "Too many requests. Please wait a moment and try again.";
-            else if (statusCode >= 500) friendlyError = "Something went wrong on our end. Please try again shortly.";
-          }
-        }
+        // QA PF1: a refusal says why in words (the plan that includes it, or the credits needed). Never a code.
+        friendlyError = refusalMessage(e, rawMsg.match(/^HTTP 5\d\d/) ? "Something went wrong on our end. Please try again shortly. Nothing was charged." : "Blueprint generation failed. Nothing was charged.");
       }
       setError(friendlyError);
       setShowInputs(true);
@@ -2307,19 +2292,7 @@ export default function BlueprintPage() {
       if (isNetwork) {
         friendlyError = "Connection error. Check your internet and try again.";
       } else {
-        const httpMatch = rawMsg.match(/^HTTP (\d+):\s*(.*)/s);
-        if (httpMatch) {
-          const statusCode = Number(httpMatch[1]);
-          try {
-            const detail = JSON.parse(httpMatch[2])?.detail || JSON.parse(httpMatch[2]);
-            const errCode = detail?.error || detail;
-            if (errCode === "FEATURE_NOT_ENTITLED") friendlyError = "Your account does not have access to this feature.";
-            else if (errCode === "INSUFFICIENT_CREDITS") friendlyError = "Not enough credits. Top up and try again.";
-            else if (typeof errCode === "string") friendlyError = errCode.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-          } catch {
-            if (statusCode >= 500) friendlyError = "Something went wrong on our end. Please try again shortly.";
-          }
-        }
+        friendlyError = refusalMessage(e, "Section generation failed. Please try again. Nothing was charged.");
       }
       setError(friendlyError);
       setShowInputs(true);
@@ -3870,7 +3843,7 @@ export default function BlueprintPage() {
                 >
                   {showInputs ? "Hide inputs" : "Edit inputs"}
                 </Button>
-                <Button disabled={isLoading} onClick={() => { if (triggerDemoGate?.("blueprint")) return; const secs = sectionsByDoc[selectedDoc]; setCreditModal({ featureName: getBlueprintFeatureName(selectedDoc, secs), creditCost: getBlueprintCreditCost(selectedDoc, secs), onConfirm: () => { setCreditModal(null); generateSelected(); } }); }}>
+                <Button disabled={isLoading} onClick={() => { if (triggerDemoGate?.("blueprint")) return; const secs = sectionsByDoc[selectedDoc]; setCreditModal({ featureName: getBlueprintFeatureName(selectedDoc, secs), creditCost: getBlueprintCreditCost(selectedDoc, secs), featureCode: getBlueprintFeatureCode(selectedDoc, secs), onConfirm: () => { setCreditModal(null); generateSelected(); } }); }}>
                   {isLoading ? <Spinner size={16} /> : null}
                   {isLoading ? "Generating..." : hasGenerated ? "Regenerate" : "Generate"}
                 </Button>
@@ -4750,6 +4723,7 @@ export default function BlueprintPage() {
         <CreditConfirmModal
           featureName={creditModal.featureName}
           creditCost={creditModal.creditCost}
+          featureCode={creditModal.featureCode}
           onConfirm={creditModal.onConfirm}
           onCancel={() => setCreditModal(null)}
         />

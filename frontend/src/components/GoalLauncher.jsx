@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
 import { apiRequest } from "../api/client";
+import UkDateInput, { ukDate } from "./UkDateInput";
+import SaidLine from "./SaidLine";
 import { useAuthStore } from "../store/auth";
 import GoogleSignInButton from "./GoogleSignInButton";
 import { DURATION, prefersReducedMotion, useReducedMotion, useTypewriter } from "../lib/motion";
@@ -25,10 +28,10 @@ const FALLBACK = {
   prompt: "What do you want EnterprateAI to do for your business?",
   reassurance: "Free essential business tools. 50 AI Credits to get started.",
   goals: [
-    { key: "need_funding", label: "I need funding" }, { key: "more_customers", label: "I need more customers" },
-    { key: "price_offer", label: "Help me price my product/service" }, { key: "launch", label: "I want to launch a product/service" },
-    { key: "cash_flow", label: "Improve my cash flow" }, { key: "grow", label: "Help me grow my business" },
-    { key: "test_idea", label: "Test a business idea" }, { key: "business_risks", label: "Help me understand my business risks" },
+    { key: "need_funding", label: "I need funding" },
+    { key: "price_offer", label: "Help me price my product/service" },
+    { key: "launch", label: "I want to launch a product/service" },
+    { key: "test_idea", label: "Test a business idea" },
   ],
   tasks: [
     { key: "create_invoice", label: "Create Invoice" }, { key: "create_quotation", label: "Create Quotation" },
@@ -49,6 +52,16 @@ export function goalSets(goals, size = GOALS_SHOWN) {
   const sets = [];
   for (let i = 0; i < all.length; i += size) sets.push(Array.from({ length: size }, (_, k) => all[(i + k) % all.length]));
   return sets;
+}
+
+/** The number in an answer: "£45 per groom" is 45, "£2.5k" is 2500. Null when there is none. (The server reads it the same way.) */
+export function numberIn(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const m = String(value ?? "").replace(/[£$€₦]/g, " ").match(/(-?\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?\b/i);
+  if (!m) return null;
+  const scale = { k: 1e3, thousand: 1e3, m: 1e6, million: 1e6 }[(m[2] || "").toLowerCase()] || 1;
+  const n = Number(m[1].replace(/,/g, "")) * scale;
+  return Number.isFinite(n) ? n : null;
 }
 
 export const startPath = (sessionId) => `/start/${sessionId}`;
@@ -207,7 +220,7 @@ export default function GoalLauncher({ className = "" }) {
 export const EXAMPLES = ["Create an invoice for Mark, $300", "Find grants for my bakery", "Draft a quote for 20 chairs", "Help me price my product"];
 const STATIC_EXAMPLE = "For example: create an invoice for ABC Consulting, or I need more customers";
 // The Agent's steps as a visitor sees them. Ticked from the real task where there is one.
-export const AGENT_STEPS = ["Reading your request", "Drafting the document", "Ready for your approval"];
+export const AGENT_STEPS = [];
 
 export const LAUNCHER_PREFILL = "ea:launcher:prefill";
 /** Put words in the launcher's field, ready to send (nothing is sent). */
@@ -216,12 +229,20 @@ export function prefillLauncher(text) {
   window.dispatchEvent(new CustomEvent(LAUNCHER_PREFILL, { detail: { text } }));
 }
 
+/** Brings an element into view by scrolling the page up or down only (never sideways, never an ancestor). */
+export function scrollPageTo(el, block = "nearest") {
+  if (!el || typeof window.scrollBy !== "function") return;
+  const r = el.getBoundingClientRect();
+  const h = window.innerHeight || document.documentElement.clientHeight;
+  const by = block === "center" ? r.top + r.height / 2 - h / 2 : r.top < 0 ? r.top - 16 : r.bottom > h ? Math.min(r.bottom - h + 16, r.top - 16) : 0;
+  if (Math.abs(by) > 1) window.scrollBy({ top: by, left: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+}
+
 /** Scroll the launcher into view and put the cursor in its field (the nav button and the floating pill both do this). */
 export function focusLauncher() {
   const field = document.getElementById("goal-prompt");
   if (!field) return;
-  const card = field.closest("[data-goal-launcher]") || field;
-  card.scrollIntoView?.({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
+  scrollPageTo(field.closest("[data-goal-launcher]") || field, "center");
   field.focus({ preventScroll: true });
 }
 
@@ -229,7 +250,7 @@ export function focusLauncher() {
  * The Agent's steps, ticking in turn. `done` is how many are finished (from the real task when there is
  * one); the next one is shown as under way. Used over the product preview while a request is read.
  */
-export function AgentSteps({ done = 0, title = "EnterprateAI Agent", className = "" }) {
+export function AgentSteps({ done = 0, title = "EnterprateAI", className = "" }) {
   return (
     <div role="status" aria-live="polite" data-agent-steps className={`rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-2xl shadow-brand-900/15 ${className}`}>
       <div className="flex items-center gap-2"><AgentAvatar size={28} working={done < AGENT_STEPS.length} /><p className="text-sm font-bold text-slate-900">{title}</p></div>
@@ -279,13 +300,16 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
   const sets = useMemo(() => goalSets(offer.goals), [offer.goals]);
   const [turn, setTurn] = useState(0);
   const [held, setHeld] = useState(false);
+  const [starting, setStarting] = useState(false);      // this box's own Send is working (not the task card's: QA P3)
+  const [stopped, setStopped] = useState(false);      // a goal was chosen once: the goals stay put from then on
   const chosen = sets.findIndex((set) => set.some((g) => g.key === flow.session?.goal_key));
   const shown = chosen >= 0 ? chosen : turn % sets.length;
   useEffect(() => {
-    if (sets.length < 2 || held || chosen >= 0) return undefined;
+    // Never moves under the pointer, the keyboard or a finger, while a goal is being started, once one has been, or with reduced motion.
+    if (sets.length < 2 || held || chosen >= 0 || stopped || picking || reduced) return undefined;
     const timer = setInterval(() => setTurn((t) => t + 1), GOALS_EVERY_MS);
     return () => clearInterval(timer);
-  }, [sets.length, held, chosen]);
+  }, [sets.length, held, chosen, stopped, picking, reduced]);
 
   async function submit(e) {
     e.preventDefault();
@@ -296,12 +320,14 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
       setTimeout(() => setShake(false), 450);
       return;
     }
-    if (await begin({ text: text.trim(), entry_mode: "free_text" })) setText("");
+    setStarting(true);
+    try { if (await begin({ text: text.trim(), entry_mode: "free_text" })) setText(""); } finally { setStarting(false); }
   }
 
   /** A chip: its words run into the field, then it starts. With reduced motion it starts at once. */
   function pick(item, entry_mode) {
     if (busy || picking) return;
+    setStopped(true);
     const start = () => begin({ key: item.key, entry_mode });
     if (reduced) { start(); return; }
     setPicking(item.key);
@@ -327,9 +353,9 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
             <input id="goal-prompt" ref={field} value={text} onChange={(e) => setText(e.target.value)} maxLength={500} readOnly={Boolean(picking)}
               onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} placeholder={placeholder}
               className="h-full min-w-0 flex-1 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-500" />
-            <button type="submit" aria-label="Start" aria-busy={busy || undefined}
+            <button type="submit" aria-label="Send" aria-busy={busy || undefined}
               className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-lg bg-brand-600 px-5 text-sm font-semibold text-white transition hover:bg-brand-700 active:scale-95">
-              {busy ? "Working…" : "Start"}
+              {starting ? "Working…" : "Send"}
               <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4}><path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14m-6-6l6 6-6 6" /></svg>
             </button>
           </div>
@@ -337,7 +363,8 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
 
         {/* Business goals first, in the owner's own words; tasks second, for someone who knows the document they want. */}
         <div className="mt-4" role="group" aria-label="Popular business goals" data-goal-sets={sets.length}
-          onMouseEnter={() => setHeld(true)} onMouseLeave={() => setHeld(false)} onFocus={() => setHeld(true)} onBlur={() => setHeld(false)}>
+          onMouseEnter={() => setHeld(true)} onMouseLeave={() => setHeld(false)} onFocus={() => setHeld(true)} onBlur={() => setHeld(false)}
+          onTouchStart={() => setHeld(true)} onPointerDown={() => setHeld(true)}>
           <p className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-indigo-100">
             Popular business goals
             {sets.length > 1 && (
@@ -379,7 +406,7 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
         {/* The bottom row: what you can rely on, and (on the homepage) a 30 second look at the Agent at work. They stack on a phone. */}
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" data-launcher-foot>
           <p className="flex flex-wrap gap-x-2 gap-y-0.5 text-[12px] font-medium text-indigo-100" data-trust-row>
-            <span>No sign up to start</span><span aria-hidden="true">·</span><span>Nothing is sent without your approval</span>
+
           </p>
           {onWatch && (
             <button type="button" data-watch-demo onClick={onWatch} aria-label={`Watch a ${DEMO_SECONDS} second demo of the Agent`}
@@ -414,7 +441,7 @@ function Field({ f, value, onChange, at = "card" }) {
       </label>
       {f.type === "choice" ? (
         <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={f.label}>
-          {f.options.map((o) => (
+          {[...f.options, ...(f.unsure && !f.options.some((o) => o.value === "unknown") ? [{ value: "unknown", label: f.unsure }] : [])].map((o) => (
             <label key={o.value} className={`cursor-pointer rounded-lg border px-2.5 py-1.5 text-[13px] font-medium transition ${value === o.value ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 text-slate-700 hover:border-slate-300"}`}>
               <input type="radio" name={`goal-field-${at}-${f.key}`} className="sr-only" checked={value === o.value} onChange={() => onChange(o.value)} />
               {o.label}
@@ -427,12 +454,13 @@ function Field({ f, value, onChange, at = "card" }) {
         <>
           <div className={f.prefix ? "relative" : undefined}>
             {f.prefix && <span data-currency aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-slate-400">{f.prefix}</span>}
-            <input id={`goal-field-${at}-${f.key}`} className={`${inputCls} ${f.prefix ? "pl-7" : ""}`} type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
-              step={f.type === "number" ? "0.01" : undefined} min={f.type === "number" ? "0" : undefined} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />
+            {f.type === "date" ? <UkDateInput id={`goal-field-${at}-${f.key}`} className={inputCls} value={value ?? ""} onChange={onChange} />
+              : <input id={`goal-field-${at}-${f.key}`} className={`${inputCls} ${f.prefix ? "pl-7" : ""}`} inputMode={f.type === "number" ? "decimal" : undefined} type="text"
+                value={value ?? ""} onChange={(e) => onChange(e.target.value)} />}
           </div>
-          {f.chips?.length > 0 && (
+          {(f.chips?.length > 0 || f.unsure) && (
             <div className="mt-1.5 flex flex-wrap gap-1" role="group" aria-label={`Common answers for ${f.label}`}>
-              {f.chips.map((c) => (
+              {[...(f.chips || []), ...(f.unsure ? [{ value: "unknown", label: f.unsure }] : [])].map((c) => (
                 <button key={c.value} type="button" onClick={() => onChange(c.value)} aria-pressed={String(value) === String(c.value)}
                   className={`rounded-full border px-2 py-0.5 text-[11px] font-medium transition ${String(value) === String(c.value) ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
                   {c.label}
@@ -461,8 +489,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   // Tablet: the card opens under the launcher and the page moves to it (smoothly, unless reduced motion is asked for).
   useEffect(() => {
     if (placement !== "below" || !sessionId || !card.current?.offsetParent) return;
-    const calm = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    card.current.scrollIntoView?.({ behavior: calm ? "auto" : "smooth", block: "nearest" });
+    scrollPageTo(card.current);
   }, [placement, sessionId]);
   // Phone: Back closes the sheet (the task stays saved), as × does.
   useEffect(() => {
@@ -477,7 +504,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
     try { if (window.history.state?.eaSheet === sessionId) window.history.back(); } catch { /* the sheet is closed either way */ }
   };
   const [values, setValues] = useState({});
-  const [editing, setEditing] = useState(() => new Set());      // said-chips that were clicked: their fields are open to change
+  const [editing, setEditing] = useState(() => new Set());
+  const [answeredHere, setAnsweredHere] = useState(() => new Set());      // turns taken in this card (before the server's reply is in)
+  useEffect(() => { setAnsweredHere(new Set()); }, [session?.id]);      // said-chips that were clicked: their fields are open to change
   const [currency, setCurrency] = useState(null);
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
@@ -486,26 +515,98 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   const [marketing, setMarketing] = useState(false);    // tips and the newsletter: unticked unless they tick it
   const [code, setCode] = useState("");
   const [changing, setChanging] = useState(false);      // "Change email": back to the address, the task untouched
+  const [identityPhase, setIdentityPhase] = useState(() => (session?.first_name ? "email" : "name"));
   const [note, setNote] = useState("");
   const { sendCode, verifyCode, withGoogle } = flow;
   const sent = !here && Boolean(session?.verification?.sent) && !changing;      // a code is out: the card asks for it (a refresh comes back to this)
   const googleOn = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID || import.meta.env.REACT_APP_GOOGLE_CLIENT_ID);
   const key = `${session?.id}:${session?.goal_key}:${session?.next}`;
+  const held = JSON.stringify((session?.questions || []).map((q) => [q.key, q.default]));
+  useEffect(() => {      // every reply from the server: the answers it kept are the ones shown
+    setValues(Object.fromEntries((session?.questions || []).map((q) => [q.key, q.default ?? ""])));
+  }, [held]);      // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {      // every reply: an answer it could not use is said, even the same one twice
+    const refused = Object.keys(session?.rejected || {});
+    const bad = Object.entries(session?.rejected || {})[0];
+    if (bad) { const q = (session?.questions || []).find((x) => x.key === bad[0]); setError(`${q ? q.label : "That answer"} ${bad[1]}`); }
+    // An answer the server couldn't use was not given: its question is open again (it was skipped before).
+    if (refused.length) setAnsweredHere((had) => new Set([...had].filter((k) => !refused.includes(k))));
+  }, [session]);
   useEffect(() => {      // a new step: start from what the server holds
     setValues(Object.fromEntries((session?.questions || []).map((q) => [q.key, q.default ?? ""])));
     setEditing(new Set());
     setCurrency(null);
     setError("");
+    setIdentityPhase(session?.first_name ? "email" : "name");
   }, [key]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   const res = session?.resolution;
   const questions = session?.questions || [];
   const shownCurrency = currency || session?.currency;
   const sign = { GBP: "£", USD: "$", EUR: "€", NGN: "₦" }[shownCurrency] || "";
-  const fields = useMemo(() => questions.filter((q) => !q.proposed || editing.has(q.key)).map((q) => (q.prefix && sign ? { ...q, prefix: sign } : q)), [questions, editing, sign]);
-
+  // Given: answered by the person, or read from their own message. A default alone is not an answer.
+  const given = (q) => Object.prototype.hasOwnProperty.call(session?.inputs || {}, q.key) || Object.prototype.hasOwnProperty.call(session?.proposed || {}, q.key) || answeredHere.has(q.key);
+  const open_ = (q) => values[q.key] === "" || values[q.key] == null || !given(q);
+  const currentQuestion = useMemo(() => {
+    if (session?.next !== "questions") return null;
+    const editedKey = [...editing].find((value) => questions.some((question) => question.key === value));
+    // In the order asked (who it is for first), required or not: each one is a turn.
+    const fallback = editedKey ? questions.find((question) => question.key === editedKey) : questions.find(open_);
+    if (!fallback) return null;
+    return fallback.prefix && sign ? { ...fallback, prefix: sign } : fallback;
+  }, [session?.next, questions, editing, values, sign, session?.inputs, session?.proposed, answeredHere]);      // eslint-disable-line react-hooks/exhaustive-deps
+  const [draftValue, setDraftValue] = useState("");
+  const [typing, setTyping] = useState(false);
+  const [phone, setPhone] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 767px)").matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return undefined;
+    const media = window.matchMedia("(max-width: 767px)");
+    const changed = () => setPhone(media.matches);
+    media.addEventListener?.("change", changed);
+    return () => media.removeEventListener?.("change", changed);
+  }, []);
+  useEffect(() => {      // the page behind the sheet does not scroll while it is open
+    if (!(placement === "column" && phone && !closed && session)) return undefined;
+    const was = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = was; };
+  }, [placement, phone, closed, session]);
+  const [picking, setPicking] = useState(false);      // "Change something": which answer
+  const body = useRef(null);
+  const reply = useRef(null);
+  const justOpened = useRef(true);      // this task card has just appeared: its first question takes the cursor
+  useEffect(() => {
+    if (!currentQuestion || prefersReducedMotion()) { setTyping(false); return undefined; }
+    setTyping(true);
+    const timer = setTimeout(() => setTyping(false), 300 + Math.floor(Math.random() * 300));
+    return () => clearTimeout(timer);
+  }, [currentQuestion?.key]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // The conversation so far: each question already answered, with the answer under it (tap to change it).
+  const shownValue = (q, v) => (v === "unknown" ? (q.unsure || "Not sure") : q.type === "date" && ukDate(v) ? ukDate(v) : q.type === "choice" ? (q.options.find((o) => String(o.value) === String(v))?.label || String(v))
+    : q.prefix && v !== "" && !Number.isNaN(Number(v)) ? `${sign || q.prefix}${Number(v).toLocaleString("en-GB")}` : String(v));
+  useEffect(() => {      // each turn: the newest question in view inside the card, and the cursor back in the reply box
+    if (typing) return;
+    if (body.current) body.current.scrollTop = body.current.scrollHeight;
+    const here = card.current;
+    const active = typeof document !== "undefined" ? document.activeElement : null;
+    // Only when the person is in the card (or nowhere), or has just started this task from the launcher (QA R12c):
+    // the cursor is never taken from somewhere else on the page.
+    const fromLauncher = Boolean(here && active?.closest?.("[data-goal-launcher]")) && !here.contains(active) && justOpened.current;
+    if (reply.current && here && (!active || active === document.body || here.contains(active) || fromLauncher)) {
+      reply.current.focus({ preventScroll: true });
+      justOpened.current = false;
+    }
+  }, [typing, currentQuestion?.key, session]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // What came from their first message is shown once, in the "From what you said" line, never as a reply here (QA P5-1).
+  const fromMessage = new Set((session?.summary || []).filter((r) => r.from_message || r.proposed).map((r) => r.key));
+  const thread = questions.filter((q) => q.key !== currentQuestion?.key && values[q.key] !== "" && values[q.key] != null && given(q) && !fromMessage.has(q.key));
+  const [changingSaid, setChangingSaid] = useState(false);
+  useEffect(() => {
+    if (!currentQuestion) { setDraftValue(""); return; }
+    setDraftValue(values[currentQuestion.key] ?? currentQuestion.default ?? "");
+  }, [currentQuestion?.key, currentQuestion?.default, values]);
   const step = session?.next;
-  const said = (session?.summary || []).filter((r) => (step === "identity" ? true : r.proposed));
+  const said = (session?.summary || []).filter((r) => (step === "identity" ? true : r.proposed || r.from_message));
   const chosen = session?.goal_label && step !== "none" && step !== "clarify" ? session.goal_label : res?.original_goal;
   const open = (k) => setEditing((s) => new Set(s).add(k));
 
@@ -516,19 +617,50 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   if (!session) return null;
   if (here && step === "identity") return null;
 
+  function submitQuestion(nextValue = draftValue) {
+    const activeQuestion = currentQuestion;
+    if (!activeQuestion) return;
+    let answerValue = nextValue ?? "";
+    if (activeQuestion.required && (answerValue === "" || answerValue == null)) {
+      setError(`${activeQuestion.label} is required.`);
+      return;
+    }
+    if (activeQuestion.type === "number" && answerValue !== "unknown" && answerValue !== "") {
+      const figure = numberIn(answerValue);
+      // Digits are read here; words ("about sixty", "standard rate") go to the server, which reads them (QA H) or says why not.
+      if (figure != null) answerValue = figure;
+    }
+    const nextValues = { ...values, [activeQuestion.key]: answerValue };
+    setValues(nextValues);
+    if (editing.has(activeQuestion.key)) setEditing((had) => { const next = new Set(had); next.delete(activeQuestion.key); return next; });
+    setError("");
+    setAnsweredHere((had) => new Set([...had, activeQuestion.key]));
+    // Only what was given goes back: a default nobody confirmed is not sent as an answer (QA P2-3).
+    const answers = Object.fromEntries(questions.filter((question) => nextValues[question.key] !== "" && nextValues[question.key] != null
+      && (question.key === activeQuestion.key || given(question))).map((question) => [question.key, nextValues[question.key]]));
+    if (currency && currency !== session.currency) answers.currency = currency;
+    answer(answers, questions.some((question) => question.proposed));
+  }
+
   function submit(e) {
     e?.preventDefault();
     if (step === "questions") {
-      const missing = questions.find((q) => q.required && (values[q.key] === "" || values[q.key] == null));
-      if (missing) { if (missing.proposed) open(missing.key); setError(`${missing.label} is required.`); return; }
-      setError("");
-      const answers = Object.fromEntries(fields.filter((f) => values[f.key] !== "" && values[f.key] != null).map((f) => [f.key, values[f.key]]));
-      if (currency && currency !== session.currency) answers.currency = currency;
-      answer(answers, questions.some((q) => q.proposed));      // sending it confirms what was read from their sentence
+      submitQuestion();
     } else if (step === "identity") {
       setNote("");
       if (here) { setError(carryOn()); return; }
       if (sent) { verifyCode(code).then(setError); return; }
+      if (identityPhase === "name") {
+        if (!name.trim()) { setError("By the way, what's your name?"); return; }
+        if (!/^[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ' -]{0,39}$/.test(name.replace(/\s+/g, " ").trim())) {
+          setError("Enter your name using letters only (spaces, hyphens and apostrophes are fine).");
+          return;
+        }
+        setError("");
+        setIdentityPhase("email");
+        return;
+      }
+      if (!email.trim() || !EMAIL.test(email)) { setError("Simple - what's your email address?"); return; }
       sendCode(email, renaming || !session.first_name ? name : "", marketing).then((problem) => { setError(problem); if (!problem) { setChanging(false); setCode(""); } });
     }
   }
@@ -540,9 +672,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
     // Under 768px: a full-screen sheet. From 1024px: the right-hand column, where the product preview was, never taller than the hero.
     : `${closed ? "max-md:hidden" : "max-md:flex"} flex-col bg-white max-md:fixed max-md:inset-0 max-md:z-[70] max-md:motion-safe:animate-[ea-sheet-up_.22s_ease-out] md:hidden `
       + "lg:absolute lg:left-6 lg:right-0 lg:top-10 lg:z-10 lg:flex lg:max-h-[calc(100%-2.5rem)] lg:rounded-2xl lg:border-2 lg:border-brand-500 lg:shadow-2xl lg:shadow-brand-900/10 lg:ring-4 lg:ring-brand-500/10 lg:motion-safe:animate-[ea-slide-in_.3s_ease-out]";
-  const primary = step === "questions" ? "Continue" : step === "identity" ? "Continue" : null;
+  const primary = step === "questions" ? "Send" : step === "identity" ? "Send" : null;
 
-  return (
+  const sheet = (
     <section ref={card} aria-label="Your task" data-task-card data-placement={placement} className={`text-left ${shell}`}>
       <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
         <div className="min-w-0">
@@ -577,9 +709,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
         </ol>
       )}
       <form onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3" data-task-body>
+        <div ref={body} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3" data-task-body>
           <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
-            <p className="min-w-0 flex-1 text-[13px] font-medium text-slate-800" data-says>{res.message}</p>
+            <p className="min-w-0 flex-1 text-[13px] font-medium text-slate-800" data-says>{session.value_line || res.message}</p>
             {res.credit_badge && step !== "none" && step !== "clarify" && (
               <span data-credit-badge title={res.credit_implication || undefined} className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">{res.credit_badge}</span>
             )}
@@ -590,17 +722,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
             </p>
           )}
           {res.recommended_path?.length > 1 && (
-            <div data-path>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Here is how I can help</p>
-              <ol className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                {res.recommended_path.map((s, i) => (
-                  <li key={s} className="flex items-center gap-1.5 text-[12px] text-slate-700">
-                    <span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[10px] font-bold text-brand-700">{i + 1}</span>
-                    <span data-step>{s}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
+            <p data-path className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] font-medium text-emerald-900">
+              I’ll check what looks ready and show you the gaps. Free.
+            </p>
           )}
 
           {step === "clarify" && session.clarify && (
@@ -616,8 +740,31 @@ export function GoalTaskCard({ flow, placement = "column" }) {
             </div>
           )}
 
-          {(step === "questions" || step === "identity") && said.length > 0 && (
-            // What was read from their own sentence (or, at the checkpoint, everything given): a chip each, open to change with a click.
+          {step === "questions" && (session.acknowledged || session.progress) && (
+            <p className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-slate-600" data-conversation>
+              {session.acknowledged && <span data-acknowledged>{session.acknowledged}</span>}
+              {session.progress && <span className="ml-auto font-semibold text-slate-500" data-progress>{session.progress.answered} of {session.progress.total}</span>}
+            </p>
+          )}
+          {step === "questions" && said.length > 0 && (
+            // What was read from their own sentence: one compact line, shown once (QA P5-1). "Edit" lists each, to pick the one to change.
+            <SaidLine items={said.map((r) => ({ key: r.key, text: r.key === "currency" ? shownCurrency : r.value }))} editing={changingSaid}
+              onEdit={() => setChangingSaid(true)}>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5" role="group" aria-label="Change what you said">
+                {said.filter((r) => r.key !== "currency" || session.currency_options?.length > 0).map((r) => (
+                  <button key={r.key} type="button" data-said-change={r.key} aria-pressed={editing.has(r.key)}
+                    onClick={() => { open(r.key); setChangingSaid(false); }}
+                    className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-800 hover:border-brand-300">
+                    {r.label.replace(/\?$/, "")}: {r.key === "currency" ? shownCurrency : r.value}
+                  </button>
+                ))}
+                <button type="button" onClick={() => setChangingSaid(false)} className="text-[12px] font-semibold text-slate-500 hover:underline">Done</button>
+              </div>
+            </SaidLine>
+          )}
+          {session.currency_note && step === "questions" && said.length > 0 && !editing.has("currency") && <p className="-mt-2 text-[11px] text-slate-500" data-currency-note>In {shownCurrency}.</p>}
+          {step === "identity" && said.length > 0 && (
+            // At the checkpoint: everything given, a chip each.
             <div data-said>
               <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{step === "identity" ? "What you told me" : "From what you said"}</p>
               <div className="mt-1 flex flex-wrap gap-1.5">
@@ -634,73 +781,150 @@ export function GoalTaskCard({ flow, placement = "column" }) {
                   );
                 })}
               </div>
-              {session.currency_note && step === "questions" && !editing.has("currency") && <p className="mt-1 text-[11px] text-slate-500" data-currency-note>In {shownCurrency}.</p>}
             </div>
           )}
 
-          {step === "questions" && (fields.length > 0 || editing.has("currency")) && (
-            // Only what is missing (and anything opened to change), two to a row where it fits.
-            <div className={`grid gap-3 sm:grid-cols-2 ${placement === "column" ? "lg:max-xl:grid-cols-1" : ""}`} data-fields>
-              {fields.map((f) => <Field key={f.key} at={placement} f={f} value={values[f.key]} onChange={(v) => setValues((s) => ({ ...s, [f.key]: v }))} />)}
-              {editing.has("currency") && session.currency_options?.length > 0 && (
-                <Field at={placement} f={{ key: "currency", label: "Currency", type: "choice", required: true, options: session.currency_options.map((c) => ({ value: c, label: c })) }}
-                  value={shownCurrency} onChange={setCurrency} />
+          {step === "questions" && thread.length > 0 && (
+            <ol className="space-y-2" aria-label="The conversation so far" data-thread>
+              {thread.map((q) => (
+                <li key={q.key} className="space-y-1">
+                  <p className="w-fit max-w-[85%] rounded-2xl rounded-tl-sm bg-slate-50 px-3 py-1.5 text-[12px] text-slate-600 ring-1 ring-slate-100">{q.label}</p>
+                  <button type="button" onClick={() => open(q.key)} aria-label={`Change your answer: ${shownValue(q, values[q.key])}`} data-answer={q.key}
+                    className="ml-auto block w-fit max-w-[85%] rounded-2xl rounded-tr-sm bg-brand-600 px-3 py-1.5 text-left text-[13px] font-medium text-white hover:bg-brand-700">
+                    {shownValue(q, values[q.key])}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+
+          {step === "questions" && currentQuestion && typing && (
+            <p role="status" aria-label="EnterprateAI is typing" data-typing className="flex w-fit gap-1 rounded-2xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-slate-100">
+              {[0, 1, 2].map((n) => <span key={n} aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-slate-400 motion-safe:animate-bounce" style={{ animationDelay: `${n * 120}ms` }} />)}
+            </p>
+          )}
+
+          {step === "questions" && !currentQuestion && questions.length > 0 && (
+            <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3" data-summary>
+              <p className="text-[13px] font-semibold text-slate-900">Here's what I've got:</p>
+              <ul className="mt-1.5 space-y-0.5">
+                {(session.summary || []).filter((r) => r.key !== "currency").map((r) => {
+                  const q = questions.find((x) => x.key === r.key) || {};
+                  return <li key={r.key} className="text-[13px] text-slate-700"><span className="text-slate-500">{q.noun ? q.noun[0].toUpperCase() + q.noun.slice(1) : r.label}:</span> {r.value}</li>;
+                })}
+              </ul>
+              <div className="mt-2.5 flex flex-wrap items-center gap-3">
+                <button type="button" disabled={busy} onClick={() => answer(Object.fromEntries(questions.filter((q) => values[q.key] !== "" && values[q.key] != null).map((q) => [q.key, values[q.key]])), true)}
+                  className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">Continue</button>
+                <button type="button" onClick={() => setPicking((v) => !v)} aria-expanded={picking} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">Change something</button>
+              </div>
+              {picking && (
+                <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Which answer to change" data-change-pick>
+                  {questions.filter((q) => values[q.key] !== "" && values[q.key] != null).map((q) => (
+                    <button key={q.key} type="button" onClick={() => { setPicking(false); open(q.key); }} className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-700 hover:border-brand-300">
+                      {q.noun ? q.noun[0].toUpperCase() + q.noun.slice(1) : q.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {step === "questions" && currentQuestion && !typing && (
+            <div className="space-y-2" data-question-turn aria-live="polite">
+              <div className="w-fit max-w-[90%] rounded-2xl rounded-tl-sm bg-white px-3 py-2 text-[13px] leading-5 text-slate-800 shadow-sm ring-1 ring-slate-100" data-agent-says>
+                {session.acknowledged && thread.length === 0 ? <span className="block text-slate-500">{session.acknowledged}</span> : null}
+                {currentQuestion.label}
+              </div>
+              {currentQuestion.type === "choice" ? (
+                <div className="flex flex-wrap gap-2" role="group" aria-label={currentQuestion.label} data-question-choice>
+                  {[...currentQuestion.options, ...(currentQuestion.unsure && !currentQuestion.options.some((o) => o.value === "unknown") ? [{ value: "unknown", label: currentQuestion.unsure }] : [])].map((o) => (
+                    <button key={o.value} type="button" disabled={busy} onClick={() => submitQuestion(o.value)} data-quick-reply
+                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition disabled:opacity-60 ${String(draftValue) === String(o.value) ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-white text-slate-700 hover:border-brand-300"}`}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-white bg-white p-3 shadow-sm">
+                  {currentQuestion.type === "date"
+                    ? <UkDateInput aria-label={currentQuestion.label} value={draftValue} onChange={setDraftValue} className={inputCls} />
+                    : <input ref={reply} aria-label={currentQuestion.label} placeholder="Type your reply" value={draftValue} onChange={(e) => setDraftValue(e.target.value)}
+                    inputMode={currentQuestion.type === "number" ? "decimal" : undefined} type="text" className={`${inputCls} ${currentQuestion.prefix ? "pl-8" : ""}`} />}
+                  {currentQuestion.prefix && <span className="pointer-events-none absolute left-7 top-[50%] hidden text-sm font-medium text-slate-500" />}
+                  {(currentQuestion.chips?.length > 0 || currentQuestion.unsure) && (
+                    <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label={currentQuestion.label}>
+                      {[...(currentQuestion.chips || []), ...(currentQuestion.unsure ? [{ value: "unknown", label: currentQuestion.unsure }] : [])].map((chip) => (
+                        <button key={chip.value} type="button" disabled={busy} onClick={() => submitQuestion(chip.value)} data-quick-reply
+                          className={`rounded-full border px-2.5 py-1 text-[12px] font-semibold transition ${String(draftValue) === String(chip.value) ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-slate-50 text-slate-700 hover:border-brand-300"}`}>
+                          {chip.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
 
           {step === "identity" && (
             <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3" data-checkpoint>
-              <p className="text-sm font-semibold text-slate-900">
-                {sent ? <>We sent a code to <span data-masked>{session.verification.masked}</span>.</>
-                  : here ? "Continue to carry on." : "To continue, verify your email."}
-              </p>
-              {sent ? (
-                // The code is asked for right here: nobody is sent to another page to prove an address.
-                <div data-code-step>
-                  {googleOn && session.verification.google && (
-                    // A Google address: one tap with Google is the quickest way in. The code below works just as well.
-                    <div className="mt-2" data-google-first>
-                      <GoogleSignInButton disabled={busy} onCredential={withGoogle} />
-                      <p className="mt-1.5 text-center text-[11px] text-slate-500">or enter the code we emailed you</p>
-                    </div>
-                  )}
-                  <input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]*" maxLength={7} aria-label="6-digit code" placeholder="6-digit code" value={code}
-                    onChange={(e) => setCode(e.target.value.replace(/[^0-9 ]/g, ""))} className={`${inputCls} mt-2 tracking-[0.3em]`} />
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                    <button type="button" disabled={busy} onClick={resend} className="text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline disabled:opacity-60">Resend code</button>
-                    <button type="button" onClick={() => { setChanging(true); setCode(""); setError(""); setNote(""); }} className="text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline">Change email</button>
-                  </div>
-                  {note && <p role="status" className="mt-1.5 text-[11px] text-slate-600">{note}</p>}
+              <div className="space-y-2" data-identity-turn>
+                <div className="rounded-2xl bg-white px-3 py-2 text-[13px] leading-5 text-slate-800 shadow-sm ring-1 ring-slate-100">
+                  {sent ? <>I sent a code to <span data-masked>{session.verification.masked}</span>.</>
+                    : here ? "I already have your account. Let’s keep going."
+                      : identityPhase === "name" ? "What name should I use for this?" : "What email should I send the code to?"}
                 </div>
-              ) : (
-                <>
-                  {session.first_name && !renaming && (
-                    // They said who they are in their message, so the name isn't asked for again.
-                    <p className="mt-2 text-[13px] font-semibold text-slate-900" data-continue-as>
-                      Continue as {session.first_name}
-                      <button type="button" onClick={() => setRenaming(true)} className="ml-2 text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline">Not you? Change</button>
-                    </p>
-                  )}
-                  <div className={`mt-2 grid gap-2 ${session.first_name && !renaming ? "" : "sm:grid-cols-2"}`}>
-                    {(!session.first_name || renaming) && (
+                {sent ? (
+                  <div data-code-step>
+                    {googleOn && session.verification.google && (
+                      <div className="mt-2" data-google-first>
+                        <GoogleSignInButton disabled={busy} onCredential={withGoogle} />
+                        <p className="mt-1.5 text-center text-[11px] text-slate-500">or enter the code we emailed you</p>
+                      </div>
+                    )}
+                    <input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]*" maxLength={7} aria-label="6-digit code" placeholder="6-digit code" value={code}
+                      onChange={(e) => setCode(e.target.value.replace(/[^0-9 ]/g, ""))} className={`${inputCls} mt-2 tracking-[0.3em]`} />
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                      <button type="button" disabled={busy} onClick={resend} className="text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline disabled:opacity-60">Resend code</button>
+                      <button type="button" onClick={() => { setChanging(true); setCode(""); setError(""); setNote(""); }} className="text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline">Change email</button>
+                    </div>
+                    {note && <p role="status" className="mt-1.5 text-[11px] text-slate-600">{note}</p>}
+                  </div>
+                ) : identityPhase === "name" ? (
+                  <div className="rounded-xl border border-white bg-white p-3 shadow-sm">
+                    {session.first_name && !renaming ? (
+                      <p className="text-[13px] font-semibold text-slate-900" data-continue-as>
+                        I'll use {session.first_name}.
+                        <button type="button" onClick={() => { setRenaming(true); setIdentityPhase("name"); }} className="ml-2 text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline">Change</button>
+                      </p>
+                    ) : (
                       <input type="text" aria-label="Your name" placeholder="Your name" autoComplete="name" maxLength={40} value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
                     )}
-                    <input type="email" aria-label="Your email address" placeholder="you@yourbusiness.com" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
                   </div>
-                  <p className="mt-1 text-[11px] text-slate-500">We'll email you a 6-digit code. No password needed.</p>
-                  <label className="mt-2 flex items-start gap-2 text-[12px] text-slate-600" data-marketing>
-                    <input type="checkbox" checked={marketing} onChange={(e) => setMarketing(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300" />
-                    <span>Send me tips, product updates and the EnterprateAI newsletter. Unsubscribe any time.</span>
-                  </label>
-                  {googleOn && (
-                    <div className="mt-2" data-google>
-                      <p className="mb-1.5 text-center text-[11px] text-slate-400">or</p>
-                      <GoogleSignInButton disabled={busy} onCredential={withGoogle} />
-                    </div>
-                  )}
-                </>
-              )}
+                ) : (
+                  <div className="rounded-xl border border-white bg-white p-3 shadow-sm">
+                    {session.first_name && !renaming && (
+                      <p className="mb-2 text-[13px] font-semibold text-slate-900" data-continue-as>
+                        I'll use {session.first_name}.
+                        <button type="button" onClick={() => { setRenaming(true); setIdentityPhase("name"); }} className="ml-2 text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline">Change</button>
+                      </p>
+                    )}
+                    <input type="email" aria-label="Your email address" placeholder="you@yourbusiness.com" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
+                    <p className="mt-1 text-[11px] text-slate-500">I'll email a 6-digit code so I can keep the task moving.</p>
+                    <label className="mt-2 flex items-start gap-2 text-[12px] text-slate-600" data-marketing>
+                      <input type="checkbox" checked={marketing} onChange={(e) => setMarketing(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300" />
+                      <span>Send me tips, product updates and the EnterprateAI newsletter. Unsubscribe any time.</span>
+                    </label>
+                    {googleOn && (
+                      <div className="mt-2" data-google>
+                        <p className="mb-1.5 text-center text-[11px] text-slate-400">or</p>
+                        <GoogleSignInButton disabled={busy} onCredential={withGoogle} />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
               {!here && <p className="mt-1.5 text-[11px] text-slate-500" data-retention>Kept for {session.retention_days} days, and picked up as soon as you're in.</p>}
             </div>
           )}
@@ -724,4 +948,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
       </form>
     </section>
   );
-}
+  // Below 768px the card is a full-screen sheet. It is put on the page's body, so no animated parent (the hero's
+  // slide-in leaves a translate behind, which traps fixed elements) can shrink or clip it; the page behind it stays still.
+  return placement === "column" && phone && !closed ? createPortal(sheet, document.body) : sheet;
+}

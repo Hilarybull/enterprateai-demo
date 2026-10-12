@@ -758,7 +758,7 @@ def _look_for_work(business_id: str) -> None:
     call for a task it hasn't started (an invoice that fell overdue overnight). Never slows the page."""
     try:
         from app.modules.agent import autostart
-        autostart.later(business_id)
+        autostart.later(business_id, visit=True)      # a visit: never an Idea Validation (QA U8)
     except Exception:      # noqa: BLE001
         pass
 
@@ -862,7 +862,7 @@ async def set_dashboard_stage(business_id: str, body: DashboardStageIn, user=Dep
         if stage is None:
             data.pop("dashboard_stage", None)
         else:
-            data["dashboard_stage"] = {"stage": stage, "set_by": user["id"], "set_at": now.isoformat()}
+            data["dashboard_stage"] = {"stage": stage, "set_by": user["id"], "set_at": now.isoformat(), "v": dash.CHOICE_VERSION}
         after = dash.stage_of(data, now)
         change.update({"from": before["stage"], "from_source": before["source"], "to": after["stage"], "to_source": after["source"],
                        "detected": after["detected"]})
@@ -984,8 +984,12 @@ async def list_runs(
     have = {r["id"] for r in listed}
     raw_runs = await current.open_runs(orch, business_id, [r for r in awaiting if r["id"] not in have] + listed, recheck=True)
     waiting = {a["run_id"] for a in pending}
+    from app.modules.agent.twins import stale_twins
+    stale = {r["id"] for r in stale_twins(raw_runs)} if bucket != "history" else set()      # a task asked twice is listed once (QA U8)
     runs = []
     for r in raw_runs:
+        if r["id"] in stale:
+            continue
         pr = _public_run(r)
         # A run counts as needing approval only while it has a live pending approval (the
         # same definition the dashboard uses); one whose approval has lapsed needs attention.

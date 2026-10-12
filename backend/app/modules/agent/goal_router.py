@@ -3,12 +3,14 @@ session need no account; attaching, resuming and preparing need a signed-in user
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from app.modules.agent import first_value
 from app.modules.agent import goals
 from app.shared.auth.deps import get_current_user
 
@@ -143,6 +145,7 @@ class EventIn(BaseModel):
     session_id: str | None = Field(default=None, max_length=80)
     entry_mode: str | None = Field(default=None, max_length=20)
     key: str | None = Field(default=None, max_length=64)
+    where: str | None = Field(default=None, max_length=20)      # "app" or "homepage": which surface it happened on (QA PF7)
 
 
 class ResumeIn(BaseModel):
@@ -205,7 +208,9 @@ async def goal_event(body: EventIn, request: Request):
     session = await goals.load(get_store(), body.session_id) if body.session_id else None
     mode = body.entry_mode if body.entry_mode in ("business_goal", "quick_task", "free_text") else None
     key = body.key if body.key in goals._BY_KEY else None
-    await goals.track(get_store(), body.name, session, entry_mode=None if session else mode, goal_key=None if session else key)
+    where = body.where if body.where in ("app", "homepage") else None
+    await goals.track(get_store(), body.name, session, entry_mode=None if session else mode, goal_key=None if session else key,
+                      **({"where": where} if where else {}))
     return {"ok": True}
 
 
@@ -274,6 +279,377 @@ async def session_verify(session_id: str, body: CodeIn):
         raise HTTPException(status_code=403, detail=str(e)) from e
     return {"access_token": accounts.token(user["id"]), "token_type": "bearer", "email": email, "new_account": created, "session": goals.public(session),
             "first_name": visitor.get("first_name") or (str(user.get("name") or "").split(" ")[0] or None)}
+
+
+@router.get("/task-sessions/{session_id}/first-value")
+async def session_first_value(session_id: str, user=Depends(get_current_user)):
+    """The free first-value result for a covered goal: a score or a check, how much of the evidence is known,
+    what looks ready and what is missing. Worked out from the answers and the business's own records only; no
+    model and no outside research is involved, so it is there whatever else is unavailable (PRD 5.1, SIF-03)."""
+    session = await _session(session_id)
+    if session.get("user_id") and session["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Not found.")
+    data = None
+    if session.get("business_id"):
+        try:
+            data = await get_orchestrator().rt.business.load(session["business_id"])
+        except Exception:      # noqa: BLE001 - the answers alone still give a result
+            data = None
+    result = goals.first_value_of(session, data)
+    if not result:
+        raise HTTPException(status_code=404, detail="This task has no first-value result.")
+    plan = "explorer"
+    try:
+        plan = await get_orchestrator().rt.meter.plan(user["id"])
+    except Exception:      # noqa: BLE001
+        pass
+    # The premium step: the plan is checked first, and only then credits (PRD 4.1). It is asked for only when chosen.
+    result["premium_gate"] = first_value.premium_gate(result, entitled=plan != "explorer")
+    await goals.track(get_store(), "first_value_shown", session)
+    return {"session_id": session["id"], "goal_key": session.get("goal_key"), "result": result}
+
+
+class QuickCheckIn(BaseModel):
+    answers: dict[str, Any] = Field(default_factory=dict)
+
+
+async def _business_for(user: dict, business_id: str) -> dict:
+    """The business's records, for someone who can see it (404 otherwise: nothing about it is said)."""
+    orch = get_orchestrator()
+    try:
+        actor, _policy = await orch.actor_for(user["id"], business_id, user.get("email"))
+    except Exception as e:      # noqa: BLE001 - no access reads as not found
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    if not getattr(actor, "can_view", False):
+        raise HTTPException(status_code=404, detail="Not found.")
+    try:
+        return await orch.rt.business.load(business_id) or {}
+    except Exception:      # noqa: BLE001 - the answers alone still give a result
+        return {}
+
+
+def _quick_questions(goal_key: str, data: dict, said: dict | None = None) -> list[dict]:
+    known = first_value.known_sources(goal_key, data)
+    said = said or {}
+    questions = []
+    for q in goals.questions_for(goal_key):
+        q = dict(q)
+        if q["key"] in said:
+            # QA P5-1: read from the owner's own words. Shown once under "From what you said", not asked again.
+            q["default"], q["said"], q["said_text"] = said[q["key"]], True, goals._shown(q, said[q["key"]])
+        elif q["key"] in known:
+            k = known[q["key"]]
+            q["default"], q["prefilled"], q["source"] = k["value"], True, k["source"]
+            if k.get("proposal_id"):
+                q["proposal_id"] = k["proposal_id"]      # can be saved to the profile, only if the owner says so
+        questions.append(q)
+    return questions
+
+
+# QA PF3: each check's premium step is a research run (app/modules/agent/research.py); its plan comes from the registry.
+_LAUNCH_FIELDS = (("customer", "audience"), ("where", "geography"))
+
+
+async def _launch_plans(user: dict, business_id: str) -> list[dict]:
+    from app.modules.readiness import rules as rr
+    from app.modules.readiness.service import service_for
+    try:
+        listed = await service_for(get_orchestrator()).list_subjects(user["id"], business_id, rr.LAUNCH, user.get("email"), include_archived=False)
+    except Exception:      # noqa: BLE001 - no launch module, or not allowed: there is nothing to link
+        return []
+    return [x for x in (listed.get("items") or []) if x.get("status") not in ("cancelled", "archived")]
+
+
+def _iso_date(value) -> str | None:
+    import re as _re
+    v = str(value or "").strip()
+    return v if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", v) else None
+
+
+@router.post("/businesses/{business_id}/quick-check/launch/attach")
+async def quick_check_attach(business_id: str, body: QuickCheckIn, user=Depends(get_current_user)):
+    """QA E4: the launch quick check's answers go onto the launch plan (the one on record, or a new one made from
+    them), into its empty fields only, and the plan is checked again, so it no longer shows 0% evidence."""
+    from app.modules.readiness import rules as rr
+    from app.modules.readiness.service import service_for
+    from app.modules.agent import answer_memory
+    await _business_for(user, business_id)
+    svc = service_for(get_orchestrator())
+    a = body.answers or {}
+    plans = await _launch_plans(user, business_id)
+    try:
+        if plans:
+            plan = plans[0]
+            full = await svc.get_subject(user["id"], business_id, rr.LAUNCH, plan["id"], user.get("email"))
+            current = (full.get("data") or full) if isinstance(full, dict) else {}
+            changes = {field: str(a[key]).strip() for key, field in _LAUNCH_FIELDS if str(a.get(key) or "").strip() and not current.get(field)}
+            if str(a.get("customer") or "").strip() and not (current.get("customers") or {}).get("target_segment"):
+                changes["customers"] = {"target_segment": str(a["customer"]).strip()}      # the demand check reads it here (C1.A)
+            when = answer_memory.target_date_from(a.get("target_date"), _today())
+            if when and not current.get("target_date"):
+                changes["target_date"] = when
+            if changes:
+                await svc.update_subject(user["id"], business_id, rr.LAUNCH, plan["id"], full.get("revision"), changes, user.get("email"))
+            made, subject_id, title = False, plan["id"], plan.get("name") or plan.get("title")
+        else:
+            payload = {"name": (str(a.get("sell") or "My launch").strip())[:80], "scope": "commercial",
+                       **({"customers": {"target_segment": str(a["customer"]).strip()}} if str(a.get("customer") or "").strip() else {}),
+                       **{field: str(a[key]).strip() for key, field in _LAUNCH_FIELDS if str(a.get(key) or "").strip()},
+                       **({"target_date": when} if (when := answer_memory.target_date_from(a.get("target_date"), _today())) else {})}
+            created = await svc.create_subject(user["id"], business_id, rr.LAUNCH, payload, user.get("email"))
+            made, subject_id, title = True, created.get("id"), payload["name"]
+        evidence = await _attach_demand_evidence(svc, user, business_id, subject_id, a)
+        try:
+            await svc.request_assessment(user["id"], business_id, rr.LAUNCH, subject_id, idempotency_key=f"quick-check:{subject_id}:{len(str(a))}", email=user.get("email"))
+        except Exception:      # noqa: BLE001 - the plan is saved; it is checked from its own page
+            logger.info("quick check: the launch plan %s was not re-checked", subject_id)
+    except HTTPException:
+        raise
+    except Exception as e:      # noqa: BLE001
+        raise HTTPException(status_code=409, detail="Your launch plan couldn't be updated just now. Nothing was changed.") from e
+    # Said plainly: what the plan's own demand check still needs before this evidence counts (never filled in for them).
+    still = [] if not evidence else ["The problem it solves for your customers (on the plan's Customers and offer section)"]
+    return {"initiative_id": subject_id, "created": made, "title": title, "to": f"/launch/{subject_id}", "evidence_id": evidence,
+            "target_date": None if not (when := answer_memory.target_date_from(a.get("target_date"), _today())) else when, "still_needed": still}
+
+
+def _today():
+    """The business's own today (the clock the readiness checks use), so evidence is never "in the future"."""
+    try:
+        return get_orchestrator().rt.clock().date()
+    except Exception:      # noqa: BLE001
+        return datetime.now(timezone.utc).date()
+
+
+# The demand ladder's rungs as the readiness module's evidence types.
+_EVIDENCE_TYPE = {"paid_pilot": "pilot", "paying_customers": "sale", "repeat_paying_customers": "sale", "LOIs": "letter_of_intent",
+                  "enquiries": "enquiry", "market_research": "research"}
+
+
+async def _attach_demand_evidence(svc, user: dict, business_id: str, subject_id: str, a: dict) -> str | None:
+    """QA PF5: the quick check's demand evidence ("5 neighbours booked a paid trial clean") goes on the launch plan as a
+    dated evidence item, linked to its demand check, unverified until the owner reviews it."""
+    from app.modules.readiness import rules as rr
+    said = str(a.get("evidence") or "").strip()
+    if not first_value._known(said) or said.lower() in ("none", "no", "nothing yet", "not yet", "none yet"):
+        return None
+    level = first_value.demand_level(said)
+    try:
+        made = await svc.add_evidence(user["id"], business_id, {
+            "title": f"{level[1] if level else 'Demand evidence'} (from your launch quick check)", "type": _EVIDENCE_TYPE.get(level[0] if level else "", "other"),
+            "claim": said[:1000], "source": {"kind": "note", "reference": "Said in your launch quick check"},
+            "effective_date": _today().isoformat(), "links": [{"subject_id": subject_id, "check": "C1.A"}]},
+            user.get("email"), feature=rr.LAUNCH)
+        return made.get("id")
+    except Exception:      # noqa: BLE001 - the plan is updated either way; the evidence can be added on its page
+        logger.info("quick check: demand evidence not added to launch plan %s", subject_id, exc_info=True)
+        return None
+
+
+async def _premium_context(user: dict, business_id: str, goal_key: str, raw: dict | None) -> tuple:
+    from app.modules.agent import research
+    if goal_key not in research.CAPABILITY:
+        raise HTTPException(status_code=404, detail="This check has no premium step yet.")
+    data = await _business_for(user, business_id)
+    answers = {**first_value.known_answers(goal_key, data), **_read_answers(goal_key, raw)}
+    return data, answers, first_value.assess(goal_key, answers, data)
+
+
+async def _premium_quote(user: dict, goal_key: str, result: dict) -> dict:
+    """QA PF1/PF3: entitlement first (the registry's plan for what the research stands for, admin grants included),
+    then the cost, then what will be researched. Nothing has started; nothing is charged."""
+    from app.modules.agent import config as agent_config, research
+    orch = get_orchestrator()
+    capability = research.CAPABILITY[goal_key]
+    plan = await orch.rt.meter.plan(user["id"])
+    topics = research.topics_to_research(goal_key, result)
+    base = {"capability": capability, "label": result["premium_next_action"]["label"], "blockers": len(result["blockers"]),
+            "topics": [t["label"] for t in topics]}
+    if not agent_config.plan_allows(plan, capability):
+        need = agent_config.CAPABILITY_MIN_PLAN.get(capability) or "starter_insight"
+        return {**base, "allowed": False, "gate": first_value.premium_gate(result, entitled=False),
+                "refusal": {"minimum_plan": need, "minimum_plan_label": agent_config.PLAN_LABEL.get(need, need)}}
+    cost = await orch.rt.meter.cost(research.FEATURE)
+    balance = await orch.rt.meter.balance(user["id"])
+    if cost and balance is not None and balance < cost:
+        return {**base, "allowed": False, "cost": cost, "balance": balance, "gate": first_value.premium_gate(result, entitled=True, credits=0)}
+    return {**base, "allowed": True, "cost": cost, "balance": balance, "after": None if balance is None else balance - cost}
+
+
+@router.post("/businesses/{business_id}/quick-check/{goal_key}/premium/quote")
+async def quick_check_premium_quote(business_id: str, goal_key: str, body: QuickCheckIn, user=Depends(get_current_user)):
+    """What the premium step would do and cost, before it starts (PRD 4.1, 12.3)."""
+    _data, _answers, result = await _premium_context(user, business_id, goal_key, body.answers)
+    return await _premium_quote(user, goal_key, result)
+
+
+@router.post("/businesses/{business_id}/quick-check/{goal_key}/premium")
+async def quick_check_premium(business_id: str, goal_key: str, body: QuickCheckIn, user=Depends(get_current_user)):
+    """QA PF3: the premium step for real. The plan, then credits; then the research run for this check's missing
+    evidence, with the check's answers and what is on record. It returns the run, to review in place.
+    "Find my best price" is research too, never a Price Test (that needs three months of revenue)."""
+    from app.modules.agent import research
+    data, answers, result = await _premium_context(user, business_id, goal_key, body.answers)
+    quote = await _premium_quote(user, goal_key, result)
+    if not quote["allowed"]:
+        return {"started": False, "gate": quote["gate"], "quote": quote}
+    run = await research.start(get_orchestrator(), user=user, business_id=business_id, goal=goal_key, answers=answers, data=data)
+    await goals.track(get_store(), "premium_started", {"id": run["id"], "goal_key": goal_key, "events": []})
+    return {"started": True, "research": run, "quote": quote, "run_id": run["id"], "capability": quote["capability"]}
+
+
+async def _session_premium_context(session_id: str, user: dict) -> tuple:
+    """A homepage task's first-value premium step (the card on the start page and the dashboard): the same research,
+    from the answers the task was given and its business. Only the account the task belongs to."""
+    session = await _session(session_id)
+    if not session.get("user_id") or session["user_id"] != user["id"] or not session.get("business_id"):
+        raise HTTPException(status_code=404, detail="Not found.")
+    goal = session.get("goal_key")
+    from app.modules.agent import research
+    if goal not in research.CAPABILITY:
+        raise HTTPException(status_code=404, detail="This task has no premium step.")
+    raw = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
+    data, answers, result = await _premium_context(user, session["business_id"], goal, raw)
+    return session, goal, data, answers, result
+
+
+@router.post("/task-sessions/{session_id}/premium/quote")
+async def session_premium_quote(session_id: str, user=Depends(get_current_user)):
+    _s, goal, _data, _answers, result = await _session_premium_context(session_id, user)
+    return await _premium_quote(user, goal, result)
+
+
+@router.post("/task-sessions/{session_id}/premium")
+async def session_premium(session_id: str, user=Depends(get_current_user)):
+    from app.modules.agent import research
+    session, goal, data, answers, result = await _session_premium_context(session_id, user)
+    quote = await _premium_quote(user, goal, result)
+    if not quote["allowed"]:
+        return {"started": False, "gate": quote["gate"], "quote": quote}
+    run = await research.start(get_orchestrator(), user=user, business_id=session["business_id"], goal=goal, answers=answers, data=data)
+    return {"started": True, "research": run, "quote": quote, "run_id": run["id"], "capability": quote["capability"], "business_id": session["business_id"]}
+
+
+class ResearchReview(BaseModel):
+    decisions: dict[str, dict] = Field(default_factory=dict)      # {item id: {"decision": "accept"|"edit"|"reject", "value"?}}
+
+
+@router.get("/businesses/{business_id}/research/{run_id}")
+async def research_run(business_id: str, run_id: str, user=Depends(get_current_user)):
+    data = await _business_for(user, business_id)
+    run = (data.get("research_runs") or {}).get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Not found.")
+    return {"research": run}
+
+
+@router.post("/businesses/{business_id}/research/{run_id}/review")
+async def research_review(business_id: str, run_id: str, body: ResearchReview, user=Depends(get_current_user)):
+    """Accept, edit or reject each item; the accepted ones become the check's next dataset version, and the
+    deterministic engine is run again on it. Returns the before and after."""
+    from app.modules.agent import research
+    orch = get_orchestrator()
+    try:
+        actor, _policy = await orch.actor_for(user["id"], business_id, user.get("email"))
+    except Exception as e:      # noqa: BLE001
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    if not (getattr(actor, "is_owner", False) or getattr(actor, "can_prepare", False)):
+        raise HTTPException(status_code=403, detail="Only someone who can edit this business can adopt research.")
+    try:
+        out = await research.review(orch, user=user, business_id=business_id, run_id=run_id, decisions=body.decisions)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail="This research has already been reviewed, or has nothing to review.") from e
+    return {"research": {k: v for k, v in out.items() if k != "result"}, "result": out["result"]}
+
+
+class ProposalDecision(BaseModel):
+    confirm: bool
+
+
+@router.post("/businesses/{business_id}/profile-proposals/{proposal_id}")
+async def decide_profile_proposal(business_id: str, proposal_id: str, body: ProposalDecision, user=Depends(get_current_user)):
+    """Save a proposed value to the company profile (with where it came from), or dismiss it. Nothing else writes it (QA R1)."""
+    orch = get_orchestrator()
+    try:
+        actor, _policy = await orch.actor_for(user["id"], business_id, user.get("email"))
+    except Exception as e:      # noqa: BLE001
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    if not (getattr(actor, "is_owner", False) or getattr(actor, "can_prepare", False)):
+        raise HTTPException(status_code=403, detail="Only someone who can edit this business can change its profile.")
+    from app.modules.agent import profile_proposals
+    decided: dict = {}
+
+    def _apply(d: dict) -> None:
+        decided.update(profile_proposals.decide(d, proposal_id, confirm=body.confirm, user_id=user["id"]))
+    try:
+        await orch.rt.business.mutate(business_id, _apply)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail="That suggestion is no longer waiting.") from e
+    return {"proposal": decided}
+
+
+def _read_answers(goal_key: str, raw: dict | None) -> dict:
+    """QA H: the quick check's answers, read by the shared normalisers: "about sixty" is 60, "£45 per groom" is 45,
+    "not sure" stays an answer ("unknown"). Only the check's own questions; nothing read that isn't there."""
+    from app.modules.agent import understanding as und
+    kinds = {q["key"]: q.get("type") for q in goals.questions_for(goal_key)}
+    out = {}
+    for k, v in (raw or {}).items():
+        if k not in kinds or v in (None, ""):
+            continue
+        if isinstance(v, str) and und.is_unsure(v):
+            out[k] = "unknown"
+        elif kinds[k] == "number" and isinstance(v, str):
+            read = und.vat_of(v) if k == "vat_rate" else und.number_of(v)
+            if read is not None:
+                out[k] = read
+        else:
+            out[k] = v
+    return out
+
+
+@router.get("/businesses/{business_id}/quick-check/{goal_key}")
+async def quick_check_questions(business_id: str, goal_key: str, said: str | None = Query(default=None, max_length=1000),
+                                user=Depends(get_current_user)):
+    """In the app: the short first-value conversation for Launch, Funding, Pricing or Customer Growth,
+    with what the Company already holds filled in (QA P1-7, First-Value PRD 8, SIF-01/02)."""
+    if not first_value.covered(goal_key):
+        raise HTTPException(status_code=404, detail="No quick check for that.")
+    data = await _business_for(user, business_id)
+    kind = first_value.ASSESSMENT_OF[goal_key]
+    # The owner's own sentence, when they started here from one: read by the same readers as the homepage (QA P5-1).
+    read = {**(await goals.understood_answers(said, goal_key)), **goals.extract(said, goal_key)} if said and said.strip() else {}
+    return {"goal_key": goal_key, "headline": first_value.HEADLINE[kind], "value": goals.value_of(goal_key),
+            "questions": _quick_questions(goal_key, data, read)}
+
+
+@router.post("/businesses/{business_id}/quick-check/{goal_key}")
+async def quick_check_result(business_id: str, goal_key: str, body: QuickCheckIn, user=Depends(get_current_user)):
+    """The provisional, deterministic result: score, evidence coverage, strengths and blockers, the premium
+    next action and the free ones. No model, no credits. The premium step checks the plan before credits."""
+    if not first_value.covered(goal_key):
+        raise HTTPException(status_code=404, detail="No quick check for that.")
+    data = await _business_for(user, business_id)
+    allowed = {q["key"] for q in goals.questions_for(goal_key)}
+    answers = {**first_value.known_answers(goal_key, data), **_read_answers(goal_key, body.answers)}
+    # Nothing here changes the company's records (QA R1): the answers are this check's own. They are kept, with the
+    # offering they are about, so the next check and the launch plan start from them (QA PF5); the profile is untouched.
+    result = first_value.assess(goal_key, answers, data)
+    try:
+        from app.modules.agent import answer_memory
+        await get_orchestrator().rt.business.mutate(business_id, lambda d: answer_memory.remember(d, goal_key, answers))
+    except Exception:      # noqa: BLE001 - the result stands; the next check simply asks again
+        logger.info("quick check: answers for %s not kept", goal_key)
+    plan, credits = "explorer", None
+    try:
+        plan = await get_orchestrator().rt.meter.plan(user["id"])
+        credits = await get_orchestrator().rt.meter.balance(user["id"])
+    except Exception:      # noqa: BLE001
+        pass
+    result["premium_gate"] = first_value.premium_gate(result, entitled=plan != "explorer", credits=credits if plan != "explorer" else None)
+    return {"goal_key": goal_key, "result": result}
 
 
 @router.post("/task-sessions/{session_id}/attach-user")

@@ -1,3 +1,5 @@
+import { premiumFlow } from "../components/ResearchReview";
+import FirstValueCard, { fetchFirstValue, rememberFirstValue } from "../components/FirstValueCard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { apiRequest, apiRequestCached } from "../api/client";
@@ -50,6 +52,7 @@ export default function StartPage({ framed = false }) {
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
   const [workspace, setWorkspace] = useState(false);
+  const [result, setResult] = useState(null);      // the free first result, for a covered goal
   const began = useRef(false);
 
   const prepare = useCallback(async () => {
@@ -64,6 +67,17 @@ export default function StartPage({ framed = false }) {
         setStage("blocked");
         return;
       }
+      if (done.first_value) {
+        try {
+          const fv = await fetchFirstValue(sessionId);
+          if (fv?.result) {
+            rememberFirstValue(sessionId);      // the same result is the first card on the dashboard until it is dismissed or acted on
+            setResult(fv.result);
+            setStage("result");
+            return;
+          }
+        } catch { /* the hand-off below still opens the work */ }
+      }
       if (done.handoff?.to) {
         try {
           const cachedEmail = localStorage.getItem("ea_email") || "";
@@ -72,6 +86,7 @@ export default function StartPage({ framed = false }) {
           localStorage.removeItem("ea_task_session");
           // Said once on the page it lands on: what was set up, and where things stand.
           if (done.handoff.message) sessionStorage.setItem("ea_goal_handoff", JSON.stringify({ to: String(done.handoff.to).split("?")[0], message: done.handoff.message }));
+          if (done.handoff.ready_message && done.handoff.run_id) sessionStorage.setItem("ea_goal_ready", JSON.stringify({ run_id: done.handoff.run_id, message: done.handoff.ready_message }));
         } catch { /* fine without it */ }
         trackGoal("dashboard_handoff_completed", { session_id: sessionId });
         navigate(done.handoff.to, { replace: true });
@@ -149,9 +164,13 @@ export default function StartPage({ framed = false }) {
   return (
     <Frame>
       <div className="mx-auto w-full max-w-[560px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900" role="region" aria-label="Your task">
-        {stage !== "gone" && (
+        {stage === "result" && result && (
+          <FirstValueCard result={result} onContinue={() => navigate("/dashboard", { replace: true })}
+            onPremium={premiumFlow({ base: `/task-sessions/${sessionId}/premium` })} />
+        )}
+        {stage !== "gone" && stage !== "result" && (
           <>
-            <p className="text-[11px] font-bold uppercase tracking-widest text-brand-600">Picking up where you left off</p>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-brand-600">Setting up your workspace</p>
             {goal && <p className="mt-0.5 text-lg font-bold text-slate-900 dark:text-slate-100" data-goal-kept>{goal}</p>}
             <div className="mt-4" role="status" aria-live="polite"><Progress steps={steps} /></div>
             {stage === "preparing" && <p className="mt-3 text-sm text-slate-500">Your dashboard opens as soon as there is something to show you.</p>}

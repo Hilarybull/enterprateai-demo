@@ -1,3 +1,4 @@
+import UkDateInput from "../UkDateInput";
 import { useState } from "react";
 import { addEvidence, attachEvidenceFile, attest, dateLabel, downloadEvidenceFile, readinessError, reviewEvidence } from "../../lib/readiness";
 import { todayLocal } from "../../lib/format";
@@ -52,10 +53,10 @@ export function AddEvidence({ businessId, feature, subject, defaultCheck, onAdde
           <textarea rows={2} className={`mt-1 ${inputClass}`} value={form.claim} onChange={set("claim")} />
         </label>
         <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Date it is from
-          <input type="date" max={todayLocal()} className={`mt-1 ${inputClass}`} value={form.effective_date} onChange={set("effective_date")} />{err("effective_date")}
+          <UkDateInput max={todayLocal()} className={`mt-1 ${inputClass}`} value={form.effective_date} onChange={(v) => set("effective_date")({ target: { value: v } })} />{err("effective_date")}
         </label>
         <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Expires on (if it does)
-          <input type="date" className={`mt-1 ${inputClass}`} value={form.expires_on} onChange={set("expires_on")} />{err("expires_on")}
+          <UkDateInput className={`mt-1 ${inputClass}`} value={form.expires_on} onChange={(v) => set("expires_on")({ target: { value: v } })} />{err("expires_on")}
         </label>
         <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Source
           <select className={`mt-1 ${inputClass}`} value={form.kind} onChange={set("kind")}>

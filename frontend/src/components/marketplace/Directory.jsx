@@ -202,7 +202,12 @@ export function ReportBox({ slug, via }) {
     catch (err) { setState({ problem: directoryError(err, "That couldn't be sent. Please try again.") }); }
   }
   if (state.done) return <Notice tone="emerald">{state.done}</Notice>;
-  if (!open) return <Btn kind="link" className="text-[13px] !text-slate-500" onClick={() => setOpen(true)}>Report incorrect information</Btn>;
+  if (!open) return (
+    <span className="flex flex-wrap gap-x-4 gap-y-1">
+      <Btn kind="link" className="text-[13px] !text-slate-500" onClick={() => { setForm((f) => ({ ...f, kind: "correction" })); setOpen(true); }}>Report incorrect information</Btn>
+      <Btn kind="link" className="text-[13px] !text-slate-500" onClick={() => { setForm((f) => ({ ...f, kind: "unlist" })); setOpen(true); }}>Request unlisting</Btn>
+    </span>
+  );
   return (
     <form onSubmit={send} className="space-y-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700" aria-label="Report this profile">
       <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">What would you like to do?

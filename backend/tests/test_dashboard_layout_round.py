@@ -79,8 +79,9 @@ def test_every_stage_tile_carries_a_look_that_matches_its_state():
     funding_case(env)
     d = _pre(env)
     moods = {s["key"]: (s.get("mood"), s.get("tone"), s.get("icon")) for s in d["agent"]["suggestions"] if s["key"].startswith("stage_")}
-    assert moods["stage_funding"] == ("working", "indigo", "clock") and moods["stage_register"] == ("working", "indigo", "clock")
-    assert all(m[0] in ("good", "working", "needs_you", "problem", "idle") for m in moods.values())
+    # Nothing is running: offers, with their own look (never the clock of work in progress, QA P1-5).
+    assert moods["stage_funding"] == ("suggested", "indigo", "bulb") and moods["stage_register"] == ("suggested", "indigo", "bulb")
+    assert all(m[0] in ("suggested", "good", "working", "needs_you", "problem", "idle") for m in moods.values())
     none = _pre(Env())
     assert _suggestion(none, "stage_funding")["mood"] == "needs_you" and _suggestion(none, "stage_funding")["tone"] == "amber"      # "I need a funding case…"
 

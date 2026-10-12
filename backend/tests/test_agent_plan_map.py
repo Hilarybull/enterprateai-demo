@@ -23,7 +23,7 @@ def test_explorer_runs_what_it_includes_and_pays_in_credits_with_no_monthly_coun
         assert res["kind"] != "blocked", (n, res.get("reason_codes"))
 
 
-@pytest.mark.parametrize("capability", ["scenario_help", "new_proposal", "risk_concentration", "enquiry_to_quote"])
+@pytest.mark.parametrize("capability", ["scenario_help", "new_proposal", "risk_concentration"])
 def test_explorer_is_never_run_or_charged_for_what_it_does_not_include(capability):
     env = Env(plan="explorer", credits=50)
     res = env.submit(capability=capability, channel="ui_action", params=dict(ENQUIRY) if capability == "enquiry_to_quote" else {})
@@ -32,8 +32,8 @@ def test_explorer_is_never_run_or_charged_for_what_it_does_not_include(capabilit
     assert (res["plan_required"], res["plan_required_label"]) == ("starter_insight", "Starter")
     assert res["actions"][0] == {"label": "Upgrade", "to": "/pricing", "upgrade": True}
     assert run(env.store.list_runs("A")) == [] and env.meter.charges == [] and env.meter.balances[OWNER] == 50
-    if capability == "enquiry_to_quote":
-        assert res["actions"][1] == {"label": "Create an invoice instead", "capability": "new_invoice"}      # something the plan does include
+    if capability == "new_proposal":
+        assert res["actions"][1] == {"label": "Prepare a quotation instead", "capability": "enquiry_to_quote"}      # something the plan does include
 
 
 def test_starter_gets_four_scenarios_a_month_and_the_fifth_is_blocked_by_the_plan():
@@ -90,4 +90,14 @@ def test_the_pricing_page_is_given_the_same_map_the_agent_checks():
     assert "Scenario Help" not in out["plans"]["explorer"]["adds"] and out["plans"]["decision_engine"]["adds"] == []
     assert out["plans"]["starter_insight"]["quotas"]["scenario_help"] == 4 and out["plans"]["decision_engine"]["quotas"]["scenario_help"] is None
     assert sum(len(p["adds"]) for p in out["plans"].values()) == len(WORKFLOWS)      # every task appears once, on the plan that first includes it
+
+
+@pytest.mark.as_shipped
+def test_explorer_can_have_a_quotation_prepared_for_credits_and_a_proposal_stays_premium():
+    env = Env(plan="explorer", credits=50)
+    quoted = env.submit(capability="enquiry_to_quote", params=dict(ENQUIRY))
+    assert quoted["kind"] == "workflow" and env.meter.charges and env.meter.balances[OWNER] < 50      # it runs, and it is paid for in credits
+    spent = list(env.meter.charges)
+    proposal = env.submit(capability="new_proposal", channel="ui_action")
+    assert proposal["kind"] == "blocked" and proposal["reason"] == "plan" and env.meter.charges == spent      # blocked, and nothing more is charged
 

@@ -22,11 +22,15 @@ _ADDS: dict[str, tuple[str, ...]] = {
         "add_customer", "add_catalogue_item", "add_vendor", "update_record",
         "idea_validation", "business_plan_draft", "registration_checklist",
         "marketplace_profile", "marketplace_offering",
+        # Quotations too: Invoice, Quotation and Contract are free tools by hand, and the Agent may prepare
+        # them on any plan for AI Credits (First-Value PRD 4.2). Reading an inbound Marketplace request's
+        # details is a separate lock (rfq_unlocked), which stays closed on Explorer.
+        "enquiry_to_quote", "quote_to_cash",
     ),
-    # Starter: proposals, quotation management, chasing payments, scenarios (a few a month), risk
+    # Starter: proposals, chasing payments, scenarios (a few a month), risk
     # and the fragility index, funding and launch preparation, and the wider document set.
     "starter_insight": (
-        "new_proposal", "enquiry_to_quote", "quote_to_cash", "payment_followup",
+        "new_proposal", "payment_followup",
         "scenario_help", "expansion_scenario", "risk_concentration",
         "funding_pack_draft", "readiness_refresh", "launch_evidence_gaps",
         "market_size", "price_test", "capacity_check", "offer_review",
@@ -57,9 +61,7 @@ QUOTA_WORDS = {"scenario_help": "scenario simulations"}
 
 # Something the plan does include, to offer in place of a task it doesn't.
 ALTERNATIVE: dict[str, tuple[str, str]] = {
-    "enquiry_to_quote": ("new_invoice", "Create an invoice instead"),
-    "quote_to_cash": ("new_invoice", "Create an invoice instead"),
-    "new_proposal": ("new_contract", "Draft a contract instead"),
+    "new_proposal": ("enquiry_to_quote", "Prepare a quotation instead"),
     "funding_pack_draft": ("business_plan_draft", "Draft a business plan instead"),
     "market_size": ("idea_validation", "Validate the idea instead"),
 }
@@ -91,3 +93,16 @@ def quota(plan: str | None, key: str) -> int | None:
 def alternative(plan: str | None, capability: str) -> dict | None:
     other = ALTERNATIVE.get(capability)
     return {"label": other[1], "capability": other[0]} if other and plan_allows(plan, other[0]) else None
+
+
+def public_registry() -> dict:
+    """What the public site shows of this table (QA U6): each plan's name, what it adds and its monthly numbers.
+    The site reads it from frontend/src/content/entitlements.json, which a test keeps equal to this."""
+    return {"plans": [{"key": p, "label": PLAN_LABEL[p]} for p in PLAN_ORDER],
+            "adds": {p: sorted(_ADDS[p]) for p in PLAN_ORDER},
+            "quotas": {p: dict(QUOTAS[p]) for p in PLAN_ORDER}}
+
+
+if __name__ == "__main__":      # python -m app.modules.plans.capabilities > ../frontend/src/content/entitlements.json
+    import json
+    print(json.dumps(public_registry(), indent=2, sort_keys=True))

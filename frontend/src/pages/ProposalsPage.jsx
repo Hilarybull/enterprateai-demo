@@ -1,3 +1,5 @@
+import { refusalMessage } from "../lib/entitlement";
+import UkDateInput from "../components/UkDateInput";
 import { useEffect, useImperativeHandle, useRef, forwardRef, useState, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -367,7 +369,7 @@ function RequestModal({ onClose, onSaved, editItem }) {
         if (!title.trim() && data.title_hint) setTitle(data.title_hint);
       }
     } catch (e) {
-      setBriefError(e instanceof Error ? e.message : "Could not extract text from file.");
+      setBriefError(refusalMessage(e, "Could not extract text from file."));      // a plan refusal in words (QA PF1)
     } finally {
       setBriefUploading(false);
     }
@@ -534,7 +536,7 @@ function RequestModal({ onClose, onSaved, editItem }) {
             </div>
             <div>
               <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">Deadline</label>
-              <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)}
+              <UkDateInput value={deadline} onChange={(v) => setDeadline(v)}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" />
             </div>
           </div>

@@ -183,7 +183,7 @@ async def publish_to_marketplace(
     payload: MarketplacePublishRequest,
     user=Depends(get_current_user),
 ):
-    result = await publish_workspace(user_id=user["id"], workspace_id=payload.workspace_id)
+    result = await publish_workspace(user=user, workspace_id=payload.workspace_id)
     await _sync_directory(result, user["id"])
     return result
 
@@ -333,3 +333,4 @@ async def my_profile_views(
     user=Depends(get_current_user),
 ) -> dict:
     return await get_profile_views(user_id=user["id"], workspace_id=workspace_id)
+

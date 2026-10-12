@@ -48,10 +48,9 @@ function PlusIcon() {
   );
 }
 
-function initialsFromEmail(email) {
-  const name = (email || "").split("@")[0] || "?";
-  const parts = name.split(/[.\-_]+/).filter(Boolean);
-  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "?";
+function initialsFromName(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "U";
 }
 
 function StatusBadge({ status }) {
@@ -308,7 +307,7 @@ export default function TeamPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-slate-800 dark:text-brand-400">
-                            {initialsFromEmail(m.email)}
+                            {initialsFromName(m.name)}
                           </span>
                           <span className="font-medium text-slate-800 dark:text-slate-200 truncate max-w-[200px]">{m.email}</span>
                         </div>
@@ -350,7 +349,7 @@ export default function TeamPage() {
                 {members.map((m) => (
                   <div key={m.id} className="flex items-center gap-3 px-4 py-3">
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-slate-800 dark:text-brand-400">
-                      {initialsFromEmail(m.email)}
+                      {initialsFromName(m.name)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[13px] font-semibold text-slate-800 dark:text-slate-200">{m.email}</div>
@@ -452,7 +451,7 @@ export default function TeamPage() {
                         <div key={inv.id} className="px-4 py-3 flex items-center gap-3">
                           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-slate-800">
                             {inv.email
-                              ? <span className="text-xs font-bold">{initialsFromEmail(inv.email)}</span>
+                              ? <span className="text-xs font-bold">U</span>
                               : <LinkIcon className="h-3.5 w-3.5" />
                             }
                           </div>
@@ -616,7 +615,7 @@ export default function TeamPage() {
                         <div key={inv.id} className="flex items-center gap-3 px-4 py-3 opacity-60">
                           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">
                             {inv.email
-                              ? <span className="text-xs font-bold">{initialsFromEmail(inv.email)}</span>
+                              ? <span className="text-xs font-bold">U</span>
                               : <LinkIcon className="h-3.5 w-3.5" />
                             }
                           </div>

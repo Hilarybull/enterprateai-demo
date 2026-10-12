@@ -23,7 +23,7 @@ export function AgentIdentity({ subtitle, working = false, as: Title = "p" }) {
       <AgentAvatar size={32} working={working} />
       <div className="min-w-0">
         <Title className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-bold text-white">
-          EnterprateAI Agent
+          EnterprateAI
           <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-300"><span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-400" />Online</span>
         </Title>
         {subtitle && <p className="mt-0.5 text-[13px] text-white/70" data-agent-subtitle>{subtitle}</p>}
@@ -43,7 +43,7 @@ export default function AgentShell({ as: Tag = "div", className = "", bodyClassN
   const visible = usePageVisible();
   return (
     <Tag ref={box} data-agent-shell data-m-idle={!seen || !visible} {...rest}
-      className={`m-agent-card relative overflow-hidden rounded-2xl p-[2px] text-left shadow-[0_20px_60px_rgba(108,92,231,0.25)] ${className}`}>
+      className={`m-agent-card relative overflow-clip rounded-2xl p-[2px] text-left shadow-[0_20px_60px_rgba(108,92,231,0.25)] ${className}`}>
       <span aria-hidden="true" className="m-agent-border" />
       <div data-agent-panel className={`relative h-full rounded-[14px] bg-gradient-to-br from-[#1e1b4b] via-[#312e81] to-[#4c1d95] ${bodyClassName}`}>
         {children}

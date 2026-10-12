@@ -1,3 +1,4 @@
+import { refusalMessage } from "../lib/entitlement";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiRequest, getApiBaseUrl } from "../api/client";
@@ -138,12 +139,12 @@ export default function BusinessPlanPage() {
         setPlanMissing(true);
       } else {
         if (message.includes("FEATURE_NOT_ENTITLED")) {
-          if (!hasBlueprintGrant) setError("Upgrade to the Decision Engine plan to create a live business plan.");
+          if (!hasBlueprintGrant) setError(refusalMessage(err, "Live Business Plan Intelligence is included from the Decision Engine plan."));
         } else if (message.includes("NETWORK_ERROR")) {
           setError("Network error - please try again.");
           setShowLivePlanWorkspace(true);
         } else {
-          setError(message.replace(/^HTTP \d+:\s*/, ""));
+          setError(refusalMessage(err, message.replace(/^HTTP \d+:\s*/, "")));
           setShowLivePlanWorkspace(true);
         }
       }
@@ -174,11 +175,11 @@ export default function BusinessPlanPage() {
     } catch (err) {
       const message = String(err?.message || "");
       if (message.includes("FEATURE_NOT_ENTITLED")) {
-        setError("Your account is not entitled to create a live business plan. Ask the admin to grant Blueprint access.");
+        setError(refusalMessage(err, "Live Business Plan Intelligence is included from the Decision Engine plan."));
       } else if (message.includes("NETWORK_ERROR")) {
         setError("Network error - please try again.");
       } else {
-        setError(message.replace(/^HTTP \d+:\s*/, ""));
+        setError(refusalMessage(err, message.replace(/^HTTP \d+:\s*/, "")));
       }
     } finally {
       setCreating(false);

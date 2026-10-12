@@ -1,6 +1,8 @@
+import UkDateInput from "../components/UkDateInput";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import QuickCheck from "../components/QuickCheck";
 import { ButtonSpinner, ContentSkeleton, LoadError, ReadinessDetailSkeleton, ReadinessListSkeleton } from "../components/Skeleton";
 import { Attestation, EvidenceList } from "../components/readiness/Evidence";
 import { Btn, Field, Notice, Panel, Pill } from "../components/readiness/Fields";
@@ -103,7 +105,7 @@ function NewSubject({ businessId, feature, profiles, onCreated, onCancel }) {
                 <span className="mt-1 block text-[12px] font-normal text-slate-500">{off((u) => u.scope === "pilot")?.reason}</span>
               </label>
               <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Target launch date (optional)
-                <input type="date" className={input} value={form.target_date} onChange={(e) => setForm({ ...form, target_date: e.target.value })} />
+                <UkDateInput className={input} value={form.target_date} onChange={(v) => setForm({ ...form, target_date: v })} />
               </label>
             </>
           )}
@@ -163,8 +165,8 @@ function SubjectList({ businessId, feature }) {
     <div className="space-y-4">
       {items.length === 0 && !creating && (
         <Panel>
-          <p className="text-sm text-slate-700 dark:text-slate-200">{meta.intro}</p>
-          <p className="mt-1 text-[13px] text-slate-500">{meta.caveat}</p>
+          {/* The header above already says what this is (QA P3: it was said twice); the card says what to do next. */}
+          <p className="text-[13px] text-slate-500">{meta.caveat}</p>
           {canEdit ? <Btn kind="primary" className="mt-3" onClick={() => setCreating(true)}>{meta.newLabel}</Btn>
             : <p className="mt-3 text-[13px] text-slate-500">Your role can view {meta.nounPlural} but not create them.</p>}
         </Panel>
@@ -512,6 +514,8 @@ export default function ReadinessPage({ feature }) {
   return (
     <div className="space-y-4">
       <PageHeader title={meta.title} description={meta.intro} />
+      {/* The free first value first: a short conversation and a provisional result; the full checklist stays below. */}
+      <QuickCheck key={`qc-${businessId}`} businessId={businessId} goalKey={feature === "launch" ? "launch" : "need_funding"} />
       <SubjectList key={businessId} businessId={businessId} feature={feature} />
     </div>
   );

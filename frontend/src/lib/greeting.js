@@ -12,9 +12,14 @@ export function hourIn(tz, now = new Date()) {
   return now.getHours();
 }
 
-/** "Good morning" from 05:00, "Good afternoon" from 12:00, "Good evening" from 17:00 until 04:59. */
+/** QA E10: four bands in the person's own timezone. Morning 05:00 to 11:59, afternoon 12:00 to 16:59, evening
+ * 17:00 to 21:59, and night 22:00 to 04:59. At night it is "Hello": "Good night" is a goodbye, and "Good evening"
+ * at 01:53 was wrong. */
+export const GREETING_BANDS = [[5, "Good morning"], [12, "Good afternoon"], [17, "Good evening"], [22, "Hello"]];
 export function greetingAt(hour) {
-  return hour >= 5 && hour < 12 ? "Good morning" : hour >= 12 && hour < 17 ? "Good afternoon" : "Good evening";
+  const h = ((Number(hour) % 24) + 24) % 24;
+  if (h < 5) return "Hello";
+  return [...GREETING_BANDS].reverse().find(([from]) => h >= from)[1];
 }
 
 /** The first name out of whatever is on record ("Munah Okoro" gives "Munah"). Never a placeholder: nothing, when nothing is known. */

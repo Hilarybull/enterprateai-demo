@@ -36,7 +36,7 @@ export default function GoogleSignInButton({ onCredential, disabled }) {
     function compute() {
       const w = el.clientWidth || 0;
       // Google button width should be a number; keep it within a sane range.
-      const next = Math.max(220, Math.min(420, w));
+      const next = Math.max(240, Math.min(320, w));
       setWidth(next);
     }
 
@@ -107,7 +107,8 @@ export default function GoogleSignInButton({ onCredential, disabled }) {
       className={(disabled ? "pointer-events-none opacity-60 " : "") + "w-full"}
     >
       {error ? <div className="text-xs text-rose-700">{error}</div> : null}
-      <div ref={ref} className="flex w-full justify-center" />
+      <div ref={ref} className="flex w-full justify-center overflow-hidden" />
     </div>
   );
 }
+

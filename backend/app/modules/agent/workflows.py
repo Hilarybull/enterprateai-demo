@@ -157,7 +157,9 @@ async def e2q_customer(ctx):
                 [{"key": "customer_name", "label": "Customer name", "type": "text", "required": True, "default": name,
                   **({"hint": "Read from the enquiry text"} if from_text and name else {})},
                  {"key": "customer_email", "label": "Customer email", "type": "email", "required": True, "default": email,
-                  **({"hint": "Read from the enquiry text"} if from_text and email else {})}])
+                  **({"hint": "Read from the enquiry text"} if from_text and email else {})},
+                 # QA U3: the rest of the quotation in the same dialog, so the task asks each thing once, in one go.
+                 *(await _rest_of_the_quotation(ctx, enquiry))])
         found = await ctx.call("search_customer", name=name, email=email)
         c = found["exact"]
         # The address is on record under a different name (a colleague at the same firm, a shared
@@ -205,13 +207,18 @@ async def e2q_items(ctx):
     by_id = {str(p["id"]): p for p in products}
     priced: list[dict] = []
     unmatched: list[dict] = []
+    if isinstance(ctx.answers.get("items"), str) and ctx.answers["items"].strip():
+        # Typed as words in one box ("3 x office deep clean at \u00a3150 each"): read into lines, never dropped.
+        # Without this the items asked with the customer were asked again here as "Items to quote".
+        ctx.answers["items"] = intent.lines_in_text(ctx.answers["items"], products)
 
     if isinstance(ctx.answers.get("items"), list) and ctx.answers["items"]:
         # Explicit answers from an authorised user: catalogue items keep the catalogue price,
         # custom lines carry the price the user typed.
         for it in ctx.answers["items"]:
             qty = max(1, int(float(it.get("quantity") or 1)))
-            p = by_id.get(str(it.get("product_id") or ""))
+            # A line typed by name ("end of tenancy clean") is the catalogue item it names, whatever the case (QA R12d).
+            p = by_id.get(str(it.get("product_id") or "")) or (intent.catalogue_item_named(it.get("name"), products) if it.get("name") else None)
             typed = float(it.get("unit_price") or 0)
             if p and p["unit_price"] > 0 and (not typed or abs(typed - float(p["unit_price"])) < 0.005):
                 priced.append({"product_id": p["id"], "name": p["name"], "quantity": qty, "unit_price": p["unit_price"],
@@ -220,6 +227,8 @@ async def e2q_items(ctx):
                 priced.append({"product_id": (p or {}).get("id"), "name": str(it.get("name") or p["name"]).strip(), "quantity": qty,
                                "unit_price": float(it["unit_price"]), "unit_cost": (p or {}).get("unit_cost", 0),
                                "price_source": "user_confirmed"})
+            elif str(it.get("name") or "").strip():
+                unmatched.append({"name": str(it["name"]).strip(), "quantity": qty})
     else:
         asked = (ctx.params.get("rfq") or {}).get("items")
         if asked is not None:
@@ -265,6 +274,8 @@ async def e2q_items(ctx):
         {"name": i["name"], "quantity": i["quantity"], "unit_price": i["unit_price"], "price_source": i["price_source"]} for i in priced]})
     return Next()
 
+
+TERMS_FROM_SETTINGS = "from your default settings"      # said beside the terms on the draft (QA P2-4)
 
 _PRICE_SOURCE_TEXT = {
     "catalogue": "your catalogue price",
@@ -315,6 +326,7 @@ async def e2q_draft(ctx):
         **({"rfq_id": ctx.state["rfq_id"]} if ctx.state.get("rfq_id") else {}),      # the draft answers this marketplace request
         validity_days=ctx.policy.get("quote_validity_days"),
         payment_terms=f"Net {int(ctx.policy.get('default_payment_terms_days') or 14)} days",
+        payment_terms_source=TERMS_FROM_SETTINGS,
     )
     ctx.state["quote_id"] = draft["quote_id"]
     ctx.state["quote_reference"] = draft.get("reference")
@@ -1155,13 +1167,28 @@ async def _studio(ctx, feature: str, call):
 async def _keep(ctx, key: str, value: dict) -> None:
     def _apply(data: dict) -> None:
         data.setdefault("agent_studio", {})[key] = {**value, "at": ctx.now().isoformat(), "run_id": ctx.run["id"]}
-        # What the owner told the Agent about the business is kept on the profile, so it is asked once.
+        # PRD 6.1 (QA R1): what the owner answered here, asked about their own business ("Is this your customer?"),
+        # is an explicit confirmation: it goes on the profile, with where it came from. Answers carried in from a
+        # homepage goal (another idea, perhaps) are not: they are kept as proposals for the owner to confirm.
+        from app.modules.agent import profile_proposals
+        carried = set((ctx.params.get("answers") or {}) if isinstance(ctx.params.get("answers"), dict) else ())
+        from_goal = str(ctx.run.get("source_reference") or "").startswith("goal:")
+        source = {"kind": "agent_task", "workflow": ctx.run.get("workflow_key"), "run_id": ctx.run["id"],
+                  "offering": str(ctx.answers.get("description") or "")[:200]}      # QA PF5: which offering it was said about
         profile = data.setdefault("workspace_profile", {})
+        proposals = {}
         for field, column in (("description", "description"), ("customer", "target_customer"), ("problem", "problem"),
                               ("industry", "primary_industry"), ("location", "location")):
             said = str(ctx.answers.get(field) or "").strip()
-            if said and not str(profile.get(column) or "").strip():
+            if not said or str(profile.get(column) or "").strip():
+                continue
+            if from_goal or field in carried:
+                proposals["about_company" if column == "description" else column] = said
+            else:
                 profile[column] = said
+                profile.setdefault("provenance", {})[column] = {"source": {**source, "answered_by_owner": True}, "confirmed_at": ctx.now().isoformat()}
+        if proposals:
+            profile_proposals.propose(data, proposals, {**source, **({"goal_reference": ctx.run.get("source_reference")} if from_goal else {})}, ctx.now())
         if key == "validation" and not (data.get("validation") or {}).get("overall_score"):
             data["validation"] = {**(data.get("validation") or {}), "overall_score": value["score"], "source": "agent"}
     await ctx.rt.business.mutate(ctx.run["business_id"], _apply)

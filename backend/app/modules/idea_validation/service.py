@@ -1256,6 +1256,11 @@ async def update_workspace(
                 from app.modules.addons.service import restore_locked_rfqs
                 v = {**v, "rfq_requests": restore_locked_rfqs(v["rfq_requests"], merged[k].get("rfq_requests") or [])}
             merged[k] = {**merged[k], **v}
+        elif k == "workspace_profile" and isinstance(v, dict) and isinstance(merged.get(k), dict):
+            # QA D1: the company profile is merged, never replaced, by a whole-document save (the Registration
+            # wizard once sent {company_name, about_company} and every other confirmed onboarding answer was lost).
+            # A blank value never wipes one that is set; clearing a field is the profile endpoint's job.
+            merged[k] = {**merged[k], **{kk: vv for kk, vv in v.items() if vv not in (None, "", [], {}) or kk not in merged[k]}}
         else:
             merged[k] = v
 

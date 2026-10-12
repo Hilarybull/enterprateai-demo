@@ -107,6 +107,12 @@ async def _items(ctx, text: str) -> tuple[list[dict], list[dict], list[dict]]:
     by_id = {str(p["id"]): p for p in products}
     priced: list[dict] = []
     given = ctx.answers.get("items")
+    if isinstance(given, str) and given.strip():
+        # Typed as words ("3 x logo design at £300"): read into lines. One with no price is asked about, filled in.
+        read = intent.lines_in_text(given, products)
+        if any(r["unit_price"] == "" for r in read) or not read:
+            return [], read, products
+        given = read
     if isinstance(given, list) and given:
         for it in given:
             qty = float(it.get("quantity") or 0)

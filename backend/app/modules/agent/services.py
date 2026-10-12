@@ -206,7 +206,7 @@ class Meter:
     async def balance(self, user_id: str) -> int: raise NotImplementedError
     async def rfq_unlocked(self, owner_id: str) -> bool: raise NotImplementedError      # may requests for a quotation be read
     async def cost(self, feature: str) -> int: raise NotImplementedError      # credits one use of this feature takes
-    def charge(self, user_id: str, feature: str): raise NotImplementedError
+    def charge(self, user_id: str, feature: str, key: str | None = None): raise NotImplementedError
 
 
 @dataclass
@@ -230,8 +230,12 @@ class MemoryMeter(Meter):
         return self.balances.get(user_id, 0)
 
     @asynccontextmanager
-    async def charge(self, user_id, feature):
+    async def charge(self, user_id, feature, key=None):
         from app.modules.agent import config
+        done = self.__dict__.setdefault("_keys", set())
+        if key and key in done:      # the same action again: charged once (as the wallet's idempotency key does)
+            yield
+            return
         cost = self.costs.get(feature, config.CREDIT_FEATURES.get(feature, {}).get("cost", 0))
         available = self.balances.get(user_id, 0)
         if available < cost:
@@ -240,6 +244,8 @@ class MemoryMeter(Meter):
         # Committed only when the action succeeded (refunded on failure).
         self.balances[user_id] = available - cost
         self.charges.append((user_id, feature, cost))
+        if key:
+            done.add(key)
 
 
 class CreditMeter(Meter):
@@ -282,11 +288,11 @@ class CreditMeter(Meter):
         return int(await get_balance(user_id) or 0)
 
     @asynccontextmanager
-    async def charge(self, user_id, feature):
+    async def charge(self, user_id, feature, key=None):
         from fastapi import HTTPException
         from app.modules.credits.service import credit_guard
         try:
-            async with credit_guard(user_id, feature):
+            async with credit_guard(user_id, feature, key):      # `key`: the same action is charged once
                 yield
         except HTTPException as e:
             detail = e.detail if isinstance(e.detail, dict) else {}

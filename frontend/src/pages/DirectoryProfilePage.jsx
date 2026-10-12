@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ReportBox, TrustBadge } from "../components/marketplace/Directory";
 import MarketplaceHeader, { Initials } from "../components/marketplace/MarketplaceHeader";
 import { Btn, Notice, Panel } from "../components/readiness/Fields";
-import { activateMarketplaceProfile, directoryError, getBusinessProfile, profileAccess, recordProfileView, verifyOwnBusiness } from "../lib/directory";
+import { activateMarketplaceProfile, directoryError, getBusinessProfile, myClaims, profileAccess, recordProfileView, verifyOwnBusiness } from "../lib/directory";
+import { useAuthStore } from "../store/auth";
 import { confirmDialog } from "../lib/dialog";
 import { SkeletonBlock, SkeletonCard, SkeletonRegion, SkeletonText } from "../components/Skeleton";
 
@@ -50,13 +51,14 @@ function useAway(open, close, box) {
 const sourceLine = (profile) => (profile.source_basis ? `Based on public sources${profile.sources?.length ? ` · ${profile.sources.join(", ")}` : ""}` : `${profile.trust.label} · what this means`);
 
 /** What the badge means and where the details come from, as sentences. Used by the badge's tooltip and the trust card. */
+/** What the badge means, said once (QA R9): one sentence (where the profile came from, when it came from public
+ * sources; otherwise what the badge means), the sources on the same line, and the registered number. */
 function TrustWords({ profile }) {
-  const sourced = Boolean(profile.source_basis);
+  const sentence = profile.source_basis || profile.trust.meaning;
+  const sources = profile.sources?.length ? ` Sources: ${profile.sources.join(", ")}.` : "";
   return (
     <>
-      <p><span className="font-semibold">{profile.trust.label}.</span> {profile.trust.meaning}</p>
-      {sourced && <p>{profile.source_basis}{profile.sources?.length ? ` Sources: ${profile.sources.join(", ")}.` : ""}</p>}
-      {sourced && !profile.claimed && <p>The business can confirm or change these details after claiming the profile.</p>}
+      <p data-trust-sentence><span className="font-semibold">{profile.trust.label}.</span> {sentence}{sources}</p>
       {profile.legal_identifier && <p>Registered number {profile.legal_identifier}, from the public register.</p>}
     </>
   );
@@ -161,11 +163,25 @@ export default function DirectoryProfilePage() {
   const { slug } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [state, setState] = useState({ loading: true });
   const [owner, setOwner] = useState({});      // the owner's controls: what is running, or what went wrong
   const [asVisitor, setAsVisitor] = useState(false);
   const [shared, setShared] = useState("");
   const b = state.profile;
+  // QA P2-11: someone who has already claimed this profile is told where their claim stands, not offered a new one.
+  const signedIn = useAuthStore((st) => Boolean(st.token)) || (() => { try { return Boolean(localStorage.getItem("ea_token")); } catch { return false; } })();
+  const [myClaim, setMyClaim] = useState(null);
+  useEffect(() => {
+    if (!b || b.claimed || !signedIn) { setMyClaim(null); return undefined; }
+    let live = true;
+    myClaims().then((r) => {
+      if (!live) return;
+      const slugs = [b.slug, b.canonical_slug].filter(Boolean);
+      setMyClaim((r.items || []).find((c) => slugs.includes(c.profile?.slug) && ["claim_started", "verification_pending", "disputed"].includes(c.status)) || null);
+    }).catch(() => { if (live) setMyClaim(null); });      // only a help: the profile shows either way
+    return () => { live = false; };
+  }, [b?.slug, b?.claimed, signedIn]);      // eslint-disable-line react-hooks/exhaustive-deps
   // What opens this profile if unclaimed profiles aren't public: an invitation link or an exact-match lookup.
   const via = profileAccess(slug, params);
   useNoIndex(Boolean(b?.noindex));
@@ -248,7 +264,9 @@ export default function DirectoryProfilePage() {
   const ways = WAYS.filter(([key]) => open[key]).map(([key, label, line]) => ({ key, label, line, to: goTo[key] }));
   const mail = !paused && b.contact?.email ? `mailto:${b.contact.email}` : null;
   // One main button: a quote where quotes are on, otherwise the way to get in touch.
-  const main = !b.claimed ? (b.claim?.eligible ? { label: b.claim.cta, go: () => navigate(claimLink) } : null)
+  const reviewing = myClaim && (myClaim.next_step === "pending_review" || myClaim.status === "verification_pending");
+  const main = !b.claimed ? (myClaim ? { label: reviewing ? "Your claim is under review" : "Continue your claim", go: () => navigate(claimLink) }
+    : b.claim?.eligible ? { label: b.claim.cta, go: () => navigate(claimLink) } : null)
     : open.rfqs ? { label: "Request a quote", go: () => navigate(quoteLink()) }
       : open.enquiries ? { label: "Contact", go: () => navigate(toListing) }
         : mail ? { label: "Contact", go: () => { window.location.href = mail; } } : null;
@@ -260,6 +278,11 @@ export default function DirectoryProfilePage() {
 
   return (
     <PublicFrame>
+      {/* QA P3: back to the search the visitor came from (or the directory, when they arrived straight here). */}
+      <button type="button" data-back-to-results onClick={() => (location.key !== "default" ? navigate(-1) : navigate("/marketplace?tab=businesses"))}
+        className="mb-3 inline-flex items-center gap-1 text-[13px] font-semibold text-slate-500 hover:text-brand-700">
+        <span aria-hidden="true">←</span> Back to results
+      </button>
       {mine && <OwnerBar profile={b} busy={owner.busy} problem={owner.problem} onVerify={verifyMine} onUnlist={unlist} onVisitor={() => setAsVisitor(true)} />}
       {b.owner_controls && asVisitor && (
         <div data-owner-bar role="region" aria-label="Your profile" className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] dark:border-slate-700 dark:bg-slate-900">
@@ -357,9 +380,14 @@ export default function DirectoryProfilePage() {
         <aside className="order-first lg:order-none">
           <div className="space-y-4 lg:sticky lg:top-[88px]">
             {!b.claimed ? (
-              <Panel title="Is this your business?">
-                <p className="text-sm text-slate-700 dark:text-slate-200">Claim it to control this profile, publish your offerings, choose the opportunities you want and connect to EnterprateAI's business tools.</p>
-                {b.claim?.eligible
+              <Panel title={myClaim ? "Your claim" : "Is this your business?"}>
+                {/* While their claim is under review the claimant sees where it stands, not the pitch to claim it (QA R9). */}
+                {!myClaim && <p className="text-sm text-slate-700 dark:text-slate-200">Claim it to control this profile, publish your offerings, choose the opportunities you want and connect to EnterprateAI's business tools.</p>}
+                {myClaim
+                  ? <p className="mt-2 text-[13px] text-slate-600 dark:text-slate-300" data-my-claim>{reviewing
+                    ? "You've claimed this profile and it is being reviewed. Nothing changes on it until the review is done."
+                    : "You've started claiming this profile. Carry on where you left off."}</p>
+                  : b.claim?.eligible
                   ? <p className="mt-2 text-[12px] text-slate-500">Claiming is free. You'll be asked to show that you manage the business.</p>
                   : <p className="mt-2 text-[13px] text-slate-500">This profile can't be claimed right now.</p>}
               </Panel>

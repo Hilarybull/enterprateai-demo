@@ -15,6 +15,7 @@ Three parts, none of which executes anything itself:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -28,6 +29,8 @@ from app.modules.agent import config, intent
 from app.modules.agent.workflows import WORKFLOWS
 
 logger = logging.getLogger(__name__)
+
+from app.modules.agent import first_value      # noqa: E402
 
 REGISTRY_VERSION = "goals-2026-10-07"
 SESSION_DAYS = 7      # how long an unfinished session is kept; disclosed on the homepage
@@ -143,13 +146,116 @@ GOALS: list[dict[str, Any]] = [
 ]
 _BY_KEY = {g["key"]: g for g in GOALS}
 
+# The short conversation for each of the five covered goals: the questions of the First-Value PRD
+# (7.2, 8.1, 9.1, 10.1, 11.2), in its order. `q` is the question's number (two fields can share
+# one question). `unsure`: "Not sure" (or the wording given) is an answer; it is kept as unknown
+# and never guessed. `value` is the one line that says what the visitor gets, in plain words.
+UNSURE = "unknown"
+_NOT_SURE = "Not sure"
+
+
+def _choice(key: str, label: str, options: list[tuple[str, str]], **extra: Any) -> dict:
+    return _f(key, label, "choice", options=[{"value": v, "label": text} for v, text in options], **extra)
+
+
+_CONVERSATIONS: dict[str, dict[str, Any]] = {
+    "need_funding": {"value": "I'll check how funding-ready you are and show you the gaps. Free.", "questions": [
+        _money("amount", "How much funding do you think you need?", required=True, chips=_FUNDING_AMOUNTS, unsure=_NOT_SURE, q=1, noun="amount"),
+        _f("use", "What do you need the money for?", "textarea", required=True, q=2, noun="purpose"),
+        _choice("stage", "What stage is the business at?", [("idea", "Just an idea"), ("pre_revenue", "Not trading yet"), ("trading", "Trading"), ("growing", "Trading and growing")], required=True, q=3, noun="stage"),
+        _choice("route", "What funding route are you considering?", [("equity", "Equity"), ("loan", "Loan"), ("grant", "Grant"), (UNSURE, _NOT_SURE)], required=True, q=4, noun="route"),
+        _f("timing", "When do you need the funding?", "text", required=True, q=5, noun="timing", unsure=_NOT_SURE,
+           chips=[{"value": v, "label": v} for v in ("Within 3 months", "In 3 to 6 months", "In 6 to 12 months")]),
+        _f("traction", "What traction do you have so far? Customers, revenue, pilots, contracts or other evidence.", "textarea", required=True, q=6, noun="traction",
+           unsure="No traction yet", unsure_value="No traction yet"),
+    ]},
+    "test_idea": {"value": "I'll give you a first look at whether the idea can work, from your own numbers. Free.", "questions": [
+        _f("description", "What is your product or service idea?", "textarea", required=True, q=1, noun="idea"),
+        _f("customer", "Who is it for, and where?", "text", required=True, q=2, noun="customer"),
+        _money("price", "What price are you thinking of charging?", required=True, unsure=_NOT_SURE, q=3, noun="price"),
+        _f("monthly_sales", "Roughly how many could you sell each month?", "number", required=True, unsure=_NOT_SURE, q=3, noun="monthly sales"),
+        _money("cost", "Roughly what does one sale cost you?", required=True, unsure=_NOT_SURE, q=4, noun="cost per sale"),
+        _money("fixed_costs", "Any new monthly fixed costs?", unsure=_NOT_SURE, q=4, noun="fixed costs"),
+        _f("capacity", "How many could you realistically deliver each month?", "number", required=True, unsure=_NOT_SURE, q=5, noun="capacity"),
+        _choice("demand", "What evidence of demand do you already have?", [("assumption", "None yet, it is my assumption"), ("research", "Research"), ("enquiries", "Enquiries"),
+                ("lois", "Letters of intent"), ("pilot", "A paid pilot"), ("paying", "Paying customers"), ("repeat", "Repeat customers")], required=True, q=6, noun="demand evidence"),
+    ]},
+    "launch": {"value": "I'll check how ready the launch is and show you what is missing. Free.", "questions": [
+        _choice("kind", "What are you launching?", [("product", "A product"), ("service", "A service"), ("both", "Both")], required=True, q=1, noun="kind"),
+        _f("sell", "Briefly describe it.", "textarea", required=True, q=2, noun="description"),
+        _choice("stage", "What stage is it at?", [("idea", "Idea"), ("prototype", "Prototype"), ("testing", "Testing"), ("ready", "Ready")], required=True, q=3, noun="stage"),
+        _f("customer", "Who is it for?", "text", required=True, q=4, noun="customer"),
+        _f("where", "Where do you want to launch?", "text", required=True, unsure=_NOT_SURE, q=5, noun="launch market"),
+        _f("target_date", "When do you want to launch?", "text", required=True, q=5, noun="launch date", unsure="Not decided yet",
+           chips=[{"value": v, "label": v} for v in ("Within a month", "In 1 to 3 months", "In 3 to 6 months")]),
+        _f("evidence", "What customer testing or demand evidence do you already have?", "textarea", required=True, q=6, noun="demand evidence", unsure="None yet", unsure_value="None yet"),
+    ]},
+    "price_offer": {"value": "I'll show what your price means for your margin, from your own numbers. Free.", "questions": [
+        _f("sell", "What are you pricing?", "text", required=True, q=1, noun="what you are pricing"),
+        _f("customer", "Who are you selling it to?", "text", required=True, unsure=_NOT_SURE, q=2, noun="customer"),
+        _money("price", "What price are you considering or charging now?", required=True, unsure=_NOT_SURE, q=3, noun="price"),
+        _money("cost", "About what does one sale cost you to deliver?", required=True, unsure=_NOT_SURE, q=4, noun="cost per sale"),
+        _f("monthly_sales", "How many could you realistically sell each month?", "number", required=True, unsure=_NOT_SURE, q=5, noun="monthly sales"),
+        _choice("positioning", "How do you want to position it?", [("affordable", "Affordable"), ("mid", "Mid-market"), ("premium", "Premium"), (UNSURE, _NOT_SURE)], required=True, q=6, noun="positioning"),
+    ]},
+    "more_customers": {"value": "I'll check what is in place for winning customers and show you the gaps. Free.", "questions": [
+        _f("sell", "What do you sell?", "text", required=True, q=1, noun="what you sell"),
+        _f("customer", "Who do you believe your ideal customers are?", "text", required=True, unsure="I'm not sure", q=2, noun="ideal customer"),
+        _f("where", "Where do you want to find customers?", "text", required=True, unsure=_NOT_SURE, q=3, noun="where"),
+        _f("channel", "How do customers find you today?", "text", required=True, unsure="I don't have customers yet", unsure_value="I don't have customers yet", q=4, noun="channel"),
+        _f("price", "What do you typically charge, or what is a typical customer worth?", "text", required=True, unsure=_NOT_SURE, q=5, noun="price"),
+        _f("goal", "What would success look like over the next three months?", "text", required=True, unsure=_NOT_SURE, q=6, noun="goal"),
+    ]},
+}
+# A document's short conversation: who it is for, their email (it can wait), what, how many, the price,
+# VAT once (offered from the currency, and kept as the business's default), and the due date stated rather than asked.
+_LATER = "I'll add it later"
+_VAT_CHIPS = [{"value": v, "label": label} for v, label in ((0, "No VAT"), (5, "5%"), (7.5, "7.5%"), (20, "20%"))]
+VAT_BY_CURRENCY = {"GBP": 20, "EUR": 20, "NGN": 7.5, "USD": 0}
+
+
+def _document_questions(noun: str, what: str) -> list[dict]:
+    return [
+        _f("customer", "Who is it for?", "text", required=True, q=1, noun="customer"),
+        _f("customer_email", "What is their email address?", "email", required=True, unsure=_LATER, unsure_value="", q=2, noun="email"),
+        _f("item", what, "text", required=True, q=3, noun="what it is for"),
+        _f("quantity", "How many?", "number", default=1, q=4, noun="quantity", chips=[{"value": n, "label": str(n)} for n in (1, 2, 5, 10)]),
+        _money("amount", "What price for each?", required=True, q=4, noun="price"),
+        _f("vat_rate", "Do you charge VAT on this?", "number", required=True, q=5, noun="VAT", chips=_VAT_CHIPS, suffix="%"),
+        _f("due_days", f"Due in 14 days. Want a different date?" if noun == "invoice" else "Valid for 30 days. Want a different period?", "number",
+           default=14 if noun == "invoice" else 30, q=6, noun="due date" if noun == "invoice" else "validity",
+           chips=[{"value": n, "label": f"{n} days"} for n in ((7, 14, 30) if noun == "invoice" else (14, 30, 60))]),
+    ]
+
+
+def questions_for(goal_key: str) -> list[dict]:
+    """The short conversation's questions for a goal (copies, safe to change)."""
+    return [dict(q) for q in (_CONVERSATIONS.get(goal_key) or {}).get("questions") or []]
+
+
+def value_of(goal_key: str) -> str:
+    return str((_CONVERSATIONS.get(goal_key) or {}).get("value") or "")
+
+
+_CONVERSATIONS["create_invoice"] = {"value": "I'll prepare the invoice for you to approve. Nothing is sent until you say so.", "questions": _document_questions("invoice", "What is it for?")}
+_CONVERSATIONS["create_quotation"] = {"value": "I'll prepare the quotation for you to approve. Nothing is sent until you say so.", "questions": _document_questions("quotation", "What are you quoting for?")}
+for _key, _talk in _CONVERSATIONS.items():
+    _BY_KEY[_key]["questions"] = _talk["questions"]
+    _BY_KEY[_key]["value"] = _talk["value"]
+
 # Free text that states an outcome rather than a document: which goal it means.
 _OUTCOMES: list[tuple[str, re.Pattern]] = [
     ("need_funding", re.compile(r"\b(funding|fund(s|ed)?|investors?|investment|raise (money|capital|funds)|loans?|grants?|finance my|borrow\w*"
                                 r"|rais(e|ing) (about |around |up to )?(£|\d)|(need|want|looking for|after) (about |around |roughly )?(£\s?\d|\d[\d,]*\s?(k|m|thousand|million|pounds)\b))", re.I)),
     ("more_customers", re.compile(r"\b(more (customers|clients|sales|leads|work|business)|win (more )?(work|customers|clients|contracts)|get (customers|clients|leads)|find (customers|clients))\b", re.I)),
     ("price_offer", re.compile(r"\b(pric(e|ing) (my|our|a|the)|how much (should|to) (i )?charge|what (should|to) (i )?charge|help me price)\b", re.I)),
-    ("launch", re.compile(r"\blaunch\w*\b", re.I)),
+    ("launch", re.compile(
+        r"\blaunch\w*\b"
+        r"|\b(?:start|starting|open|opening|set\s+up|setting\s+up|begin|beginning|kick\s+off|run|running)\s+(?:up\s+)?"
+        r"(?:(?:a|an|my|our|the|own|new|small|little|lil|tiny|local|mobile|online|proper|side)\s+){0,3}(?:[\w'&-]+\s+){0,3}"
+        r"(?:business|biz|company|shop|cafe|caf\u00e9|coffee\s+shop|bakery|salon|store|restaurant|studio|gym|agency|brand|service|services|"
+        r"startup|start-up|venture|firm|clinic|bar|pub|takeaway|stall|van|trade|practice|hustle|thing)\b"
+        r"|\b(?:thinking|thinkin|planning|looking)\s+(?:of|about|bout|to|on)\s+(?:starting|opening|setting\s+up|launching|start|open|set\s+up|launch)\b", re.I)),
     ("cash_flow", re.compile(r"\b(cash ?flow|cash position|running out of (cash|money)|paid (late|faster|on time)|late pay\w*)\b", re.I)),
     ("test_idea", re.compile(r"\b((business |startup |new )idea|test (an?|my) idea|validat\w+)\b", re.I)),
     ("business_risks", re.compile(r"\b(risks?|fragil\w*|what could go wrong)\b", re.I)),
@@ -233,11 +339,17 @@ def extract(text: str, goal_key: str | None) -> dict[str, Any]:
             out["amount"] = amount
         # The amount comes out with the word that led up to it ("for £1,500", "at 2k").
         rest = re.sub(r"(?:\s*,)?(?:\s+(?:for|at|of|costing|worth|totall?ing|priced at|@))?\s*" + re.escape(m.group(0)), " ", text, count=1, flags=re.I)
+    if goal_key in ("launch", "more_customers", "price_offer"):
+        out.update({k: v for k, v in _launch_facts(text).items() if k in wanted})
+        return out
     if goal_key == "need_funding":
         # What it is for follows the amount when one was given ("£50k for hiring"); otherwise the first "for".
+        # It ends at the next clause: "£25k for a van, we're trading, need it by March" is three answers, not one.
         use = re.search(r"\b(?:for|to (?:fund|pay for|cover|finance)|to)\s+(.+)$", text[m.end():], re.I) if m else re.search(r"\bfor\s+(.+)$", rest, re.I)
-        if use and "use" in wanted and not _NOT_A_USE.search(use.group(1)) and len(_tidy(use.group(1))) > 2:
-            out["use"] = _tidy(use.group(1))
+        purpose = re.split(r"\s*(?:[,;.]|\band\s+(?:we|i)\b|\b(?:we(?:'re| are)|i(?:'m| am)|need it|needed)\b)", use.group(1), maxsplit=1)[0] if use else ""
+        if purpose and "use" in wanted and not _NOT_A_USE.search(purpose) and len(_tidy(purpose)) > 2:
+            out["use"] = _tidy(purpose)
+        out.update({k: v for k, v in _funding_facts(text).items() if k in wanted})
         return out
     if not ({"customer", "item", "solution"} & wanted) or goal_key not in ("create_invoice", "create_quotation", "prepare_proposal"):
         return out
@@ -255,6 +367,73 @@ def extract(text: str, goal_key: str | None) -> dict[str, Any]:
     if told.get("work"):
         out["solution" if "solution" in wanted else "item"] = told["work"]
     return {k: v for k, v in out.items() if v not in ("", None)}
+
+
+_WHAT = re.compile(r"\b(?:launch(?:ing)?|start(?:ing)?|open(?:ing)?|set(?:ting)?\s+up|sell(?:ing)?|pric(?:e|ing)|offer(?:ing)?|run(?:ning)?|customers? for)\s+(?:a\s+|an\s+|my\s+|our\s+|the\s+|new\s+|small\s+|little\s+|lil\s+)*"
+                   r"(.+?)(?=\s+(?:in|across|around|near|for|to|by|from|next|this|before)\b|[,.;!?]|$)", re.I)
+_PLACE = re.compile(r"\b(?:in|across|around|near)\s+((?:the\s+)?[A-Z][\w'-]+(?:[\s-]+(?:upon[\s-]+)?[A-Z][\w'-]+)*(?:,\s*[A-Z][\w'-]+)?)")
+_WHEN = re.compile(r"\b(next (?:week|month|year|spring|summer|autumn|winter)|this (?:month|year|spring|summer|autumn|winter)|in \d+ (?:weeks?|months?)"
+                   r"|(?:in |by |before )?(?:january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+\d{4})?)\b", re.I)
+
+
+# "already got 3 mates who said they'd pay", "4 people said theyd defo pay", "two customers have asked": demand evidence, as said.
+_EVIDENCE = re.compile(r"\b(?:\d+|a\s+few|a\s+couple(?:\s+of)?|some|two|three|four|five|six|several|loads\s+of|lots\s+of)\s+"
+                       r"(?:people|mates|friends|customers|clients|neighbours|neighbors|folk|businesses|families)\b[^.!?]{0,40}?"
+                       r"\b(?:pay|paid|buy|bought|use|book|booked|asked|interested|signed\s+up|pre-?ordered)\b", re.I)
+
+
+def _launch_facts(text: str) -> dict[str, Any]:
+    """"I want to launch a home cleaning service in Leeds next month": what (and whether it is a product or a
+    service), where and when, when they are plainly there (QA P2-2). Anything doubtful is left to be asked."""
+    out: dict[str, Any] = {}
+    m = _WHAT.search(text)
+    if m:
+        what = _tidy(re.sub(r"\s*\b(?:business|biz|company|thing|idea|venture)$", "", m.group(1).strip(), flags=re.I))
+        vague = re.fullmatch(r"(?:it|this|that|something|(?:a |my )?product(?:/service)?|(?:a |my )?service|(?:a |my )?business)", what, re.I)
+        if len(what) >= 3 and not vague and not re.match(r"(?:in|on|at|by|next|this|before|soon)\b", what, re.I):
+            out["sell"] = what
+            # A service: said so, or an activity done for someone ("dog walking", "car valeting", "tutoring").
+            if re.search(r"\bservices?\b|\bcleaning|\bconsult|\bcoaching|\brepairs?\b|\bdesign\b|\bcatering\b", what, re.I) \
+                    or (re.search(r"\b\w{3,}ing\b", what, re.I) and not re.search(r"\b(?:shop|store|cafe|café|bakery|brand|range|app|product)\b", what, re.I)):
+                out["kind"] = "service"
+            elif re.search(r"\bproducts?\b|\bapp\b|\bshop\b|\brange\b|\bbrand\b", what, re.I):
+                out["kind"] = "product"
+    p = _PLACE.search(text)
+    month = re.compile(r"^(?:" + _MONTHS + r")\b", re.I)
+    if p and not month.match(p.group(1)):
+        out["where"] = p.group(1).strip()
+    w = _WHEN.search(text)
+    if w:
+        out["target_date"] = w.group(1).strip()
+    e = _EVIDENCE.search(text)
+    if e:
+        out["evidence"] = _tidy(e.group(0))
+    return out
+
+
+_MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec"
+
+
+def _funding_facts(text: str) -> dict[str, Any]:
+    """The stage, route and timing someone states in passing ("we're trading, need a loan by March"). Only what is plainly said."""
+    out: dict[str, Any] = {}
+    if re.search(r"\b(not (?:yet )?trading|pre[- ]?revenue|haven'?t (?:started|launched)|no revenue|not started)\b", text, re.I):
+        out["stage"] = "pre_revenue"
+    elif re.search(r"\b(growing|scaling|expanding)\b", text, re.I):
+        out["stage"] = "growing"
+    elif re.search(r"\b(trading|have (?:customers|revenue|sales)|in business|up and running)\b", text, re.I):
+        out["stage"] = "trading"
+    elif re.search(r"\bjust an idea\b", text, re.I):
+        out["stage"] = "idea"
+    route = [k for k, pattern in (("equity", r"\b(equity|investors?|angels?|vc|venture)\b"), ("loan", r"\b(loans?|borrow\w*|bank|overdraft|credit line)\b"), ("grant", r"\bgrants?\b"))
+             if re.search(pattern, text, re.I)]
+    if len(route) == 1:      # two routes named: they have not chosen, so it is asked
+        out["route"] = route[0]
+    when = re.search(rf"\b(by|before|in|within|next)\s+((?:the\s+)?(?:end of\s+)?(?:{_MONTHS}|q[1-4]|\d+\s+(?:days?|weeks?|months?|years?)|month|quarter|year|summer|autumn|winter|spring|christmas)(?:\s+\d{{4}})?)\b", text, re.I)
+    if when:
+        said = f"{when.group(1).lower()} {when.group(2)}"
+        out["timing"] = said[:1].upper() + re.sub(rf"\b({_MONTHS})\b", lambda mm: mm.group(1).capitalize(), said[1:], flags=re.I)
+    return out
 
 
 def _display_name(name: str) -> str:
@@ -298,8 +477,12 @@ def _credit_badge(capability: str | None) -> str:
     return "Uses AI Credits"
 
 def _display_credit_badge(session: dict) -> str:
+    """The badge says what the task will really cost (QA R13): "Free" only when it is, never because the visitor
+    hasn't signed in yet. A first task is free only while FIRST_TASK_FREE is on (it is off: the Agent charges)."""
     start = (session.get("resolution") or {}).get("start_capability")
-    if not session.get("user_id") or (session.get("new_workspace") and start in config.FREE_FIRST_TASKS):
+    if first_value.covered(session.get("goal_key")):
+        return "Free"      # the first-value conversation and its result are free (First-Value PRD); the premium step is offered after
+    if config.FIRST_TASK_FREE and session.get("new_workspace") and start in config.FREE_FIRST_TASKS:
         return "Free"
     cost = config.cost_of(start) if start else "Free"
     if cost == "Free":
@@ -463,8 +646,11 @@ def _event(session: dict, kind: str, when: datetime, **facts: Any) -> None:
 
 # The MVP funnel (PRD s20). The first three are reported by the page; the rest happen here.
 CLIENT_EVENTS = ("homepage_goal_prompt_viewed", "entry_mode_selected", "verification_started", "dashboard_handoff_completed",
-                 "demo_opened", "demo_completed", "demo_try_it_clicked")
-SERVER_EVENTS = ("goal_or_task_submitted", "goal_outcome_resolved", "capability_match_classified", "email_verified", "task_or_goal_path_resumed", "first_output_prepared")
+                 "demo_opened", "demo_completed", "demo_try_it_clicked",
+                 # QA PF7: the funnel past the goal: the first value seen in the app, the premium step chosen, its upgrade
+                 # prompt followed, and the clarifying choice. Each was refused (422) before, so none was recorded.
+                 "first_value_shown", "first_value_premium_clicked", "premium_upgrade_clicked", "onboarding_match_choice")
+SERVER_EVENTS = ("questions_avoided", "first_value_shown", "goal_or_task_submitted", "goal_outcome_resolved", "capability_match_classified", "email_verified", "task_or_goal_path_resumed", "first_output_prepared")
 
 
 async def track(store: SessionStore, name: str, session: dict | None = None, *, clock=None, **facts: Any) -> None:
@@ -474,7 +660,7 @@ async def track(store: SessionStore, name: str, session: dict | None = None, *, 
     event = {"name": name, "at": _now(clock).isoformat(), "session_id": (session.get("id") or "")[:12] or None, "entry_mode": session.get("entry_mode"),
              "goal_key": session.get("goal_key"), "capability": (session.get("resolution") or {}).get("start_capability"),
              "resolution_class": (session.get("resolution") or {}).get("resolution_class"), "signed_in": bool(session.get("user_id")),
-             **{k: v for k, v in facts.items() if k in ("entry_mode", "goal_key") and v}}
+             **{k: v for k, v in facts.items() if k in ("entry_mode", "goal_key", "where") and v}}
     logger.info("goal analytics %s goal=%s entry_mode=%s capability=%s", name, event["goal_key"], event["entry_mode"], event["capability"])
     try:
         await store.record(event)
@@ -491,10 +677,30 @@ def _questions(session: dict) -> list[dict]:
 def _missing(session: dict) -> list[str]:
     """Required answers not given yet. A value read from the visitor's sentence counts as given; they confirm it with the rest."""
     answers = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
-    return [f["key"] for f in _questions(session) if f.get("required") and answers.get(f["key"]) in (None, "")]
+    given = session.get("inputs") or {}
+    # An answer of "I'll add it later" is kept as empty: it was answered, so it is not asked again.
+    return [f["key"] for f in _questions(session) if f.get("required") and answers.get(f["key"]) in (None, "") and not (f["key"] in given and f.get("unsure"))]
+
+
+_FIGURE = re.compile(r"(-?\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?\b", re.I)
+
+
+def number_in(value: Any) -> float | None:
+    """The number in an answer: "£45 per groom" is 45, "about 20 a month" is 20, "£2.5k" is 2500. None when there is none."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    m = _FIGURE.search(str(value or "").replace("\u00a3", " ").replace("$", " ").replace("\u20ac", " ").replace("\u20a6", " "))
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", "")) * _SCALE.get((m.group(2) or "").lower(), 1)
+    except ValueError:
+        return None
 
 
 def _shown(field: dict, value: Any) -> str:
+    if value == UNSURE:
+        return str(field.get("unsure") or _NOT_SURE)
     if field.get("type") == "choice":
         return next((o["label"] for o in field.get("options") or [] if o["value"] == value), str(value))
     if field.get("type") == "number" and isinstance(value, (int, float)):
@@ -515,7 +721,9 @@ def _in_currency(session: dict, fields: list[dict]) -> list[dict]:
 def _summary(session: dict) -> list[dict]:
     """What has been given so far, one short line each, for the visitor to see and confirm."""
     answers = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
-    rows = [{"key": f["key"], "label": f["label"], "value": _shown(f, answers[f["key"]]), "proposed": f["key"] not in (session.get("inputs") or {})}
+    said = set(session.get("from_message") or [])
+    rows = [{"key": f["key"], "label": f["label"], "value": _shown(f, answers[f["key"]]), "proposed": f["key"] not in (session.get("inputs") or {}),
+             "from_message": f["key"] in said}
             for f in _in_currency(session, _questions(session)) if answers.get(f["key"]) not in (None, "")]
     if session.get("currency") and session["currency"] != DEFAULT_CURRENCY and any(f.get("prefix") for f in _questions(session)):
         rows.append({"key": "currency", "label": "Currency", "value": session["currency"], "proposed": not session.get("currency_confirmed")})
@@ -530,6 +738,28 @@ _PREPARING = {"funding_readiness": "Checking your funding readiness", "launch_re
               "offer_review": "Reviewing what you sell"}
 
 
+_NOUN = {"amount": "amount", "use": "purpose", "customer": "customer", "item": "what it is for", "solution": "what you are proposing", "description": "idea"}
+
+
+def _conversation(session: dict) -> dict:
+    """The short conversation as the page shows it: how far through it is ("2 of 6", counted in questions, not
+    fields), what was understood from the first message ("Got your amount, purpose and timing."), and the one
+    line that says what the visitor gets. Engine and capability names are never part of it."""
+    fields = _questions(session)
+    answers = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
+    # Counted in the turns the chat takes, one question each (QA P2-1): a field the visitor answered, or one read
+    # from their first message, is done; "Not sure" is an answer too. Grouping by PRD question number made it lag.
+    done = sum(1 for f in fields if answers.get(f["key"]) not in (None, "") or (f["key"] in (session.get("inputs") or {}) and f.get("unsure")))
+    understood = [f.get("noun") or _NOUN.get(f["key"]) or f["key"].replace("_", " ") for f in fields if f["key"] in (session.get("proposed") or {})]
+    said = ""
+    if understood:
+        said = f"Got your {understood[0]}." if len(understood) == 1 else f"Got your {', '.join(understood[:-1])} and {understood[-1]}."
+    goal = _BY_KEY.get(session.get("goal_key") or "") or {}
+    return {"progress": {"answered": done, "total": len(fields)} if fields else None, "acknowledged": said,
+            "value_line": goal.get("value") or "", "first_value": first_value.covered(session.get("goal_key")),
+            "questions_avoided": len(understood)}
+
+
 def public(session: dict) -> dict:
     """What the browser is given. The visitor's own answers come back to them; nothing else is in a session."""
     res, answers, missing = session["resolution"], session.get("inputs") or {}, _missing(session)
@@ -538,7 +768,7 @@ def public(session: dict) -> dict:
     return {
         "id": session["id"], "state": session["state"], "entry_mode": session.get("entry_mode"), "goal_key": session.get("goal_key"),
         "goal_label": goal.get("label") or res.get("underlying_outcome") or res.get("original_goal"),
-        "resolution": {**res, "credit_badge": _display_credit_badge(session)},
+        "resolution": {**res, "credit_badge": _display_credit_badge(session), **({"recommended_path": [], "message": goal["value"]} if goal.get("value") else {})},
         "questions": [{**f, "default": answers.get(f["key"], proposed.get(f["key"], f.get("default", ""))), "proposed": f["key"] in proposed}
                       for f in _in_currency(session, _questions(session))],
         # A currency other than the default was written: kept, said ("In USD"), and theirs to switch.
@@ -549,8 +779,11 @@ def public(session: dict) -> dict:
                           "google": session["email"].rsplit("@", 1)[-1] in ("gmail.com", "googlemail.com")}
                          if session.get("verify") and session.get("email") and not session.get("user_id") else None),
         "saving": saving_text(session) if res["resolution_class"] not in (NO_MATCH, "clarify") else "",
+        **_conversation(session),
         # Their own first name, when they have said it ("I'm Munah"): the page greets them with it and doesn't ask again.
         "first_name": (session.get("visitor") or {}).get("first_name") or None,
+        # Answers that could not be used, by field, with why: the page goes back to the first one.
+        "rejected": dict(session.get("rejected") or {}),
         "choose": session.get("choose"), "preparing_label": _PREPARING.get(res.get("start_capability") or "", "Preparing your task"),
         "clarify": res.get("clarify"), "inputs": answers, "proposed": proposed, "summary": _summary(session), "missing": missing,
         "authenticated": bool(session.get("user_id")), "business_id": session.get("business_id"),
@@ -561,18 +794,56 @@ def public(session: dict) -> dict:
     }
 
 
+async def _understood_goal(text: str, no_match: dict) -> dict:
+    """QA U1a: the rules found no goal. The understanding layer may (it asks the model when unsure). Only when the model
+    agrees nothing fits is it "doesn't do that"; with no model to ask, one question offers the closest goals instead."""
+    from app.modules.agent import understanding as und
+    goals_reg = {g["key"]: g["label"] for g in GOALS}
+    try:
+        u = await und.understand(text, {"capabilities": goals_reg})
+    except Exception:      # noqa: BLE001
+        u = None
+    if u and u.intent in goals_reg and u.confidence >= 0.6:
+        out = resolve(key=u.intent)
+        return {**out, "original_goal": text, "provenance": {**(out.get("provenance") or {}), "rule": "understanding"}}
+    if u and u.intent == und.UNSUPPORTED and u.method == "llm+rules":
+        return no_match      # the model agrees: nothing here does that
+    return _clarify(text, ["launch", "test_idea", "need_funding", "create_invoice"], registry(), "understanding_unsure") or no_match
+
+
+async def understood_answers(text: str, goal_key: str | None) -> dict[str, Any]:
+    """QA H: answers the shared understanding layer finds in the visitor's own sentence, for this goal's questions.
+    Only those good enough to show for confirmation (0.6 and over), each one quoted in the sentence."""
+    if not text or not goal_key:
+        return {}
+    from app.modules.agent import understanding as und
+    qs = [{"key": q["key"], "type": q.get("type"), "label": q.get("label")} for q in questions_for(goal_key)]
+    if not qs:
+        return {}
+    try:
+        u = await und.understand(text, {"capabilities": und.capability_registry(), "questions": qs, "goal_key": goal_key})
+    except Exception:      # noqa: BLE001 - the rule reader's answers stand
+        return {}
+    wanted = {q["key"] for q in qs}
+    return {f.key: f.normalised_value for f in u.fields if f.key in wanted and f.action != und.ASK and not f.unsure}
+
+
 async def start(store: SessionStore, *, text: str | None, key: str | None, entry_mode: str, clock=None) -> dict:
     now = _now(clock)
     from app.shared import people
     visitor, text = people.own_name(text) if text else (None, text)
     res = resolve(text=text, key=key)
+    if text and not key and res.get("resolution_class") == NO_MATCH:
+        res = await _understood_goal(text, res)
     session = {"id": secrets.token_urlsafe(24), **({"visitor": visitor, "name": visitor["full_name"]} if visitor else {}), "state": INITIATED, "entry_mode": entry_mode if entry_mode in ("business_goal", "quick_task", "free_text") else "free_text",
                "goal_key": res.get("goal_key"), "original_goal": res["original_goal"], "resolution": res, "inputs": {},
-               "proposed": extract(text or "", res.get("goal_key")) if not key else {}, "user_id": None, "business_id": None,
+               "proposed": ({**(await understood_answers(text or "", res.get("goal_key"))), **extract(text or "", res.get("goal_key"))} if not key else {}),
+               "user_id": None, "business_id": None,
                "currency": None, "said_currency": None,
                "handoff": None, "events": [], "created_at": now.isoformat(), "updated_at": now.isoformat(),
                "expires_at": (now + timedelta(days=SESSION_DAYS)).isoformat()}
     _take_currency(session)
+    session["from_message"] = sorted(session["proposed"])      # read from their own first message: shown once, never asked (QA P5-1)
     _event(session, "HomepageGoalSubmitted", now)
     _event(session, "GoalOutcomeResolved", now, resolution_class=res["resolution_class"])
     if res["resolution_class"] == NO_MATCH:
@@ -588,7 +859,15 @@ async def start(store: SessionStore, *, text: str | None, key: str | None, entry
     await track(store, "goal_or_task_submitted", session, clock=clock)
     await track(store, "goal_outcome_resolved", session, clock=clock)
     await track(store, "capability_match_classified", session, clock=clock)
+    if session.get("proposed"):      # each answer read from the first message is a question not asked (PRD 16)
+        await track(store, "questions_avoided", session, clock=clock, count=len(session["proposed"]))
     return session
+
+
+def first_value_of(session: dict, data: dict | None = None, clock=None) -> dict | None:
+    """The free deterministic result for this task, from the answers given and what the Company has on record."""
+    answers = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
+    return first_value.assess(session.get("goal_key") or "", answers, data, now=_now(clock), sign=SIGNS.get(session.get("currency") or DEFAULT_CURRENCY, "£"))
 
 
 # ── saving a task: the email is verified with a code, in place ───────────────
@@ -644,11 +923,24 @@ async def send_code(store: SessionStore, session: dict, email: str | None, maile
     session["updated_at"] = now.isoformat()
     await store.put(session)
     await track(store, "verification_started", session, clock=clock)
-    try:
-        await mailer(email, code, saving_text(session))
-    except Exception:      # noqa: BLE001 - said as "sent": whether an address can be mailed is not for a stranger to learn; Resend is there
-        logger.warning("goal onboarding: the code email could not be sent for session %s", session["id"][:8], exc_info=True)
+    # The answer never depends on the email going out (a failure is only logged), so the visitor is not kept
+    # waiting on the mail service: a short wait, then it finishes in the background (QA P2-13: ~10s before).
+    sending = asyncio.ensure_future(_mail_code(mailer, email, code, saving_text(session), session["id"]))
+    _MAILING.add(sending)
+    sending.add_done_callback(_MAILING.discard)
+    await asyncio.wait({sending}, timeout=MAIL_WAIT_SECONDS)
     return session
+
+
+MAIL_WAIT_SECONDS = 2.0
+_MAILING: set = set()      # sends still going after the reply: kept so they are not dropped half way
+
+
+async def _mail_code(mailer, email: str, code: str, text: str, session_id: str) -> None:
+    try:
+        await mailer(email, code, text)
+    except Exception:      # noqa: BLE001 - said as "sent": whether an address can be mailed is not for a stranger to learn; Resend is there
+        logger.warning("goal onboarding: the code email could not be sent for session %s", session_id[:8], exc_info=True)
 
 
 async def check_code(store: SessionStore, session: dict, code: str, clock=None) -> str:
@@ -700,6 +992,7 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
         res["original_goal"] = session["original_goal"]
         session.update({"resolution": res, "goal_key": res.get("goal_key"), "proposed": extract(session["original_goal"], res.get("goal_key"))})
         _take_currency(session)
+        session["from_message"] = sorted(session["proposed"])
         _event(session, "FallbackPathAccepted", now, resolution_class=res["resolution_class"])
         await track(store, "capability_match_classified", session, clock=clock)
     elif session["resolution"]["resolution_class"] == "clarify" and answers.get("goal_key") == OTHER:
@@ -723,11 +1016,31 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
         session["state"] = READY
     allowed = {f["key"]: f for f in _questions(session)}
     for k, v in answers.items():
+        if k in allowed and allowed[k].get("unsure") and str(v).strip().lower() in (UNSURE, str(allowed[k]["unsure"]).lower()):
+            session["inputs"][k] = allowed[k]["unsure_value"] if "unsure_value" in allowed[k] else UNSURE      # said, and stored as said: never guessed, never treated as a fact
+            continue
+        if k in allowed and allowed[k]["type"] == "email" and v not in (None, ""):
+            if not _ADDRESS.match(str(v).strip()):
+                continue      # not an address: asked again
+            session["inputs"][k] = str(v).strip().lower()
+            continue
         if k in allowed and v not in (None, ""):
-            try:
-                session["inputs"][k] = float(v) if allowed[k]["type"] == "number" else str(v).strip()[:2000]
-            except (TypeError, ValueError):
+            if allowed[k]["type"] == "number":
+                # QA H: the shared normalisers: "about sixty" is 60, "standard rate" is 20 for VAT, "not sure" is an answer.
+                from app.modules.agent import understanding as _und
+                if _und.is_unsure(v) and allowed[k].get("unsure"):
+                    session.get("rejected", {}).pop(k, None)
+                    session["inputs"][k] = UNSURE
+                    continue
+                figure = _und.vat_of(v) if k == "vat_rate" else _und.number_of(v)
+                if figure is None:
+                    # Not a number: kept out, and said, so the page asks it again with the reason (never a silent no-op).
+                    session.setdefault("rejected", {})[k] = "Please enter a number, for example 45."
+                    continue
+                session.get("rejected", {}).pop(k, None)
+                session["inputs"][k] = figure
                 continue
+            session["inputs"][k] = str(v).strip()[:2000]
     if session["inputs"]:
         _event(session, "TaskInputConfirmed", now, fields=len(session["inputs"]))
     if session["state"] not in (HANDED_OFF, AWAITING_REVIEW, PREPARING) and not picked:
@@ -771,6 +1084,29 @@ def _prefill(session: dict) -> dict:
         out["amount"] = a["amount"]
     if session.get("currency") and session["currency"] != DEFAULT_CURRENCY:
         out["currency"] = session["currency"]
+    qty = a.get("quantity") if isinstance(a.get("quantity"), (int, float)) and a.get("quantity") > 0 else 1
+    if out.get("item"):
+        out["item"]["quantity"] = int(qty) if float(qty).is_integer() else qty
+    return out
+
+
+def _answers_for_task(session: dict) -> dict:
+    """The homepage answers as the task's own answers: who, their email, the lines, VAT and the due date."""
+    a = session.get("inputs") or {}
+    if session.get("goal_key") not in ("create_invoice", "create_quotation"):
+        return {}
+    out: dict[str, Any] = {}
+    if a.get("customer"):
+        out["customer_id"], out["customer_name"] = "new", str(a["customer"])
+    if a.get("customer_email"):
+        out["customer_email"] = a["customer_email"]
+    if a.get("item") and isinstance(a.get("amount"), (int, float)):
+        qty = a.get("quantity") if isinstance(a.get("quantity"), (int, float)) and a.get("quantity") > 0 else 1
+        out["items"] = [{"name": str(a["item"]), "quantity": qty, "unit_price": a["amount"]}]
+    if isinstance(a.get("vat_rate"), (int, float)):
+        out["vat_rate"] = a["vat_rate"]
+    if isinstance(a.get("due_days"), (int, float)) and a["due_days"] > 0:
+        out["payment_terms_days" if session.get("goal_key") == "create_invoice" else "validity_days"] = int(a["due_days"])
     return out
 
 
@@ -852,9 +1188,41 @@ def _told(a: dict) -> str:
     return f"{amount} to fund: {use}" if amount and use else amount or (f"to fund: {use}" if use else "")
 
 
+def _same_subject(existing: list[dict], wanted: dict, name_field: str) -> dict | None:
+    """An open record that is the one being asked for again: same name, same amount (where there is one), same purpose."""
+    norm = lambda v: " ".join(str(v or "").lower().split())      # noqa: E731
+    for row in existing:
+        d = row.get("data") or {}
+        if norm(d.get(name_field)) != norm(wanted.get(name_field)):
+            continue
+        try:
+            same_amount = float(d.get("target_amount") or 0) == float(wanted.get("target_amount") or 0)
+        except (TypeError, ValueError):
+            same_amount = False
+        if same_amount and norm(d.get("purpose")) == norm(wanted.get("purpose")) and norm(d.get("audience")) == norm(wanted.get("audience")):
+            return row
+    return None
+
+
 def _choice_field(existing: list[dict], noun: str, a: dict) -> dict:
     """Update the one that is there, or start another: one question, with what would change said on the option."""
     options = []
+    plan = noun.replace("funding case", "funding plan")
+    if len(existing) == 1 and noun.endswith("case"):
+        data, row = existing[0].get("data") or {}, existing[0]
+        had, now_ = data.get("target_amount"), a.get("amount")
+        try:
+            had_s = _shown({"type": "number", "prefix": "£"}, float(had)) if had not in (None, "") else ""
+        except (TypeError, ValueError):
+            had_s = ""
+        when = ""
+        if row.get("created_at"):
+            stamp = datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00"))
+            when = f"{stamp.day} {stamp.strftime('%b')}"
+        to = f" to {_shown({'type': 'number', 'prefix': '£'}, now_)}" if isinstance(now_, (int, float)) else ""
+        label = f"You already have a {had_s + ' ' if had_s else ''}{plan}{' from ' + when if when else ''}. Update it{to} or start a new one?"
+        return _f("subject_choice", label, "choice", required=True,
+                  options=[{"value": row["id"], "label": f"Update it{to}"}, {"value": NEW, "label": "Start a new one"}])
     for row in existing:
         data = row.get("data") or {}
         name = data.get("title") or data.get("name") or noun.capitalize()
@@ -862,9 +1230,9 @@ def _choice_field(existing: list[dict], noun: str, a: dict) -> dict:
         change = (f" (amount {_shown({'type': 'number', 'prefix': '£'}, float(had))} → {_shown({'type': 'number', 'prefix': '£'}, now_)})"
                   if isinstance(now_, (int, float)) and isinstance(had, (int, float)) and float(had) != float(now_) else "")
         options.append({"value": row["id"], "label": f"Update {name}{change}"})
-    options.append({"value": NEW, "label": f"Start a new {noun.split()[-1]}" if noun.endswith("case") else "Start a new launch plan"})
+    options.append({"value": NEW, "label": "Start a new funding plan" if noun.endswith("case") else "Start a new launch plan"})
     several = len(existing) > 1
-    return _f("subject_choice", f"You already have {'funding cases' if noun.endswith('case') and several else 'launch plans' if several else 'a ' + noun}. "
+    return _f("subject_choice", f"You already have {'funding plans' if noun.endswith('case') and several else 'launch plans' if several else 'a ' + plan}. "
                                 f"Update {'one' if several else 'it'} or start a new one?", "choice", required=True, options=options)
 
 
@@ -934,9 +1302,14 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                     payload = {k: v for k, v in {"audience": a.get("customer"), "target_date": a.get("target_date"), "pinned": True}.items() if v not in (None, "")}
                     title, told = str(a.get("sell") or "My launch")[:120], f'"{str(a.get("sell")).strip()}"' if a.get("sell") else ""
                 name_field = "title" if kind == rules.FUNDING else "name"
+                twin = None
                 if choice == NEW:
+                    twin = _same_subject(await _open_subjects(svc, session["business_id"], kind), {**payload, name_field: title}, name_field)
+                if choice == NEW and twin:
+                    made, did = twin, f'I found "{(twin.get("data") or {}).get(name_field) or noun}" already set up with these details'
+                elif choice == NEW:
                     made = await svc.create_subject(user_id, session["business_id"], kind, {**payload, name_field: title}, email)
-                    did = f"I set up your {noun} from what you told me"
+                    did = f"I set up your {noun.replace('funding case', 'funding plan')} from what you told me"
                 else:
                     row = await svc.store.get("subjects", choice)
                     if not row or row.get("business_id") != session["business_id"] or row.get("kind") != kind:
@@ -965,17 +1338,22 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                         created_s, time.perf_counter() - clocked - created_s, time.perf_counter() - clocked)
             session["state"] = HANDED_OFF
         else:
-            # What the visitor said about the business is theirs to keep: it goes on the profile, only where that is still empty.
+            # What was said for this goal is about this task, not yet about the company: it is kept as a proposal,
+            # with where it came from, and goes on the profile only when the owner confirms it (PRD 6.1, QA R1).
             facts = {"about_company": a.get("description") or a.get("sell"), "target_customer": a.get("customer") if session.get("goal_key") not in
                      ("create_invoice", "create_quotation", "prepare_proposal") else None, "problem": a.get("problem")}
-
-            def _profile(d: dict) -> None:
-                p = d.setdefault("workspace_profile", {})
-                for k, v in facts.items():
-                    if v and not p.get(k):
-                        p[k] = str(v)
             if any(facts.values()):
-                await orch.rt.business.mutate(session["business_id"], _profile)
+                from app.modules.agent import profile_proposals
+                source = {"kind": "goal", "goal_key": session.get("goal_key"), "goal_label": session.get("goal_label"), "session_id": session["id"],
+                          "offering": str(a.get("sell") or a.get("description") or "")[:200]}      # QA PF5: which offering it was said about
+                await orch.rt.business.mutate(session["business_id"], lambda d: profile_proposals.propose(d, facts, source, now))
+            if isinstance(a.get("vat_rate"), (int, float)):
+                try:
+                    policy = await orch.rt.store.get_policy(session["business_id"]) or {}
+                    if policy.get("default_vat_rate") is None:
+                        await orch.rt.store.set_policy(session["business_id"], {"default_vat_rate": float(a["vat_rate"])}, user_id)
+                except Exception:      # noqa: BLE001 - the draft carries the rate either way
+                    logger.info("goal onboarding: the VAT default was not saved for %s", session["business_id"])
             # The first essential task on a new account is free (PRD s13): the workspace made for this
             # goal is marked, once, and the Agent waives the charge for the one task started from it.
             if config.FIRST_TASK_FREE and session.get("new_workspace") and capability in config.FREE_FIRST_TASKS:
@@ -984,12 +1362,17 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                 await orch.rt.business.mutate(session["business_id"], _free)
             out = await orch.submit(AgentRequest(requesting_actor_id=user_id, business_id=session["business_id"], source_channel="text",
                                                  raw_input=_request_text(session), requested_capability=capability, background=True,
-                                                 params={"prefill": _prefill(session)} if _prefill(session) else {},
+                                                 params={**({"prefill": _prefill(session)} if _prefill(session) else {}),
+                                                         **({"answers": _answers_for_task(session)} if _answers_for_task(session) else {})},
                                                  source_reference=f"goal:{session['id']}",
                                                  essential_handoff=True), email=email)
             run = out.get("run")
             if run:
                 handoff.update({"to": f"/dashboard?task={run['id']}", "run_id": run["id"]})
+                noun = {"create_invoice": "invoice", "create_quotation": "quotation"}.get(session.get("goal_key") or "")
+                if noun:      # said on the dashboard when the draft opens for review
+                    who = (session.get("inputs") or {}).get("customer")
+                    handoff.update({"ready": True, "ready_message": f"Your {noun}{' for ' + str(who) if who else ''} is ready to review."})
                 session["state"] = AWAITING_REVIEW
             else:
                 # Not started (plan, credits, nothing to act on): said as it is, with the dashboard still to go to.

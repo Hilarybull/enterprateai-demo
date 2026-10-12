@@ -8,8 +8,10 @@ runtime checks, not prompt wording.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import contextvars
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable
@@ -82,8 +84,12 @@ def _offer_vat_default(fields: list[dict]) -> list[dict]:
         rate = fields[at]
         fields = [*fields[:at + 1], {"key": "save_vat_default", "label": "Save as my default VAT rate", "type": "checkbox", "default": False,
                                     "hint": "You won't be asked again. Change it any time in Agent settings.",
+                                    "companion_of": "vat_rate",      # shown with the VAT question, never a question of its own (QA U3)
                                     **({"show_if": rate["show_if"]} if rate.get("show_if") else {})}, *fields[at + 1:]]
     return fields
+
+
+from app.modules.agent.twins import ONE_PER_BUSINESS, stale_twins, twins  # noqa: E402  (QA U8)
 
 
 def dedupe_key(capability: str, source_reference: str | None, params: dict) -> str | None:
@@ -149,15 +155,45 @@ class Ctx:
         b = self.run["budget"]
         return self.rt.classifier.available and b["llm_calls"] < b["max_llm_calls"]
 
+    def _read(self, text: str) -> dict:
+        """What has been read from this enquiry on this task, kept so it is read, and paid for, once (AC-12):
+        answering a question and carrying on does not read the same words again."""
+        key = hashlib.sha256((text or "").encode("utf-8")).hexdigest()[:16]
+        cache = self.run["state"].setdefault("enquiry_read", {})
+        if cache.get("key") != key:
+            cache.clear()
+            cache["key"] = key
+        return cache
+
+    async def _paid_read(self, cache: dict, what: str, work):
+        """Run one reading of the enquiry. The first reading of these words on this task is charged; any other reading of them is not."""
+        if cache.get("charged"):
+            self.run["budget"]["llm_calls"] += 1
+            return await work()
+        from app.modules.agent import config as _cfg
+        if self.run.get("workflow_key") in _cfg.READING_INCLUDED_IN:
+            # Part of the advertised price of preparing this task (QA E7): read, never charged on top.
+            self.run["budget"]["llm_calls"] += 1
+            found = await work()
+            cache["charged"] = True
+            return found
+        async with self.rt.meter.charge(self.actor.user_id, "agent_classify"):
+            self.run["budget"]["llm_calls"] += 1
+            found = await work()
+        cache["charged"] = True
+        await self.orch.note_spend(self.run, "agent_classify", what)
+        return found
+
     async def classify_enquiry(self, text: str) -> tuple[str, str]:
         cls, method = await intent.classify_enquiry(text, Classifier(), self.actor.user_id)   # rules only
         if cls not in ("general_enquiry", "uncertain") or not self._llm_allowed():
             return cls, method
+        cache = self._read(text)
+        if cache.get("classified"):
+            return tuple(cache["classified"])
         try:
-            async with self.rt.meter.charge(self.actor.user_id, "agent_classify"):
-                self.run["budget"]["llm_calls"] += 1
-                found = await intent.classify_enquiry(text, self.rt.classifier, self.actor.user_id)
-            await self.orch.note_spend(self.run, "agent_classify", "classify_enquiry")
+            found = await self._paid_read(cache, "classify_enquiry", lambda: intent.classify_enquiry(text, self.rt.classifier, self.actor.user_id))
+            cache["classified"] = list(found)
             return found
         except InsufficientCredits:
             raise
@@ -165,13 +201,14 @@ class Ctx:
             return cls, method      # LLM failure never breaks the workflow (s22.1)
 
     async def extract_items(self, text: str) -> list[dict]:
+        cache = self._read(text)
+        if "items" in cache:
+            return list(cache["items"])
         if not self._llm_allowed():
             return []
         try:
-            async with self.rt.meter.charge(self.actor.user_id, "agent_classify"):
-                self.run["budget"]["llm_calls"] += 1
-                items = await self.rt.classifier.extract_items(text=text, user_id=self.actor.user_id)
-            await self.orch.note_spend(self.run, "agent_classify", "read_enquiry_items")
+            items = await self._paid_read(cache, "read_enquiry_items", lambda: self.rt.classifier.extract_items(text=text, user_id=self.actor.user_id))
+            cache["items"] = list(items or [])
             return items
         except InsufficientCredits:
             raise
@@ -230,6 +267,10 @@ def what_changed(before: dict, after: dict) -> str:
         parts.append(f"total {_money_text(before.get('total'), cur)} → {_money_text(after.get('total'), cur)}")
     return "; ".join(parts) or "Nothing in the document changed."
 
+
+# "Export the full customer list", "send me every client's email": a bulk export asked for in so many words.
+_EXPORT_ASK = re.compile(r"\b(?:export|download|dump|send|share|email|forward|copy|list)\b[^.?!]{0,60}?\b(?:customers?|clients?|contacts?|leads?)\b"
+                         r"(?:[^.?!]{0,30}\b(?:list|lists|emails?|details|data|phones?|numbers?|records?|database)\b)?", re.I)
 
 _BACKGROUND: set = set()
 _ADVANCING: set = set()       # tasks being carried on in this process right now
@@ -738,6 +779,25 @@ class Orchestrator:
             return {"kind": "blocked", "reason_codes": ["unsupported_channel"], "message": "Unsupported request channel."}
         actor, policy = await self.actor_for(req.requesting_actor_id, req.business_id, email)
         from app.shared.privacy import REFUSAL, is_bulk_contact_request
+        if req.raw_input and not req.part_of_message:
+            kept, cut = intent.without_injection(req.raw_input)
+            if cut:
+                # Instructions inside the message are data, never commands: they start nothing, and an export
+                # asked for there is refused. The genuine request before them carries on (QA P1-6, s11.2).
+                # An export asked for in the injected part is named in the one line said about it (QA R11).
+                exports = is_bulk_contact_request(cut) or bool(_EXPORT_ASK.search(cut))
+                ignored = ("I ignored instructions written inside that message"
+                           + (", including a request to export contact details, which I never do" if exports else "") + ".")
+                if not kept or not re.search(r"[A-Za-z]{3}", kept):
+                    if is_bulk_contact_request(cut):      # the same fixed refusal as always
+                        return {"kind": "blocked", "reason_codes": ["bulk_contact_export"], "message": REFUSAL}
+                    return {"kind": "blocked", "reason_codes": ["untrusted_instructions"], "message": ignored + " Nothing was started."}
+                from dataclasses import replace
+                out = await self._submit(replace(req, raw_input=kept), email)
+                out = dict(out) if isinstance(out, dict) else {"kind": "answer", "result": out}
+                out["ignored_instructions"] = True
+                out["message"] = " ".join(x for x in (ignored, out.get("message")) if x)
+                return out
         if is_bulk_contact_request(req.raw_input):
             # A fixed server rule, whatever the wording: no bulk export of contact details.
             return {"kind": "blocked", "reason_codes": ["bulk_contact_export"], "message": REFUSAL}
@@ -762,6 +822,17 @@ class Orchestrator:
             capability = None      # a requested capability is only a candidate (s5.1)
         if not capability and req.raw_input:
             capability = await intent.resolve_capability(req.raw_input, Classifier(), actor.user_id, self.supported_capabilities())
+        if not capability and req.raw_input and not req.part_of_message:
+            # QA H: where the rules can't place a request, the understanding layer may (rules, then a model only when
+            # unsure). It chooses only from the registered workflows; a question or "unsupported" leaves it to the answer path.
+            from app.modules.agent.understanding import understand
+            try:
+                u = await understand(req.raw_input, {"capabilities": {k: WORKFLOWS[k].title for k in self.supported_capabilities()},
+                                                      "user_id": actor.user_id, "task_id": f"request:{req.request_id}"})
+                if u.intent in WORKFLOWS and u.confidence >= 0.6:
+                    capability = u.intent
+            except Exception:      # noqa: BLE001 - the answer path still runs; nothing dead-ends
+                logger.warning("understanding failed for a request", exc_info=True)
         if capability == "marketplace_rfq":
             # Asked to deal with marketplace requests: a quotation is drafted for each one waiting.
             return await self._reply_to_requests(req, email)
@@ -815,6 +886,13 @@ class Orchestrator:
         runs = []
         repeats: list[dict] = []
         for params in targets["runs"]:
+            if wf.workflow_key in ONE_PER_BUSINESS:
+                # QA U8: one Idea Validation (Market Size, Plan Draft) per business at a time. Asked again while one
+                # waits on its first answer, that one is shown, never a second asking the same thing.
+                twin = next(iter(twins(await self.rt.store.list_runs(req.business_id, limit=200), wf.workflow_key)), None)
+                if twin and not params:
+                    repeats.append(twin)
+                    continue
             if wf.workflow_key == "payment_followup":
                 earlier, same = await self._existing_followup(req.business_id, params.get("invoice_id"), policy)
                 if earlier and same:      # already open or already checked, same answer: shown once, no new task, no quota used
@@ -1070,8 +1148,11 @@ class Orchestrator:
             if newdocs._unpaid(data):
                 # Something is owed, but each has had its reminder recently (or is on hold): said as it is.
                 return {"kind": "answer", "message": "No overdue invoices are eligible for a reminder right now: each has been reminded recently or is on hold."}
-            return {"kind": "answer", "message": "Nothing is owed right now: every invoice is paid, so there is no one to remind.",
-                    "actions": [{"label": "Start a new invoice", "capability": "new_invoice"}]}
+            # QA U7: said as it is. With no invoices sent, "every invoice is paid" would be true of nothing.
+            sent = [i for i in invoices if isinstance(i, dict) and not i.get("archived") and str(i.get("status") or "").lower() not in ("draft", "void", "cancelled")]
+            message = ("You have no unpaid invoices, so there is no one to remind." if sent
+                       else "You haven't sent any invoices yet, so there is no one to remind.")
+            return {"kind": "answer", "message": message, "actions": [{"label": "Start a new invoice", "capability": "new_invoice"}]}
 
         if key == "receipt_send":
             if p.get("invoice_id"):
@@ -1104,7 +1185,8 @@ class Orchestrator:
                           dedupe: bool = False) -> dict:
         now = self.rt.clock().isoformat()
         budget = dict(config.PAID_BUDGET if ent["is_paid"] else config.DEFAULT_BUDGET)
-        state: dict[str, Any] = {"params": params, "answers": {}}
+        # Answers given before the task existed (the homepage conversation) are its answers from the start: not asked again.
+        state: dict[str, Any] = {"params": params, "answers": dict(params.get("answers") or {}) if isinstance(params.get("answers"), dict) else {}}
         if wf.workflow_key in ("idea_validation", "market_size", "business_plan_draft") and req.raw_input:
             from app.modules.agent import said
             named = said.idea_in(req.raw_input)
@@ -1422,6 +1504,29 @@ class Orchestrator:
         clean = {k: v for k, v in (answers or {}).items() if k in allowed}      # only what was asked for
         if not clean:
             raise Conflict("no_matching_answer", "None of those answers match the question this task is asking.")
+        # QA H: a number typed in words ("about sixty", "20%", "standard rate" for VAT) is read by the shared normalisers;
+        # one that can't be read is refused with the reason, never stored as text.
+        from app.modules.agent import understanding as und
+        for f in run["pending_question"]["fields"]:
+            k = f["key"]
+            v = clean.get(k)
+            if f.get("type") != "number" or not isinstance(v, str) or not v.strip():
+                continue
+            read = und.vat_of(v) if k == "vat_rate" else und.number_of(v)
+            if read is None:
+                raise Conflict("invalid_answer", f"{f.get('label') or k}: please enter a number, for example 20.")
+            clean[k] = read
+        for f in run["pending_question"]["fields"]:      # a discount's amount is typed into a text box too
+            v = clean.get(f["key"])
+            if f.get("type") != "discount" or not isinstance(v, dict) or not isinstance(v.get("value"), str):
+                continue
+            if not v["value"].strip():
+                clean[f["key"]] = {**v, "value": ""}
+                continue
+            read = und.number_of(v["value"].replace("%", ""))
+            if read is None:
+                raise Conflict("invalid_answer", f"{f.get('label') or f['key']}: please enter a number, for example 10.")
+            clean[f["key"]] = {**v, "value": read}
         run["state"].setdefault("answers", {}).update(clean)
         if clean.get("save_vat_default") and clean.get("vat_rate") not in (None, "") and actor.is_owner:
             # "Save as my default": written to Agent settings, so the VAT rate is never asked for again.
@@ -1520,6 +1625,19 @@ class Orchestrator:
         summary = ("Cancelled. " + (f"{len(done)} message(s) had already been sent and can't be recalled." if done
                                     else "Nothing had been sent."))
         return await self._finish(run, RUN_CANCELLED, None, "cancelled_by_user", summary)
+
+    async def close_duplicates(self, runs: list[dict]) -> int:
+        """QA U8: tasks of the same kind still waiting on the same first question, nothing answered in any of
+        them, are one task asked twice. The newest stays; the others are closed (nothing had been sent)."""
+        closed = 0
+        for run in stale_twins(runs):
+            try:
+                await self._finish(run, RUN_CANCELLED, None, "duplicate",
+                                   "Closed: the same task was already waiting for this answer. Nothing was sent.")
+                closed += 1
+            except Exception:      # noqa: BLE001 - one that can't be closed doesn't stop the rest
+                logger.warning("could not close duplicate task %s", run.get("id"), exc_info=True)
+        return closed
 
     async def close_unanswered(self, runs: list[dict]) -> int:
         """Requests that have waited on the owner for an answer with nothing happening for
@@ -2014,6 +2132,7 @@ class Orchestrator:
             if not 0 <= days <= 365:
                 raise Conflict("invalid_edit", "Payment terms must be between 0 and 365 days.")
             edit["payment_terms"] = f"Net {days} days"
+            edit["payment_terms_source"] = "set by you"
         if not edit:
             raise Conflict("invalid_edit", "There's nothing to change.")
         # Before anything else (including any question a later step asks), no earlier version

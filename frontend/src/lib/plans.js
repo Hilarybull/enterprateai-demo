@@ -190,12 +190,27 @@ export function formatPrice(price) {
   return `£${Number.isInteger(price) ? price : price.toFixed(2)}`;
 }
 
+// QA U4: every plan's name as people see it, the plans not on sale included. A key is never shown as it is stored.
+const PLAN_NAMES = { explorer: "Explorer", starter_insight: "Starter", decision_engine: "Decision Engine",
+  growth_navigator: "Growth Navigator", strategic_business_os: "Strategic Business OS" };
+const words = (key) => String(key || "").replace(/[_-]+/g, " ").trim().replace(/^./, (c) => c.toUpperCase());
+
 export function planLabel(planKey, status) {
   if (status === "grandfathered") return "Early Access";
   const normalised = normalisePlanKey(planKey);
   if (normalised === "explorer" && status === "expired") return "Trial Expired";
-  if (normalised === "explorer") return "Explorer";
-  return getPlan(normalised)?.label ?? planKey;
+  return getPlan(normalised)?.label ?? PLAN_NAMES[normalised] ?? (words(normalised) || "Explorer");
+}
+
+/**
+ * What the account can use, by name (QA U4): its plan, or the reason it has more than its plan. An admin's
+ * full-access grant reads "Full access (test grant)", never the top plan's key.
+ */
+export function accessLabel(subscription) {
+  const source = subscription?.access_source;
+  if (source === "admin full-access grant") return "Full access (test grant)";
+  if (source === "early-access account" || subscription?.status === "grandfathered") return "Early Access";
+  return planLabel(subscription?.plan_key, subscription?.status);
 }
 
 // Paid features (proposals, RFQ replies, multiple listings) need Starter or above.

@@ -112,12 +112,12 @@ def test_the_tiles_say_what_the_agent_needs_is_doing_or_has_done():
     env = Env()
     d = _pre(env)
     assert _suggestion(d, "stage_funding")["text"] == "I need a funding case before the funding pack can be drafted."      # only the owner can supply that
-    assert _suggestion(d, "stage_register")["text"] == "I'm preparing your registration checklist."
+    assert _suggestion(d, "stage_register")["text"] == "Prepare my registration checklist"      # nothing running yet: an offer (QA P1-5)
     _, lid = launch(env, forecast=False)
     _, cid = funding_case(env)
     only(env, "launch_evidence_gaps", "funding_pack_draft", "registration_checklist")      # the idea-stage work has its own tests
     d = _pre(env)
-    assert (_suggestion(d, "stage_funding")["text"], _suggestion(d, "stage_blockers")["text"]) == ("I'm drafting your funding pack.", "I'm checking your launch evidence for gaps.")
+    assert (_suggestion(d, "stage_funding")["text"], _suggestion(d, "stage_blockers")["text"]) == ("Draft my funding pack", "Check my launch evidence for gaps")      # not started yet: offers, not "I'm …" (QA P1-5)
     done = started(env)                                                   # the Agent does all of it
     assert {"launch_evidence_gaps", "funding_pack_draft", "registration_checklist"} <= set(done)
     d = _pre(env)

@@ -587,16 +587,20 @@
 }
 .lg-google {
   position: relative;
-  height: 58px;
+  min-height: 58px;
+  height: auto;
   margin-top: 21px;
 }
 .lg-google-face {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 15px;
+  gap: 8px 15px;
+  padding: 10px 16px;
+  text-align: center;
   border: 1px solid #e6e6ee;
   border-radius: 12px;
   background: #fff;
@@ -614,6 +618,7 @@
 .lg-google-g {
   width: 24px;
   height: 24px;
+  flex: 0 0 auto;
 }
 .lg-google-hit {
   position: absolute;
@@ -621,9 +626,14 @@
   overflow: hidden;
   opacity: 0.01;
   border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .lg-google-hit > div {
-  transform: scale(1, 1.5);
+  width: 100%;
+  min-width: 100%;
+  transform: scale(1, 1.35);
   transform-origin: top center;
 }
 .lg-switch {
@@ -1318,7 +1328,8 @@
     font-size: 18px;
   }
   .lg-google {
-    height: 52px;
+    min-height: 52px;
+    height: auto;
   }
   .lg-google-face {
     font-size: 16px;
@@ -1354,3 +1365,9 @@
     font-size: clamp(26px, 8vw, 34px);
   }
 }
+
+
+
+
+
+

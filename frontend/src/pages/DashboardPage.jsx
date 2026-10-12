@@ -1,3 +1,5 @@
+import { OPEN_APPROVAL_EVENT } from "../components/agent/AgentPanel";
+import { FirstValueOnDashboard } from "../components/FirstValueCard";
 import { compactFigure, isFigure } from "../lib/figures";
 import { CountText } from "../components/Motion";
 import { enter } from "../lib/motion";
@@ -97,6 +99,7 @@ export default function DashboardPage() {
   // fetch or render it for lower-plan accounts.
   const hasLivePlanAccess = subscription?.status === "grandfathered"
     || planRank(subscription?.plan_key) >= planRank("decision_engine");
+  const isExplorerPlan = subscription?.status !== "grandfathered" && planRank(subscription?.plan_key) <= planRank("explorer");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -216,8 +219,17 @@ export default function DashboardPage() {
     // Marked and sent in one go. (It used to wait on a timer that the dashboard's own refresh
     // cancelled, after the task had already been marked as handed over: so it never opened.)
     handedOff.current = task;
+    let ready = null;
+    try { ready = JSON.parse(sessionStorage.getItem("ea_goal_ready") || "null"); } catch { ready = null; }
     setTimeout(() => {
-      followInAgentBox({ runId: task });
+      if (ready?.run_id === task) {
+        // A document asked for on the homepage: it is ready, so it opens for review. No forms, no questions.
+        try { sessionStorage.removeItem("ea_goal_ready"); } catch { /* said once at most */ }
+        window.dispatchEvent(new CustomEvent(OPEN_APPROVAL_EVENT, { detail: { runId: task } }));
+        window.dispatchEvent(new CustomEvent("ea:toast", { detail: { kind: "success", title: "Ready", message: ready.message } }));
+      } else {
+        followInAgentBox({ runId: task });
+      }
       navigate("/dashboard", { replace: true });
     }, 0);
   }, [searchParams, agentSummary, navigate]);
@@ -712,6 +724,8 @@ export default function DashboardPage() {
 
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
 
+      <FirstValueOnDashboard />
+
       {/* Needs Approval always sits beside the Agent card (below it on narrow screens), also when it is empty. */}
       <div {...enter("fadeUp", 0)} className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]">
         {/* A remembered copy is showing while the fresh one loads: approvals and anything that starts a task wait for it. */}
@@ -758,7 +772,7 @@ export default function DashboardPage() {
 
       {adaptive ? (
         <AdaptiveInsights dashboard={dashboard} loading={dashLoading && !dashboard} failed={dashFailed && !dashboard}
-          fullSimulation={subscription?.status === "grandfathered" || isPlatformModuleGranted("simulation", platformGrants)} paused={fromMemory}
+          fullSimulation={subscription?.status === "grandfathered" || isPlatformModuleGranted("simulation", platformGrants)} previewOnly={isExplorerPlan} paused={fromMemory}
           busyKey={insightBusy} onRetry={() => { setDashLoading(true); loadAgentSummary(); }}
           onAction={(card, action) => {
             trackDashboard(workspaceId, action?.upgrade ? "upgrade_clicked" : "insight_action", card.key,
@@ -812,9 +826,10 @@ export default function DashboardPage() {
           <div className="min-w-0 flex-[1_1_200px]">
             <div className="text-base font-bold text-slate-900 dark:text-slate-100">Business Health Report</div>
             <p className="text-[15px] text-slate-500 dark:text-slate-400">
+              {stageReport?.has_result === false ? <span data-report-empty>{stageReport.empty_text}</span> : <>
               Updated {new Date(dashboard?.freshness?.generated_at || Date.now()).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
               {" · "}{stageReport?.action?.panel === "launch_readiness" ? "Includes your setup checklist and launch readiness."
-                : stageReport?.description || "A full assessment of your business performance, risks and recommendations."}
+                : stageReport?.description || "A full assessment of your business performance, risks and recommendations."}</>}
             </p>
           </div>
           <button type="button" aria-expanded={showReports}

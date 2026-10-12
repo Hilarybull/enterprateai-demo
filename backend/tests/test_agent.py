@@ -312,7 +312,7 @@ def test_ac05_the_agent_needs_a_paid_plan_and_then_runs_on_the_accounts_credits(
     # Product decision (QA, Oct 2026): Agent tasks are not on the free plan. This replaces the
     # original AC-05 ("free users get limited Agent value"); the table is config.CAPABILITY_MIN_PLAN.
     free = Env(plan="explorer", credits=50)
-    blocked = free.submit(capability="enquiry_to_quote", params=dict(ENQUIRY))
+    blocked = free.submit(capability="new_proposal", channel="ui_action")      # proposals stay premium; quotations are on every plan
     assert blocked["kind"] == "blocked" and blocked["reason_codes"] == ["plan_capability"] and blocked["upgrade"] is True
     assert blocked["message"].endswith(" plan.") and "Starter plan" in blocked["message"]
     assert run(free.store.list_runs("A")) == [] and run(free.store.list_enquiries("A")) == [] and free.meter.balances[OWNER] == 50

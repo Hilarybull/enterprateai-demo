@@ -368,10 +368,12 @@ def _sender(tc: ToolContext, data: dict) -> dict:
     if not company["name"]:
         fields.append({"key": "business_name", "label": "Business name", "type": "text", "required": True})
     if not company["email"]:
-        # Offered as the address they signed in with (they have just proved it is theirs): one tap to accept, or change it.
+        # QA P5-3: suggested from the business's own records (another address on its profile), never from the address
+        # its owner signs in with: a personal sign-in is not where customers' replies should go. When the two are the
+        # same address, it is the profile's, so it is offered all the same.
         profile, contact = data.get("workspace_profile") or {}, data.get("contact") if isinstance(data.get("contact"), dict) else {}
-        own = next((str(x).strip() for x in (profile.get("contact_email"), profile.get("business_email"), profile.get("support_email"), data.get("email"), contact.get("email"),
-                                             getattr(tc.actor, "email", None), tc.run.get("requester_email"), getattr(tc.actor, "user_id", None)) if valid_email(x)), "")
+        own = next((str(x).strip() for x in (profile.get("email"), profile.get("contact_email"), profile.get("business_email"), profile.get("support_email"),
+                                             data.get("email"), contact.get("email")) if valid_email(x)), "")
         fields.append({"key": "business_email", "label": "Business email (customers' replies go here)", "type": "email", "required": True,
                        **({"default": own} if valid_email(own) else {})})
     fields[-1]["hint"] = "Saved to your workspace profile, so you won't be asked again."
@@ -504,6 +506,7 @@ async def create_quotation_draft(tc: ToolContext, a: dict) -> dict:
             "currency": _asked_currency(tc, data), "validity_days": validity,
             "valid_until": (now + timedelta(days=validity)).date().isoformat(),
             "payment_terms": a.get("payment_terms") or "",
+            "payment_terms_source": a.get("payment_terms_source") or "",
             "notes": a.get("notes") or "", "status": "draft", "version": 1,
             "contact_name": a["customer"].get("contact_name") or "",
             "source": "EnterprateAI Agent", "agent_run_id": tc.run["id"], "source_enquiry_id": a.get("enquiry_id"),
@@ -523,7 +526,7 @@ async def create_quotation_draft(tc: ToolContext, a: dict) -> dict:
 
 
 async def update_quotation_draft(tc: ToolContext, a: dict) -> dict:
-    allowed = {"notes", "payment_terms", "validity_days", "valid_until", "customer_email", "customer_id", "customer_name", "vat_rate", "items", "discount"}
+    allowed = {"notes", "payment_terms", "payment_terms_source", "validity_days", "valid_until", "customer_email", "customer_id", "customer_name", "vat_rate", "items", "discount"}
     patch = {k: v for k, v in (a.get("patch") or {}).items() if k in allowed}
     items = patch.pop("items", None)
     if items is not None:
@@ -596,6 +599,7 @@ async def build_quotation_payload(tc: ToolContext, a: dict) -> tuple[dict, str]:
         "customer_name": q.get("customer_name") or "Customer", "to_email": to, "channel": "email",
         "currency": _currency(q, data), **amounts,
         "valid_until": q.get("valid_until") or "", "payment_terms": _terms_text(q), "notes": q.get("notes") or "",
+        "payment_terms_source": q.get("payment_terms_source") or "",
         "source_enquiry_id": q.get("source_enquiry_id"),
         **({"rfq_id": q["rfq_id"]} if q.get("rfq_id") else {}),
     }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -165,6 +167,33 @@ def _defaults(*, email: str, company_name: str) -> dict[str, Any]:
     }
 
 
+def _offering_key(name: str) -> str:
+    """"End of tenancy cleaning" and "end-of-tenancy clean" are one offering (the Agent matches typed items the same way)."""
+    from app.modules.agent.intent import _norm_name
+    return _norm_name(name)
+
+
+def catalogue_with_offerings(catalogue: dict | None, names: list[str], now: str) -> tuple[dict, list[dict]]:
+    """The catalogue with an offering for each name not already there (by name, whatever its case or ending).
+    No price is invented: a new offering has none, and says it needs one."""
+    cat = dict(catalogue or {})
+    products = [dict(x) for x in cat.get("products") or [] if isinstance(x, dict)]
+    have = {_offering_key(x.get("name") or "") for x in products if not x.get("archived")}
+    added = []
+    for name in names:
+        key = _offering_key(name)
+        if not name or not key or key in have:
+            continue
+        have.add(key)
+        item = {"id": str(uuid.uuid4()), "name": name[:120], "type": "service", "description": "", "base_price": None, "cost_of_sales": None,
+                "discount": 0, "freight_cost": 0, "marketplace_listed": True, "archived": False, "price_needed": True,
+                "source": "onboarding", "created_at": now, "updated_at": now}
+        products.append(item)
+        added.append(item)
+    cat["products"] = products
+    return cat, added
+
+
 async def complete_onboarding(*, user_id: str, email: str, answers: dict[str, Any]) -> dict:
     """Apply the sign-up workspace answers. Skipped fields keep their current
     value (or a default for a first-time profile). Always marks onboarding done
@@ -204,6 +233,13 @@ async def complete_onboarding(*, user_id: str, email: str, answers: dict[str, An
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Please check your answers: {e}")
         patch["workspace_profile"] = validated.model_dump()
         patch["workspace_profile_updated_at"] = now
+
+    # QA D2: what the business offers, said at onboarding, becomes its Catalogue offerings (the records the
+    # pricing check, quotations and the Marketplace use), once each and never with an invented price.
+    offered = [str(sv.get("service_name") or "").strip() for sv in (cleaned.get("services") or []) if isinstance(sv, dict)]
+    catalogue, added = catalogue_with_offerings(data.get("catalogue"), offered, now)
+    if added:
+        patch["catalogue"] = catalogue
 
     patch["onboarding"] = {
         **(data.get("onboarding") or {}),

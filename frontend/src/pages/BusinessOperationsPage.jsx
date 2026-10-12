@@ -1,3 +1,4 @@
+import UkDateInput from "../components/UkDateInput";
 import Pagination, { pageSlice, useUrlValue } from "../components/Pagination";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { alertDialog } from "../lib/dialog";
@@ -375,6 +376,8 @@ function Field({ label, children }) {
 }
 
 function TextInput({ value, onChange, placeholder, type = "text" }) {
+  if (type === "date") return <UkDateInput value={value || ""} onChange={onChange}      // dd/mm/yyyy (QA R7)
+    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300" />;
   return (
     <input type={type} value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder}
       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
@@ -703,7 +706,7 @@ function InvoiceStateModal({ invoice, state, refLabel, amountLabel, onSubmit, on
           </label>
           <label className="block text-sm font-semibold text-slate-800">
             Date
-            <input type="date" value={date} max={todayLocal()} onChange={(e) => setDate(e.target.value)} required
+            <UkDateInput value={date} max={todayLocal()} onChange={(v) => setDate(v)} required
               className="mt-1.5 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" />
           </label>
           {err && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{err}</p>}
@@ -771,7 +774,7 @@ function RecordPaymentModal({ invoice, onRecord, onClose }) {
           </div>
           <div className="space-y-1">
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">Date Received</label>
-            <input type="date" value={paidAt} onChange={e => setPaidAt(e.target.value)}
+            <UkDateInput value={paidAt} onChange={(v) => setPaidAt(v)}
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
           </div>
           <div className="space-y-1">
@@ -818,7 +821,7 @@ function RecordDeliveryModal({ invoice, onRecord, onClose }) {
           </div>
           <div className="space-y-1">
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">Delivery Date</label>
-            <input type="date" value={deliveredAt} onChange={e => setDeliveredAt(e.target.value)}
+            <UkDateInput value={deliveredAt} onChange={(v) => setDeliveredAt(v)}
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
           </div>
         </div>

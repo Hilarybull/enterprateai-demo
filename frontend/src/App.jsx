@@ -22,6 +22,8 @@ import EssentialsPage from "./pages/EssentialsPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import AgentCentrePage from "./pages/AgentCentrePage";
 import ToolLibraryPage from "./pages/ToolLibraryPage";
+import QuickCheckPage from "./pages/QuickCheckPage";
+import { ArticlesRedirect, FeaturePage, FeaturesPage, HowItWorksPage, NotFound, TestimonialsPage, UseCasesPage } from "./pages/public/SitePages";
 import ReadinessPage from "./pages/ReadinessPage";
 import StartPage from "./pages/StartPage";
 import AgentRunPage from "./pages/AgentRunPage";
@@ -144,6 +146,14 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      {/* QA F: a page for every item in the homepage's navigation, and for each Features and Articles menu item. */}
+      <Route path="/features" element={<FeaturesPage />} />
+      <Route path="/features/:slug" element={<FeaturePage />} />
+      <Route path="/how-it-works" element={<HowItWorksPage />} />
+      <Route path="/use-cases" element={<UseCasesPage />} />
+      <Route path="/testimonials" element={<TestimonialsPage />} />
+      <Route path="/articles" element={<ArticlesRedirect />} />
+      <Route path="/articles/:slug" element={<ArticlesRedirect />} />
       <Route path="/pricing" element={<PricingPage />} />
       <Route path="/pricing/success" element={<PricingSuccessPage />} />
       <Route path="/integrations/callback" element={<IntegrationsCallbackPage />} />
@@ -176,6 +186,7 @@ export default function App() {
         <Route path="funding/:subjectId" element={<RequireWorkspace><ErrorBoundary label="Funding Readiness"><ReadinessPage feature="funding" /></ErrorBoundary></RequireWorkspace>} />
         <Route path="launch" element={<RequireWorkspace><ErrorBoundary label="Launch Readiness"><ReadinessPage feature="launch" /></ErrorBoundary></RequireWorkspace>} />
         <Route path="launch/:subjectId" element={<RequireWorkspace><ErrorBoundary label="Launch Readiness"><ReadinessPage feature="launch" /></ErrorBoundary></RequireWorkspace>} />
+        <Route path="check/:goal" element={<RequireWorkspace><QuickCheckPage /></RequireWorkspace>} />
         <Route path="agent" element={<RequireWorkspace><AgentCentrePage /></RequireWorkspace>} />
         <Route path="agent/runs/:runId" element={<RequireWorkspace><AgentRunPage /></RequireWorkspace>} />
         <Route path="validation" element={<ValidationWizardPage />} />
@@ -209,7 +220,7 @@ export default function App() {
       <Route path="/marketplace-profile" element={<OldMarketplaceProfile />} />
       <Route path="/marketplace/business/:slug" element={<ErrorBoundary label="Business profile"><DirectoryProfilePage /></ErrorBoundary>} />
       <Route path="/marketplace/claim/:slug" element={<ErrorBoundary label="Claim your business"><ClaimFlowPage /></ErrorBoundary>} />
-      <Route path="*" element={<NotFoundPage />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
     <DemoTour />
     <CookieBanner />

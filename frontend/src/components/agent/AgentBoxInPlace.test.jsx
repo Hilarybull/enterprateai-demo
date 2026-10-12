@@ -66,25 +66,27 @@ describe("the Agent box keeps the owner on the dashboard", () => {
   it("'need a quotation' opens the question in place; customer and items answered, the draft is confirmed and is in Needs Approval", async () => {
     const { onChanged } = mount();
     await type("need a quotation");
-    const dialog = screen.getByRole("dialog", { name: "The Agent needs a few details" });
+    const dialog = screen.getByRole("dialog", { name: "A few details" });
     expect(onTheDashboard()).toBeTruthy();                                // no route change
-    expect(dialog.querySelector("[data-step]").textContent).toBe("Step 2 of 5");
+    // Counted in the task's own questions, never the workflow's steps (QA P2-1). A new customer's name and email
+    // count until a customer on record is chosen, so the total only ever goes down (QA U3).
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 1 of 4");
     expect(within(dialog).getByText(QUESTION.question)).toBeTruthy();
-    // Customers on record, searchable, with "+ New customer"; a new customer's fields only once chosen.
+    // Customers on record, searchable, with "+ New customer"; a new customer's name and email are asked only once chosen.
     expect(within(dialog).getByLabelText("Search your customers")).toBeTruthy();
-    expect(within(dialog).queryByText("Customer email")).toBeNull();
     fireEvent.click(within(dialog).getByLabelText("+ New customer"));
-    expect(within(dialog).getByText("Customer email")).toBeTruthy();
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 1 of 4");      // their name and email to come: no change
     fireEvent.change(within(dialog).getByLabelText("Search your customers"), { target: { value: "fra" } });
     expect(within(dialog).queryByText("QA Round Six Ltd")).toBeNull();
     fireEvent.click(within(dialog).getByText("Frank"));
-    expect(within(dialog).queryByText("Customer email")).toBeNull();
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 2 of 2");      // a customer on record: their name and email drop out
     // The catalogue item brings its price, which stays editable; "+ Other item" is offered.
     fireEvent.change(within(dialog).getByLabelText("Item"), { target: { value: "p4" } });
     expect(within(dialog).getByLabelText("Unit price").value).toBe("200");
     fireEvent.change(within(dialog).getByLabelText("Quantity"), { target: { value: "2" } });
     expect(within(dialog).getByRole("button", { name: "+ Other item" })).toBeTruthy();
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
     expect(posts(/\/workflow-runs\/run-q\/input$/)[0].body).toEqual({ background: true, answers: { customer_id: "c2",
       items: [{ product_id: "p4", name: "", quantity: "2", unit_price: 200 }] } });
     expect(posts(/\/agent\/requests$/)[0].body.background).toBe(true);      // started by the server, watched here
@@ -111,14 +113,14 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     mount();
     const card = screen.getByRole("region", { name: "EnterprateAI Agent" });
     expect(card.hasAttribute("data-agent-shell")).toBe(true);
-    for (const cls of ["m-agent-card", "rounded-2xl", "p-[2px]", "overflow-hidden", "shadow-[0_20px_60px_rgba(108,92,231,0.25)]"]) expect(card.className.split(" ")).toContain(cls);
+    for (const cls of ["m-agent-card", "rounded-2xl", "p-[2px]", "overflow-clip", "shadow-[0_20px_60px_rgba(108,92,231,0.25)]"]) expect(card.className.split(" ")).toContain(cls);
     expect(card.querySelector(":scope > .m-agent-border").getAttribute("aria-hidden")).toBe("true");
     const panel = card.querySelector(":scope > [data-agent-panel]");
     for (const cls of ["rounded-[14px]", "bg-gradient-to-br", "from-[#1e1b4b]", "via-[#312e81]", "to-[#4c1d95]"]) expect(panel.className.split(" ")).toContain(cls);
     // Who it is, as on the homepage: the avatar, the name in white, "Online" in words, and the subtitle at 70% white.
     const who = card.querySelector("[data-agent-identity]");
     expect(who.querySelector("[data-agent-avatar]").style.width).toBe("32px");
-    expect(who.querySelector("h2").textContent).toBe("EnterprateAI AgentOnline");
+    expect(who.querySelector("h2").textContent).toBe("EnterprateAIOnline");      // the shared shell's name, as on the homepage
     expect(who.querySelector("h2").className).toContain("text-white");
     expect(who.querySelector("[data-agent-subtitle]")).toBeNull();          // on the dashboard the greeting and the briefing take the subtitle's place
     expect(card.querySelector("[data-agent-greeting]").className).toMatch(/\btext-lg\b.*\bsm:text-xl\b/);
@@ -137,8 +139,9 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     await type("quote for QA Round Six");
     const dialog = screen.getByRole("dialog");
     onChanged.mockClear();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: /^Discard this request/ })); });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Discard this request" }));
+    expect(posts(/\/cancel$/).length).toBe(0);                             // asked first (QA R12a)
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Yes, discard it" })); });
     expect(posts(/\/workflow-runs\/run-q\/cancel$/).length).toBe(1);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByText("Discarded. Nothing was sent.")).toBeTruthy();
@@ -159,20 +162,25 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     await type("need a quotation");
     let dialog = screen.getByRole("dialog");
     fireEvent.click(within(dialog).getByText("Frank"));
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
     fireEvent.change(within(dialog).getByLabelText("Item"), { target: { value: "p1" } });
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
-    dialog = screen.getByRole("dialog", { name: "The Agent needs one thing from you" });      // same place, next question
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
+    dialog = screen.getByRole("dialog", { name: "A few details" });      // same place, next question
     expect(within(dialog).getByText("What VAT rate should this quotation use?")).toBeTruthy();
-    expect(dialog.querySelector("[data-step]").textContent).toBe("Step 4 of 5");
+    // Counted across the task, not reset (QA E5). The first dialog said 2; a third the task asks after all drops the
+    // "of" rather than raising the total (QA U3).
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 3");
+    expect(dialog.querySelector("[data-opening]")).toBeNull();            // one question, asked once in the server's words
+    expect(dialog.querySelector("[data-asks]").textContent).toBe("What VAT rate should this quotation use?");
     onChanged.mockClear();
-    // Cancel asks what should happen to the request, and "Keep for later" leaves it waiting.
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    const choice = within(dialog).getByRole("group", { name: "What should happen to this request?" });
-    expect(within(choice).getAllByRole("button").map((b) => b.textContent.replace(/(Keep for later|Discard this request).*/, "$1"))).toEqual(["Keep for later", "Discard this request", "Back to the form"]);
-    fireEvent.click(within(choice).getByRole("button", { name: "Back to the form" }));
-    expect(within(dialog).queryByRole("group", { name: "What should happen to this request?" })).toBeNull();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: /^Keep for later/ }));
+    // Discard asks first; "Keep it" goes back to the question.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Discard this request" }));
+    const choice = within(dialog).getByRole("group", { name: "Discard this request?" });
+    expect(within(choice).getAllByRole("button").map((b) => b.textContent)).toEqual(["Yes, discard it", "Keep it"]);
+    fireEvent.click(within(choice).getByRole("button", { name: "Keep it" }));
+    expect(within(dialog).queryByRole("group", { name: "Discard this request?" })).toBeNull();
+    // Close keeps the request waiting (QA R12a: the button says what it does).
+    fireEvent.click(dialog.querySelector("[data-close]"));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(posts(/\/input$/).length).toBe(1);                              // nothing more was answered
     expect(posts(/\/cancel$/).length).toBe(0);                             // and nothing was cancelled
@@ -183,7 +191,7 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     const question = { run_id: "run-q", ...next.pending_question };
     show({ ...SUMMARY, suggestions: [{ key: "question:run-q", icon: "chat", tone: "amber", mood: "needs_you", text: "What VAT rate should this quotation use?", question, action: { run_id: "run-q" } }] });
     fireEvent.click(screen.getByText("What VAT rate should this quotation use?").closest("button"));
-    expect(within(screen.getByRole("dialog")).getByText("VAT rate (%)")).toBeTruthy();
+    expect(within(screen.getByRole("dialog")).getByLabelText("VAT rate (%)")).toBeTruthy();
   });
 
   it("says 'Working on it…' in place while a task is running, then gives the result", async () => {
@@ -230,10 +238,11 @@ describe("the chat bubble does the same", () => {
     await act(async () => { fireEvent.click(screen.getAllByRole("button")[0]); });
     fireEvent.change(screen.getByPlaceholderText(/Ask about customers/), { target: { value: "need a quotation" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
-    const dialog = screen.getByRole("dialog", { name: "The Agent needs a few details" });
+    const dialog = screen.getByRole("dialog", { name: "A few details" });
     fireEvent.click(within(dialog).getByText("Frank"));
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });      // one question at a time
     fireEvent.change(within(dialog).getByLabelText("Item"), { target: { value: "p4" } });
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
     expect(await screen.findByText(new RegExp(READY_TEXT.replace(/[.£]/g, "\\$&")))).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByText("See details").getAttribute("href")).toBe("/agent/runs/run-q");      // only on a click
@@ -247,7 +256,7 @@ describe("a button elsewhere on the dashboard", () => {
     const { followInAgentBox } = await import("./AgentPanel");
     mount();
     await act(async () => { followInAgentBox({ run: asking }); });
-    expect(screen.getByRole("dialog", { name: "The Agent needs a few details" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "A few details" })).toBeTruthy();
     expect(onTheDashboard()).toBeTruthy();
   });
 });

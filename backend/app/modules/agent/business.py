@@ -524,7 +524,9 @@ def cash_position(data: dict, today: date) -> dict[str, Any]:
               if (parse_day(e.get("date") or e.get("expense_date") or e.get("created_at")) or today) >= since]
     burn = money(sum(recent) / 3) if recent else 0.0
     runway = round(cash / burn, 1) if burn > 0 and cash > 0 else None
-    return {"cash": cash, "monthly_burn": burn, "runway_months": runway}
+    # `recorded`: whether any money in or out is on record at all. Without it, 0 is not a cash position (QA P2-5).
+    paid_in = any(status_of(i) == "paid" for i in invs)
+    return {"cash": cash, "monthly_burn": burn, "runway_months": runway, "recorded": bool(paid_in or paid_exps)}
 
 
 def simulate(data: dict, scenario: str, params: dict, today: date) -> dict[str, Any]:

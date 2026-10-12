@@ -383,7 +383,9 @@ def test_someone_described_is_not_taken_for_their_name_so_the_name_is_asked_for(
     assert said.read("invoice mark for research work", TODAY)["party"] == "mark" and said.read("invoice Acme Research Ltd £400", TODAY)["party"] == "Acme Research Ltd"
 
 
-def test_the_business_email_question_offers_the_address_the_owner_signed_in_with():
+def test_the_business_email_question_never_offers_the_address_the_owner_signed_in_with():
+    """QA P5-3 (this replaces the earlier rule): the suggestion comes from the business's own records; a sign-in
+    address alone is never assumed to be where customers' replies should go."""
     from test_agent import Env
     env = Env()
     env.businesses["A"]["data"].setdefault("workspace_profile", {}).pop("email", None)
@@ -392,4 +394,4 @@ def test_the_business_email_question_offers_the_address_the_owner_signed_in_with
     q = (r.get("pending_question") or {}).get("fields") or []
     asked = {f["key"]: f for f in q}
     if "business_email" in asked:      # this business has no email of its own on record
-        assert asked["business_email"]["default"] == OWNER and asked["business_email"]["required"] is True
+        assert "default" not in asked["business_email"] and asked["business_email"]["required"] is True

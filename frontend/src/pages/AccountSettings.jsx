@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest, getApiBaseUrl } from "../api/client";
-import { planLabel } from "../lib/plans";
+import { accessLabel } from "../lib/plans";
 import { useAuthStore } from "../store/auth";
 import { Switch, TipsSwitch } from "./EmailPreferencesPage";
 
@@ -280,7 +280,7 @@ export function PlanSection() {
   return (
     <Section heading="Plan & credits">
       <dl className="grid gap-4 sm:grid-cols-3">
-        <div><dt className="text-[13px] text-slate-500">Current plan</dt><dd className="mt-1 text-lg font-bold text-slate-900 dark:text-slate-100">{planLabel(subscription.plan_key, subscription.status)}</dd></div>
+        <div><dt className="text-[13px] text-slate-500">Current plan</dt><dd className="mt-1 text-lg font-bold text-slate-900 dark:text-slate-100">{accessLabel(subscription)}</dd></div>
         <div><dt className="text-[13px] text-slate-500">AI credits remaining</dt><dd className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">{typeof info?.available_credits === "number" ? info.available_credits.toLocaleString() : "—"}</dd></div>
         <div><dt className="text-[13px] text-slate-500">{free ? "Allocation" : "Renews"}</dt><dd className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-200">{free ? "Free trial allocation" : when || "See billing"}</dd></div>
       </dl>

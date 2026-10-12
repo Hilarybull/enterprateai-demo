@@ -27,9 +27,8 @@ describe("a form filled from the owner's message", () => {
     const onSubmit = vi.fn();
     const { container } = render(<QuestionForm question="What should this invoice include?" fields={invoiceForMark()} onSubmit={onSubmit} />);
     const said = container.querySelector("[data-said]");
-    expect(within(said).getByText("From what you said")).toBeTruthy();
-    // Everything taken from the message, not just the customer: Customer Mark (new) · $300 · USD.
-    expect([...said.querySelectorAll("dl > div")].map((d) => d.textContent)).toEqual(["Customer:Mark (new)", "Amount:$300.00", "Currency:USD"]);
+    // One compact line, shown once (QA P5-1): everything taken from the message, not just the customer.
+    expect(said.querySelector("[data-said-line]").textContent).toBe("From what you said: Mark (new) · $300.00 · USD (Edit)");
     // Asked: Mark's email and what the line is for. Not asked: who it is for, or the optional extras.
     expect(screen.getByLabelText("Customer email")).toBeTruthy();
     expect(screen.getByLabelText("Item description").value).toBe("");
@@ -55,12 +54,12 @@ describe("a form filled from the owner's message", () => {
       items: [{ product_id: null, name: "Consulting", quantity: 1, unit_price: 300 }], due_date: "2026-10-21", currency: "USD" });
   });
 
-  it("'Change' opens everything that was read, to correct it; the extras open on request", () => {
+  it("'Edit' opens everything that was read, to correct it; the extras open on request", () => {
     const { container } = render(<QuestionForm fields={invoiceForMark()} onSubmit={() => {}} />);
     fireEvent.click(container.querySelector("[data-more-options]"));
-    expect(screen.getByLabelText("Due date").value).toBe("2026-10-21");
+    expect(screen.getByLabelText("Due date").value).toBe("21/10/2026");      // shown the UK way (QA P2-12)
     expect(screen.getByLabelText("Notes on the invoice")).toBeTruthy();
-    fireEvent.click(within(container.querySelector("[data-said]")).getByRole("button", { name: "Change" }));
+    fireEvent.click(within(container.querySelector("[data-said]")).getByRole("button", { name: "(Edit)" }));
     expect(container.querySelector("[data-said]")).toBeNull();
     expect(screen.getByLabelText("Customer name").value).toBe("Mark");
     fireEvent.change(screen.getByLabelText("Customer name"), { target: { value: "Marc Ltd" } });
@@ -76,7 +75,7 @@ describe("a form filled from the owner's message", () => {
       { key: "term", label: "Term", type: "text", default: "12 months", said: true, said_text: "12 months" },
       { key: "start_date", label: "Start date", type: "date", default: "2026-11-01", said: true, said_text: "1 Nov 2026" }];
     const { container } = render(<QuestionForm fields={fields} onSubmit={onSubmit} />);
-    expect([...container.querySelectorAll("[data-said] dd")].map((d) => d.textContent)).toEqual(["monthly bookkeeping", "£300.00", "12 months", "1 Nov 2026"]);
+    expect([...container.querySelectorAll("[data-said-chip]")].map((d) => d.textContent)).toEqual(["monthly bookkeeping", "£300.00", "12 months", "1 Nov 2026"]);
     expect(screen.queryAllByRole("textbox")).toEqual([]);
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "That's right, continue" }));

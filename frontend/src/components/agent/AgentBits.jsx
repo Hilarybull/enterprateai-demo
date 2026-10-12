@@ -1,3 +1,5 @@
+import SaidLine from "../SaidLine";
+import UkDateInput from "../UkDateInput";
 import { useExit } from "../../lib/motion";
 import { createPortal } from "react-dom";
 import { useState } from "react";
@@ -81,45 +83,111 @@ function lineOf(row, catalogue) {
 }
 
 /** The lines a form starts with: what the Agent suggests, else one line to fill in. */
-function startingLines(field) {
+export function startingLines(field) {
   const catalogue = field.catalogue || [];
   const given = field.default?.length ? field.default : field.suggested || [];
   return given.length ? given.map((r) => lineOf(r, catalogue)) : [lineOf({}, catalogue)];
 }
 
-function LineItems({ field, value, onChange, vatRate, discount, currency }) {
+/** Items typed as words ("3 x office deep clean at £150 each, 2 window cleans at 40") as form lines.
+ * A line naming a catalogue item is that item (its price filled in when none is typed). The server reads them the same way. */
+export function linesFromText(text, catalogue = []) {
+  const out = [];
+  for (let part of String(text || "").trim().split(/\s*(?:\n+|;|,|\s+and\s+(?=\d)|\s+plus\s+)\s*/i)) {
+    part = part.trim().replace(/^[ .]+|[ .]+$/g, "");
+    if (!part) continue;
+    let qty = 1, price = "", name = part, m;
+    if ((m = name.match(/^(\d{1,5})\s*(?:x|×|\*)?\s+(?:of\s+)?/i))) { qty = Number(m[1]); name = name.slice(m[0].length).replace(/^(?:hours?|hrs?|days?|weeks?|months?|sessions?|units?|pcs?)\s+(?:of\s+)?/i, ""); }
+    else if ((m = name.match(/\s*(?:x|×)\s*(\d{1,5})\s*$/i))) { qty = Number(m[1]); name = name.slice(0, m.index); }
+    m = name.match(/\s*(?:\bat\b|@|\bfor\b|-)?\s*[£$€₦]?\s*(\d[\d,]*(?:\.\d+)?)\s*(k)?\s*(?:each|ea|apiece|per\s+\w+(?:\s+\w+)?)?\s*$/i);
+    if (m && m.index > 0 && /[£$€₦@]|\bat\b|\bfor\b|each|per\b|ea\b|apiece/i.test(m[0])) {
+      price = Number(m[1].replace(/,/g, "")) * (m[2] ? 1000 : 1);
+      name = name.slice(0, m.index);
+    }
+    if (qty === 1 && (m = name.match(/\s*(?:x|×)\s*(\d{1,5})\s*$/i))) { qty = Number(m[1]); name = name.slice(0, m.index); }
+    name = name.replace(/\s+/g, " ").replace(/^[ .:-]+|[ .:-]+$/g, "");
+    if (!name) continue;
+    const low = name.toLowerCase();
+    const hit = catalogueItemNamed(name, catalogue);
+    out.push(hit
+      ? { product_id: hit.id, name: "", quantity: Math.max(1, qty), unit_price: price !== "" ? price : (hit.unit_price > 0 ? hit.unit_price : ""), other: false }
+      : { product_id: null, name: name.slice(0, 200), quantity: Math.max(1, qty), unit_price: price, other: true });
+  }
+  return out;
+}
+
+/** The lines worth sending, or why not: what the item questions check before anything goes. */
+export function checkLines(field, rows) {
+  const catalogue = field.catalogue || [];
+  const lines = (rows || []).filter((r) => r.product_id || r.other || String(r.name || "").trim());
+  if (field.required && !lines.length) return { error: "Choose at least one item." };
+  if (lines.find((r) => !r.product_id && (!String(r.name || "").trim() || !(Number(r.unit_price) > 0)))) return { error: "Other items need a description and a price." };
+  if (lines.find((r) => r.product_id && !(Number(r.unit_price) > 0) && !(catalogue.find((p) => String(p.id) === String(r.product_id))?.unit_price > 0)))
+    return { error: "That catalogue item has no price set. Enter a unit price." };
+  return { lines: lines.map((r) => ({ product_id: r.product_id || null, name: r.name || "", quantity: r.quantity, unit_price: r.unit_price })) };
+}
+
+const normName = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean)
+  .map((w) => (w.length > 4 ? w.replace(/(?:ing|ings|es|s)$/, "") : w)).join(" ");
+/** The catalogue item a typed name means, whatever its case or ending ("end of tenancy clean"). The server reads it the same way. */
+export function catalogueItemNamed(name, catalogue = []) {
+  const low = String(name || "").trim().toLowerCase();
+  if (low.length < 3) return null;
+  return catalogue.find((p) => String(p.name || "").trim().toLowerCase() === low || normName(p.name) === normName(name))
+    || catalogue.find((p) => { const n = String(p.name || "").trim().toLowerCase(); return n.length >= 3 && (low.includes(n) || (low.length >= 5 && n.includes(low))); })
+    || null;
+}
+
+/** The item picker's one grid: item, qty, unit price, remove (headings and rows share it, QA E6). */
+const LINE_GRID = "grid-cols-[minmax(0,1fr)_4rem_5.75rem_2.375rem]";
+
+export function LineItems({ field, value, onChange, vatRate, discount, currency }) {
   const catalogue = field.catalogue || [];
   const rows = value?.length ? value : startingLines(field);
   const update = (i, patch) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  // A typed description that names a catalogue item becomes that item, with its price (QA R12d).
+  const settle = (i) => {
+    const r = rows[i];
+    const hit = !r.product_id && r.other ? catalogueItemNamed(r.name, catalogue) : null;
+    if (hit) update(i, { product_id: hit.id, name: "", other: false, unit_price: r.unit_price !== "" && r.unit_price != null ? r.unit_price : (hit.unit_price > 0 ? hit.unit_price : "") });
+  };
   return (
     <div className="space-y-2">
+      {/* QA E6: one grid for the headings and every row, at every width, so each label sits over its box:
+          item (the catalogue choice and, for another item, its description, stacked) · qty · unit price · remove. */}
+      <div className={`grid ${LINE_GRID} gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400`} aria-hidden="true" data-line-headings>
+        <span>Item</span><span>Qty</span><span>Unit price</span><span />
+      </div>
       {rows.map((r, i) => {
         const product = catalogue.find((p) => String(p.id) === String(r.product_id ?? ""));
         const typed = !product && r.other;
         return (
-          <div key={i} className="grid grid-cols-12 gap-2">
-            {catalogue.length > 0 && (
-              <select className={`${inputCls} col-span-12 sm:col-span-5`} value={product ? String(r.product_id) : typed ? "other" : ""} aria-label="Item"
-                onChange={(e) => {
-                  const picked = catalogue.find((p) => String(p.id) === e.target.value);
-                  // Choosing a catalogue item fills in its price, which can then be changed.
-                  update(i, picked ? { product_id: picked.id, name: "", other: false, unit_price: picked.unit_price > 0 ? picked.unit_price : "" }
-                    : { product_id: null, other: e.target.value === "other", unit_price: "" });
-                }}>
-                <option value="">Choose from your catalogue…</option>
-                {catalogue.map((p) => <option key={p.id} value={String(p.id)}>{p.name}{p.unit_price > 0 ? "" : " (no price set)"}</option>)}
-                <option value="other">Other item…</option>
-              </select>
-            )}
-            {typed && (
-              <input className={`${inputCls} col-span-12 ${catalogue.length ? "sm:col-span-7" : ""}`} placeholder="Item description" aria-label="Item description" value={r.name || ""} onChange={(e) => update(i, { name: e.target.value })} />
-            )}
-            <input className={`${inputCls} col-span-4 ${typed ? "sm:col-span-3" : "sm:col-span-2"}`} type="number" min="1" aria-label="Quantity" placeholder="Qty"
+          <div key={i} className={`grid ${LINE_GRID} items-start gap-2`} data-line-row>
+            <div className="min-w-0 space-y-1.5">
+              {catalogue.length > 0 && (
+                <select className={`${inputCls} min-w-0`} value={product ? String(r.product_id) : typed ? "other" : ""} aria-label="Item"
+                  onChange={(e) => {
+                    const picked = catalogue.find((p) => String(p.id) === e.target.value);
+                    // Choosing a catalogue item fills in its price, which can then be changed.
+                    update(i, picked ? { product_id: picked.id, name: "", other: false, unit_price: picked.unit_price > 0 ? picked.unit_price : "" }
+                      : { product_id: null, other: e.target.value === "other", unit_price: "" });
+                  }}>
+                  <option value="">Choose from your catalogue…</option>
+                  {catalogue.map((p) => <option key={p.id} value={String(p.id)}>{p.name}{p.unit_price > 0 ? "" : " (no price set)"}</option>)}
+                  <option value="other">Other item…</option>
+                </select>
+              )}
+              {(typed || !catalogue.length) && (
+                <input className={`${inputCls} min-w-0`} placeholder="Item description" aria-label="Item description" value={r.name || ""}
+                  onChange={(e) => update(i, { name: e.target.value, other: true })} onBlur={() => settle(i)} />
+              )}
+            </div>
+            <input className={`${inputCls} min-w-0 px-2`} type="number" min="1" aria-label="Quantity" placeholder="Qty" title="Quantity"
               value={r.quantity ?? 1} onChange={(e) => update(i, { quantity: e.target.value })} />
-            <input className={`${inputCls} col-span-6 ${typed ? "sm:col-span-7" : "sm:col-span-4"}`} type="number" min="0" step="0.01" aria-label="Unit price"
-              placeholder="Unit price" value={r.unit_price ?? ""} onChange={(e) => update(i, { unit_price: e.target.value })} />
+            <input className={`${inputCls} min-w-0 px-2`} type="number" min="0" step="0.01" aria-label="Unit price" title="Unit price"
+              placeholder="Price" value={r.unit_price ?? ""} onChange={(e) => update(i, { unit_price: e.target.value })} />
             <button type="button" aria-label="Remove item" onClick={() => onChange(rows.length > 1 ? rows.filter((_, j) => j !== i) : [lineOf({}, catalogue)])}
-              className="col-span-2 sm:col-span-1 flex items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:text-rose-600 dark:border-slate-700">
+              className="flex h-[38px] items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:text-rose-600 dark:border-slate-700">
               <Icon name="x" className="h-4 w-4" />
             </button>
           </div>
@@ -158,7 +226,7 @@ function LineTotals({ rows, vatRate, discount, currency }) {
 }
 
 /** Pick a customer already on record (searchable), or choose to add a new one. */
-function CustomerPicker({ field, value, onChange }) {
+export function CustomerPicker({ field, value, onChange }) {
   const [search, setSearch] = useState("");
   const options = field.options || [];
   const term = search.trim().toLowerCase();
@@ -228,7 +296,9 @@ export function QuestionForm({ question, fields, onSubmit, submitting, submitLab
         continue;
       }
       if (f.type === "discount") {
-        if (Number(v?.value) > 0) out[f.key] = { type: v.type === "amount" ? "amount" : "percent", value: Number(v.value) };
+        // "10%" or "ten percent" reaches the server as typed, which reads it (QA U2); a plain figure goes as a number.
+        const typed = String(v?.value ?? "").trim();
+        if (/^\d+(\.\d+)?$/.test(typed) ? Number(typed) > 0 : typed !== "") out[f.key] = { type: v.type === "amount" ? "amount" : "percent", value: /^\d+(\.\d+)?$/.test(typed) ? Number(typed) : typed };
         continue;
       }
       if (!(v === "" && !f.required)) out[f.key] = v;
@@ -246,20 +316,8 @@ export function QuestionForm({ question, fields, onSubmit, submitting, submitLab
     <form onSubmit={submit} className="space-y-4">
       {question && <p className="text-sm font-medium text-slate-800 dark:text-slate-100">{question}</p>}
       {brief && (
-        <div className="rounded-xl bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60" data-said>
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">From what you said</p>
-            {said.length > 0 && <button type="button" onClick={() => setChanging(true)} className="text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-300">Change</button>}
-          </div>
-          <dl className="mt-1 space-y-0.5">
-            {noted.filter(applies).map((f) => (
-              <div key={f.key} className="flex gap-2 text-[13px]">
-                <dt className="shrink-0 text-slate-500">{f.said_label || f.label}:</dt>
-                <dd className="min-w-0 font-medium text-slate-800 dark:text-slate-100">{f.said_text || f.said_note}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
+        // One compact line, shown once (QA P5-1): "From what you said: Mark (new) · $300.00 · USD (Edit)".
+        <SaidLine items={noted.filter(applies).map((f) => ({ key: f.key, text: f.said_text || f.said_note }))} onEdit={said.length > 0 ? () => setChanging(true) : null} />
       )}
       {shown.map((f) => (
         <div key={f.key} className={f.type === "checkbox" ? "-mt-2" : undefined}>
@@ -291,9 +349,11 @@ export function QuestionForm({ question, fields, onSubmit, submitting, submitLab
                 <option value="percent">%</option>
                 <option value="amount">{formatCurrency(0).replace(/[\d.,\s-]/g, "") || "£"}</option>
               </select>
-              <input className={`${inputCls} w-32`} type="number" min="0" step="0.01" placeholder="None" aria-label={f.label} value={values[f.key]?.value ?? ""}
+              <input className={`${inputCls} w-32`} type="text" inputMode="decimal" placeholder="None" aria-label={f.label} value={values[f.key]?.value ?? ""}
                 onChange={(e) => set(f.key)({ type: values[f.key]?.type || "percent", value: e.target.value })} />
             </div>
+          ) : f.type === "date" ? (
+            <UkDateInput className={inputCls} aria-label={f.label} value={values[f.key] || ""} onChange={set(f.key)} />
           ) : f.type === "customer" ? (
             <CustomerPicker field={f} value={values[f.key]} onChange={set(f.key)} />
           ) : f.type === "line_items" ? (
@@ -302,8 +362,8 @@ export function QuestionForm({ question, fields, onSubmit, submitting, submitLab
             <>
               <div className={f.prefix ? "relative" : undefined}>
                 {f.prefix && <span data-currency aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-slate-400">{f.prefix}</span>}
-                <input className={`${inputCls} ${f.prefix ? "pl-7" : ""}`} aria-label={f.label} type={f.type === "number" ? "number" : f.type === "email" ? "email" : f.type === "date" ? "date" : "text"} step={f.type === "number" ? "0.01" : undefined}
-                  min={f.type === "number" ? "0" : undefined} value={values[f.key]} onChange={(e) => set(f.key)(e.target.value)} />
+                <input className={`${inputCls} ${f.prefix ? "pl-7" : ""}`} aria-label={f.label} inputMode={f.type === "number" ? "decimal" : undefined} type={f.type === "email" ? "email" : f.type === "date" ? "date" : "text"} 
+                   value={values[f.key]} onChange={(e) => set(f.key)(e.target.value)} />
               </div>
               {f.chips?.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap gap-1.5" role="group" aria-label={`Common answers for ${f.label}`}>
@@ -448,7 +508,7 @@ export function ApprovalReview({ approval, lastEdit = null, editedByYou = false 
         {p.quote_reference && !p.differs_from_quote && p.quote_total != null && <Row label="From quotation" value={`${p.quote_reference} · matches`} />}
         <Row label="Valid until" value={p.valid_until} />
         <Row label="Due date" value={p.due_date ? `${p.due_date}${p.days_overdue ? ` · ${p.days_overdue} days overdue` : ""}` : null} />
-        <Row label="Payment terms" value={p.payment_terms} />
+        <Row label="Payment terms" value={p.payment_terms && p.payment_terms_source ? `${p.payment_terms} (${p.payment_terms_source})` : p.payment_terms} />
         <Row label="Payment date" value={p.paid_at} />
         {p.stage && <Row label="Reminder" value={`Reminder ${p.stage}`} />}
         <Row label="Notes" value={p.notes} />

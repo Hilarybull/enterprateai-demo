@@ -185,6 +185,22 @@ describe("Card actions (QA round 1)", () => {
     expect(h.onAction.mock.calls[0][1]).toMatchObject({ capability: "risk_concentration", agent: true });
   });
 
+  it("shows a teaser and upgrade prompt for Explorer cards", () => {
+    render(<AdaptiveInsights dashboard={dash([card()])} {...handlers()} previewOnly />);
+    expect(screen.getByText("2 customers make up 68% of your revenue.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Upgrade to see the full explanation and what to do next" })).toBeTruthy();      // says what upgrading unlocks
+    expect(screen.queryByText(/Consider diversifying your customer base/)).toBeNull();
+  });
+
+  it("asks for no upgrade where nothing is held back (QA P1-8): a card that needs data, the public Marketplace, a short card", () => {
+    const needs = card({ key: "runway", title: "Runway", state: "insufficient_data", text: "Add your costs to see your runway. Nothing is recorded yet, so there is no figure." });
+    const market = card({ key: "marketplace_similar", title: "Similar Businesses", text: "Browse similar businesses on the Marketplace. They are public, so anyone can see them.", cta: { label: "Browse the Marketplace", to: "/marketplace" } });
+    const short = card({ key: "short", title: "Short", text: "All invoices are paid." });
+    render(<AdaptiveInsights dashboard={dash([needs, market, short])} {...handlers()} previewOnly />);
+    expect(screen.queryByRole("button", { name: /^Upgrade to see/ })).toBeNull();
+    expect(screen.getByText(/Nothing is recorded yet, so there is no figure/)).toBeTruthy();      // shown in full
+  });
+
   it("shows no Agent action on a card that has none", () => {
     render(<AdaptiveInsights dashboard={dash([card({ agent_action: null })])} {...handlers()} />);
     expect(screen.queryByRole("button", { name: /Ask Agent/ })).toBeNull();
@@ -362,15 +378,15 @@ describe("Stage surfaces", () => {
     expect(tile.getAttribute("data-mood")).toBe("needs_you");
     expect(tile.querySelector("span").className).toContain("amber");      // needs you: amber, not red
     fireEvent.click(tile);
-    const dialog = screen.getByRole("dialog", { name: "The Agent needs one thing from you" });
+    const dialog = screen.getByRole("dialog", { name: "A few details" });
     expect(dialog.className).toContain("max-h-[80vh]");                  // sized to its content, never taller than 80% of the screen
     const footer = dialog.querySelector("[data-form-footer]");
-    expect(footer.className).toContain("sticky bottom-0");                // Continue and Cancel stay in view
-    expect(within(footer).getByRole("button", { name: "Continue" })).toBeTruthy();
-    expect(within(footer).getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(footer.className).toContain("sticky bottom-0");                // Send and Close stay in view
+    expect(within(footer).getByRole("button", { name: "Send" })).toBeTruthy();
+    expect(footer.querySelector("[data-close]").textContent).toBe("Close");      // the task waits in Needs You (QA R12a)
     expect(dialog.querySelector(".max-h-\\[200px\\]")).toBeNull();          // no inner box that scrolls the buttons away
     fireEvent.change(dialog.querySelector("textarea, input"), { target: { value: "Owners lose evenings to paperwork" } });
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
+    await act(async () => { fireEvent.click(within(footer).getByRole("button", { name: "Send" })); });
     const sent = calls.find((c) => c.method === "POST" && /\/workflow-runs\/run-7\/input$/.test(c.path));
     expect(sent.body).toEqual({ answers: { problem: "Owners lose evenings to paperwork" }, background: true });
     expect(onChanged).toHaveBeenCalled();

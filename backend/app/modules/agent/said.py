@@ -99,6 +99,11 @@ def _count(word: str) -> float:
     return 1.0 if word.lower() in ("a", "an", "one") else float(word)
 
 
+# Words that open a message about an enquiry, never a name: "enquiry from", "request for", "message from".
+_STOP_WORDS = r"(?:enquiry|enquiries|inquiry|request|requests|message|email|e-mail|query|note|lead|from|for|by|via|about|re|regarding|hi|hello|dear|new|a|an|the)"
+_STOP_NAME = re.compile(rf"^{_STOP_WORDS}(?:\s+{_STOP_WORDS})*\b\s*$|^(?:enquiry|inquiry|request|message|email|query|lead)\b", re.I)
+
+
 def read(text: str, today: date) -> dict[str, Any]:
     """Everything stated in the sentence. Keys are present only when the sentence says so."""
     original = (text or "").strip()
@@ -241,6 +246,8 @@ def read(text: str, today: date) -> dict[str, Any]:
     if m and _is_name(m.group("name")) and not re.match(rf"^(?:{_DOC})\b", m.group("name"), re.I):
         party = m.group("name")
     add = re.match(r"^(?:new\s+)?(customer|client|vendor|supplier|service|product|item)\s+(?:called\s+|named\s+)?(?P<name>.+)$", head, re.I)
+    if add and _STOP_NAME.match(add.group("name")):
+        add = None      # "Customer enquiry from …" is a message about an enquiry, not a new customer called "enquiry from" (QA R5)
     if add:
         kind = add.group(1).lower()
         out["record"] = "item" if kind in ("service", "product", "item") else "vendor" if kind in ("vendor", "supplier") else "customer"
@@ -276,6 +283,8 @@ def read(text: str, today: date) -> dict[str, Any]:
                 party, work = name, said_work or None
             else:
                 work = name      # "invoice for consulting": the work, with nobody named
+    if party and _STOP_NAME.fullmatch(re.sub(r"\s+", " ", party).strip(" .,:;-")):
+        party = None      # only filler words ("enquiry from", "request for"): nobody is named, so the name is asked with nothing filled in
     if party and not _REF.search(party):
         out["party"] = re.sub(r"\s+", " ", party).strip(" .,:;-")
     extra = [c for c in clauses[1:] if c and not re.fullmatch(r"(?:and|plus|also)?", c, re.I)]

@@ -126,7 +126,11 @@ def _vendor_fields(data: dict, vendor: dict | None) -> list[dict]:
 
 def _lines(answers: dict) -> list[dict]:
     out = []
-    for it in answers.get("items") or []:
+    given = answers.get("items") or []
+    if isinstance(given, str):      # typed as words: read into lines; one with no price is left to be asked
+        from app.modules.agent.intent import lines_in_text
+        given = [r for r in lines_in_text(given, []) if r["unit_price"] != ""]
+    for it in given:
         qty, name = float(it.get("quantity") or 0), str(it.get("name") or "").strip()
         price = float(it.get("unit_price") or 0) if it.get("unit_price") not in (None, "") else -1
         if qty > 0 and price >= 0 and name:

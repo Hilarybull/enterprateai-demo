@@ -45,6 +45,32 @@ async def _current_plan_for_user(user_id: str) -> tuple[str, str]:
     return plan_code, status
 
 
+async def entitled_plan(user_id: str) -> str:
+    """QA PF1: what the account can use, by the one resolver /plans/my uses (E8): the subscription, then admin
+    grants (full access counts as the top plan; an early-access account too). Every paid action is checked
+    against this, never the subscription row alone, so a "Full access (test grant)" account is never refused."""
+    try:
+        from app.modules.plans.access import effective_access
+        return normalise_plan_key((await effective_access(user_id))["effective_plan"])
+    except Exception:      # noqa: BLE001 - without the resolver, the subscription alone
+        plan_code, _status = await _current_plan_for_user(user_id)
+        return plan_code
+
+
+PLAN_LABELS = {"explorer": "Explorer", "starter_insight": "Starter", "decision_engine": "Decision Engine",
+               "growth_navigator": "Growth Navigator", "strategic_business_os": "Strategic Business OS"}
+
+
+def not_entitled_detail(feature_code: str, config: dict | None, plan_code: str) -> dict:
+    """What a refusal says (QA PF1): the plan it needs and the one the account is on, in words. Never a code."""
+    minimum = normalise_plan_key((config or {}).get("minimum_plan") or DEFAULT_MIN_PLAN)
+    name = str((config or {}).get("feature_name") or "This feature")
+    need, have = PLAN_LABELS.get(minimum, minimum), PLAN_LABELS.get(plan_code, plan_code)
+    return {"error": "FEATURE_NOT_ENTITLED", "feature_code": feature_code, "feature_name": name,
+            "minimum_plan": minimum, "minimum_plan_label": need, "plan": plan_code, "plan_label": have,
+            "message": f"{name} is included from the {need} plan. You're on {have}.", "upgrade": True}
+
+
 # ---------------------------------------------------------------------------
 # RPC helpers (call stored Postgres functions for atomic operations)
 # ---------------------------------------------------------------------------
@@ -265,14 +291,18 @@ def _with_minimum(row: dict | None) -> dict | None:
 
 
 async def get_feature_config(feature_code: str) -> dict | None:
-    return _with_minimum(await sb_select(
-        "credit_feature_config",
-        filters=[("feature_code", "eq", feature_code)],
-        single=True,
-    ))
+    """The live price list's row, or the migrations' own when the row is missing (QA PF1): never "not found"
+    for a feature the product sells."""
+    from app.modules.credits.catalogue import default_config
+    try:
+        row = await sb_select("credit_feature_config", filters=[("feature_code", "eq", feature_code)], single=True)
+    except Exception:      # noqa: BLE001 - the price list can't be read: the migrations' prices stand
+        row = None
+    return _with_minimum(row or default_config(feature_code))
 
 
 async def get_all_features() -> list[dict]:
+    # The live list as stored (the admin edits these rows); the catalogue only stands in for a single missing row.
     return [_with_minimum(r) for r in await sb_select("credit_feature_config", order="feature_code") or []]
 
 
@@ -312,15 +342,10 @@ async def reserve_credits(
         return {"ok": False, "error": "FEATURE_DISABLED"}
 
     credit_cost = int(config.get("credit_cost") or 0)
-    plan_code, _status = await _current_plan_for_user(user_id)
+    plan_code = await entitled_plan(user_id)
     entitled = await _feature_entitled(plan_code, feature_code, config.get("minimum_plan")) or await _has_platform_grant(user_id, feature_code)
     if not entitled:
-        return {
-            "ok": False,
-            "error": "FEATURE_NOT_ENTITLED",
-            "plan": plan_code,
-            "minimum_plan": config.get("minimum_plan") or DEFAULT_MIN_PLAN,
-        }
+        return {"ok": False, **not_entitled_detail(feature_code, config, plan_code)}
 
     gen_id = generation_id or str(uuid.uuid4())
     idempotency_key = f"{user_id}:{feature_code}:{gen_id}"
@@ -489,11 +514,15 @@ async def check_credits(user_id: str, feature_code: str) -> dict:
 
     balance = await get_balance(user_id)
     cost = int(config.get("credit_cost") or 0)
-    plan_code, _status = await _current_plan_for_user(user_id)
+    plan_code = await entitled_plan(user_id)
     entitled = await _feature_entitled(plan_code, feature_code, config.get("minimum_plan")) or await _has_platform_grant(user_id, feature_code)
     credit_controlled = _is_credit_controlled(config)
     allowed = bool(config.get("enabled", True)) and entitled and (not credit_controlled or balance >= cost)
     return {
+        # QA PF1: the plan is checked before any credits are shown. Refused, it says why, in words.
+        **({"refusal": not_entitled_detail(feature_code, config, plan_code)} if not entitled else {}),
+        "feature_name": config.get("feature_name"),
+        "cost_shown": cost if credit_controlled else 0,      # what a confirmation shows is what is charged
         "allowed": allowed,
         "can_afford": allowed,
         "entitled": entitled,
@@ -551,10 +580,13 @@ async def credit_guard(user_id: str, feature_code: str, generation_id: str | Non
                     status_code=402,
                     detail={"error": reservation.get("error"), "feature_code": feature_code},
                 )
+        elif err == "FEATURE_NOT_ENTITLED":
+            raise HTTPException(status_code=403, detail={k: v for k, v in reservation.items() if k != "ok"})
         else:
             raise HTTPException(
-                status_code=402,
-                detail={"error": err, "feature_code": feature_code},
+                status_code=403,
+                detail={"error": err, "feature_code": feature_code,
+                        "message": "This isn't available on your account just now. Nothing was charged."},
             )
 
     no_hold = bool(reservation.get("no_hold"))

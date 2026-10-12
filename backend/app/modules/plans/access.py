@@ -146,12 +146,9 @@ async def plan_meets(user_id: str, minimum_plan: str, *, grant_module: str | Non
     Grandfathered accounts and admin module grants always qualify."""
     if grant_module and await _has_module_grant(user_id, grant_module):
         return True
-    sub = await resolve_subscription(user_id)
-    if sub.status == "grandfathered":
-        return True
-    if sub.status != "active":
-        return False
-    return _plan_rank(sub.plan_key) >= _plan_rank(minimum_plan)
+    # QA PF1: the same resolver as /plans/my (E8): the subscription, then admin grants. A full-access grant is the
+    # top plan here too, whichever module the feature lives in.
+    return _plan_rank((await effective_access(user_id))["effective_plan"]) >= _plan_rank(minimum_plan)
 
 
 async def effective_plan_key(user_id: str) -> str:
@@ -165,3 +162,19 @@ async def effective_plan_key(user_id: str) -> str:
     if plan != TOP_PLAN and is_full_access(await module_grants(user_id)):
         return TOP_PLAN
     return plan
+
+
+PLAN_WORDS = {"explorer": "Explorer", "starter_insight": "Starter", "decision_engine": "Decision Engine",
+              "growth_navigator": "Growth Navigator", "strategic_business_os": "Strategic Business OS"}
+
+
+async def refusal(user_id: str, minimum_plan: str, feature: str) -> dict:
+    """QA PF1: why a paid feature is refused, in words: the plan it needs and the one the account has."""
+    try:
+        have = (await effective_access(user_id))["effective_plan"]
+    except Exception:      # noqa: BLE001
+        have = "explorer"
+    need = PLAN_WORDS.get(minimum_plan, minimum_plan)
+    return {"error": "FEATURE_NOT_ENTITLED", "feature_name": feature, "minimum_plan": minimum_plan, "minimum_plan_label": need,
+            "plan": have, "plan_label": PLAN_WORDS.get(have, have), "upgrade": True,
+            "message": f"{feature} is included from the {need} plan. You're on {PLAN_WORDS.get(have, have)}."}

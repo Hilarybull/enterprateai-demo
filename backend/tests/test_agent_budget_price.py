@@ -146,7 +146,7 @@ def test_a_growing_business_gets_it_once_a_month_and_the_tile_shows_the_result()
     growing(env)
     assert build(env)["context"]["business_stage"] == "growth"
     tile = lambda: next(s for s in build(env)["agent"]["suggestions"] if s["key"] == "stage_pricing")      # noqa: E731
-    assert tile()["text"] == "I'm testing a 5% and a 10% price change."
+    assert tile()["text"] == "Show me a 5% and a 10% price change"      # nothing running yet: an offer (QA P1-5)
     _only(env, "price_test")
     [r] = run(autostart.sweep(env.orch, "A"))
     assert r["workflow_key"] == "price_test" and r["source_reference"] == f"price:test:{env.now:%Y-%m}"

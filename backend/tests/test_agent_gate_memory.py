@@ -64,16 +64,18 @@ def test_the_same_gate_stops_every_automatic_trigger_and_the_assistant_route():
     env = Env(plan="explorer")
     _records(env)
     on(env)
-    assert run(autostart.sweep(env.orch, "A")) == []                      # automatic starting
+    started = run(autostart.sweep(env.orch, "A"))                         # automatic starting: only what the plan includes
+    assert all(agent_config.plan_allows("explorer", r["workflow_key"]) for r in started)
     env.fin["rfq_requests"] = [{"id": "r1", "status": "pending", "customer_name": "Buyer", "customer_email": "b@x.test", "items": [{"name": "Strategy Workshop", "quantity": 1}]}]
     assert run(agent_rfq.received(env.orch, "A", "r1")) is None           # a marketplace request arriving
-    typed = env.submit(text="Prepare a quotation for BrightTech Ltd for 2 x Strategy Workshop", channel="text")      # typed to the assistant
+    before = (len(run(env.store.list_runs("A"))), list(env.meter.charges))
+    typed = env.submit(capability="new_proposal", channel="ui_action")      # asked for directly: a proposal is not on Explorer
     assert typed["kind"] == "blocked" and typed["reason_codes"] == ["plan_capability"]
-    assert run(env.store.list_runs("A")) == [] and env.meter.charges == []
+    assert (len(run(env.store.list_runs("A"))), list(env.meter.charges)) == before      # nothing started, nothing charged
     # A task from before a downgrade can't be carried on either.
     paid = Env()
-    r = paid.submit(capability="enquiry_to_quote", params={"body": "Please quote for your Unpriced Service"})["run"]
-    run(paid.store.update_run(r["id"], {"status": "failed"}))
+    r = paid.submit(capability="registration_checklist", channel="ui_action")["run"]
+    run(paid.store.update_run(r["id"], {"status": "failed", "workflow_key": "new_proposal"}))      # a premium task, from before the downgrade
     paid.meter.plans[OWNER] = "explorer"
     with pytest.raises(Exception):
         run(paid.orch.retry(r["id"], OWNER))

@@ -280,12 +280,14 @@ async def answer_from_profile(orch, business_id: str, data: dict, runs: list[dic
     return changed
 
 
-async def sweep(orch, business_id: str, limit: int = MAX_PER_SWEEP) -> list[dict]:
+async def sweep(orch, business_id: str, limit: int = MAX_PER_SWEEP, visit: bool = False) -> list[dict]:
     """Start the tasks the records call for, in the owner's name. Returns the tasks started.
-    Does nothing unless the owner has switched automatic starting on."""
+    Does nothing unless the owner has switched automatic starting on. `visit`: the owner has only opened a
+    page, so nothing that asks about the business itself is started (QA U8)."""
     policy = await orch.rt.store.get_policy(business_id)
     try:      # housekeeping that applies whether or not automatic starting is on
         await orch.close_unanswered(await orch.rt.store.list_runs(business_id, limit=500))
+        await orch.close_duplicates(await orch.rt.store.list_runs(business_id, limit=500))
     except Exception:      # noqa: BLE001
         logger.warning("could not close unanswered tasks for %s", business_id, exc_info=True)
     if not enabled(policy):
@@ -299,6 +301,8 @@ async def sweep(orch, business_id: str, limit: int = MAX_PER_SWEEP) -> list[dict
         runs = await orch.rt.store.list_runs(business_id, limit=500)      # picked up again before anything new is started
     started: list[dict] = []
     todo = [*candidates(data, policy, runs, orch.rt.clock()), *await preparation(orch, business_id, data, policy, runs, ent["owner_id"])]
+    if visit:      # QA U8: opening a page never starts an Idea Validation (or a market size, or a plan draft)
+        todo = [c for c in todo if c["capability"] not in NOT_ON_A_VISIT]
     from app.modules.agent import config as agent_config
     if budget(policy, runs, orch.rt.clock())["paused"]:
         # The month's automatic budget is used: work that costs credits waits. Free work carries on.
@@ -316,7 +320,11 @@ async def sweep(orch, business_id: str, limit: int = MAX_PER_SWEEP) -> list[dict
     return started
 
 
-def later(business_id: str, orch=None) -> None:
+# Never started just because the owner opened a page (QA U8): they ask about the business itself.
+NOT_ON_A_VISIT = ("idea_validation", "market_size", "business_plan_draft")
+
+
+def later(business_id: str, orch=None, visit: bool = False) -> None:
     """Records have just changed somewhere else in the product: look at them shortly, in the
     background, without holding up whatever changed them. Several changes close together are one look."""
     if not business_id or time.monotonic() - _last_sweep.get(business_id, -_MIN_GAP_S) < _MIN_GAP_S:
@@ -332,7 +340,7 @@ def later(business_id: str, orch=None) -> None:
                 await the.release_stalled(await the.rt.store.list_runs(business_id, limit=200))
                 await the.auto_retry(await the.rt.store.list_runs(business_id, limit=200))
                 await answer_from_profile(the, business_id, await the.rt.business.load(business_id), await the.rt.store.list_runs(business_id, limit=200))
-            await sweep(the, business_id)
+            await sweep(the, business_id, visit=visit)
         except Exception:      # noqa: BLE001 - never surfaces in the save that triggered it
             logger.warning("automatic start failed for business %s", business_id, exc_info=True)
 

@@ -1717,6 +1717,7 @@ export default function ResultsPage() {
                   onClick={() => setCreditModal({
                     featureName: "Market Data Refresh",
                     creditCost: 4,
+                    featureCode: "market_data_refresh",
                     onConfirm: () => { setCreditModal(null); runSvcMr(); },
                   })}
                   className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-700 transition-colors"
@@ -1738,6 +1739,7 @@ export default function ResultsPage() {
                   onClick={() => setCreditModal({
                     featureName: "Market Data Refresh",
                     creditCost: 4,
+                    featureCode: "market_data_refresh",
                     onConfirm: () => { setCreditModal(null); runSvcMr(); },
                   })}
                   className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-700 transition-colors"
@@ -3449,6 +3451,7 @@ export default function ResultsPage() {
         <CreditConfirmModal
           featureName={creditModal.featureName}
           creditCost={creditModal.creditCost}
+          featureCode={creditModal.featureCode}
           onConfirm={creditModal.onConfirm}
           onCancel={() => setCreditModal(null)}
         />

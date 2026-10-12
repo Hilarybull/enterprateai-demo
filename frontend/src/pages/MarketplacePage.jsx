@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { DirectoryResults, FindToClaim } from "../components/marketplace/Directory";
 import MarketplaceHeader from "../components/marketplace/MarketplaceHeader";
@@ -28,12 +28,20 @@ export default function MarketplacePage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const { triggerDemoGate } = useDemoTour() || {};
-  const [query, setQuery] = useState("");
+  // QA P3: the search is in the address too (?q=), so it can be shared and Back returns to it.
+  const [query, setQueryState] = useState(() => params.get("q") || "");
+  const setQuery = (q) => {
+    setQueryState(q);
+    const next = new URLSearchParams(params);
+    if (q.trim()) next.set("q", q); else next.delete("q");
+    setParams(next, { replace: true });
+  };
+  useEffect(() => { const q = params.get("q") || ""; if (q !== query) setQueryState(q); }, [params]);      // eslint-disable-line react-hooks/exhaustive-deps
   const tab = tabFrom(params);
   const shown = TABS.find((t) => t.id === tab) || TABS[1];
 
   // The tab lives in the address, so a refresh or a shared link opens the same one.
-  const setTab = (id) => { setQuery(""); setParams({ tab: id }, { replace: true }); };
+  const setTab = (id) => { setQueryState(""); setParams({ tab: id }, { replace: true }); };
   const list = () => { if (triggerDemoGate?.("marketplace")) return; navigate("/marketplace/profile"); };
 
   return (

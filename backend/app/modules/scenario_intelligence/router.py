@@ -78,6 +78,70 @@ async def scenario_templates_list(
     return ScenarioTemplateListResponse(templates=template_list())
 
 
+# QA PF1: which scenarios each plan can run, checked on the server too (the page's planAllowsScenario, the same
+# rule): the baseline projection on every plan; four scenarios on Starter; every scenario from Decision Engine.
+# Running one is deterministic and free (Credit System v2 §6); only the AI explanation is charged.
+STARTER_SCENARIOS = ("tmpl_client_loss", "tmpl_payment_delay", "tmpl_revenue_drop", "tmpl_cost_increase")
+FREE_SCENARIOS = ("do_nothing_projection",)
+
+
+def scenario_minimum_plan(template_id: str | None) -> str:
+    if not template_id or template_id in FREE_SCENARIOS:
+        return "explorer"
+    return "starter_insight" if template_id in STARTER_SCENARIOS else "decision_engine"
+
+
+async def _require_scenario(user_id: str, template_id: str | None, name: str) -> None:
+    from app.modules.plans.access import has_grant, plan_meets, refusal
+    need = scenario_minimum_plan(template_id)
+    if need == "explorer" or await has_grant(user_id, "simulation") or await plan_meets(user_id, need):
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=await refusal(user_id, need, name or "This scenario"))
+
+
+# ── QA PF4: no run (and no charge) without the data a projection needs ──────────────────────────────────────────
+
+async def estimate_baseline(user: dict, business_id: str) -> dict | None:
+    """A forecast baseline from the owner's own pricing or idea answers (£70 × 25 a month), labelled "Estimate", for
+    when nothing is on record yet. Only figures they gave; None when there are none."""
+    try:
+        from app.modules.agent.router import get_orchestrator
+        orch = get_orchestrator()
+        actor, _policy = await orch.actor_for(user["id"], business_id, user.get("email"))
+        if not getattr(actor, "can_view", False):
+            return None
+        data = await orch.rt.business.load(business_id) or {}
+    except Exception:      # noqa: BLE001 - no estimate then; the owner is told what is missing
+        return None
+    from app.modules.agent import first_value
+    for goal, words in (("price_offer", "your pricing check"), ("test_idea", "your idea check")):
+        a = ((data.get("quick_check_answers") or {}).get(goal) or {}).get("answers") or {}
+        price, sales = first_value._num(a.get("price")), first_value._num(a.get("monthly_sales"))
+        if price and sales:
+            cost = first_value._num(a.get("cost")) or 0
+            fixed = first_value._num(a.get("fixed_costs")) or 0
+            return {"label": "Estimate", "basis": f"£{price:g} × {sales:g} a month, from {words}", "from": goal,
+                    "state": {"revenue_monthly": round(price * sales, 2), "cost_of_sales_monthly": round(cost * sales, 2), "expenses_monthly": round(fixed, 2)}}
+    return None
+
+
+async def _with_enough_data(user: dict, business_id: str, state, params: dict | None):
+    """The state to project, or a 422 saying what is missing (and the estimate on offer). With `use_estimate`, the
+    owner's own pricing answers are the baseline, and the run is labelled an estimate."""
+    from app.modules.scenario_intelligence.service import sufficiency
+    enough = sufficiency(state)
+    if enough["enough"]:
+        return state, None
+    estimate = await estimate_baseline(user, business_id)
+    if (params or {}).get("use_estimate") and estimate:
+        return state.model_copy(update=estimate["state"]), estimate
+    raise HTTPException(status_code=422, detail={
+        "error": "INSUFFICIENT_DATA", "missing": enough["missing"], "estimate": estimate,
+        "message": "There isn't enough on record to project yet: " + " and ".join(m.lower() for m in enough["missing"]) + ". Nothing was run and nothing was charged."
+                   + (f" You can use your own figures as an estimate instead ({estimate['basis']})." if estimate else
+                      " Record your sales and costs, or answer the pricing check, to project from them.")})
+
+
 @router.post("/scenario-runs", response_model=ScenarioRunResponse)
 async def scenario_runs_create(
     payload: ScenarioRunRequest,
@@ -86,6 +150,15 @@ async def scenario_runs_create(
     template = resolve_template(payload.scenario_template_id)
     if not template:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario template not found")
+    await _require_scenario(_user["id"], payload.scenario_template_id, getattr(template, "name", None) or payload.scenario_name or "This scenario")
+    from app.modules.scenario_intelligence.service import CLIENT_SCENARIOS, has_client
+    if payload.scenario_template_id in CLIENT_SCENARIOS and not has_client(payload.state):
+        raise HTTPException(status_code=422, detail={"error": "NO_CLIENT_ON_RECORD",
+                                                     "message": "There's no client on record, so there is no largest client to lose. Nothing was run."})
+    state, estimate = await _with_enough_data(_user, payload.business_id, payload.state, payload.parameters)
+    if estimate:
+        payload.parameters = {**(payload.parameters or {}), "basis": "estimate", "estimate_basis": estimate["basis"]}
+    payload.state = state
 
     run_doc = await create_scenario_run(
         tenant_id=payload.tenant_id,
@@ -124,6 +197,13 @@ async def scenario_runs_explain(
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario run not found")
 
+    # QA PF4: the narrative only describes the engine's output. With nothing on record behind it, it says so, with
+    # no model call and no charge.
+    base = run.get("baseline_snapshot") or {}
+    if not any(float(base.get(k) or 0) for k in ("revenue_monthly", "costs_monthly", "expenses_monthly", "cost_of_sales_monthly")):
+        return {"scenario_run_id": scenario_run_id, "interpretation": "There is not enough data on record to explain this scenario: no revenue or costs. "
+                "Record your sales and costs, or run it from an estimate, and the explanation will describe what the projection shows.",
+                "provider": None, "model": None, "total_tokens": 0, "not_enough_data": True}
     async with credit_guard(user["id"], "scenario_ai_interpretation"):
         try:
             return await generate_scenario_interpretation(scenario_run_id, user["id"])
@@ -169,6 +249,7 @@ async def scenario_runs_get(
         risk_signals=risk_signals,
         recommendations=recs,
         multi_engine=run.get("multi_engine"),
+        parameters={k: v for k, v in (run.get("parameters") or {}).items() if k in ("basis", "estimate_basis", "timeline_months")},
     )
 
 
@@ -192,11 +273,12 @@ async def do_nothing_run(
     payload: DoNothingRequest,
     _user=Depends(get_current_user),
 ) -> DoNothingResponse:
+    state, _estimate = await _with_enough_data(_user, payload.business_id, payload.state, getattr(payload, "parameters", None) or {})
     result = await do_nothing_projection(
         tenant_id=payload.tenant_id,
         business_id=payload.business_id,
         state_version=payload.state_version,
-        state=payload.state,
+        state=state,
         timeline_months=payload.timeline_months,
     )
     return DoNothingResponse(**result)

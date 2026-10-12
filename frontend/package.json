@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "lint": "echo \"(optional) add eslint\"",
     "test": "vitest run",
-    "check:overflow": "node scripts/check-overflow.mjs"
+    "check:overflow": "node scripts/check-overflow.mjs",
+    "check:nav": "node scripts/check-nav-menus.mjs",
+    "check:premium": "node scripts/check-premium-research.mjs"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.3.0",

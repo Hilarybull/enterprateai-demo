@@ -1,3 +1,4 @@
+import UkDateInput from "../UkDateInput";
 import { TONE, dateLabel, getPath, newKey } from "../../lib/readiness";
 
 // Small building blocks shared by the readiness screens, and the fields the guided sections
@@ -77,7 +78,7 @@ function Control({ field, id, value, onChange, disabled, data, selfId, evidence 
       // Text, not a number input: blank stays blank (unknown) and is never turned into zero.
       return <input {...common} type="text" inputMode="decimal" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
     case "date":
-      return <input {...common} type="date" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} />;
+      return <UkDateInput {...common} value={value ?? ""} onChange={(v) => onChange(v || null)} />;      // dd/mm/yyyy (QA P2-12)
     case "month":
       return <input {...common} type="month" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} />;
     case "select":

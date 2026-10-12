@@ -847,4 +847,11 @@ async def agent_tasks_by_plan() -> dict:
 
 @router.get("/my", response_model=SubscriptionOut)
 async def get_my_subscription(user=Depends(get_current_user)) -> SubscriptionOut:
-    return await resolve_subscription(user["id"])
+    sub = await resolve_subscription(user["id"])
+    try:
+        from app.modules.plans.access import effective_access
+        access = await effective_access(user["id"])
+        sub.effective_plan_key, sub.access_source = access["effective_plan"], access["source"]
+    except Exception:      # noqa: BLE001 - the subscription alone is still the right answer without grants
+        sub.effective_plan_key = None
+    return sub

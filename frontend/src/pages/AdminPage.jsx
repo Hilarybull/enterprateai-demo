@@ -1,3 +1,4 @@
+import UkDateInput from "../components/UkDateInput";
 import { createPortal } from "react-dom";
 import { alertDialog } from "../lib/dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -5,7 +6,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { apiRequest } from "../api/client";
 import { EXTRA_GRANTS, MODULES, FEATURES } from "../lib/permissions";
-import { getPlan, normalisePlanKey, planLabel } from "../lib/plans";
+import { normalisePlanKey, planLabel } from "../lib/plans";
 import logoUrl from "../enterprate-logo.png";
 import ConfirmDialog from "../components/ConfirmDialog";
 import AdminClaims from "../components/marketplace/AdminClaims";
@@ -1428,7 +1429,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                   <dt className="font-semibold text-slate-600 dark:text-slate-300">Subscription</dt>
                   <dd className="text-slate-700 dark:text-slate-200">{planLabel(access.subscription_plan, access.subscription_status)}</dd>
                   <dt className="font-semibold text-slate-600 dark:text-slate-300">Effective plan</dt>
-                  <dd className="text-slate-700 dark:text-slate-200">{getPlan(access.effective_plan)?.label || access.effective_plan} <span className="text-slate-500">({access.source})</span></dd>
+                  <dd className="text-slate-700 dark:text-slate-200">{planLabel(access.effective_plan)} <span className="text-slate-500">({access.source})</span></dd>
                   <dt className="font-semibold text-slate-600 dark:text-slate-300">Agent tasks</dt>
                   <dd className={access.agent_tasks ? "font-semibold text-emerald-700" : "text-slate-500"}>{access.agent_tasks ? "Yes" : "No"}</dd>
                   <dt className="font-semibold text-slate-600 dark:text-slate-300">Marketplace RFQs</dt>
@@ -1735,8 +1736,8 @@ export function ContactsSection() {
         <select aria-label="Marketing consent" value={filters.consent} onChange={set("consent")} className={field}><option value="">Any consent</option><option value="yes">Can be sent marketing</option><option value="no">Cannot be sent marketing</option></select>
         <select aria-label="Plan" value={filters.plan} onChange={set("plan")} className={field}><option value="">Any plan</option><option value="explorer">Explorer</option><option value="starter_insight">Starter</option><option value="decision_engine">Decision Engine</option></select>
         <select aria-label="Sign-up source" value={filters.source} onChange={set("source")} className={field}><option value="">Any source</option>{Object.entries(CONTACT_SOURCES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-        <input type="date" aria-label="Joined from" value={filters.since} onChange={set("since")} className={field} />
-        <input type="date" aria-label="Joined until" value={filters.until} onChange={set("until")} className={field} />
+        <UkDateInput aria-label="Joined from" value={filters.since} onChange={(v) => set("since")({ target: { value: v } })} className={field} />
+        <UkDateInput aria-label="Joined until" value={filters.until} onChange={(v) => set("until")({ target: { value: v } })} className={field} />
       </div>
       {state.problem && <p role="alert" className="mb-2 text-[13px] text-rose-600">{state.problem}</p>}
       {state.loading ? <p role="status" className="py-6 text-center text-[13px] text-slate-400">Loading contacts…</p> : (

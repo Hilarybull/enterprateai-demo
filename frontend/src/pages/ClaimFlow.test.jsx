@@ -291,7 +291,8 @@ describe("claim journey (W03 to W11)", () => {
     mount(`/marketplace/claim/${base.slug}?intent=INT-1`, <ClaimFlowPage />, "/marketplace/claim/:slug");
     await screen.findByText("Claim under review");
     expect(screen.getByText("Editing the public profile")).toBeTruthy();
-    expect(screen.getByText("Evidence for review · 5 Oct 2026")).toBeTruthy();
+    expect(screen.getByText(/^Evidence for review · 5 Oct 2026 at \d{2}:\d{2}$/)).toBeTruthy();      // with the time (QA P3)
+    expect(document.querySelector("[data-claim-ref]").textContent).toMatch(/^CLM-[A-Z0-9]{2,8}$/);      // never the raw UUID
     expect(screen.queryByLabelText("Public description")).toBeNull();     // no owner controls before approval
     fireEvent.click(screen.getByRole("button", { name: "Return to Marketplace" }));
     expect(screen.getByTestId("where").textContent).toBe("/marketplace?tab=businesses");
@@ -981,6 +982,13 @@ describe("businesses that sign up directly (G-1 to G-4)", () => {
     if (choice) fireEvent.click(screen.getByLabelText(choice));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    if (!choice) {
+      // No answer yet: Finish asks first and creates nothing (QA P0-3); "Decide later" is one tap away.
+      const ask = await screen.findByText(/Before we finish/);
+      expect(sent("POST", /onboarding$/).length).toBe(0);
+      fireEvent.click(within(ask.closest("[data-finish-match]")).getByLabelText("Decide later"));
+      fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    }
     await waitFor(() => expect(sent("POST", /onboarding$/).length).toBe(1));
     expect(sent("POST", /onboarding$/)[0].body.answers).toMatchObject({ company_name: "Northwind Advisory", registration_number: "12345678" });
   }
@@ -997,7 +1005,7 @@ describe("businesses that sign up directly (G-1 to G-4)", () => {
     expect(sent("POST", /duplicate-answers$/)[0].body).toEqual({ profile_id: "p1", answer: "not_mine" });
   });
 
-  it("G-1: 'Decide later', or no answer at all, never holds up sign-up", async () => {
+  it("G-1: 'Decide later' never holds up sign-up; with no answer, Finish asks once first", async () => {
     await onboardTo("Decide later");
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard"));
     expect(sent("POST", /duplicate-answers$/).length).toBe(0);
@@ -1410,6 +1418,52 @@ describe("round N", () => {
     fireEvent.click(screen.getByRole("button", { name: "AI fill: suggest my services" }));
     expect((await screen.findByText(/Services couldn't be suggested just now/)).getAttribute("role")).toBe("alert");
     expect(sent("PATCH", /marketplace-profile$/).length).toBe(0);            // nothing was saved
+  });
+});
+
+describe("QA P2-11: a claim already made", () => {
+  it("the profile says the claim is under review and links to it, instead of offering a new claim", async () => {
+    useAuthStore.setState({ token: "t", email: "me@northwind.test", hydrated: true });
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: unclaimed }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: { ok: true } }) },
+      { method: "GET", match: /^\/business-claims$/, reply: () => ({ body: { enabled: true, items: [claimOf({ status: "verification_pending", next_step: "pending_review", profile: { ...base } })] } }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    const go = await screen.findAllByRole("button", { name: "Your claim is under review" });
+    expect(screen.queryByRole("button", { name: unclaimed.claim?.cta || "Claim this Business for Free" })).toBeNull();
+    expect(document.querySelector("[data-my-claim]").textContent).toContain("being reviewed");
+    expect(screen.queryByText(/Claim it to control this profile/)).toBeNull();      // no sales pitch while it is reviewed (QA R9)
+    expect(screen.queryByRole("heading", { name: "Is this your business?" })).toBeNull();
+    fireEvent.click(go[0]);
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/marketplace/claim/${base.slug}`));
+  });
+
+  it("on the claim page, someone signed in sees step 1 as done", async () => {
+    useAuthStore.setState({ token: "t", email: "me@northwind.test", hydrated: true });
+    routes = [{ method: "GET", match: /marketplace\/businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: unclaimed }) },
+      { method: "GET", match: /business-claims$/, reply: () => ({ body: { items: [] } }) }];
+    mount(`/marketplace/claim/${base.slug}`, <ClaimFlowPage />, "/marketplace/claim/:slug");
+    const done = await screen.findByText(/^Signed in/);
+    expect(done.closest("li").hasAttribute("data-step-done")).toBe(true);
+    expect(screen.queryByText("Sign in or create an account")).toBeNull();
+  });
+});
+
+describe("QA P3: the public profile", () => {
+  it("says the badge's meaning once, offers Request unlisting, and has a way back to the results", async () => {
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: unclaimed }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: { ok: true } }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    await screen.findByRole("heading", { name: "Northwind Advisory Ltd" });
+    const card = screen.getByRole("heading", { name: "About this badge" }).closest("section");
+    const sentences = card.textContent.split(/(?<=\.)\s*/).filter(Boolean);
+    expect(new Set(sentences).size).toBe(sentences.length);      // no sentence said twice
+    // QA R9: one sentence about where it came from, not two saying the same thing in different words.
+    expect((card.textContent.match(/public sources/g) || []).length).toBe(1);
+    expect(card.textContent).not.toMatch(/has not (yet )?confirmed it/i);
+    fireEvent.click(screen.getByRole("button", { name: "Request unlisting" }));
+    expect(screen.getByRole("combobox").value).toBe("unlist");
+    fireEvent.click(document.querySelector("[data-back-to-results]"));
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/marketplace?tab=businesses"));
   });
 });
 

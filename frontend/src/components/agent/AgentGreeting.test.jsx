@@ -30,7 +30,7 @@ describe("the Agent card's greeting and briefing", () => {
     useWorkspaceStore.setState({ workspaceId: "ws1", workspaceName: "QA Onboarding Test Ltd" });
     render(<MemoryRouter><AgentPanel businessId="ws1" summary={summary} onChanged={() => {}} /></MemoryRouter>);
     const greeting = card().querySelector("[data-agent-greeting]");
-    expect(greeting.textContent).toMatch(/^Good (morning|afternoon|evening), QA Onboarding Test Ltd$/);
+    expect(greeting.textContent).toMatch(/^(Good (morning|afternoon|evening)|Hello), QA Onboarding Test Ltd$/);
     expect(greeting.getAttribute("title")).toBe(greeting.textContent);
     expect(greeting.textContent).not.toContain("Munah");                    // the workspace, not the person, on this card
     await waitFor(() => expect(card().querySelector("[data-agent-briefing]").textContent).toBe("While you were away I drafted 1 invoice and checked your risks."));
@@ -51,10 +51,11 @@ describe("the Agent card's greeting and briefing", () => {
     expect(asked.filter((a) => /ws2\/agent\/briefing/.test(a)).length).toBe(1);
   });
 
-  it("a workspace with no name yet is greeted without one, with a way to name the business", () => {
+  it("a workspace with no business name uses the display name and shows no business prompt", () => {
     useWorkspaceStore.setState({ workspaceId: "ws1", workspaceName: "My workspace" });
     render(<MemoryRouter><AgentPanel businessId="ws1" summary={summary} onChanged={() => {}} /></MemoryRouter>);
-    expect(card().querySelector("[data-agent-greeting] span").textContent).toMatch(/^Good (morning|afternoon|evening)$/);
-    expect(screen.getByRole("button", { name: "Name your business" })).toBeTruthy();
+    expect(card().querySelector("[data-agent-greeting] span").textContent).toMatch(/^(Good (morning|afternoon|evening)|Hello), Munah Okoro$/);
+    expect(screen.queryByRole("button", { name: "Name your business" })).toBeNull();
   });
 });
+

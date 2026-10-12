@@ -197,5 +197,9 @@ CREDIT_FEATURES: dict[str, dict[str, Any]] = {
     "rfq_response":         {"name": "RFQ Response",                   "cost": 2},
 }
 
+# QA E7: tasks whose reading of the enquiry is part of the price they advertise ("2 credits to prepare the
+# quotation"): the reading is never charged on top, so what is charged is what was said.
+READING_INCLUDED_IN = frozenset({"enquiry_to_quote"})
+
 # Invoice states in which a reminder must never be sent (s16.6, AC-23).
 REMINDER_INELIGIBLE_STATUSES = {"paid", "void", "voided", "cancelled", "canceled", "credited", "disputed", "draft", "written_off"}

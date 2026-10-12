@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useRef } from "react";
 import html2pdf from "html2pdf.js";
@@ -75,6 +75,7 @@ export default function CataloguePage() {
   const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
   const refreshWorkspaceData = useWorkspaceStore((s) => s.refreshWorkspaceData);
   const wsDoc = useWorkspaceStore((s) => s.wsDoc);
+  const [marketplaceStatus, setMarketplaceStatus] = useState(null);
   const navigate = useNavigate();
 
   function canCatalogueFeature(featureKey) {
@@ -121,6 +122,18 @@ export default function CataloguePage() {
     const t = searchParams.get("tab");
     if (t) { setActiveTab(t); setSearchParams({}, { replace: true }); }
   }, []); // eslint-disable-line
+
+  useEffect(() => {
+    let alive = true;
+    if (!workspaceId) {
+      setMarketplaceStatus(null);
+      return () => { alive = false; };
+    }
+    apiRequest("/marketplace/status", "GET")
+      .then((res) => { if (alive) setMarketplaceStatus(res); })
+      .catch(() => { if (alive) setMarketplaceStatus(null); });
+    return () => { alive = false; };
+  }, [workspaceId, workspaceDataRefreshTrigger]);
   const [reportFinancials, setReportFinancials] = useState({ invoices: [], expenses: [] });
   const [pendingCatalogueReport, setPendingCatalogueReport] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -156,15 +169,15 @@ export default function CataloguePage() {
       const sellPrice = Math.max(0, Number(p.base_price || 0) - Number(p.discount || 0));
       const cos = Number(p.cost_of_sales || p.unit_cost || 0);
       const margin = sellPrice > 0 ? (((sellPrice - cos) / sellPrice) * 100).toFixed(1) : null;
-      return { name: p.name || "—", category: p.category || p.product_type || "—", price: formatCurrency(sellPrice, cur), cos: formatCurrency(cos, cur), margin: margin != null ? `${margin}%` : "—" };
+      return { name: p.name || "�", category: p.category || p.product_type || "�", price: p.price_needed && !(Number(p.base_price) > 0) ? "Price needed" : formatCurrency(sellPrice, cur), cos: formatCurrency(cos, cur), margin: margin != null ? `${margin}%` : "�" };
     });
     const customerRows = figures
       .sort((a, b) => b.revenue - a.revenue || b.outstanding - a.outstanding)
-      .map((c) => ({ name: c.name || "—", invoices: c.invoices, revenue: formatCurrency(c.revenue, cur), outstanding: formatCurrency(c.outstanding, cur),
-        terms: c.payment_terms ? `${c.payment_terms}d` : "—" }));
+      .map((c) => ({ name: c.name || "�", invoices: c.invoices, revenue: formatCurrency(c.revenue, cur), outstanding: formatCurrency(c.outstanding, cur),
+        terms: c.payment_terms ? `${c.payment_terms}d` : "�" }));
     const vendorRows = activeVendors.map(v => ({
-      name: v.name || "—", category: v.vendor_type || v.category || "—",
-      terms: v.payment_terms ? `${v.payment_terms}d` : "—",
+      name: v.name || "�", category: v.vendor_type || v.category || "�",
+      terms: v.payment_terms ? `${v.payment_terms}d` : "�",
       spent: formatCurrency(vendorSpendMap.get(v.name) || 0, cur),
     }));
     return { productRows, customerRows, vendorRows, cur };
@@ -376,7 +389,7 @@ export default function CataloguePage() {
   }
 
   function buildCatalogueReportHtml({ productRows, customerRows, vendorRows, cur }) {
-    const col = (cells) => cells.map((c) => `<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;">${c ?? "—"}</td>`).join("");
+    const col = (cells) => cells.map((c) => `<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;">${c ?? "�"}</td>`).join("");
     const hdr = (cells) => cells.map((c) => `<th style="padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;border-bottom:2px solid #e2e8f0;text-align:left;">${c}</th>`).join("");
     const table = (headers, rows) => `
       <table style="width:100%;border-collapse:collapse;margin-top:8px;">
@@ -653,6 +666,10 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     useWorkspaceStore.getState().clearWsDoc();
     refreshWorkspaceData();
   }
+  async function publishMarketplaceWorkspace() {
+    await apiRequest("/marketplace/publish", "POST", { workspace_id: workspaceId });
+    refreshWorkspaceData();
+  }
   async function persistCatalogueIntegrations(next) {
     await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { integrations: { catalogue: next } } });
   }
@@ -847,11 +864,19 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
   }
 
   async function toggleMarketplaceListing(productId, currentlyListed) {
+    const nextListed = !currentlyListed;
+    const previousProducts = products;
     const nextProducts = products.map((product) =>
-      product.id === productId ? { ...product, marketplace_listed: !currentlyListed } : product
+      product.id === productId ? { ...product, marketplace_listed: nextListed } : product
     );
     setProducts(nextProducts);
-    await persist({ products: nextProducts, customers, vendors });
+    try {
+      if (nextListed) await publishMarketplaceWorkspace();
+      await persist({ products: nextProducts, customers, vendors });
+    } catch (e) {
+      setProducts(previousProducts);
+      setError(e instanceof Error ? e.message : "Could not list on the Marketplace.");
+    }
   }
 
   function deleteEntity(kind, id) {
@@ -1032,12 +1057,12 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   {catalogueDrill.items.map((item) => (
                     <div key={item.id} className="flex items-center justify-between gap-4 py-2.5">
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-slate-800">{item.name || item.company_name || "—"}</div>
+                        <div className="truncate text-sm font-medium text-slate-800">{item.name || item.company_name || "�"}</div>
                         {catalogueDrill.type === "products" && (
-                          <div className="text-[11px] text-slate-400">{item.category || "No category"} · Sell: {formatCurrency(Number(item.base_price || 0), currency)}</div>
+                          <div className="text-[11px] text-slate-400">{item.category || "No category"} � Sell: {formatCurrency(Number(item.base_price || 0), currency)}</div>
                         )}
                         {catalogueDrill.type === "customers" && (
-                          <div className="text-[11px] text-slate-400">{item.email || item.contact_email || "No email"}{item.payment_terms ? ` · ${item.payment_terms}d terms` : ""}</div>
+                          <div className="text-[11px] text-slate-400">{item.email || item.contact_email || "No email"}{item.payment_terms ? ` � ${item.payment_terms}d terms` : ""}</div>
                         )}
                         {catalogueDrill.type === "vendors" && (
                           <div className="text-[11px] text-slate-400">{item.email || item.contact_email || "No email"}</div>
@@ -1097,7 +1122,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   }}
                   className="flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-brand-600 hover:bg-brand-50 disabled:opacity-40 transition-colors dark:text-brand-400 dark:hover:bg-brand-900/20"
                 >
-                  {descSuggesting ? "..." : "✦ AI Fill"}
+                  {descSuggesting ? "..." : "? AI Fill"}
                 </button>
               </div>
               <textarea
@@ -1207,19 +1232,19 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             <ProductTypeIcon type={p.type} />
                             <div className="text-sm font-semibold text-slate-900">{p.name}</div>
                             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${p.type === "product" ? "bg-sky-50 text-sky-700" : "bg-violet-50 text-violet-700"}`}>{p.type}</span>
-                            {p.marketplace_listed === false ? (
-                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                                Hidden
-                              </span>
-                            ) : (
+                            {marketplaceStatus?.is_published && p.marketplace_listed !== false ? (
                               <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
                                 Listed
+                              </span>
+                            ) : (
+                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                Hidden
                               </span>
                             )}
                             {importBadge(p)}
                           </div>
                           <div className="mt-0.5 text-xs text-slate-500">
-                            {formatCurrency(p.base_price, currency)} base · {formatCurrency(p.cost_of_sales || 0, currency)} CoS{p.discount ? ` · ${formatCurrency(p.discount, currency)} off` : ""}{p.freight_cost ? ` · ${formatCurrency(p.freight_cost, currency)} freight` : ""}
+                            {p.price_needed && !(Number(p.base_price) > 0) ? <span className="font-semibold text-amber-700" data-price-needed>Price needed</span> : <>{formatCurrency(p.base_price, currency)} base</>} � {formatCurrency(p.cost_of_sales || 0, currency)} CoS{p.discount ? ` � ${formatCurrency(p.discount, currency)} off` : ""}{p.freight_cost ? ` � ${formatCurrency(p.freight_cost, currency)} freight` : ""}
                           </div>
                         </div>
                         <ActionMenu
@@ -1254,7 +1279,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   </div>
                   {pTotal > 1 && (
                     <div className="flex items-center justify-between pt-1">
-                      <span className="text-xs text-slate-500">{activeProducts.length} product{activeProducts.length !== 1 ? "s" : ""} · Page {pPage + 1} of {pTotal}</span>
+                      <span className="text-xs text-slate-500">{activeProducts.length} product{activeProducts.length !== 1 ? "s" : ""} � Page {pPage + 1} of {pTotal}</span>
                       <div className="flex items-center gap-1">
                         <button type="button" disabled={pPage === 0} onClick={() => setProductPage((p) => Math.max(0, p - 1))} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
                         {Array.from({ length: Math.min(5, pTotal) }, (_, i) => { const pi = pTotal <= 5 ? i : Math.max(0, Math.min(pPage - 2 + i, pTotal - 5 + i)); return <button key={pi} type="button" onClick={() => setProductPage(pi)} className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${pPage === pi ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{pi + 1}</button>; })}
@@ -1290,7 +1315,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-900">{p.name}</div>
                       <div className="text-xs text-slate-500">
-                        Archived {age} days ago • Expires in {expiring} days
+                        Archived {age} days ago � Expires in {expiring} days
                       </div>
                     </div>
                     <ActionMenu
@@ -1464,8 +1489,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             {importBadge(c)}
                           </div>
                           <div className="text-xs text-slate-500">
-                            {c.industry || "Industry"} • {formatPaymentTerms(c.payment_terms)} • {c.address || "Address on file"}
-                            {c.email ? ` • ${c.email}` : ""}{c.phone_number ? ` • ${c.phone_number}` : ""}
+                            {c.industry || "Industry"} � {formatPaymentTerms(c.payment_terms)} � {c.address || "Address on file"}
+                            {c.email ? ` � ${c.email}` : ""}{c.phone_number ? ` � ${c.phone_number}` : ""}
                           </div>
                         </div>
                         <ActionMenu items={[
@@ -1480,7 +1505,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   </div>
                   {cTotal > 1 && (
                     <div className="flex items-center justify-between pt-1">
-                      <span className="text-xs text-slate-500">{activeCustomers.length} customer{activeCustomers.length !== 1 ? "s" : ""} · Page {cPage + 1} of {cTotal}</span>
+                      <span className="text-xs text-slate-500">{activeCustomers.length} customer{activeCustomers.length !== 1 ? "s" : ""} � Page {cPage + 1} of {cTotal}</span>
                       <div className="flex items-center gap-1">
                         <button type="button" disabled={cPage === 0} onClick={() => setCustomerPage((p) => Math.max(0, p - 1))} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
                         {Array.from({ length: Math.min(5, cTotal) }, (_, i) => { const pi = cTotal <= 5 ? i : Math.max(0, Math.min(cPage - 2 + i, cTotal - 5 + i)); return <button key={pi} type="button" onClick={() => setCustomerPage(pi)} className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${cPage === pi ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{pi + 1}</button>; })}
@@ -1516,7 +1541,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-900">{c.name}</div>
                       <div className="text-xs text-slate-500">
-                        Archived {age} days ago • Expires in {expiring} days
+                        Archived {age} days ago � Expires in {expiring} days
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1702,8 +1727,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             {importBadge(v)}
                           </div>
                           <div className="mt-0.5 text-xs text-slate-500">
-                            {v.product_name} · {formatCurrency(v.price, currency)} · {formatPaymentTerms(v.payment_terms)}
-                            {v.email ? ` • ${v.email}` : ""}{v.phone_number ? ` • ${v.phone_number}` : ""}
+                            {v.product_name} � {formatCurrency(v.price, currency)} � {formatPaymentTerms(v.payment_terms)}
+                            {v.email ? ` � ${v.email}` : ""}{v.phone_number ? ` � ${v.phone_number}` : ""}
                           </div>
                         </div>
                         <ActionMenu items={[
@@ -1718,7 +1743,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   </div>
                   {vTotal > 1 && (
                     <div className="flex items-center justify-between pt-1">
-                      <span className="text-xs text-slate-500">{activeVendors.length} vendor{activeVendors.length !== 1 ? "s" : ""} · Page {vPage + 1} of {vTotal}</span>
+                      <span className="text-xs text-slate-500">{activeVendors.length} vendor{activeVendors.length !== 1 ? "s" : ""} � Page {vPage + 1} of {vTotal}</span>
                       <div className="flex items-center gap-1">
                         <button type="button" disabled={vPage === 0} onClick={() => setVendorPage((p) => Math.max(0, p - 1))} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
                         {Array.from({ length: Math.min(5, vTotal) }, (_, i) => { const pi = vTotal <= 5 ? i : Math.max(0, Math.min(vPage - 2 + i, vTotal - 5 + i)); return <button key={pi} type="button" onClick={() => setVendorPage(pi)} className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${vPage === pi ? "border-brand-500 bg-brand-600 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{pi + 1}</button>; })}
@@ -1754,7 +1779,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-900">{v.name}</div>
                       <div className="text-xs text-slate-500">
-                        Archived {age} days ago • Expires in {expiring} days
+                        Archived {age} days ago � Expires in {expiring} days
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1953,9 +1978,13 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <div className="mt-5 flex gap-3">
                 <button
                   className="flex-1 rounded-xl bg-brand-600 py-2.5 text-[13px] font-semibold text-white hover:bg-brand-700"
-                  onClick={() => {
-                    // Product is already in catalogue; marketplace_listed defaults true — nothing to do
-                    setAddToMarketModal(null);
+                  onClick={async () => {
+                    try {
+                      await publishMarketplaceWorkspace();
+                      setAddToMarketModal(null);
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Could not list on the Marketplace.");
+                    }
                   }}
                 >
                   <span className="inline-flex items-center gap-2">
@@ -1969,18 +1998,21 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                 <button
                   className="flex-1 rounded-xl border border-slate-200 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                   onClick={async () => {
-                    // Mark marketplace_listed: false so backend excludes it
-                    const updated = products.map((p) => p.id === addToMarketModal.id ? { ...p, marketplace_listed: false } : p);
-                    setProducts(updated);
-                    persist({ products: updated, customers, vendors });
-                    setAddToMarketModal(null);
+                    try {
+                      const updated = products.map((p) => p.id === addToMarketModal.id ? { ...p, marketplace_listed: false } : p);
+                      setProducts(updated);
+                      await persist({ products: updated, customers, vendors });
+                      setAddToMarketModal(null);
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Could not hide from the Marketplace.");
+                    }
                   }}
                 >
                   <span className="inline-flex items-center gap-2">
                     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M4 19 19 4" />
                       <path d="M9.5 9.5 3 16s4 5 9 5c1.7 0 3.2-.4 4.6-1.1" />
-                      <path d="M14.5 14.5 21 8s-4-5-9-5c-1.7 0-3.2.4-4.6 1.1" />
+                      <path d="M14.5 14.5 21 8s-4-5-9-5c1.7 0 3.2-.4 4.6 1.1" />
                     </svg>
                     Keep hidden
                   </span>
@@ -1993,4 +2025,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     </div>
   );
 }
+
+
+
+
 

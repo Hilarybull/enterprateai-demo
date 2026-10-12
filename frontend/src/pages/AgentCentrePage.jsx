@@ -1,3 +1,4 @@
+import UkDateInput from "../components/UkDateInput";
 import { DraftDrawer } from "../components/agent/DraftEditor";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -464,8 +465,8 @@ export default function AgentCentrePage() {
             <option value="">All statuses</option>
             {STATUSES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
-          <label className="text-[12px] text-slate-500">From<input type="date" className={`${selectCls} ml-1.5`} value={filters.from} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} /></label>
-          <label className="text-[12px] text-slate-500">To<input type="date" className={`${selectCls} ml-1.5`} value={filters.to} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} /></label>
+          <label className="text-[12px] text-slate-500">From<UkDateInput className={`${selectCls} ml-1.5`} value={filters.from} onChange={(v) => setFilters((f) => ({ ...f, from: v }))} /></label>
+          <label className="text-[12px] text-slate-500">To<UkDateInput className={`${selectCls} ml-1.5`} value={filters.to} onChange={(v) => setFilters((f) => ({ ...f, to: v }))} /></label>
         </div>
       )}
 

@@ -33,6 +33,14 @@ function spanFor(n, i) {
 // From 640 to 1023px the third of three cards spans both columns.
 const wideFor = (n, i) => n === 3 && i === 2;
 
+function teaserText(text, max = 110) {
+  const clean = String(text || "").trim();
+  if (!clean) return "";
+  const firstSentence = clean.split(/(?<=[.!?])\s+/)[0] || clean;
+  const clipped = firstSentence.length > max ? `${firstSentence.slice(0, max).replace(/\s+\S*$/, "")}`.trim() + "…" : firstSentence;
+  return clipped;
+}
+
 const HEADLINE_TONE = { emerald: "bg-emerald-50 text-emerald-700 ring-emerald-200", amber: "bg-amber-50 text-amber-700 ring-amber-200", rose: "bg-rose-50 text-rose-700 ring-rose-200" };
 
 /** The context the page is composed for: business stage with its headline metric, freshness,
@@ -71,7 +79,7 @@ export function DashboardContext({ context, saving, onGoal, onStage, freshness, 
           </label>
         ) : (
           <button type="button" onClick={() => setChanging(true)} className="font-semibold text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline dark:text-slate-400">
-            {manual ? "Set by you. Change it" : "Not right? Change it"}
+            {manual ? "Set by you. Change it" : context.stage_source === "declared" ? "From your setup. Change it" : "Not right? Change it"}
           </button>
         ))}
         {updated && (
@@ -264,7 +272,17 @@ function WhyPopover({ id, card, anchor, onClose, canHide, onHide }) {
   ), document.body);
 }
 
-function InsightCard({ card: given, busy, anyBusy, exhausted, onAction, onHide, open, onToggle, wide = false, fullSimulation = false, paused = false, className = "" }) {
+/** A card whose full content is really held back on this plan: there is more than the teaser, and it is not a "Needs data"
+ * card or something public anyway (the Marketplace). Only these say anything about upgrading (QA P1-8: value before the gate). */
+export function gatedOnPlan(card, previewOnly) {
+  if (!previewOnly || !card || card.state === "insufficient_data") return false;
+  const to = String(card.cta?.to || card.agent_action?.to || "");
+  if (/marketplace/i.test(String(card.key || "")) || to.startsWith("/marketplace")) return false;
+  const full = String(card.text || "").trim();
+  return Boolean(full) && teaserText(full) !== full;
+}
+
+function InsightCard({ card: given, busy, anyBusy, exhausted, onAction, onHide, open, onToggle, wide = false, fullSimulation = false, paused = false, previewOnly: plan = false, className = "" }) {
   // An account whose Simulation access is wider than its plan (grandfathered, or granted by an
   // administrator) can run the scenario, so its button is the ordinary one.
   const unlocked = fullSimulation && given.cta?.locked && given.cta.unlocked_to;
@@ -276,7 +294,9 @@ function InsightCard({ card: given, busy, anyBusy, exhausted, onAction, onHide, 
   const lockedCta = Boolean(card.cta?.locked);
   const body = useRef(null);
   const [clipped, setClipped] = useState(false);
-  useLayoutEffect(() => { const el = body.current; if (el) setClipped(el.scrollHeight > el.clientHeight + 1); }, [card.text]);
+  const previewOnly = gatedOnPlan(card, plan);
+  const bodyText = previewOnly ? teaserText(card.text) : card.text;
+  useLayoutEffect(() => { const el = body.current; if (el) setClipped(el.scrollHeight > el.clientHeight + 1); }, [bodyText]);
   const missing = card.state === "insufficient_data";
   const st = { ...(TONE[card.tone] || TONE.indigo), ...(missing ? NEUTRAL : {}) };
   const badge = missing ? "Needs data" : card.state === "stale" ? "May be out of date" : card.positive ? "On track" : card.goal_match ? "Your goal" : card.priority_class <= 2 ? PRIORITY_LABEL[card.priority_class] : null;
@@ -292,8 +312,12 @@ function InsightCard({ card: given, busy, anyBusy, exhausted, onAction, onHide, 
       )}
       {/* Three lines at most, so every card in a row is the same height; "More" opens the full explanation. */}
       <div className="mt-2.5 flex-1">
-        <p ref={body} data-insight-text className="line-clamp-3 break-words text-[14px] leading-relaxed text-slate-600 dark:text-slate-300" title={card.text}>{card.text}</p>
-        {clipped && <button type="button" onClick={toggle} className="mt-0.5 text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-300">More</button>}
+        <p ref={body} data-insight-text className={`break-words text-[14px] leading-relaxed text-slate-600 dark:text-slate-300 ${previewOnly ? "line-clamp-2" : "line-clamp-3"}`} title={previewOnly ? bodyText : card.text}>{bodyText}</p>
+        {previewOnly ? (
+          <button type="button" onClick={() => onAction(card, { to: "/pricing", upgrade: true })} className="mt-0.5 text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-300">
+            Upgrade to see the full explanation and what to do next
+          </button>
+        ) : clipped && <button type="button" onClick={toggle} className="mt-0.5 text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-300">More</button>}
       </div>
       {card.detail && <p className="mt-1 text-[12px] font-semibold text-slate-500">{card.detail}</p>}
       {/* A paid-plan note is said on the button ("· Pro"), not as another line of text. */}
@@ -353,7 +377,7 @@ function InsightCard({ card: given, busy, anyBusy, exhausted, onAction, onHide, 
   );
 }
 
-export default function AdaptiveInsights({ dashboard, loading, failed, busyKey, onRetry, onAction, onWhy, onHide, onShowHidden, fullSimulation = false, paused = false }) {
+export default function AdaptiveInsights({ dashboard, loading, failed, busyKey, onRetry, onAction, onWhy, onHide, onShowHidden, fullSimulation = false, previewOnly = false, paused = false }) {
   const cards = arrangeInsights(dashboard);
   const [openKey, setOpenKey] = useState(null);      // one explanation open at a time
   const toggleWhy = (card) => setOpenKey((k) => { if (k !== card.key) onWhy(card); return k === card.key ? null : card.key; });
@@ -393,7 +417,7 @@ export default function AdaptiveInsights({ dashboard, loading, failed, busyKey, 
       ) : (
         <div className={`grid grid-cols-1 gap-4 ${gridFor(cards.length)}`}>
           {cards.map((card, i) => (
-            <InsightCard key={card.key} card={card} className={spanFor(cards.length, i)} wide={wideFor(cards.length, i)} fullSimulation={fullSimulation} paused={paused} busy={busyKey === card.key} anyBusy={!!busyKey} exhausted={!!exhausted}
+            <InsightCard key={card.key} card={card} className={spanFor(cards.length, i)} wide={wideFor(cards.length, i)} fullSimulation={fullSimulation} paused={paused} previewOnly={previewOnly} busy={busyKey === card.key} anyBusy={!!busyKey} exhausted={!!exhausted}
               open={openKey === card.key} onToggle={toggleWhy} onAction={onAction} onHide={onHide} />
           ))}
         </div>

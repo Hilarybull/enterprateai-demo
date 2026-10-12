@@ -82,7 +82,7 @@ describe("invoices, contracts, reminders and receipts", () => {
       reference: "INV-7", company: "Apex", customer_name: "Frank", to_email: "frank@frank.test", currency: "GBP", vat_rate: 20, subtotal: 750, vat_amount: 150, total: 900,
       items: [{ description: "Monthly bookkeeping", qty: 2, unit_price: 375 }], due_date: "2026-11-05", payment_terms: "Net 14 days" } };
     const { container } = render(<DraftEditor approval={invoice} options={{ document: "invoice", catalogue: CATALOGUE, customers: [{ id: "c2", name: "Frank" }] }} onCancel={() => {}} onSave={onSave} />);
-    expect(screen.getByLabelText("Due date").value).toBe("2026-11-05");
+    expect(screen.getByLabelText("Due date").value).toBe("05/11/2026");      // shown the UK way (QA P2-12)
     for (const label of ["Valid until", "Notes to the customer", "Recipient"]) expect(screen.queryByLabelText(label)).toBeNull();
     fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "3" } });
     fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-11-20" } });

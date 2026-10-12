@@ -60,21 +60,24 @@ def growing(env):
 
 # ── configuration is data ────────────────────────────────────────────────────
 def test_each_stage_fills_the_same_skeleton_from_configuration():
-    assert set(dash.STAGE_LAYOUT) == set(dash.STAGES) == {"idea", "pre_launch", "operating", "growth"}
+    # QA R10: the PRD's five stages; a startup (early revenue) is laid out as an operating business.
+    assert set(dash.STAGE_LAYOUT) == set(dash.STAGES) == {"idea", "pre_launch", "startup", "operating", "growth"}
     expect_cards = {
         "idea": ["validate", "business_plan", "scenarios", "registration"],
         "pre_launch": ["business_plan", "funding_readiness", "registration", "scenarios"],
+        "startup": ["essentials", "validate", "business_plan", "scenarios"],
         "operating": ["essentials", "validate", "business_plan", "scenarios"],
         "growth": ["essentials", "scenarios", "marketplace", "business_plan"],
     }
     expect_kpis = {
         "idea": ["validation_score", "market_size", "startup_costs", "funding_needed"],
         "pre_launch": ["launch_readiness", "runway", "planned_costs", "funding_secured", "launch_risks"],
+        "startup": ["revenue", "cash_balance", "costs", "receivables", "active_risks"],
         "operating": ["revenue", "cash_balance", "costs", "receivables", "active_risks"],
         "growth": ["revenue_growth", "margin", "cash_balance", "receivables", "top_customer_share"],
     }
     expect_report = {"idea": "Idea Validation Report", "pre_launch": "Setup checklist",
-                     "operating": "Business Health Report", "growth": "Business Health Report"}
+                     "startup": "Business Health Report", "operating": "Business Health Report", "growth": "Business Health Report"}
     for stage in dash.STAGES:
         d = build(Env(), preview_stage=stage)
         assert d["context"]["business_stage"] == stage and d["context"]["stage_label"] == dash.STAGE_LABEL[stage]
@@ -212,12 +215,13 @@ def test_idea_slots_weakness_next_validation_step_pricing_scenario_similar_busin
     env = Env()
     idea(env)
     d = build(env)
-    assert keys(d, "insights") == ["idea_weakness", "next_step", "scenario", "marketplace_similar"]
-    assert [c["priority_class"] for c in d["insights"]] == [1, 2, 3, 5]
+    # QA P2-7: the next step is not time-sensitive, so it sits after the scenario ("Next step", class 4).
+    assert keys(d, "insights") == ["idea_weakness", "scenario", "next_step", "marketplace_similar"]
+    assert [c["priority_class"] for c in d["insights"]] == [1, 3, 4, 5]
     weak = card(d, "idea_weakness")
     assert weak["state"] == "insufficient_data" and weak["cta"] == {"label": "Validate my idea", "to": "/validation"}
     # G-4: validation is the weakness card's call to action; the next-step slot moves on.
-    assert card(d, "next_step")["text"] == "Next: your market size. I'm working it out." and card(d, "next_step")["cta"] == {"label": "See the market size", "to": "/validation"}
+    assert card(d, "next_step")["text"] == "After your idea's score. Next: your market size." and card(d, "next_step")["cta"] == {"label": "See the market size", "to": "/validation"}
     assert [c["cta"]["label"] for c in d["insights"]].count("Validate my idea") == 1
     assert card(d, "scenario")["text"].startswith("Price moves an early plan more than anything else") and card(d, "scenario")["agent_action"] is None
     assert card(d, "marketplace_similar")["cta"]["to"] == "/marketplace"
@@ -232,8 +236,8 @@ def test_idea_slots_weakness_next_validation_step_pricing_scenario_similar_busin
 
 def test_pre_launch_slots_blocker_next_launch_action_runway_scenario_funding_gaps():
     d = build(Env())
-    assert keys(d, "insights") == ["blocker", "next_step", "scenario", "funding_gaps"]
-    assert [c["priority_class"] for c in d["insights"]] == [1, 2, 3, 5]
+    assert keys(d, "insights") == ["blocker", "scenario", "next_step", "funding_gaps"]      # QA P2-7: a next step, not time-sensitive
+    assert [c["priority_class"] for c in d["insights"]] == [1, 3, 4, 5]
     assert "A validated business idea" in card(d, "blocker")["why"]["missing"] and len(d["launch_readiness"]["items"]) == 7
     nxt = card(d, "next_step")
     assert nxt["text"] == "3 of 7 launch items in place. I need from you: a validated business idea." and nxt["cta"] == {"label": "Add it", "to": "/validation"}
@@ -293,18 +297,20 @@ def test_agent_suggestions_follow_the_stage():
     env = Env()
     idea(env)
     texts = [s["text"] for s in build(env)["agent"]["suggestions"]]
-    assert texts == ["I'm scoring your idea.", "I'm drafting your business plan.", "I'm sizing your market."]
+    # Nothing is running yet: offers in the owner's words, never "I'm …" with no task behind it (QA P1-5).
+    assert texts == ["Score my idea", "Draft my business plan", "Size my market"]
+    assert {s["mood"] for s in build(env)["agent"]["suggestions"]} == {"suggested"}
     agent = build(env)["agent"]
     assert [x["label"] for x in agent["shortcuts"]] == ["Validate Idea", "Business Plan", "Market Sizing", "Scenario Help"]
     assert agent["placeholder"] == "Ask EnterprateAI about your idea, plan or market…"
     pre = build(Env())["agent"]["suggestions"]
-    assert [s["text"] for s in pre] == ["Your idea hasn't been scored yet: I'm scoring it before you launch.", "I need a funding case before the funding pack can be drafted.",
-                                         "I'm preparing your registration checklist."]      # what the Agent needs, and what it is doing
+    assert [s["text"] for s in pre] == ["Your idea hasn't been scored yet. I can score it before you launch.", "I need a funding case before the funding pack can be drafted.",
+                                         "Prepare my registration checklist"]      # what the Agent needs, and what it can do (nothing runs yet)
     assert pre[0]["action"] == {"to": "/validation"}                          # no launch plan and the idea isn't validated: wording and route agree
     assert [x["label"] for x in build(Env())["agent"]["shortcuts"]] == ["Setup Checklist", "Funding Pack", "Registration", "Scenario Help"]
     env = Env()
     growing(env)
-    assert {"I'm testing a 5% and a 10% price change.", "I'm checking your capacity."} <= \
+    assert {"Show me a 5% and a 10% price change", "Check my capacity"} <= \
         {s["text"] for s in build(env)["agent"]["suggestions"]}
     env = Env()
     operating(env)
@@ -327,7 +333,7 @@ def test_growth_suggestions_keep_at_most_two_records_items_under_the_attention_l
     sug = d["agent"]["suggestions"]
     assert len(sug) == 4 and sug[0]["key"] == "attention" and sug[0]["text"] == "1 task needs attention."
     assert sum(1 for x in sug if not x["key"].startswith("stage_") and x["key"] != "attention") == 2
-    assert sug[3]["text"] == "I'm testing a 5% and a 10% price change."       # a stage item fills the rest: what the Agent is doing
+    assert sug[3]["text"] == "Show me a 5% and a 10% price change"       # a stage item fills the rest: an offer while nothing runs
     assert [x["label"] for x in d["agent"]["shortcuts"]] == ["Pricing Scenario", "Quote to Invoice", "Risk & Concentration", "Opportunities"]
     assert "pricing, capacity, new offers or expansion" in d["agent"]["placeholder"]
 
@@ -578,12 +584,12 @@ def test_the_stage_can_be_changed_and_reset_and_every_change_is_audited(http):
     ctx = client.get("/businesses/A/dashboard").json()["context"]
     assert ctx["business_stage"] == "growth" and ctx["stage_source"] == "manual" and ctx["detected_stage"] == "operating"
     assert ctx["transition"] is None and env.fin == before                    # no business record changed
-    assert client.put("/businesses/A/dashboard/stage", json={"stage": "startup"}).json()["stage"] == "pre_launch"      # alias
+    assert client.put("/businesses/A/dashboard/stage", json={"stage": "startup"}).json()["stage"] == "startup"      # its own stage now (QA R10)
     assert client.put("/businesses/A/dashboard/stage", json={"stage": "unicorn"}).status_code == 400
     assert client.put("/businesses/A/dashboard/stage", json={"stage": None}).json() == {"stage": "operating", "source": "records", "detected": "operating"}
     assert "dashboard_stage" not in env.businesses["A"]["data"]
     audits = [a for a in env.store.audits if a["event_type"] == "dashboard_stage_changed"]
-    assert [(a["detail"]["from"], a["detail"]["to"]) for a in audits] == [("operating", "growth"), ("growth", "pre_launch"), ("pre_launch", "operating")]
+    assert [(a["detail"]["from"], a["detail"]["to"]) for a in audits] == [("operating", "growth"), ("growth", "startup"), ("startup", "operating")]
     assert all(a["actor_id"] == OWNER and a["business_id"] == "A" for a in audits)
     who.update({"id": OUTSIDER, "email": OUTSIDER})
     assert client.put("/businesses/A/dashboard/stage", json={"stage": "idea"}).status_code == 404

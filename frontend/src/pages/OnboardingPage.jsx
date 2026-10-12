@@ -4,7 +4,8 @@ import { apiRequest, invalidateWorkspaceCache } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import logoUrl from "../enterprate-logo.png";
 import MatchPrompt, { useBusinessMatch } from "../components/marketplace/MatchPrompt";
-import { answerPossibleDuplicate } from "../lib/directory";
+import { answerPossibleDuplicate, claimableBusinesses } from "../lib/directory";
+import { trackGoal } from "../components/GoalLauncher";
 
 // Same option values the full workspace form uses (WorkspaceProfile schema).
 const BUSINESS_TYPES = [
@@ -21,6 +22,16 @@ const STAGES = [
   ["growing", "Growing"], ["established", "Established"],
 ];
 const SIZES = [["solo", "Just me"], ["2-5", "2–5"], ["6-10", "6–10"], ["11-50", "11–50"], ["51-200", "51–200"], ["200+", "200+"]];
+
+/** "example.co.uk", "www.example.com" or "https://example.com/about": a host with a dot and no spaces. */
+export function looksLikeWebsite(value) {
+  const v = String(value || "").trim();
+  if (!v || /\s/.test(v)) return false;
+  try {
+    const u = new URL(/^https?:\/\//i.test(v) ? v : `https://${v}`);
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/i.test(u.hostname);
+  } catch { return false; }
+}
 
 const STEPS = [
   { key: "identity", title: "What's your business called?", desc: "This names your workspace. You can change it anytime." },
@@ -67,6 +78,7 @@ export default function OnboardingPage() {
   // An existing Marketplace profile that may be this business, and what the person wants done about it.
   const match = useBusinessMatch({ name: answers.company_name, companyNumber: answers.registration_number, website: answers.website });
   const [matchChoice, setMatchChoice] = useState(null);
+  const [pendingMatch, setPendingMatch] = useState(null);      // found when Finish was pressed: answered before anything is created
 
   const set = (key) => (value) => setAnswers((a) => ({ ...a, [key]: value }));
   const setService = (i) => (value) => setAnswers((a) => ({ ...a, services: a.services.map((s, j) => (j === i ? value : s)) }));
@@ -74,6 +86,19 @@ export default function OnboardingPage() {
   async function finish(finalAnswers) {
     setSaving(true);
     setError("");
+    // One business, one profile (Marketplace AC-06): with a company number or website, the check is made again now, and
+    // nothing is created until the person has said whether a matching profile is theirs.
+    let found = match;
+    if (!matchChoice && (finalAnswers.registration_number || finalAnswers.website) && (finalAnswers.company_name || "").trim().length >= 2) {
+      try {
+        found = ((await claimableBusinesses({ name: finalAnswers.company_name.trim(), company_number: (finalAnswers.registration_number || "").trim(), website: (finalAnswers.website || "").trim() })).items || [])[0] || null;
+      } catch { found = null; }      // the check is a help: if it can't be made, the business is still set up
+      if (found) {
+        setPendingMatch(found);
+        setSaving(false);
+        return;
+      }
+    }
     try {
       const payload = {
         ...finalAnswers,
@@ -88,9 +113,11 @@ export default function OnboardingPage() {
       ws.clearWsDoc?.();
       window.dispatchEvent(new CustomEvent("ea:workspace:refresh"));
       // The business exists either way. What was said about the matching profile is acted on now that it does.
-      const answered = match && (finalAnswers.registration_number || finalAnswers.website) ? matchChoice : null;
-      if (answered === "not_mine") answerPossibleDuplicate(res.workspace_id, match.id).catch(() => {});
-      if (answered === "claim") navigate(`/marketplace/claim/${match.slug}?source=signup_match&business=${res.workspace_id}`, { replace: true });
+      const which = found || pendingMatch;
+      const answered = which && (finalAnswers.registration_number || finalAnswers.website) ? matchChoice : null;
+      if (answered) trackGoal("onboarding_match_choice", { key: answered });
+      if (answered === "not_mine") answerPossibleDuplicate(res.workspace_id, which.id).catch(() => {});
+      if (answered === "claim") navigate(`/marketplace/claim/${which.slug}?source=signup_match&business=${res.workspace_id}`, { replace: true });
       else navigate(next, { replace: true });
     } catch (e) {
       setError((e instanceof Error ? e.message : String(e)).replace(/^HTTP \d+:\s*/, "") || "Could not save. Please try again.");
@@ -112,6 +139,15 @@ export default function OnboardingPage() {
   }
 
   function next_() {
+    // QA P2-8: the business name is not optional (Skip is there for that), and a website must look like one.
+    if (STEPS[step].key === "identity" && answers.company_name.trim().length < 2) {
+      setError("Please enter your business name, or press Skip.");
+      return;
+    }
+    if (STEPS[step].key === "location" && answers.website.trim() && !looksLikeWebsite(answers.website)) {
+      setError("That website doesn't look right. Try something like example.co.uk, or leave it blank.");
+      return;
+    }
     if (answers.about_company.trim() && answers.about_company.trim().length < 10 && STEPS[step].key === "about") {
       setError("Please write at least 10 characters, or leave it blank.");
       return;
@@ -194,6 +230,12 @@ export default function OnboardingPage() {
             ))}
           </div>
 
+          {pendingMatch && current.key !== "location" && (
+            <div className="mt-4 space-y-2" data-finish-match role="alert">
+              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Before we finish: we found an existing Marketplace profile that may be your business.</p>
+              <MatchPrompt match={pendingMatch} choice={matchChoice} onChoice={setMatchChoice} />
+            </div>
+          )}
           {error && <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">{error}</p>}
 
           <div className="mt-7 flex items-center gap-3">

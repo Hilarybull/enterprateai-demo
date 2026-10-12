@@ -1,3 +1,4 @@
+import UkDateInput from "../UkDateInput";
 import { useEffect, useMemo, useState } from "react";
 import { dateLabel, linkForecast, listForecasts, moneyLabel, monthLabel, newKey, readinessError, saveForecast } from "../../lib/readiness";
 import { todayLocal } from "../../lib/format";
@@ -90,7 +91,7 @@ export default function ForecastEditor({ businessId, feature, subject, evidence,
         <label className="block">
           <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Cash figure is from</span>
           <span className="mt-0.5 block text-[12px] text-slate-500">The date of that balance.</span>
-          <input type="date" className={`mt-1 ${inputClass}`} disabled={disabled} max={todayLocal()} value={form.opening_cash_as_of} onChange={(e) => change({ opening_cash_as_of: e.target.value })} />
+          <UkDateInput className={`mt-1 ${inputClass}`} disabled={disabled} max={todayLocal()} value={form.opening_cash_as_of} onChange={(v) => change({ opening_cash_as_of: v })} />
         </label>
         <label className="block">
           <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Forecast starts</span>

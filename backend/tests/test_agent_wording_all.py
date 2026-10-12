@@ -84,7 +84,7 @@ def test_the_empty_dashboards_pass_too_and_the_check_catches_each_phrase():
                 "Would you like me to prepare a payment follow-up?"):
         assert chores([bad]) == [bad]
     for fine in ("I ran the check again.", "See the scenario", "Open Business Plans", "I'm testing a 5% and a 10% price change.",
-                 "Your idea hasn't been scored yet: I'm scoring it before you launch.", "My next attempt is on 2 Oct at 09:21 UTC."):
+                 "Your idea hasn't been scored yet. I can score it before you launch.", "My next attempt is on 2 Oct at 09:21 UTC."):
         assert chores([fine]) == []
 
 
@@ -149,8 +149,10 @@ def test_missing_information_is_one_question_on_the_tile_and_the_work_carries_on
     assert r["pending_question"]["question"] == "What problem does your business solve? (1 to 2 sentences)"
     r = run(env.orch.provide_input(r["id"], OWNER, {"problem": "Owners lose evenings to paperwork"}))
     assert r["status"] == "succeeded" and r["summary"].startswith("Idea scored 68/100")
+    # Asked here about the owner's own business and answered by them: on the profile, with where it came from (PRD 6.1).
     kept = env.businesses["A"]["data"]["workspace_profile"]
     assert (kept["description"], kept["target_customer"], kept["problem"]) == ("Bookkeeping for independent cafés", "Independent cafés", "Owners lose evenings to paperwork")
+    assert kept["provenance"]["target_customer"]["source"]["answered_by_owner"] is True
     assert env.orch.rt.studio.calls[0][1]["problem"] == "Owners lose evenings to paperwork"      # asked once, used from then on
 
 

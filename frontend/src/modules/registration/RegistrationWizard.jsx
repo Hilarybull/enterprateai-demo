@@ -162,10 +162,9 @@ export default function RegistrationWizard() {
               primary_industry: ideaValidation?.context?.primary_industry || "",
               business_type: ideaValidation?.context?.business_type || ""
             },
-            workspace_profile: {
-              company_name: companyName.trim(),
-              about_company: businessDescription.trim()
-            },
+            // Only the name is shared with the company profile; the registration's own description stays in
+            // `registration` and never replaces what the business said about itself (QA D1).
+            ...(companyName.trim() ? { workspace_profile: { company_name: companyName.trim() } } : {}),
             registration: {
               company_name: companyName.trim(),
               alt_name_1: altName1.trim(),

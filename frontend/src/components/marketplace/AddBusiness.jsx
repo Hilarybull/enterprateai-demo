@@ -1,3 +1,4 @@
+import UkDateInput from "../UkDateInput";
 import { useEffect, useRef, useState } from "react";
 import { AdminTable, Chip } from "../admin/AdminUI";
 import { Btn, Notice, Panel, inputClass } from "../readiness/Fields";
@@ -110,7 +111,7 @@ export function AddBusinessForm({ options, onAdded, onClose }) {
           <select className={`mt-1 ${inputClass}`} value={form.provider} onChange={set("provider")}><option value="">Choose…</option>{(options?.providers || []).map((c) => <option key={c} value={c}>{c}</option>)}</select>
         </Field>
         <Field label="Source link or reference" required error={errors["source.record_id"]}><input className={`mt-1 ${inputClass}`} value={form.reference} onChange={set("reference")} /></Field>
-        <Field label="Retrieved on" required error={errors["source.retrieved_at"]}><input type="date" className={`mt-1 ${inputClass}`} value={form.retrieved_at} onChange={set("retrieved_at")} /></Field>
+        <Field label="Retrieved on" required error={errors["source.retrieved_at"]}><UkDateInput className={`mt-1 ${inputClass}`} value={form.retrieved_at} onChange={(v) => set("retrieved_at")({ target: { value: v } })} /></Field>
       </fieldset>
       <Field label="Visibility" error={errors.visibility} className="sm:max-w-sm">
         <select className={`mt-1 ${inputClass}`} value={form.visibility} onChange={set("visibility")}>{Object.entries(VISIBILITY_OPTION).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>

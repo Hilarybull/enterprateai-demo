@@ -2,7 +2,7 @@
 // that task already in the Agent box.
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import DashboardPage from "./DashboardPage";
 import { AGENT_FOLLOW_EVENT } from "../components/agent/AgentPanel";
@@ -52,8 +52,9 @@ describe("the dashboard, arriving with a task from the homepage", () => {
       await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard"));      // a refresh won't open it again
       const dialog = await screen.findByRole("dialog");
       expect(within(dialog).getByText("Who is this invoice for, and what is it for?")).toBeTruthy();
-      expect(within(dialog).getByLabelText("Customer name").value).toBe("ABC Consulting Ltd");      // not asked again
-      expect(within(dialog).getByLabelText("Customer email").value).toBe("");
+      expect(within(dialog).getByLabelText("Customer name").value).toBe("ABC Consulting Ltd");      // filled in from what was said
+      await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });      // one question at a time
+      expect(within(dialog).getByLabelText("Customer email").value).toBe("");      // only what wasn't said is left to answer
       expect(calls.some((c) => /\/workflow-runs\/run-7$/.test(c.path))).toBe(true);
       expect(screen.queryByRole("status", { name: "Loading your dashboard" })).toBeNull();
       await act(async () => { await new Promise((r) => setTimeout(r, 300)); });

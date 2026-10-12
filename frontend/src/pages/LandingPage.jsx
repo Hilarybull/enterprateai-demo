@@ -8,6 +8,9 @@ import { Link, useNavigate } from "react-router-dom";
 import logoUrl from "../enterprate-logo.png";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import PublicHeader from "../components/public/PublicHeader";
+import PublicFooter from "../components/public/PublicFooter";
+import TestimonialCards from "../components/public/TestimonialCards";
 
 
 const PLANS = [
@@ -369,188 +372,11 @@ export default function LandingPage() {
       )}
 
       {/* NAV */}
-      <nav data-scrolled={scrolled} className={`fixed top-0 left-0 right-0 z-50 border-b transition-colors duration-200 ${scrolled ? "border-slate-200 bg-white/85 shadow-sm backdrop-blur-md" : "border-transparent bg-white/95 backdrop-blur"}`}>
-        {/* 8px shorter once the page has moved; the spacer below keeps its height, so nothing under the nav jumps. */}
-        <div className={`m-nav-inner mx-auto flex max-w-[1600px] items-center px-4 sm:px-6 ${scrolled ? "py-2" : "py-3"}`}>
-          <a href="#hero" className="shrink-0 mr-6"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" /></a>
-          <ul className="hidden flex-1 items-center justify-center gap-3 xl:gap-4 xl:flex">
-            {/* Features mega-dropdown */}
-            <li ref={featuresRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setFeaturesOpen(v => !v)}
-                className="flex items-center gap-1 whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600"
-              >
-                Features
-                <svg className={`h-3.5 w-3.5 transition-transform ${featuresOpen ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="currentColor"><path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              </button>
-              {featuresOpen && (
-                <div className="absolute left-0 top-full z-50 mt-3 w-[680px] rounded-2xl border border-slate-200 bg-white shadow-xl ring-1 ring-black/5">
-                  <div className="grid grid-cols-4 gap-0 p-6">
-                    {[
-                      {
-                        heading: "Plan & Prepare", desc: "Validate ideas and create business documents faster.",
-                        items: [
-                          { label: "Idea Validation", path: "/validation" },
-                          { label: "One-Click Business Plan Generator", path: "/blueprint?doc=business_plan" },
-                          { label: "One-Click Business Proposal Generator", path: "/blueprint?doc=client_proposal" },
-                          { label: "One-Click Sales Letter Generator", path: "/blueprint?doc=sales_letter" },
-                        ],
-                      },
-                      {
-                        heading: "Operate & Manage", desc: "Create invoices, quotations, receipts, expenses, and contracts.",
-                        items: [
-                          { label: "Free Business Essentials", path: "/essentials" },
-                          { label: "Free Invoice Generator", path: "/operations?tab=Sales&sub=Invoices" },
-                          { label: "Free Quotation Generator", path: "/operations?tab=Sales&sub=Quotations" },
-                          { label: "Free Receipt Generator", path: "/operations?tab=Sales&sub=Receipts" },
-                          { label: "Expense Tracking", path: "/operations?tab=Transactions" },
-                          { label: "Contract Management", path: "/operations?tab=Contracts" },
-                        ],
-                      },
-                      {
-                        heading: "Sell & Grow", desc: "Launch to marketplace and increase visibility.",
-                        items: [
-                          { label: "One-Click Marketplace Listing", path: "/marketplace" },
-                          { label: "RFQ to Quotation", path: "/operations?tab=Sales&sub=Quotations" },
-                          { label: "Marketplace Visibility", path: "/marketplace" },
-                          { label: "Already listed? Claim your business", path: "/marketplace?find=1" },
-                        ],
-                      },
-                      {
-                        heading: "Decision Intelligence", desc: "Simulate decisions and get business recommendations.",
-                        items: [
-                          { label: "Business Scenario Simulation", path: "/simulation" },
-                          { label: "Business Intelligence Recommendations", path: "/simulation" },
-                          { label: "Fragility Index", path: "/simulation" },
-                          { label: "Adaptive Scenario Intelligence", path: "/simulation" },
-                        ],
-                      },
-                    ].map((col) => (
-                      <div key={col.heading} className="px-3 first:pl-0 last:pr-0 border-r border-slate-100 last:border-r-0">
-                        <p className="text-[11px] font-bold uppercase tracking-wider text-brand-600">{col.heading}</p>
-                        <p className="mt-0.5 mb-3 text-[11px] text-slate-400 leading-snug">{col.desc}</p>
-                        <ul className="space-y-2">
-                          {col.items.map((item) => (
-                            <li key={item.label}>
-                              <button type="button" onClick={() => goToFeature(item.path)} className="block text-left text-[12.5px] text-slate-600 hover:text-brand-600 transition leading-snug">{item.label}</button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </li>
-            {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"]].map(([href, label]) => (
-              <li key={href}><a href={href} className="whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600">{label}</a></li>
-            ))}
-            {/* Articles dropdown */}
-            <li ref={articlesRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setArticlesOpen(v => !v)}
-                className="flex items-center gap-1 whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600"
-              >
-                Articles
-                <svg className={`h-3.5 w-3.5 transition-transform ${articlesOpen ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="currentColor"><path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              </button>
-              {articlesOpen && (
-                <div className="absolute left-1/2 top-full z-50 mt-3 w-[480px] -translate-x-1/2 rounded-2xl border border-slate-200 bg-white shadow-xl ring-1 ring-black/5">
-                  <div className="p-5">
-                    <button
-                      type="button"
-                      onClick={() => { setArticlesOpen(false); navigate("/blog"); }}
-                      className="mb-4 flex w-full items-start justify-between rounded-xl bg-brand-50 px-4 py-3 text-left hover:bg-brand-100 transition"
-                    >
-                      <div>
-                        <p className="text-sm font-bold text-brand-700">Articles Hub</p>
-                        <p className="mt-0.5 text-[11px] text-slate-500 leading-snug max-w-[300px]">Insights to help small businesses plan, operate, sell, reduce risk, and grow with intelligence.</p>
-                      </div>
-                      <span className="text-brand-500 text-lg">→</span>
-                    </button>
-                    {blogCategories.length > 0 ? (
-                      <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                        {blogCategories.map((cat) => (
-                          <button
-                            key={cat.id}
-                            type="button"
-                            onClick={() => { setArticlesOpen(false); navigate(`/blog?category=${cat.slug}`); }}
-                            className="text-left text-[12.5px] text-slate-600 hover:text-brand-600 transition py-0.5"
-                          >
-                            {cat.name}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-[12px] text-slate-400">No categories yet.</p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </li>
-            <li>
-              <Link to="/research" className="whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600">R&amp;D</Link>
-            </li>
-          </ul>
-          {/* Below 1280px the links are in the menu, so this group (the menu button) is pushed to the far right. */}
-          <div className="ml-auto flex shrink-0 items-center gap-3 xl:ml-6" data-nav-right>
-            <Link to="/login" className="hidden whitespace-nowrap text-sm font-medium text-slate-600 hover:text-slate-900 xl:block">Sign in</Link>
-            <Link to="/book-demo" className="hidden whitespace-nowrap rounded-xl border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600 transition hover:bg-brand-50 xl:block">Book a Demo</Link>
-            <button type="button" onClick={focusLauncher} data-try-agent className="hidden whitespace-nowrap rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 xl:block">
-              Try the Agent
-            </button>
-            <button type="button" onClick={() => setMobileMenuOpen(v => !v)} className="ml-1 flex h-9 w-9 flex-col items-center justify-center gap-1.5 xl:hidden" aria-label="Menu">
-              <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "translate-y-2 rotate-45" : ""}`} />
-              <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "opacity-0" : ""}`} />
-              <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "-translate-y-2 -rotate-45" : ""}`} />
-            </button>
-          </div>
-        </div>
-        {mobileMenuOpen && (
-          <div className="border-t border-slate-100 bg-white px-4 pb-4 xl:hidden">
-            <ul className="mt-3 flex flex-col gap-3">
-              {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"]].map(([href, label]) => (
-                <li key={href}><a href={href} onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">{label}</a></li>
-              ))}
-              <li><Link to="/blog" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">Articles</Link></li>
-              <li><Link to="/research" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">R&amp;D</Link></li>
-              <li><Link to="/login" className="block text-sm font-medium text-slate-700">Sign in</Link></li>
-              <li><Link to="/book-demo" onClick={() => setMobileMenuOpen(false)} className="block rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white text-center">Book a Demo</Link></li>
-            </ul>
-            <div className="mt-4 border-t border-slate-100 pt-4">
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Features</p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                {[
-                  { label: "Idea Validation", path: "/validation" },
-                  { label: "Business Plan", path: "/blueprint?doc=business_plan" },
-                  { label: "Business Proposal", path: "/blueprint?doc=client_proposal" },
-                  { label: "Sales Letter", path: "/blueprint?doc=sales_letter" },
-                  { label: "Free Business Essentials", path: "/essentials" },
-                  { label: "Invoice Generator", path: "/operations?tab=Sales&sub=Invoices" },
-                  { label: "Quotation Generator", path: "/operations?tab=Sales&sub=Quotations" },
-                  { label: "Receipt Generator", path: "/operations?tab=Sales&sub=Receipts" },
-                  { label: "Expense Tracking", path: "/operations?tab=Transactions" },
-                  { label: "Contract Management", path: "/operations?tab=Contracts" },
-                  { label: "Marketplace Listing", path: "/marketplace" },
-                  { label: "RFQ to Quotation", path: "/operations?tab=Sales&sub=Quotations" },
-                  { label: "Scenario Simulation", path: "/simulation" },
-                  { label: "BI Recommendations", path: "/simulation" },
-                  { label: "Fragility Index", path: "/simulation" },
-                ].map(f => (
-                  <button key={f.label} type="button" onClick={() => { setMobileMenuOpen(false); goToFeature(f.path); }} className="py-0.5 text-left text-xs text-slate-600 hover:text-brand-600">{f.label}</button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </nav>
-
-      <div className="h-[61px]" />
+      {/* The site's header (QA F): every item is a page; Features and Articles also open a menu. */}
+      <PublicHeader onTryIt={focusLauncher} />
 
       {/* HERO */}
-      <section id="hero" ref={heroRef} data-m-idle={!heroSeen || !pageVisible} className="relative overflow-hidden bg-gradient-to-b from-brand-50/70 via-white to-white pb-6 pt-6 sm:pb-8 sm:pt-8">
+      <section id="hero" ref={heroRef} data-m-idle={!heroSeen || !pageVisible} className="relative overflow-clip bg-gradient-to-b from-brand-50/70 via-white to-white pb-6 pt-6 sm:pb-8 sm:pt-8">
         <div className="pointer-events-none absolute inset-0">
           <div className="m-drift absolute -right-16 top-0 h-[520px] w-[520px] rounded-full bg-gradient-to-br from-purple-300/60 to-brand-300/50 blur-2xl sm:h-[620px] sm:w-[620px]" />
           <div className="absolute right-10 top-14 hidden h-64 w-64 opacity-80 lg:block" style={{ backgroundImage: "radial-gradient(circle, #A5B4FC 2px, transparent 2px)", backgroundSize: "18px 18px" }} />
@@ -599,7 +425,7 @@ export default function LandingPage() {
                   <div className="flex-1 p-3">
                     {/* No name, real or made up, whoever is looking: only the time of day, from the visitor's own clock. */}
                     <p className="min-w-[8.5rem] text-sm font-bold text-slate-900" data-mock-greeting>{greeting}</p>
-                    <p className="text-[11px] text-slate-400">Here's what your Agent did today.</p>
+                    <p className="text-[11px] text-slate-400">Here's what happened today.</p>
                     <div className="mt-2.5 grid grid-cols-2 gap-2">
                       {[
                         { t: "Idea Validation", d: "Test insights before you invest.", c: "bg-rose-50 text-rose-500", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
@@ -828,6 +654,10 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+      {/* What customers say, from the same content file as /testimonials (only consented, active entries). */}
+      <section aria-label="What customers say" className="py-2 sm:py-3" data-home-testimonials>
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6"><TestimonialCards compact /></div>
+      </section>
 
       {/* HOW IT WORKS — 3 simple steps */}
       <section id="how-it-works" className="bg-white py-6 sm:py-8">
@@ -836,7 +666,7 @@ export default function LandingPage() {
           <div className="grid gap-6 sm:grid-cols-3">
             {[
               { n: "1", title: DEMO_SCENES[0].title, body: "Say what you need in your own words: an invoice, a quotation, a plan, or a question about your business.", c: "bg-brand-600" },
-              { n: "2", title: DEMO_SCENES[1].title, body: "The Agent reads your records, asks only for what is missing, and prepares the document or the answer.", c: "bg-brand-600" },
+              { n: "2", title: DEMO_SCENES[1].title, body: "It reads your records, asks only for what is missing, and prepares the document or the answer.", c: "bg-brand-600" },
               { n: "3", title: DEMO_SCENES[2].title, body: "It waits for your say-so. Nothing is sent, and nothing leaves your business, until you approve it.", c: "bg-purple-600" },
             ].map((s, i, arr) => (
               <div key={s.n} className="relative flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4">
@@ -997,51 +827,7 @@ export default function LandingPage() {
       </button>
 
       {/* FOOTER */}
-      <footer className="bg-white py-8 border-t border-slate-100">
-        <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
-          <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
-          <div className="grid flex-1 gap-8 sm:grid-cols-2 lg:grid-cols-5">
-            <div>
-              <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto" />
-              <p className="mt-3 max-w-[220px] text-sm leading-relaxed text-slate-500">AI-native Business Decision Intelligence for ambitious founders and businesses.</p>
-            </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Product</h4>
-              <ul className="mt-4 space-y-2">
-                <li><a href="#hero" className="text-sm text-slate-500 hover:text-brand-600 transition">Features</a></li>
-                <li><a href="#pricing" className="text-sm text-slate-500 hover:text-brand-600 transition">Pricing</a></li>
-                <li><button type="button" onClick={() => goToFeature("/integrations")} className="text-sm text-slate-500 hover:text-brand-600 transition">Integrations</button></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Solutions</h4>
-              <ul className="mt-4 space-y-2">
-                <li><a href="#activities" className="text-sm text-slate-500 hover:text-brand-600 transition">For Startups</a></li>
-                <li><Link to="/essentials" className="text-sm text-slate-500 hover:text-brand-600 transition">For Small Businesses</Link></li>
-                <li><a href="#how-it-works" className="text-sm text-slate-500 hover:text-brand-600 transition">For Growth</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Resources</h4>
-              <ul className="mt-4 space-y-2">
-                <li><Link to="/blog" className="text-sm text-slate-500 hover:text-brand-600 transition">Articles</Link></li>
-                <li><Link to="/research" className="text-sm text-slate-500 hover:text-brand-600 transition">Guides</Link></li>
-                <li><a href="mailto:support@enterpate.ai" className="text-sm text-slate-500 hover:text-brand-600 transition">Help Centre</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Company</h4>
-              <ul className="mt-4 space-y-2">
-                <li><Link to="/legal/privacy" className="text-sm text-slate-500 hover:text-brand-600 transition">Privacy Policy</Link></li>
-                <li><Link to="/legal/terms" className="text-sm text-slate-500 hover:text-brand-600 transition">Terms of Service</Link></li>
-                <li><a href="mailto:support@enterpate.ai" className="text-sm text-slate-500 hover:text-brand-600 transition">Contact</a></li>
-              </ul>
-            </div>
-          </div>
-          <p className="shrink-0 text-xs text-slate-400 lg:pb-1">© {new Date().getFullYear()} EnterprateAI. All rights reserved.</p>
-          </div>
-        </div>
-      </footer>
+      <PublicFooter />
 
       {/* Book a Demo modal */}
       {bookingOpen && (

@@ -1,3 +1,4 @@
+import UkDateInput from "../UkDateInput";
 import { useExit } from "../../lib/motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { agentErrorMessage, approveAction, editDraft, getRun, rejectAction } from "../../lib/agent";
@@ -180,7 +181,7 @@ function WordingEditor({ approval, options, kind, saving = false, problem = "", 
               <input className={`${input} mt-1`} aria-label="Timeline" maxLength={200} value={timeline} onChange={(e) => setTimeline(e.target.value)} />
             </label>
             <label className="block"><span className={field}>Valid until</span>
-              <input type="date" className={`${input} mt-1`} aria-label="Valid until" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+              <UkDateInput className={`${input} mt-1`} aria-label="Valid until" value={validUntil} onChange={(v) => setValidUntil(v)} />
             </label>
             <label className="block sm:col-span-2"><span className={field}>What the customer needs</span>
               <textarea className={`${input} mt-1 min-h-[72px]`} aria-label="What the customer needs" maxLength={4000} value={needs} onChange={(e) => setNeeds(e.target.value)} />
@@ -434,15 +435,15 @@ function ItemsEditor({ approval, options, kind, saving = false, problem = "", on
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {po ? (
           <label className="block"><span className={field}>Deliver by</span>
-            <input type="date" className={`${input} mt-1`} aria-label="Deliver by" value={deliverBy} onChange={(e) => change(() => setDeliverBy(e.target.value))} />
+            <UkDateInput className={`${input} mt-1`} aria-label="Deliver by" value={deliverBy} onChange={(v) => change(() => setDeliverBy(v))} />
           </label>
         ) : invoice ? (
           <label className="block"><span className={field}>Due date</span>
-            <input type="date" className={`${input} mt-1`} aria-label="Due date" value={dueDate} onChange={(e) => change(() => setDueDate(e.target.value))} />
+            <UkDateInput className={`${input} mt-1`} aria-label="Due date" value={dueDate} onChange={(v) => change(() => setDueDate(v))} />
           </label>
         ) : (
           <label className="block"><span className={field}>Valid until</span>
-            <input type="date" className={`${input} mt-1`} aria-label="Valid until" value={validUntil} onChange={(e) => change(() => setValidUntil(e.target.value))} />
+            <UkDateInput className={`${input} mt-1`} aria-label="Valid until" value={validUntil} onChange={(v) => change(() => setValidUntil(v))} />
           </label>
         )}
         <div className={po ? "hidden" : ""}><span className={field}>Payment terms</span>

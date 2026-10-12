@@ -4519,7 +4519,7 @@ export default function ValidationWizardPage() {
                           <button
                             type="button"
                             disabled={v4Saving}
-                            onClick={() => { if (triggerDemoGate?.("validation")) return; setCreditModal({ featureName: "Idea Validation", creditCost: v4Journey === "comprehensive" ? 10 : 5, onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } }); }}
+                            onClick={() => { if (triggerDemoGate?.("validation")) return; setCreditModal({ featureName: "Idea Validation", creditCost: v4Journey === "comprehensive" ? 10 : 5, featureCode: v4Journey === "comprehensive" ? "idea_validation_comprehensive" : "idea_validation", onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } }); }}
                             className="flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-brand-700 disabled:opacity-50"
                           >
                             {v4Saving ? "Running validation..." : "Run Validation"}
@@ -6004,7 +6004,7 @@ export default function ValidationWizardPage() {
                               disabled={isLoading || isPrefilling || !canRun}
                               onClick={() => {
                                 if (!isCreateWorkspace) {
-                                  setCreditModal({ featureName: "Idea Validation", creditCost: 5, onConfirm: () => { setCreditModal(null); saveWorkspace(true); } });
+                                  setCreditModal({ featureName: "Idea Validation", creditCost: 5, featureCode: "idea_validation", onConfirm: () => { setCreditModal(null); saveWorkspace(true); } });
                                 } else {
                                   saveWorkspace(false);
                                 }
@@ -6031,6 +6031,7 @@ export default function ValidationWizardPage() {
           <CreditConfirmModal
             featureName={creditModal.featureName}
             creditCost={creditModal.creditCost}
+          featureCode={creditModal.featureCode}
             onConfirm={creditModal.onConfirm}
             onCancel={() => setCreditModal(null)}
           />

@@ -11,10 +11,9 @@ from fastapi import HTTPException, status as http_status
 
 async def _require_paid_for_proposals(user_id: str, action: str) -> None:
     if not await plan_meets(user_id, "starter_insight", grant_module="marketplace"):
-        raise HTTPException(
-            status_code=http_status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"{action} requires the Starter plan or above.",
-        )
+        # QA PF1: a plan refusal is 403 with the plan in words, not 402 (that is for credits).
+        from app.modules.plans.access import refusal
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail=await refusal(user_id, "starter_insight", action))
 from app.modules.proposals.schemas import (
     ProposalPreferencesIn,
     ProposalRequestIn,

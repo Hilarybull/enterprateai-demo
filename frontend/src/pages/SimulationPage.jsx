@@ -20,6 +20,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
 import CreditConfirmModal from "../components/CreditConfirmModal";
+import { refusalMessage, refusalOf } from "../lib/entitlement";
 
 const FieldLabel = ({ children, info }) => (
   <div className="ea-label flex items-center gap-2">
@@ -157,6 +158,8 @@ export default function SimulationPage() {
   const stateSnapshot = financialInsights.stateSnapshot;
 
   const largestClient = financialInsights.largestClient;
+  // QA PF4: "Loss of Largest Client" is offered only when there is a client on record to lose.
+  const offeredScenario = (id) => Boolean(largestClient) || !CLIENT_SCENARIOS.includes(id);
   const activeProducts = useMemo(
     () => (Array.isArray(catalogueData?.products) ? catalogueData.products.filter((item) => !item?.archived) : []),
     [catalogueData]
@@ -192,6 +195,8 @@ export default function SimulationPage() {
   const [autoProjectionLoading, setAutoProjectionLoading] = useState(false);
   const [scenarioRunningId, setScenarioRunningId] = useState(null);
   const [error, setError] = useState(null);
+  // QA PF4: nothing on record to project: what is missing, and the owner's own figures offered as an estimate.
+  const [insufficient, setInsufficient] = useState(null);      // { message, missing, estimate, retry }
   const [prefillDone, setPrefillDone] = useState(false);
 
   const [manualTemplateId, setManualTemplateId] = useState(() => {
@@ -405,6 +410,7 @@ export default function SimulationPage() {
         state: stateSnapshot
       };
       const runRes = await apiRequest("/v1/scenario-intelligence/scenario-runs", "POST", payload);
+      setInsufficient(null);
       const runId = runRes?.scenario_run_id;
       if (runId) {
         const [resultRes, timelineRes] = await Promise.all([
@@ -416,7 +422,12 @@ export default function SimulationPage() {
         setTimeline(timelineRes?.timeline || []);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Scenario run failed.");
+      const why = refusalOf(e);
+      if (why?.error === "INSUFFICIENT_DATA") {
+        setInsufficient({ ...why, retry: () => runScenario(templateId, mode, { ...(params || {}), use_estimate: true }, nameOverride) });
+      } else {
+        setError(refusalMessage(e, "Scenario run failed. Nothing was charged."));
+      }
     } finally {
       setActionLoading(false);
       setScenarioRunningId(null);
@@ -424,7 +435,7 @@ export default function SimulationPage() {
     }
   }
 
-  async function runDoNothing(monthsOverride, setAsActive = false, silent = false) {
+  async function runDoNothing(monthsOverride, setAsActive = false, silent = false, useEstimate = false) {
     if (!canRun) return;
     if (silent) {
       setAutoProjectionLoading(true);
@@ -438,8 +449,10 @@ export default function SimulationPage() {
         business_id: businessId,
         state_version: stateVersion,
         timeline_months: parseNumber(monthsOverride ?? manualTimelineMonths, 6),
-        state: stateSnapshot
+        state: stateSnapshot,
+        parameters: useEstimate ? { use_estimate: true } : {}
       });
+      setInsufficient(null);
       const projectionPayload = {
         scenario_run_id: res?.projection_id,
         scenario_name: "Baseline Continuity Projection",
@@ -458,7 +471,12 @@ export default function SimulationPage() {
         setTimeline(res?.forecast || []);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Projection failed.");
+      const why = refusalOf(e);
+      if (why?.error === "INSUFFICIENT_DATA") {
+        setInsufficient({ ...why, retry: () => runDoNothing(monthsOverride, setAsActive, false, true) });
+      } else if (!silent) {
+        setError(refusalMessage(e, "Projection failed. Nothing was charged."));
+      }
     } finally {
       if (silent) {
         setAutoProjectionLoading(false);
@@ -779,6 +797,28 @@ export default function SimulationPage() {
         </div>
       ) : null}
 
+      {insufficient ? (
+        <div role="status" data-insufficient className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-semibold">Not enough on record to simulate yet</p>
+          <p className="mt-1">{insufficient.message}</p>
+          {insufficient.estimate ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button type="button" data-use-estimate disabled={actionLoading} onClick={() => insufficient.retry?.()}
+                className="rounded-xl bg-brand-600 px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
+                Use my figures as an estimate ({insufficient.estimate.basis})</button>
+              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">Estimate</span>
+            </div>
+          ) : (
+            <a href="/check/pricing" className="mt-2 inline-block text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">Answer the pricing check</a>
+          )}
+        </div>
+      ) : null}
+      {activeRun?.parameters?.basis === "estimate" && (
+        <p data-estimate-basis className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
+          <span className="mr-2 rounded bg-white px-1.5 text-[11px] font-bold uppercase text-amber-800">Estimate</span>
+          This run is based on your own figures ({activeRun.parameters.estimate_basis}), not your records.
+        </p>
+      )}
       {error ? (
         <div className="mt-4">
           <InlineAlert kind="error" message={error} />
@@ -967,7 +1007,7 @@ export default function SimulationPage() {
               >
                 <div className="space-y-3">
                   {recommendations.length ? (
-                    recommendations.map((rec, i) => {
+                    recommendations.filter((rec) => offeredScenario(rec.scenario_template_id)).map((rec, i) => {
                       const recAllowed = planAllowsScenario(planKey, rec.scenario_template_id, planStatus) || hasSimulationGrant;
                       return (
                         <div key={rec.scenario_template_id || i} className="rounded-xl border border-slate-200 bg-white p-3">
@@ -1056,7 +1096,7 @@ export default function SimulationPage() {
                   <select className="ea-input" value={manualTemplateId} onChange={(e) => setManualTemplateId(e.target.value)}>
                     <option value="do_nothing_projection">Baseline Continuity Projection</option>
                     {templates
-                      .filter((t) => t.mode !== "adaptive")
+                      .filter((t) => t.mode !== "adaptive" && offeredScenario(t.scenario_template_id))
                       .map((t) => {
                         const allowed = planAllowsScenario(planKey, t.scenario_template_id, planStatus) || hasSimulationGrant;
                         return (
@@ -1168,7 +1208,8 @@ export default function SimulationPage() {
                       };
                       setCreditModal({
                         featureName: "Scenario Simulation",
-                        creditCost: 10,
+                        // QA PF2: a deterministic run is free (Credit System v2 §6): the server says so, so nothing is asked.
+                        featureCode: "scenario_simulation",
                         onConfirm: () => { setCreditModal(null); runScenario(manualTemplateId, "manual", scenarioParams, manualName); }
                       });
                     }}
@@ -1416,6 +1457,7 @@ export default function SimulationPage() {
         <CreditConfirmModal
           featureName={creditModal.featureName}
           creditCost={creditModal.creditCost}
+          featureCode={creditModal.featureCode}
           onConfirm={creditModal.onConfirm}
           onCancel={() => setCreditModal(null)}
         />
@@ -1434,6 +1476,16 @@ export default function SimulationPage() {
 }
 
 // Confirm dialog is shown from the SimulationPage scope (where confirmDialog state exists)
+
+// QA PF4: scenarios about a client on record; the months the projection itself marks at risk; a ratio in words when
+// it can't be a number ("Not available": nothing to compare with; "No cash to cover it": money owed, no cash).
+export const CLIENT_SCENARIOS = ["tmpl_client_loss"];
+export const atRisk = (timeline) => (timeline || []).filter((t) => ["at_risk", "stress", "critical"].includes(t?.state_label)).map((t) => t.month_index);
+export function ratioText(value, state) {
+  if (typeof value === "number") return value.toFixed(2);
+  if (state === "unbounded") return "No cash to cover it";
+  return "Not available";
+}
 
 // Receivables that can still be collected: not paid, and not disputed, voided, cancelled or credited.
 const NOT_COLLECTABLE = new Set(["paid", "disputed", "void", "voided", "cancelled", "canceled", "credited", "written_off", "draft"]);
@@ -2155,6 +2207,11 @@ function ScenarioOutput({
                       {r?.severity ? <div className="mt-1 text-xs text-slate-500">Severity: {r.severity}</div> : null}
                     </div>
                   ))
+                ) : atRisk(timeline).length ? (
+                  <div className="text-sm text-amber-800" data-at-risk-months>
+                    {atRisk(timeline).length === 1 ? "1 month" : `${atRisk(timeline).length} months`} of this projection {atRisk(timeline).length === 1 ? "is" : "are"} at risk:
+                    {" "}month {atRisk(timeline).join(", ")}. Look at the cash line for those months.
+                  </div>
                 ) : (
                   <div className="text-sm text-slate-600">No risks detected for this scenario.</div>
                 )}
@@ -2240,8 +2297,8 @@ function ScenarioOutput({
                   <div className="rounded-xl bg-slate-50 p-3">
                     <div className="text-[10px] uppercase tracking-wide text-slate-500">Cash Conversion</div>
                     <div className="mt-1 flex items-baseline gap-2">
-                      <span className={`text-lg font-bold ${(last?.cash_conversion_ratio ?? 1) < 0.3 ? "text-rose-600" : "text-slate-900"}`}>
-                        {(last?.cash_conversion_ratio ?? 0).toFixed(2)}
+                      <span className={`text-lg font-bold ${typeof last?.cash_conversion_ratio === "number" && last.cash_conversion_ratio < 0.3 ? "text-rose-600" : "text-slate-900"}`} data-ratio="cash_conversion">
+                        {ratioText(last?.cash_conversion_ratio, last?.cash_conversion_state)}
                       </span>
                       <span className="text-xs text-slate-500">Ratio</span>
                     </div>
@@ -2249,8 +2306,8 @@ function ScenarioOutput({
                   <div className="rounded-xl bg-slate-50 p-3">
                     <div className="text-[10px] uppercase tracking-wide text-slate-500">Receivable Exposure</div>
                     <div className="mt-1 flex items-baseline gap-2">
-                      <span className={`text-lg font-bold ${(last?.receivable_exposure_ratio ?? 0) >= 1.0 ? "text-rose-600" : (last?.receivable_exposure_ratio ?? 0) >= 0.5 ? "text-amber-600" : "text-slate-900"}`}>
-                        {(last?.receivable_exposure_ratio ?? 0).toFixed(2)}
+                      <span className={`text-lg font-bold ${last?.receivable_exposure_state === "unbounded" || (last?.receivable_exposure_ratio ?? 0) >= 1.0 ? "text-rose-600" : (last?.receivable_exposure_ratio ?? 0) >= 0.5 ? "text-amber-600" : "text-slate-900"}`} data-ratio="receivable_exposure">
+                        {ratioText(last?.receivable_exposure_ratio, last?.receivable_exposure_state)}
                       </span>
                       <span className="text-xs text-slate-500">Ratio</span>
                     </div>
@@ -2258,8 +2315,8 @@ function ScenarioOutput({
                   <div className="rounded-xl bg-slate-50 p-3">
                     <div className="text-[10px] uppercase tracking-wide text-slate-500">Delayed Revenue</div>
                     <div className="mt-1 flex items-baseline gap-2">
-                      <span className="text-lg font-bold text-slate-900">
-                        {((last?.delayed_revenue_pct ?? 0) * 100).toFixed(1)}%
+                      <span className="text-lg font-bold text-slate-900" data-ratio="delayed_revenue">
+                        {typeof last?.delayed_revenue_pct === "number" ? `${(last.delayed_revenue_pct * 100).toFixed(1)}%` : ratioText(null, last?.delayed_revenue_state)}
                       </span>
                       <span className="text-xs text-slate-500">of Profit</span>
                     </div>

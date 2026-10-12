@@ -63,6 +63,45 @@ def _clamp(val: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, val))
 
 
+# ── QA PF4: what the engine can and can't say (Blueprint AC-2, §11) ─────────────────────────────────────────────
+UNAVAILABLE, UNBOUNDED, OK = "unavailable", "unbounded", "ok"
+CLIENT_SCENARIOS = ("tmpl_client_loss",)      # about a client on record: never offered, or run, without one
+
+
+def typed_ratios(cash: float, cumulative_profit: float, accruals: float) -> tuple:
+    """The three risk ratios with what they mean when they can't be a number: "unavailable" when there is no profit to
+    compare with (never 1.00 from zeros), "unbounded" when money is owed and there is no cash to set it against."""
+    if cumulative_profit > 0:
+        conv, conv_state = round(cash / cumulative_profit, 2), OK
+        delayed, delayed_state = round(accruals / cumulative_profit, 2), OK
+    else:
+        conv, conv_state = None, UNAVAILABLE
+        delayed, delayed_state = (None, UNBOUNDED) if accruals > 0 else (None, UNAVAILABLE)
+    if cash > 0:
+        exposure, exposure_state = round(accruals / cash, 2), OK
+    else:
+        exposure, exposure_state = (None, UNBOUNDED) if accruals > 0 else (0.0, OK)
+    return conv, conv_state, exposure, exposure_state, delayed, delayed_state
+
+
+def sufficiency(state: BusinessStateSnapshot) -> dict:
+    """Can a projection be worked out from what is on record? Not with no revenue and no costs at all: the engine
+    would only be projecting zeros. Says what is missing, in words."""
+    revenue = float(state.revenue_monthly or 0) + float(state.accrued_revenue_total or 0) + sum(state.pending_receivables_schedule or [])
+    costs = float(state.expenses_monthly or 0) + float(state.cost_of_sales_monthly or 0) + float(state.costs_monthly or 0)
+    missing = [w for w, v in (("Monthly revenue", revenue), ("Monthly costs", costs)) if not v]
+    return {"enough": not (revenue == 0 and costs == 0), "missing": missing}
+
+
+def has_client(state: BusinessStateSnapshot) -> bool:
+    return bool((state.clients_count or 0) > 0 or (state.top_client_share_pct or 0) > 0)
+
+
+def at_risk_months(timeline: List[Dict[str, Any]]) -> List[int]:
+    """The months the projection itself marks at risk, under stress or critical."""
+    return [int(t.get("month_index") or 0) for t in timeline or [] if t.get("state_label") in ("at_risk", "stress", "critical")]
+
+
 def _runway_months(revenue: float, costs: float, starting_cash: float) -> float:
     net = revenue - costs
     if net >= 0:
@@ -805,10 +844,7 @@ def _timeline(
         prev_cash = cash
 
         # ── Risk Enhancement Ratios (Chartered Accountant Standard) ──
-        cash_conv = (cash / cumulative_profit) if cumulative_profit > 0 else 1.0
-        # If cash is negative, exposure is critically high (1.0+)
-        receivable_exp = (accruals_balance / cash) if cash > 0 else (1.0 if accruals_balance > 0 else 0.0)
-        delayed_rev_pct = (accruals_balance / cumulative_profit) if cumulative_profit > 0 else 0.0
+        cash_conv, cash_conv_state, receivable_exp, receivable_state, delayed_rev_pct, delayed_state = typed_ratios(cash, cumulative_profit, accruals_balance)
 
         # Inject critical collection alert if ratios hit extremes
         if accruals_balance > cumulative_profit and i > 2: # Give it some months to settle
@@ -842,9 +878,12 @@ def _timeline(
                 stability_score=round(score, 2),
                 state_label=health_status,
                 # Ratio exports
-                cash_conversion_ratio=round(cash_conv, 2),
-                receivable_exposure_ratio=round(receivable_exp, 2),
-                delayed_revenue_pct=round(delayed_rev_pct, 2),
+                cash_conversion_ratio=cash_conv,
+                cash_conversion_state=cash_conv_state,
+                receivable_exposure_ratio=receivable_exp,
+                receivable_exposure_state=receivable_state,
+                delayed_revenue_pct=delayed_rev_pct,
+                delayed_revenue_state=delayed_state,
             )
         )
 
@@ -1194,12 +1233,16 @@ Scenario snapshot: {scenario}
 Final month output: {last_month}
 Recommendations: {recs}
 
+Basis: {"an estimate from the owner's own pricing answers (" + str((run.get("parameters") or {}).get("estimate_basis")) + ")" if (run.get("parameters") or {}).get("basis") == "estimate" else "the business's records"}
+
 Write a concise business interpretation for the founder.
 Include:
 1. The likely impact in plain English.
 2. The most important risk or upside.
 3. One practical next step.
-Keep it grounded in the provided numbers and do not invent data.
+Only describe the engine output above: never add a figure, a cause or a risk that is not in it. Where a value is
+missing, unavailable or unbounded, say so instead of guessing. If the basis is an estimate, say it is an estimate.
+If there is not enough data for a point, say "not enough data" for it.
 """
 
     system = (
@@ -1413,10 +1456,8 @@ async def do_nothing_projection(
         prev_cash = cash
 
         # ── Risk Enhancement Ratios (Chartered Accountant Standard) ──
-        cash_conv = (cash / cumulative_profit) if cumulative_profit > 0 else 1.0
-        receivable_exp = (accruals_balance / cash) if cash > 0 else (1.0 if accruals_balance > 0 else 0.0)
-        delayed_rev_pct = (accruals_balance / cumulative_profit) if cumulative_profit > 0 else 0.0
-
+        cash_conv, cash_conv_state, receivable_exp, receivable_state, delayed_rev_pct, delayed_state = typed_ratios(cash, cumulative_profit, accruals_balance)
+        
         score = _stability_score(
             BusinessStateSnapshot(
                 revenue_monthly=monthly_revenue,
@@ -1450,9 +1491,12 @@ async def do_nothing_projection(
                 stability_score=round(score, 2),
                 state_label=health_status,
                 # Ratio exports
-                cash_conversion_ratio=round(cash_conv, 2),
-                receivable_exposure_ratio=round(receivable_exp, 2),
-                delayed_revenue_pct=round(delayed_rev_pct, 2),
+                cash_conversion_ratio=cash_conv,
+                cash_conversion_state=cash_conv_state,
+                receivable_exposure_ratio=receivable_exp,
+                receivable_exposure_state=receivable_state,
+                delayed_revenue_pct=delayed_rev_pct,
+                delayed_revenue_state=delayed_state,
             )
         )
 

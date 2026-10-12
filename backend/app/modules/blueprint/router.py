@@ -123,9 +123,11 @@ async def blueprint_generate(
     user_id: str = user["id"]
 
     if payload.type == "business_plan":
-        plan_key, plan_status = await get_user_plan_info(user_id)
+        # QA PF1: the effective plan (/plans/my's resolver): a full-access grant or an early-access account is not "free".
+        from app.modules.credits.service import entitled_plan
+        plan_key = await entitled_plan(user_id)
         has_blueprint_grant = await _has_platform_grant(user_id, "business_plan")
-        if (plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}) and not has_blueprint_grant:
+        if plan_key in _FREE_PLAN_KEYS and not has_blueprint_grant:
             existing = await list_documents(user_id=user_id, type="business_plan", limit=2)
             if len(existing) >= _LIFETIME_BLUEPRINT_LIMIT:
                 raise HTTPException(
@@ -465,7 +467,8 @@ async def blueprint_documents_export(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     if doc.type == "business_plan":
-        plan_key, plan_status = await get_user_plan_info(user_id)
+        from app.modules.credits.service import entitled_plan
+        plan_key, plan_status = await entitled_plan(user_id), "active"      # QA PF1: the effective plan
         has_blueprint_grant = await _has_platform_grant(user_id, "business_plan_full")
         if (plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}) and not has_blueprint_grant:
             raise HTTPException(
@@ -516,7 +519,8 @@ async def blueprint_export_pdf_from_html(
     if body.document_id:
         doc = await get_document(user_id=user_id, document_id=body.document_id)
         if doc and doc.type == "business_plan":
-            plan_key, plan_status = await get_user_plan_info(user_id)
+            from app.modules.credits.service import entitled_plan
+            plan_key, plan_status = await entitled_plan(user_id), "active"      # QA PF1: the effective plan
             has_blueprint_grant = await _has_platform_grant(user_id, "business_plan_full")
             if (plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}) and not has_blueprint_grant:
                 raise HTTPException(

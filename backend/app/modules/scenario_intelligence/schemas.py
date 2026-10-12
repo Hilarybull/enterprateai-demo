@@ -136,6 +136,8 @@ class ScenarioRunResult(BaseModel):
     timeline_summary: Dict[str, str]
     risk_signals: List[RiskSignal] = Field(default_factory=list)
     recommendations: List[Dict[str, Any]]
+    # What the run was asked with: {"basis": "estimate", "estimate_basis": "£70 × 25 a month, ..."} when it ran from an estimate (QA PF4).
+    parameters: Dict[str, Any] = Field(default_factory=dict)
     # Multi-engine outputs (baseline + scenario + deltas for all 5 engines)
     multi_engine: Dict[str, Any] | None = Field(default=None, description="Multi-engine orchestration output (viability, survival, growth, fragility, stability)")
     survival_delta: Dict[str, Any] | None = Field(default=None, description="Survival engine delta (baseline -> scenario)")
@@ -159,10 +161,14 @@ class ScenarioTimelineEntry(BaseModel):
     stability_score: float
     state_label: Literal["stable", "tight", "at_risk", "stress", "critical"]
     
-    # Risk Enhancement Ratios
-    cash_conversion_ratio: float = 0.0
-    receivable_exposure_ratio: float = 0.0
-    delayed_revenue_pct: float = 0.0
+    # Risk Enhancement Ratios. None with a state saying why (QA PF4): "unavailable" (nothing to compare with) or
+    # "unbounded" (money owed and no cash against it), never a figure made from zeros.
+    cash_conversion_ratio: Optional[float] = None
+    cash_conversion_state: Literal["ok", "unavailable", "unbounded"] = "ok"
+    receivable_exposure_ratio: Optional[float] = 0.0
+    receivable_exposure_state: Literal["ok", "unavailable", "unbounded"] = "ok"
+    delayed_revenue_pct: Optional[float] = 0.0
+    delayed_revenue_state: Literal["ok", "unavailable", "unbounded"] = "ok"
 
 
 class ScenarioTimelineResponse(BaseModel):
@@ -176,6 +182,7 @@ class DoNothingRequest(BaseModel):
     state_version: str
     timeline_months: int = Field(default=3, ge=1, le=12)
     state: BusinessStateSnapshot
+    parameters: Dict[str, Any] = Field(default_factory=dict)      # {"use_estimate": True}: from the owner's own pricing answers (QA PF4)
 
 
 class DoNothingResponse(BaseModel):

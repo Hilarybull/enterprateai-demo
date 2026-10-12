@@ -96,7 +96,8 @@ def _evidence(f: dict) -> list[dict]:
     else:
         ev.append({"label": "Overdue invoices", "value": "None"})
     runway = f" · {cash['runway_months']:g} months of runway" if cash["runway_months"] is not None else ""
-    ev.append({"label": "Cash position", "value": f"{fmt_money(cash['cash'], cur)}{runway}"})
+    # Never a made-up figure: with no money in or out on record there is no cash position to state (QA P2-5).
+    ev.append({"label": "Cash position", "value": f"{fmt_money(cash['cash'], cur)}{runway}" if cash.get("recorded", True) else "Not recorded yet"})
     return ev
 
 

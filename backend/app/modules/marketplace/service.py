@@ -216,16 +216,69 @@ async def get_listing_status(*, user_id: str, workspace_id: str | None = None) -
     }
 
 
-async def publish_workspace(*, user_id: str, workspace_id: str | None = None) -> dict:
+async def publish_workspace(*, user: dict, workspace_id: str | None = None) -> dict:
+    user_id = user["id"]
     ws = await _load_workspace(user_id, workspace_id)
     if not ws:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     ws_id, data = _ws_fields(ws)
-    if not data.get("workspace_profile"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Complete your workspace profile before publishing to the marketplace",
-        )
+    now = datetime.now(timezone.utc).isoformat()
+    existing_marketplace = data.get("marketplace") or {}
+    existing_public = existing_marketplace.get("profile") or {}
+    existing_profile = data.get("workspace_profile") or {}
+    company_name = str(existing_profile.get("company_name") or existing_public.get("name") or getattr(ws, "name", None) or "My workspace").strip() or "My workspace"
+    user_email = str(user.get("email") or existing_profile.get("email") or existing_public.get("public_email") or "").strip()
+    profile = dict(existing_profile)
+    if not profile.get("company_name"):
+        profile["company_name"] = company_name
+    if not profile.get("business_type"):
+        profile["business_type"] = "startup"
+    if not profile.get("primary_industry"):
+        profile["primary_industry"] = "other"
+    if not profile.get("about_company"):
+        profile["about_company"] = f"{company_name} is building its business with EnterprateAI."
+    if not profile.get("country"):
+        profile["country"] = "Online"
+    if not profile.get("city"):
+        profile["city"] = "Online"
+    if not profile.get("operating_stage"):
+        profile["operating_stage"] = "idea"
+    if not profile.get("delivery_model"):
+        profile["delivery_model"] = "manual"
+    if user_email and not profile.get("email"):
+        profile["email"] = user_email
+    catalogue_products = [p for p in ((data.get("catalogue") or {}).get("products") or []) if isinstance(p, dict) and p.get("name") and not p.get("archived") and p.get("marketplace_listed", True) is not False]
+    service_tags = [str(tag).strip() for tag in (existing_public.get("service_tags") or profile.get("service_tags") or []) if str(tag).strip()]
+    if not service_tags:
+        service_tags = [str(s.get("service_name") or "").strip() for s in (profile.get("services") or []) if str(s.get("service_name") or "").strip()]
+    if not service_tags:
+        service_tags = [str(p.get("name") or "").strip() for p in catalogue_products if str(p.get("name") or "").strip()]
+    if not service_tags:
+        service_tags = [str(profile.get("primary_industry") or profile.get("business_type") or "General services").strip()]
+    if not profile.get("services"):
+        profile["services"] = [{"service_name": tag, "service_category": str(profile.get("primary_industry") or "other"), "service_description": None} for tag in service_tags[:5]]
+    public_profile = dict(existing_public)
+    if not public_profile.get("description"):
+        public_profile["description"] = str(profile.get("about_company") or f"{company_name} is building its business with EnterprateAI.")
+    if profile.get("website") and not public_profile.get("website"):
+        public_profile["website"] = profile.get("website")
+    if not public_profile.get("service_area"):
+        public_profile["service_area"] = ", ".join(x for x in (profile.get("city"), profile.get("country")) if x) or "Online"
+    if not public_profile.get("contact_preference"):
+        public_profile["contact_preference"] = "enquiry_form"
+    if user_email and not public_profile.get("public_email"):
+        public_profile["public_email"] = user_email
+    if profile.get("phone_number") and not public_profile.get("public_phone"):
+        public_profile["public_phone"] = profile.get("phone_number")
+    public_profile["service_tags"] = service_tags[:12]
+    public_profile["revision"] = int(public_profile.get("revision") or 0)
+    public_profile["updated_at"] = now
+    public_profile["updated_by"] = user_id
+
+    draft = dict(data)
+    draft["workspace_profile"] = profile
+    draft["marketplace"] = {**existing_marketplace, "profile": public_profile}
+
     if not await has_paid_access(user_id):
         published = await sb_select(
             "workspaces",
@@ -237,15 +290,19 @@ async def publish_workspace(*, user_id: str, workspace_id: str | None = None) ->
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="The Explorer plan includes 1 marketplace listing. Unlist your other business or upgrade for multiple listings.",
             )
-    now = datetime.now(timezone.utc).isoformat()
-    existing_marketplace = data.get("marketplace") or {}
+    from app.modules.marketplace.directory import activation_of, marketplace_settings
+    check = activation_of(marketplace_settings(draft), verified_claim=bool((draft.get("marketplace") or {}).get("claim_state") == "verified"))
+    if not check["ready"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Complete your marketplace details before publishing")
     marketplace_data = {
         **existing_marketplace,
         "is_active": True,
+        "profile": public_profile,
         "published_at": existing_marketplace.get("published_at") or now,
         "updated_at": now,
     }
     merged = dict(data)
+    merged["workspace_profile"] = profile
     merged["marketplace"] = marketplace_data
     updated = await sb_update(
         "workspaces",
@@ -258,6 +315,7 @@ async def publish_workspace(*, user_id: str, workspace_id: str | None = None) ->
             detail="Failed to publish listing. Please try again.",
         )
     return {"workspace_id": ws_id, "is_published": True, "published_at": marketplace_data["published_at"], "has_profile": True}
+
 
 
 async def unpublish_workspace(*, user_id: str, workspace_id: str | None = None) -> dict:

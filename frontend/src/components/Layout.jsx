@@ -14,7 +14,7 @@ import WorkspacePrompt from "./WorkspacePrompt";
 import { WorkspaceProfilePanel } from "./WorkspaceProfileCard";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 import { hasModuleAccess, isPlatformModuleGranted, isPlatformModuleRestricted } from "../lib/permissions";
-import { planHasModuleAccess, planLabel } from "../lib/plans";
+import { accessLabel, planHasModuleAccess } from "../lib/plans";
 import { TipsPrompt } from "../pages/EmailPreferencesPage";
 import { useDemoTour } from "../context/DemoTourContext";
 
@@ -36,15 +36,6 @@ const NAV = [
 ];
 
 
-function initialsFromEmail(email) {
-  const e = String(email || "").trim();
-  if (!e) return "U";
-  const name = e.split("@")[0] || "U";
-  const parts = name.split(/[.\-_]+/).filter(Boolean);
-  const first = (parts[0] || name)[0] || "U";
-  const second = (parts[1] || "")[0] || "";
-  return (first + second).toUpperCase();
-}
 
 function Icon({ name, className = "h-4 w-4" }) {
   const base = { className, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" };
@@ -344,7 +335,7 @@ export default function Layout() {
     window.addEventListener("ea:toast", onToast);
     return () => window.removeEventListener("ea:toast", onToast);
   }, []);
-  // Asked for from anywhere ("Name your business" on the Agent card): the business profile, where its name is.
+  // Asked for from anywhere on the Agent card: the business profile, where its name is.
   useEffect(() => {
     const open = () => setWorkspaceProfileOpen(true);
     window.addEventListener("ea:workspace:profile", open);
@@ -418,9 +409,10 @@ export default function Layout() {
   const enableHealthCheck = String(import.meta.env.ENABLE_HEALTH_CHECK ?? "false").toLowerCase() === "true";
   const acceptedAny = decisionStatus === "accepted" || serviceDecisionStatus === "accepted";
   const rejectedAny = decisionStatus === "rejected" || serviceDecisionStatus === "rejected";
+  const userName = useAuthStore((s) => s.name);
   const workspaceDisplayName = isMemberMode
     ? (memberWorkspaceName || "Shared workspace")
-    : (workspaceCompanyName || workspaceName || "My workspace");
+    : (workspaceCompanyName || workspaceName || userName || "My workspace");
   const email = useAuthStore((s) => s.email);
 
 
@@ -435,7 +427,6 @@ export default function Layout() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [workspaceSwitcherOpen]);
 
-  const userName = useAuthStore((s) => s.name);
   const userPicture = useAuthStore((s) => s.picture);
   // If the avatar image fails to load, show the user's initials instead of broken alt text.
   const [avatarFailedSrc, setAvatarFailedSrc] = useState(null);
@@ -445,8 +436,8 @@ export default function Layout() {
   const refreshGrants = useAuthStore((s) => s.refreshGrants);
   const subscription = useAuthStore((s) => s.subscription);
   const profileInitials = userName
-    ? (userName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || initialsFromEmail(email))
-    : initialsFromEmail(email);
+    ? (userName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "U")
+    : "U";
 
   // Inside the app shell only the content area scrolls. If the browser ever scrolls the
   // page itself (e.g. to bring a focused field into view), put it straight back so the
@@ -974,8 +965,8 @@ export default function Layout() {
                       <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2Z" />
                     </svg>
                     {platformGrants.length > 0 && ["free_trial", "explorer", "expired", ""].includes(subscription?.plan_key ?? "")
-                      ? "Privileged"
-                      : planLabel(subscription?.plan_key, subscription?.status)}
+                      ? "Explorer + extra access"
+                      : accessLabel(subscription)}
                   </button>
                   {platformGrants.length === 0 && (!subscription?.plan_key || ["free_trial", "explorer"].includes(subscription.plan_key)) && (
                     <button
@@ -1551,7 +1542,7 @@ export default function Layout() {
                     <>
                       <h2 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">Upgrade to unlock this module</h2>
                       <p className="mt-2 max-w-sm text-sm text-slate-500 dark:text-slate-400">
-                        This feature isn't included in your current plan (<strong>{planLabel(subscription?.plan_key, subscription?.status)}</strong>).
+                        This feature isn't included in your current plan (<strong>{accessLabel(subscription)}</strong>).
                         Upgrade to access it.
                       </p>
                       <div className="mt-6 flex gap-3">
@@ -1616,3 +1607,4 @@ export default function Layout() {
     </div>
   );
 }
+

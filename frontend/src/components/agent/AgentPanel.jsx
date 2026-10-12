@@ -51,6 +51,9 @@ const TILE_TONE = {
 
 export const PAUSED_TIP = "Updating your dashboard. This will be available in a moment.";
 
+/** Asks Needs Approval to open one task's approval in its drawer: `{ detail: { runId } }`. */
+export const OPEN_APPROVAL_EVENT = "ea:approval:open";
+
 const LockMark = () => (
   <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
 );
@@ -95,7 +98,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   // What the Agent did since the owner was last here, for the line under the greeting. It belongs to the active workspace: switching
   // workspace clears it at once and asks again, so nothing from the last workspace is ever shown. Leaving the dashboard, or a minute
   // on it, is what "last here" means: a refresh does not reset it.
-  const workspace = workspaceNameOf(useWorkspaceStore((st) => st.workspaceName));
+  const workspace = workspaceNameOf(useWorkspaceStore((st) => st.workspaceCompanyName || st.workspaceName)) || String(useAuthStore((st) => st.name) || "").trim();
   const [briefing, setBriefing] = useState(summary?.briefing || null);
   useEffect(() => {
     setBriefing(summary?.briefing || null);
@@ -169,13 +172,17 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     return () => window.removeEventListener(AGENT_FOLLOW_EVENT, take);
   }, []);
 
+  const [asked, setAsked] = useState("");      // the owner's own words, shown above the answer
   async function send(req) {
     if (!businessId || busy || paused) return;
     setBusy(true);
+    if (req?.text && req.sourceChannel === "text") setAsked(req.text);
+    else if (req?.text === undefined || req?.text === null) setAsked("");
     setReply({ tone: "indigo", text: WORKING_TEXT, working: true });      // said at once, not only a spinner in the button
     try {
       const res = await submitAgentRequest({ businessId, background: true, ...req });
       handle(res, req);
+      if (req?.sourceChannel === "text") setPrompt("");      // answered, whatever the answer: the box is clear for the next message
     } catch (e) {
       setReply({ tone: "rose", text: agentErrorMessage(e, "The Agent couldn't start that. Please try again.") });
     } finally {
@@ -250,7 +257,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     if (action.prompt) {
       setPrompt(action.prompt);
       setReply({ tone: "slate", text: "Your question is in the box below. Press send to run it: it uses AI Credits." });
-      promptBox.current?.focus();
+      promptBox.current?.focus({ preventScroll: true });
       return;
     }
     // Starting a task needs credits. With none left, say so here; nothing is started.
@@ -270,7 +277,6 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
       <p data-m="fadeUp" data-agent-greeting title={getGreeting({ subject: workspace, tz: briefing?.timezone })}
         className="mt-3 flex min-w-0 items-baseline gap-2 text-lg font-semibold text-white sm:text-xl">
         <span className="min-w-0 truncate">{getGreeting({ subject: workspace, tz: briefing?.timezone })}</span>
-        {!workspace && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("ea:workspace:profile"))} data-name-business className="shrink-0 text-[12px] font-semibold text-indigo-100 underline underline-offset-2 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">Name your business</button>}
       </p>
       <p data-m="fadeUp" style={{ "--m-delay": "60ms" }} data-agent-briefing data-briefing-kind={told.kind} title={told.text}
         className="mt-0.5 line-clamp-2 min-h-[1.25rem] text-sm text-white/75 lg:line-clamp-1">{told.text}</p>
@@ -372,6 +378,9 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
         <OutOfCreditsNote className="mt-3" onPlans={() => navigate("/pricing")} onClose={() => setCreditNote(false)} />
       )}
 
+      {reply && asked && (
+        <p className="mt-3 ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-brand-600 px-3 py-1.5 text-[13px] font-medium text-white" data-you-asked>{asked}</p>
+      )}
       {reply && (
         <div role="status" className={`mt-3 rounded-xl border px-3.5 py-3 text-sm ${
           reply.tone === "emerald" ? "border-emerald-200 bg-emerald-50 text-emerald-900"
@@ -447,6 +456,18 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
   const navigate = useNavigate();
   const items = summary?.needs_approval || [];
   const [editing, setEditing] = useState(null);      // the task whose approval is open in the drawer
+  const [wanted, setWanted] = useState(null);         // asked to open (a homepage draft); opened once it is listed
+  useEffect(() => {
+    const open = (e) => setWanted(e.detail?.runId || null);
+    window.addEventListener(OPEN_APPROVAL_EVENT, open);
+    return () => window.removeEventListener(OPEN_APPROVAL_EVENT, open);
+  }, []);
+  useEffect(() => {
+    if (!wanted) return undefined;
+    if (items.some((item) => item.run_id === wanted)) { setEditing(wanted); setWanted(null); return undefined; }
+    const timer = setTimeout(() => onChanged?.(), 1500);      // still being prepared: look again shortly
+    return () => clearTimeout(timer);
+  }, [wanted, items, onChanged]);
   const rows = useListChanges(items, (item) => item.approval_id || item.run_id || item.title);
   const count = summary?.needs_approval_count ?? 0;
   // Something new is waiting: say so, top right, once the Agent has finished preparing it.
@@ -519,3 +540,5 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
     </section>
   );
 }
+
+

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { PLANS, BILLING, formatPrice, planLabel, normalisePlanKey } from "../lib/plans";
+import { PLANS, BILLING, formatPrice, accessLabel, normalisePlanKey } from "../lib/plans";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import logoUrl from "../enterprate-logo.png";
@@ -607,7 +607,7 @@ export default function PricingPage() {
           <div className="flex items-center gap-3">
             {token && subscription?.plan_key && (
               <span className="hidden rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 sm:inline dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-                {planLabel(subscription.plan_key, subscription.status)}
+                {accessLabel(subscription)}
               </span>
             )}
             <button

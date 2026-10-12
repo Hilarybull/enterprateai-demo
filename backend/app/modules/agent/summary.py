@@ -427,7 +427,8 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
         suggestions.append({"key": "budget", "icon": "info", "tone": "amber", "mood": "needs_you",
                             "text": f"Paused: monthly automatic budget used ({spend['used']} credit{'s' if spend['used'] != 1 else ''}). Raise it in Agent settings.",
                             "action": {"to": "/agent?settings=1"}})
-    for r in sorted(runs, key=lambda r: r.get("created_at") or "")[-40:]:
+    from app.modules.agent.twins import without_twins
+    for r in sorted(without_twins(runs), key=lambda r: r.get("created_at") or "")[-40:]:      # a task asked twice is shown once (QA U8)
         q = r.get("pending_question") if r.get("status") == "running" else None
         if q and not q.get("optional") and actor.can_prepare and len([s for s in suggestions if s.get("question")]) < 2:
             suggestions.insert(0, {"key": f"question:{r['id']}", "icon": "chat", "tone": "amber", "mood": "needs_you", "text": question_title(r)["title"], "detail": question_title(r)["detail"],
@@ -595,19 +596,24 @@ async def build_metrics(orch, user_id: str, business_id: str, email: str | None 
 # ── The Agent's briefing: what it did while the owner was away, and what is waiting ──
 
 _DONE = ("succeeded", "awaiting_approval")
+_ASKED_BY_OWNER = ("text", "voice", "ui_action")      # started by a person on the page, not by the Agent on its own
 
 
 def briefing_of(runs: list[dict], *, since: str | None, needs_approval: int, now: datetime) -> dict:
     """Counts for the dashboard's greeting, from the business's own tasks. `since`: when the owner
     was last here (None if never recorded). Nothing here is a sentence: the page writes those, so the
     wording and its plurals live in one place."""
-    waiting = [r for r in runs if r.get("status") == "running" and r.get("pending_question") and not (r.get("pending_question") or {}).get("optional")]
+    from app.modules.agent.twins import without_twins
+    waiting = [r for r in without_twins(runs) if r.get("status") == "running" and r.get("pending_question") and not (r.get("pending_question") or {}).get("optional")]
     working = next((r for r in runs if r.get("status") in ("running", "created") and not r.get("pending_question")), None)
     done: dict[str, int] = {}
     if since:
         for r in runs:
             when = r.get("completed_at") or r.get("updated_at") or r.get("created_at") or ""
-            if r.get("status") in _DONE and when > since and not (r.get("state") or {}).get("duplicate_of"):
+            # A task the owner asked for themselves after they were last seen was done while they were here,
+            # not "while you were away" (QA P1-5): only work started without them, or before they left, counts.
+            theirs_this_visit = r.get("source_channel") in _ASKED_BY_OWNER and (r.get("created_at") or "") > since
+            if r.get("status") in _DONE and when > since and not theirs_this_visit and not (r.get("state") or {}).get("duplicate_of"):
                 done[r.get("workflow_key") or "task"] = done.get(r.get("workflow_key") or "task", 0) + 1
     return {
         "last_seen_at": since, "first_visit": since is None and not runs,

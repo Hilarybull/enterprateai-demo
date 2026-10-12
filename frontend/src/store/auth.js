@@ -65,10 +65,17 @@ async function fetchPlatformGrants({ force = false } = {}) {
 
 async function fetchSubscription({ force = false } = {}) {
   try {
-    return await withRetry((again) => sessionGet("/plans/my", { force: force || again }));
+    return effectiveSubscription(await withRetry((again) => sessionGet("/plans/my", { force: force || again })));
   } catch {
     return null;
   }
+}
+
+/** QA E8: one entitlement everywhere. `plan_key` is what the account can use (its plan plus admin grants, from
+ * the server's single resolver); `subscribed_plan_key` is what it pays for, for the billing pages. */
+export function effectiveSubscription(sub) {
+  if (!sub || !sub.effective_plan_key || sub.effective_plan_key === sub.plan_key) return sub ? { ...sub, subscribed_plan_key: sub.plan_key } : sub;
+  return { ...sub, subscribed_plan_key: sub.plan_key, subscribed_status: sub.status, plan_key: sub.effective_plan_key, status: "active" };
 }
 
 // The dashboard needs the workspace and the agent summary as well as the session.
