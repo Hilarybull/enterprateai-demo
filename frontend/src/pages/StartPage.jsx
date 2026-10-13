@@ -163,8 +163,8 @@ export default function StartPage({ framed = false }) {
 
   return (
     <Frame>
-      {/* The result is its own card, wide enough for its two columns: not boxed inside a second frame. */}
-      <div className={stage === "result" && result ? "mx-auto w-full max-w-[820px]"
+      {/* The result is its own card, across the full width of the page (one column on a phone, two from 768px). */}
+      <div className={stage === "result" && result ? "w-full"
         : "mx-auto w-full max-w-[560px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900"} role="region" aria-label="Your task">
         {stage === "result" && result && (
           <FirstValueCard result={result} onContinue={() => navigate("/dashboard", { replace: true })}

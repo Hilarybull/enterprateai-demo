@@ -95,6 +95,17 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(run.status === "adopted" ? run : null);
+  // The draft first (the funding case, or the figures worked out); what it rests on, to adopt, edit or reject,
+  // opens with "Check or review inputs". With no draft to show, the inputs are shown at once.
+  const draftOf = (r) => Boolean(r?.deliverables || r?.figures?.length);
+  const [reviewing, setReviewing] = useState(() => !draftOf(run));
+  const Draft = ({ r }) => (r.deliverables ? <FundingDrafts d={r.deliverables} /> : <Figures list={r.figures} />);
+  const toggle = (label) => (
+    <button type="button" onClick={() => setReviewing((v) => !v)} aria-expanded={reviewing} data-review-inputs
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-slate-700 hover:border-brand-300 hover:text-brand-700">
+      {reviewing ? "Hide inputs" : label}
+    </button>
+  );
   const set = (id, patch) => setDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
   const questions = items.filter((i) => i.kind === "question");
   const proposals = items.filter((i) => i.kind !== "question");
@@ -103,13 +114,15 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
   const undecided = proposals.filter((i) => !decisions[i.id]?.decision);
   const adoptAll = () => setDecisions((d) => ({ ...d, ...Object.fromEntries(undecided.map((i) => [i.id, { decision: "accept" }])) }));
 
-  async function adopt() {
-    if (open.length) return;
+  async function adopt(chosen = decisions) {
+    const left = questions.filter((i) => !(chosen[i.id]?.decision === "skip" || (chosen[i.id]?.decision === "answer" && String(chosen[i.id]?.value || "").trim())));
+    if (left.length) return;
     setBusy(true);
     setError("");
     try {
-      const out = await apiRequest(`/businesses/${businessId}/research/${run.id}/review`, "POST", { decisions });
+      const out = await apiRequest(`/businesses/${businessId}/research/${run.id}/review`, "POST", { decisions: chosen });
       setDone(out.research);
+      setReviewing(!draftOf(out.research));      // adopted: back to the draft, now checked again
       onAdopted?.(out);
     } catch (e) {
       setError(refusalMessage(e, "That couldn't be saved just now. Nothing was changed."));
@@ -126,7 +139,10 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
           <div><dt className="text-emerald-800">Score</dt><dd className="font-semibold" data-score-change>{b.score} → {a.score}{a.score_label ? ` ${a.score_label}` : ""}</dd></div>
           <div><dt className="text-emerald-800">Evidence coverage</dt><dd className="font-semibold" data-coverage-change>{b.evidence_coverage}% → {a.evidence_coverage}%</dd></div>
         </dl>
-        <Figures list={done.figures} />
+        {draftOf(done) && <Draft r={done} />}
+        {draftOf(done) && <div className="mt-3">{toggle("Check or review inputs")}</div>}
+        {(reviewing || !draftOf(done)) && <>
+        {done.deliverables && <Figures list={done.figures} />}
         {done.changes?.length > 0 && (
           <table className="mt-3 w-full text-left text-[12.5px]" data-criteria-changes>
             <thead><tr className="text-emerald-800"><th className="font-medium">Criterion</th><th className="font-medium">Before</th><th className="font-medium">After</th><th className="font-medium">Based on</th></tr></thead>
@@ -137,7 +153,6 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
               </tr>))}</tbody>
           </table>
         )}
-        <FundingDrafts d={done.deliverables} />
         {done.sources_used?.length > 0 && (
           <div className="mt-3" data-sources-used>
             <p className="font-semibold">Sources</p>
@@ -149,6 +164,7 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
               </li>))}</ul>
           </div>
         )}
+        </>}
         <p className="mt-2 text-[12px] text-emerald-900">Researched and estimated figures stay marked as such until you confirm them. Nothing else on your business was changed.</p>
       </div>
     );
@@ -164,6 +180,24 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
         The research failed just now, so some things couldn't be looked up. Nothing was charged.</p>}
       {run.counts && <p className="text-[12px] text-slate-500" data-research-counts>
         {run.counts.researched} researched · {run.counts.estimated} estimated · {run.counts.reused} already on record · {run.counts.calculated} calculated · {run.counts.asked} to answer · {run.counts.sources} sources</p>}
+      {!reviewing && <>
+        <Draft r={run} />
+        <p className="mt-3 text-[12.5px] text-slate-600" data-review-prompt>
+          {[proposals.length ? `${proposals.length} input${proposals.length === 1 ? "" : "s"} to adopt or edit` : "", questions.length ? `${questions.length} question${questions.length === 1 ? "" : "s"} for you` : ""].filter(Boolean).join(" and ")}. The gaps above update once you adopt them: until then nothing counts.
+        </p>
+        {error && <p role="alert" className="mt-2 text-[12px] text-rose-700">{error}</p>}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {/* One press when there is nothing to answer; with questions, the inputs open to answer them first. */}
+          <button type="button" disabled={busy} aria-busy={busy} data-adopt-and-check
+            onClick={() => (questions.length ? setReviewing(true) : adopt({ ...decisions, ...Object.fromEntries(undecided.map((i) => [i.id, { decision: "accept" }])) }))}
+            className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
+            {busy ? "Checking again…" : questions.length ? `Answer ${questions.length === 1 ? "1 question" : `${questions.length} questions`} and check again` : "Adopt all and check again"}
+          </button>
+          {toggle("Check or review inputs")}
+        </div>
+      </>}
+      {reviewing && <>
+      {draftOf(run) && <div className="mt-3">{toggle("Check or review inputs")}</div>}
       <p className="mt-1 text-[13px] font-semibold text-slate-900">An answer for every gap. Nothing counts until you adopt it.</p>
       {undecided.length > 0 && <button type="button" onClick={adoptAll} data-adopt-all className="mt-2 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-[12px] font-semibold text-brand-800 hover:bg-brand-100">Adopt all ({undecided.length})</button>}
       <ul className="mt-2 space-y-3">
@@ -209,15 +243,15 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
           );
         })}
       </ul>
-      <Figures list={run.figures} />
-      <FundingDrafts d={run.deliverables} />
+      {run.deliverables && <Figures list={run.figures} />}
       {error && <p role="alert" className="mt-2 text-[12px] text-rose-700">{error}</p>}
       {open.length > 0 && <p className="mt-3 text-[12px] text-violet-800" data-questions-left>{open.length === 1 ? "1 question left" : `${open.length} questions left`}: answer or skip each.</p>}
       {undecided.length > 0 && <p className="mt-1 text-[12px] text-slate-500" data-undecided>{undecided.length} not adopted yet: they won't count unless you adopt them.</p>}
-      <button type="button" disabled={busy || open.length > 0} onClick={adopt} aria-busy={busy} data-research-adopt
+      <button type="button" disabled={busy || open.length > 0} onClick={() => adopt()} aria-busy={busy} data-research-adopt
         className="mt-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
         {busy ? "Checking again…" : "Use what I adopted and check again"}
       </button>
+      </>}
     </section>
   );
 }

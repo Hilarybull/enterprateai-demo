@@ -99,8 +99,8 @@ export default function FirstValueCard({ result, onDismiss = null, onContinue = 
           <h3 className="text-[13px] font-bold text-slate-900 dark:text-slate-100">What is missing</h3>
           {/* Each gap on one row: its label in a column of its own, so the descriptions line up. */}
           <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-800">
-            {failed.map((b) => <li key={b.key} data-blocker="failed" className="grid grid-cols-[7rem_minmax(0,1fr)] items-baseline gap-x-3 py-1.5 text-[13px] leading-snug text-slate-700 dark:text-slate-200"><span className="justify-self-start whitespace-nowrap rounded-md bg-rose-50 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700">Blocker</span><span>{b.label}</span></li>)}
-            {missing.map((b) => <li key={b.key} data-blocker={b.kind === "partial" ? "partial" : "unknown"} className="grid grid-cols-[7rem_minmax(0,1fr)] items-baseline gap-x-3 py-1.5 text-[13px] leading-snug text-slate-700 dark:text-slate-200"><span className={`justify-self-start whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${b.kind === "partial" ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`}>{b.kind === "partial" ? "Early evidence" : "Not known yet"}</span><span>{b.label}</span></li>)}
+            {failed.map((b) => <li key={b.key} data-blocker="failed" className="grid grid-cols-[6.5rem_minmax(0,1fr)] sm:grid-cols-[7rem_minmax(0,1fr)] items-baseline gap-x-3 py-1.5 text-[13px] leading-snug text-slate-700 dark:text-slate-200"><span className="justify-self-start whitespace-nowrap rounded-md bg-rose-50 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700">Blocker</span><span>{b.label}</span></li>)}
+            {missing.map((b) => <li key={b.key} data-blocker={b.kind === "partial" ? "partial" : "unknown"} className="grid grid-cols-[6.5rem_minmax(0,1fr)] sm:grid-cols-[7rem_minmax(0,1fr)] items-baseline gap-x-3 py-1.5 text-[13px] leading-snug text-slate-700 dark:text-slate-200"><span className={`justify-self-start whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${b.kind === "partial" ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`}>{b.kind === "partial" ? "Early evidence" : "Not known yet"}</span><span>{b.label}</span></li>)}
           </ul>
         </div>
       </div>
@@ -170,7 +170,6 @@ export default function FirstValueCard({ result, onDismiss = null, onContinue = 
         ? <p role="alert" className="mt-2 text-[12px] font-medium text-rose-700">{done.error}</p>
         : <p role="status" className="mt-2 text-[12px] text-emerald-800" data-fv-done>{done.text}{done.to && <> <button type="button" onClick={() => navigate(done.to)} className="font-semibold underline">Open catalogue</button></>}</p>)}
       {saved && <p role="status" className="mt-2 text-[12px] text-slate-600">Saved. You'll find this at the top of your dashboard.</p>}
-      {!gate && <p className="mt-2 text-[12px] text-slate-500" data-fv-explains>{result.premium_next_action.explains}</p>}
       {onContinue && (
         <div className="mt-4 flex justify-end border-t border-slate-100 pt-3 dark:border-slate-800">
           <button type="button" onClick={onContinue} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">{continueLabel}</button>

@@ -110,8 +110,15 @@ describe("PF3 the premium research, walked through in the browser", () => {
     const review = screen.getByRole("region", { name: "Review the research" });
     expect(review.querySelector("[data-not-connected]")).toBeTruthy();
     expect(review.querySelector("[data-research-counts]").textContent).toBe("0 researched · 0 estimated · 0 already on record · 1 calculated · 2 to answer · 0 sources");
-    expect(review.querySelector('[data-research-item="cash_needed"] [data-working]').textContent).toBe("Three months of fixed costs: 3 × £900 = £2,700");
+    // The draft first, on its own; the inputs open with "Check or review inputs".
     expect(review.querySelector("[data-funding-drafts] [data-route='loan']").textContent).toContain("Start Up Loans · 2026");
+    expect(review.querySelector("[data-research-item]")).toBeNull();
+    expect(review.querySelector("[data-review-prompt]").textContent).toBe("1 input to adopt or edit and 2 questions for you. The gaps above update once you adopt them: until then nothing counts.");
+    // With questions open, the one-press button opens the inputs to answer them first.
+    expect(within(review).getByRole("button", { name: "Answer 2 questions and check again" })).toBeTruthy();
+    await click(within(review).getByRole("button", { name: "Check or review inputs" }));
+    expect(review.querySelector("[data-funding-drafts]")).toBeNull();
+    expect(review.querySelector('[data-research-item="cash_needed"] [data-working]').textContent).toBe("Three months of fixed costs: 3 × £900 = £2,700");
     const adopt = within(review).getByRole("button", { name: "Use what I adopted and check again" });
     expect(adopt.disabled).toBe(true);                                       // two questions open
     expect(review.querySelector("[data-questions-left]").textContent).toBe("2 questions left: answer or skip each.");
@@ -122,6 +129,8 @@ describe("PF3 the premium research, walked through in the browser", () => {
     await click(within(review).getByRole("button", { name: "Adopt all (1)" }));
     await click(adopt);
     expect(calls.find((c) => /\/review$/.test(c.path)).body).toEqual({ decisions: { q1: { decision: "answer", value: "Hilary" }, q2: { decision: "skip", value: "" }, e1: { decision: "accept" } } });
+    expect(document.querySelector("[data-research-adopted] [data-funding-drafts]")).toBeTruthy();      // after adopting: the draft again
+    await click(within(document.querySelector("[data-research-adopted]")).getByRole("button", { name: "Check or review inputs" }));
     const rows = [...document.querySelectorAll("[data-criteria-changes] tbody tr")].map((r) => r.textContent);
     expect(rows).toEqual(["Launch controlNot known yetMet", "Operational processNot known yetNot known yet", "Cash preparationNot known yetPartly met"]);
   });
