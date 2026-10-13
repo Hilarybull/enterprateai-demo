@@ -210,6 +210,7 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
                 <span className="text-[12px] font-semibold text-slate-500">{i.label}</span>
                 <span data-research-state className={`rounded px-1.5 text-[11px] font-semibold ${tone}`}>{word}</span>
                 {(i.kind === "researched" || i.basis === "benchmark") && <span className="text-[11px] text-slate-500" data-research-confidence>Confidence: {CONFIDENCE(i.confidence)}</span>}
+                {i.charged > 0 && <span className="text-[11px] text-slate-500" data-field-cost>{i.charged} credits</span>}
               </div>
               {i.kind === "question" ? (
                 <div className="mt-1.5" data-question>

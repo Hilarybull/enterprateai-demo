@@ -696,6 +696,16 @@ async def agent_summary(business_id: str, user=Depends(get_current_user)):
     except Conflict as e:
         raise _conflict(e)
     s["active_runs"] = [_public_run(r) for r in s["active_runs"]]
+    # The free plan sees that there is an insight, not the insight (the dashboard does the same). If the plan can't be
+    # read, the details stay hidden: never shown by mistake, and the summary still loads.
+    from app.modules.agent.dashboard import vague_for_free
+    try:
+        free = (await get_orchestrator().entitlement(business_id)).get("plan") == "explorer"
+    except Exception:      # noqa: BLE001
+        logger.warning("plan not read for the summary of %s", business_id, exc_info=True)
+        free = True
+    if free:
+        s["insights"] = vague_for_free(s.get("insights") or [])
     try:      # the greeting's figures: never a reason for the summary to fail
         s["briefing"] = await _briefing(user, business_id, s.get("needs_approval_count") or 0)
         s.update({k: s["briefing"][k] for k in ("done_since_last_visit", "needs_input_count")})

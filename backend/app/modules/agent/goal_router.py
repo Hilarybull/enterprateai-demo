@@ -478,12 +478,15 @@ async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict 
         need = agent_config.CAPABILITY_MIN_PLAN.get(capability) or "starter_insight"
         return {**base, "allowed": False, "gate": first_value.premium_gate(result, entitled=False),
                 "refusal": {"minimum_plan": need, "minimum_plan_label": agent_config.PLAN_LABEL.get(need, need)}}
-    # Only the research is charged; calculations and questions are free (Credit System v2 §6).
-    cost = await orch.rt.meter.cost(research.FEATURE) if (topics and link["connected"]) else 0
+    # Each field the AI fills (looked up, or estimated from a benchmark) is charged; what is worked out from the owner's
+    # figures, and every question, is free (Credit System v2 §6). Each topic fills one field at most: that is the most it costs.
+    per_field = await orch.rt.meter.cost(research.FEATURE) if (topics and link["connected"]) else 0
+    most = per_field * len(topics)
     balance = await orch.rt.meter.balance(user["id"])
-    if cost and balance is not None and balance < cost:
-        return {**base, "allowed": False, "cost": cost, "balance": balance, "gate": first_value.premium_gate(result, entitled=True, credits=0)}
-    return {**base, "allowed": True, "cost": cost, "balance": balance, "after": None if balance is None else balance - cost}
+    if per_field and balance is not None and balance < per_field:
+        return {**base, "allowed": False, "cost": most, "per_field": per_field, "balance": balance, "gate": first_value.premium_gate(result, entitled=True, credits=0)}
+    return {**base, "allowed": True, "cost": most, "per_field": per_field, "fields_max": len(topics) if per_field else 0, "balance": balance,
+            "after": None if balance is None else balance - most}
 
 
 @router.post("/businesses/{business_id}/quick-check/{goal_key}/premium/quote")

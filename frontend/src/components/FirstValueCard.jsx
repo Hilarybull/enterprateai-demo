@@ -150,7 +150,10 @@ export default function FirstValueCard({ result, onDismiss = null, onContinue = 
           {/* QA R7: every gap, one of three ways: looked up, worked out from your figures, or asked. Said before it starts. */}
           <p data-fv-plan>I'll answer each gap first: {served.confirm.plan ? `${served.confirm.plan.research} to research, ${served.confirm.plan.estimate || 0} figures to estimate, ${served.confirm.plan.worked_out} to work out, ${served.confirm.plan.asked} to ask you` : "research, estimates, calculations and only then questions"}.</p>
           {served.confirm.not_connected && <p className="mt-1 text-amber-900" data-not-connected>{served.confirm.not_connected}</p>}
-          <p className="mt-1 font-semibold" data-fv-cost>{served.confirm.cost ? `${served.confirm.cost} AI Credits` : "No AI Credits"}{typeof served.confirm.balance === "number" && served.confirm.cost ? `: ${served.confirm.balance} → ${served.confirm.after}` : ""}. {served.confirm.cost ? "Charged only if the research finds at least one sourced result." : "Working out and asking are free."}</p>
+          {/* Each field the AI fills is charged; the most it can come to is said before anything starts. */}
+          <p className="mt-1 font-semibold" data-fv-cost>{served.confirm.cost
+            ? `${served.confirm.per_field || served.confirm.cost} AI Credits for each field the AI fills in${served.confirm.fields_max ? `, up to ${served.confirm.fields_max} fields (${served.confirm.cost} credits at most)` : ""}${typeof served.confirm.balance === "number" ? `. You have ${served.confirm.balance}` : ""}. Worked-out figures and questions are free.`
+            : "No AI Credits. Working out and asking are free."}</p>
           <div className="mt-2.5 flex flex-wrap gap-2">
             <button type="button" disabled={working} aria-busy={working} data-fv-start onClick={async () => {
               if (inFlight.current) return;

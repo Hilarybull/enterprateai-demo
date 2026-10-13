@@ -46,7 +46,7 @@ async function toResult() {
   await click(await screen.findByRole("button", { name: "A service" }));
   await screen.findByRole("region", { name: "Initial Launch Readiness" });
 }
-const ALLOWED = () => ({ allowed: true, cost: 2, balance: 20, after: 18, topics: ["Launch channels used by similar businesses", "Comparable prices"], blockers: 1 });
+const ALLOWED = () => ({ allowed: true, cost: 4, per_field: 2, fields_max: 2, balance: 20, after: 16, topics: ["Launch channels used by similar businesses", "Comparable prices"], blockers: 1 });
 
 describe("PF3 the premium research, walked through in the browser", () => {
   it("cost first, one press only, then each finding reviewed and the check run again: before and after", async () => {
@@ -56,7 +56,7 @@ describe("PF3 the premium research, walked through in the browser", () => {
     await act(async () => { fireEvent.click(cta); fireEvent.click(cta); });      // a double click: one quote, never two
     expect(calls.filter((c) => /\/premium\/quote$/.test(c.path)).length).toBe(1);
     const confirm = await screen.findByRole("group", { name: "Before I start" });
-    expect(confirm.querySelector("[data-fv-cost]").textContent).toBe("2 AI Credits: 20 → 18. Charged only if the research finds at least one sourced result.");
+    expect(confirm.querySelector("[data-fv-cost]").textContent).toBe("2 AI Credits for each field the AI fills in, up to 2 fields (4 credits at most). You have 20. Worked-out figures and questions are free.");
     expect(calls.some((c) => /\/premium$/.test(c.path))).toBe(false);          // nothing has started yet
     await click(within(confirm).getByRole("button", { name: "Start the research" }));
     expect(calls.filter((c) => /\/premium$/.test(c.path)).length).toBe(1);

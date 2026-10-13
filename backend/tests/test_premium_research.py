@@ -71,7 +71,7 @@ class Biz:
         return fn(self.data)
 
 
-def _orch(data, balance=20):
+def _orch(data, balance=100):
     meter = MemoryMeter(plans={OWNER: "strategic_business_os"}, balances={OWNER: balance})
     return SimpleNamespace(rt=SimpleNamespace(business=Biz(data), meter=meter)), meter
 
@@ -95,10 +95,10 @@ def answers_for(ws, goal, data):
     }[goal].items() if v not in ("", None)}
 
 
-def _start(ws, goal, *, search=None, llm=None, monkeypatch=None):
+def _start(ws, goal, *, search=None, llm=None, monkeypatch=None, balance=100):
     data = copy.deepcopy(WORKSPACES[ws]["data"])
     answers = answers_for(ws, goal, data)
-    orch, meter = _orch(data)
+    orch, meter = _orch(data, balance)
     r = asyncio.run(research.start(orch, user={"id": OWNER}, business_id="W", goal=goal, answers=answers, data=data,
                                    search=search or Search(), llm=llm or Model()))
     return r, orch, meter, data, answers
@@ -132,8 +132,10 @@ def test_every_gap_answered_first_for_every_workspace_and_check(ws, goal):
     # No question for a fact the workspace already has.
     known = {k for k, v in (r["inputs"] or {}).items() if v not in (None, "")}
     assert not {x["field"] for x in blank} & known, (ws, goal, {x["field"] for x in blank} & known)
-    # Charged exactly once, only because a sourced Researched item was produced.
-    assert r["charged"] == (2 if found else 0) and sum(c[2] for c in meter.charges) == r["charged"]
+    # 2 credits for each field the AI filled (researched or a benchmark estimate), once each; the rest is free.
+    filled = [x for x in items if research.billable(x)]
+    assert r["charged"] == 2 * len(filled) and [c[2] for c in meter.charges] == [2] * len(filled)
+    assert all(x.get("charged") == 2 for x in filled)
     # Every gap has an answer of some kind.
     covered = {c for x in items for c in [x["criterion"], *(x.get("also") or [])]}
     assert set(research.blockers_of(first_value.assess(goal, answers, data))) <= covered | {c for c in covered}
@@ -296,7 +298,9 @@ def test_the_result_card_and_the_run_count_the_same_blockers(world, monkeypatch)
     card = client.post("/businesses/A/quick-check/launch", json={"answers": answers}).json()["result"]
     out = client.post("/businesses/A/quick-check/launch/premium", json={"answers": answers}).json()
     assert out["quote"]["blockers"] == len(card["blockers"]) == len(out["research"]["blockers"])
-    assert out["research"]["charged"] == 2 and [c[2] for c in env.meter.charges] == [2]
+    filled = [x for x in out["research"]["items"] if research.billable(x)]
+    assert filled and out["research"]["charged"] == 2 * len(filled) and [c[2] for c in env.meter.charges] == [2] * len(filled)
+    assert out["quote"]["per_field"] == 2 and out["quote"]["cost"] >= out["research"]["charged"]      # never more than the quote said
 
 
 def test_find_my_best_price_is_research_never_a_price_test(world, monkeypatch):  # noqa: F811
@@ -337,3 +341,11 @@ def test_the_owner_s_own_figures_reach_the_score_estimates_do_not():
     assert isinstance(done["after"]["score"], int), done["after"]      # a real viability score from their figures
     # Accepted as a benchmark (not edited), the same figure would not have been a fact for the score.
     assert not any(x.get("basis") == "benchmark" and x.get("decision") == "accepted" and x.get("field") == "fixed_costs" for x in done["items"])
+
+
+def test_out_of_credits_part_way_the_unpaid_fields_are_asked_not_given(monkeypatch):
+    r, orch, meter, *_ = _start("uk_home_services_pre_launch", "launch", balance=4)
+    paid = [x for x in r["items"] if research.billable(x)]
+    asked = [x for x in r["items"] if x.get("field") and x["kind"] == "question" and "out of AI Credits" in (x.get("question") or "")]
+    assert len(paid) == 2 and r["charged"] == 4 and [c[2] for c in meter.charges] == [2, 2]
+    assert asked, "the fields not paid for are asked instead"

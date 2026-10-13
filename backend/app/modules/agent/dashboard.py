@@ -771,6 +771,37 @@ def _card(widget_id: str, cls: int, tone: str, text: str, *, state: str = "avail
     }
 
 
+# Explorer (the free plan) sees that there is an insight and what it is about, never the insight itself: no figures, no
+# names, no evidence, no action that would show it. The full card is on a paid plan (the owner's rule, 13 Oct 2026).
+_VAGUE = {
+    "risk": "A risk in your business needs attention.",
+    "scenario": "There's a scenario worth testing for your business.",
+    "next_step": "I've found a next step for your business.",
+    "cash": "There's something to know about your cash position.",
+    "blocker": "Something is holding back your launch.",
+    "funding_gaps": "There are gaps a funder would ask about.",
+    "idea_weakness": "There's a weak point in your idea to look at.",
+    "opportunities": "There's an opportunity for your business.",
+    "contract_action": "A contract needs your attention.",
+    "marketplace_similar": "There's something on the Marketplace for you.",
+}
+FREE_PLAN_KEEPS = {"approval"}      # what is waiting for the owner's own approval is theirs to see on any plan
+UPGRADE = {"label": "Upgrade to see the full insight", "to": "/pricing", "upgrade": True}
+
+
+def vague_for_free(cards: list[dict]) -> list[dict]:
+    out = []
+    for c in cards or []:
+        key = c.get("key") or c.get("widget_id")
+        if key in FREE_PLAN_KEEPS:
+            out.append(c)
+            continue
+        out.append({**c, "text": f"{_VAGUE.get(key, 'There is an insight here for your business.')} Upgrade to see it in full.",
+                    "detail": None, "note": None, "items": [], "agent_action": None, "cta": UPGRADE, "more": {"to": "/pricing"},
+                    "why": {"summary": "", "evidence": [], "source": "", "missing": [], "as_of": None}, "locked": True})
+    return out
+
+
 _CHECK_WORD = {"ready": "Ready", "conditionally_ready": "Conditionally ready", "not_ready": "Not ready", "insufficient_evidence": "Not enough evidence yet"}
 _CHECK_TONE = {"ready": "emerald", "conditionally_ready": "amber", "not_ready": "rose", "insufficient_evidence": "amber"}
 
@@ -1620,6 +1651,9 @@ async def build_dashboard(orch, user_id: str, business_id: str, email: str | Non
     cards = compose_insights(data, policy, now, stage=stage, prefs=prefs, approvals=approvals,
                              can_send=bool(ent.get("can_approve")), transition=transition, readiness=readiness, checks=checks,
                              plan=ent.get("plan"), runs=ctx.get("runs") or [])
+    if ent.get("plan") == "explorer":
+        cards = vague_for_free(cards)
+        summary["insights"] = vague_for_free(summary.get("insights") or [])
     values = kpi_values(data, policy, now, readiness)
     launch_check = checks.get("launch") if (checks.get("launch") or {}).get("classification") else None
     if launch_check:

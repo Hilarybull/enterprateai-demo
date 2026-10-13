@@ -736,15 +736,9 @@ async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict,
             model = llm if llm is not None else _default_llm(user["id"])
             if model is None:
                 raise RuntimeError("no model is configured")
-            # Charged once, and only when at least one sourced Researched item came of it (R9-6).
-            async with orch.rt.meter.charge(user["id"], FEATURE, key=run_id):
-                found = await _extract(goal, ctx, i, topics, evidence, model, now)
-                LAST.update({"model": True, "error": None})
-                if not any(x["kind"] == RESEARCHED and x["sources"] for x in found):
-                    raise _NotCharged()
-            charged = cost
-        except _NotCharged:
-            pass
+            found = await _extract(goal, ctx, i, topics, evidence, model, now)
+            LAST.update({"model": True, "error": None})
+            found, charged = await charge_fields(orch, user["id"], run_id, found, cost)
         except Exception as e:      # noqa: BLE001 - said plainly; nothing is charged
             logger.warning("research run %s failed: %s", run_id, e, exc_info=True)
             error = f"{type(e).__name__}: {e}"[:200]
@@ -777,8 +771,35 @@ async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict,
     return await orch.rt.business.mutate(business_id, _done)
 
 
-class _NotCharged(Exception):
-    pass
+def billable(x: dict) -> bool:
+    """A field the AI filled: looked up (Researched) or estimated from a benchmark. What is worked out from the owner's own
+    figures, carried from their answers or the records, and every question, is free."""
+    return x.get("kind") in (RESEARCHED, ESTIMATED) and x.get("basis") != "calculated"
+
+
+async def charge_fields(orch, user_id: str, run_id: str, found: list[dict], price: int) -> tuple[list[dict], int]:
+    """Each AI-filled field is charged at the price list's Agent task price (the owner's rule, 13 Oct 2026), once: its key
+    is the run and the field. Out of credits part way: the fields not paid for are asked instead, never shown for free."""
+    from app.modules.agent.services import InsufficientCredits
+    kept, charged, short = [], 0, False
+    for x in found:
+        if not billable(x) or not price:
+            kept.append(x)
+            continue
+        if not short:
+            try:
+                async with orch.rt.meter.charge(user_id, FEATURE, key=f"{run_id}:{x['id']}"):
+                    pass
+                x["charged"] = price
+                charged += price
+                kept.append(x)
+                continue
+            except InsufficientCredits:
+                short = True
+        q = _question(x["criterion"], "out_of_credits", x["label"], used_for=x.get("used_for"), tag=COULD_NOT_FIND, field=x.get("topic"),
+                      question=f"You're out of AI Credits, so this wasn't filled in. Top up to have it researched, or do you know? ({x['label'].lower()})")
+        kept.append({**q, "topic": x.get("topic")})      # the topic is answered by this question: not asked a second time
+    return kept, charged
 
 
 # ── Review ───────────────────────────────────────────────────────────────────────────────────────────────────────
