@@ -914,3 +914,14 @@ describe("a price typed with its currency", () => {
     expect(currencyIn("supportive")).toBeNull();      // a word that only contains a code is not a currency
   });
 });
+
+describe("coming back to the homepage", () => {
+  it("doesn't bring back a task already carried on after sign-in as an empty card", async () => {
+    localStorage.setItem("ea_task_session:anon", "sess-1");
+    answer = (path, method) => (method === "GET" && /task-sessions\/sess-1$/.test(path)
+      ? session({ goal_key: "need_funding", goal_label: "I need funding", next: "prepare", authenticated: true, state: "ready_to_prepare", questions: [], missing: [] }) : undefined);
+    mountLauncher();
+    await waitFor(() => expect(localStorage.getItem("ea_task_session:anon")).toBeNull());
+    expect(screen.queryByRole("region", { name: "Your task" })).toBeNull();
+  });
+});

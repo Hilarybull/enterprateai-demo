@@ -130,7 +130,14 @@ export function useGoalFlow() {
     try { saved = localStorage.getItem(sessionKey); } catch { /* fine without it */ }
     if (saved) {
       apiRequest(`/task-sessions/${saved}`, "GET")
-        .then((res) => { if (alive && res?.id && res.resolution && !["handed_off", "awaiting_review", "abandoned", "blocked"].includes(res.state)) setSession({ ...res, questions: res.questions || [] }); })
+        .then((res) => {
+          // Picked up only while there is something left to do here: questions to answer, a choice to make, or (signed
+          // out) the email to save it with. A task already carried on after sign-in (its result shown, or handed to the
+          // dashboard) is not shown again as an empty card: it is forgotten here, and kept where it went.
+          const open = ["questions", "clarify"].includes(res?.next) || (res?.next === "identity" && !res?.authenticated);
+          if (alive && res?.id && res.resolution && open && !["handed_off", "awaiting_review", "abandoned", "blocked"].includes(res.state)) setSession({ ...res, questions: res.questions || [] });
+          else if (alive) { try { localStorage.removeItem(sessionKey); } catch { /* ignore */ } }
+        })
         .catch(() => { try { localStorage.removeItem(sessionKey); } catch { /* ignore */ } });
     }
     return () => { alive = false; };
