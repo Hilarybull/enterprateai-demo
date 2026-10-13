@@ -119,10 +119,11 @@ for (const goal of GOALS) {
   check("the review appears", await until(`!!document.querySelector("[data-research-review]")`), null);
   check("started once", (await value(`window.__calls.filter((c) => /premium$/.test(c)).length`)) === 1, await value(`window.__calls.filter((c) => /premium$/.test(c))`));
   const states = await value(`[...document.querySelectorAll("[data-research-state]")].map((s) => s.textContent)`);
-  check("findings are Researched or Estimated", JSON.stringify(states) === JSON.stringify(["Researched", "Estimated"]), states);
+  check("findings are Researched or Estimated", JSON.stringify(states) === JSON.stringify(["Researched", "Estimate"]), states);
   check("a researched finding has its source and date", /How small service businesses find clients · Mar 2026/.test(await value(`document.querySelector("[data-research-sources]")?.textContent || ""`)), null);
   await click(`document.querySelectorAll("[data-research-item]")[1].querySelectorAll("button")[2]`);      // Reject the estimate
-  await click(button("Use what I accepted and check again"));
+  await click(`document.querySelector("[data-adopt-all]")`);
+  await click(button("Use what I adopted and check again"));
   check("before and after are shown", await until(`/42 → 47/.test(document.querySelector("[data-score-change]")?.textContent || "") && /40% → 50%/.test(document.querySelector("[data-coverage-change]")?.textContent || "")`),
     await value(`document.querySelector("[data-research-adopted]")?.textContent`));
   const body = await value(`window.__calls.filter((c) => /review$/.test(c)).length`);

@@ -1,4 +1,5 @@
 import { refusalMessage } from "../lib/entitlement";
+import { STREAMED_DOCS, streamBlueprint } from "../lib/blueprintStream";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import DocumentEditor, { markdownToHtml } from "../components/DocumentEditor";
@@ -491,7 +492,9 @@ export default function BlueprintPage() {
   const [inputsTab, setInputsTab] = useState("inputs");
   const [companyName, setCompanyName] = useState("");
   const [industry, setIndustry] = useState("");
-  const [pricingModel, setPricingModel] = useState("Subscription");
+  const [pricingModel, setPricingModel] = useState("");      // QA R7-5: never a silent "Subscription"
+  const [streamed, setStreamed] = useState([]);      // QA R7-5: sections written so far, shown as they arrive
+  const [retryable, setRetryable] = useState(false);      // the last attempt stopped and can be tried again (nothing was charged)
   const [workspaceId, setWorkspaceId] = useState("");
   const [tone, setTone] = useState("professional");
 
@@ -831,7 +834,7 @@ export default function BlueprintPage() {
     }
 
     const pm = String(offer.pricing_model || "").toLowerCase();
-    if (pm && (pricingModel === "Subscription" || !pricingModel)) {
+    if (pm && !pricingModel) {
       if (pm === "hourly") setPricingModel("Hourly");
       else if (pm === "retainer") setPricingModel("Retainer");
       else if (pm === "fixed_job") setPricingModel("One-time");
@@ -969,7 +972,7 @@ export default function BlueprintPage() {
           if (!dirtyFields.problem && !problem && ivProb.problem_type) setProblem(ivProb.problem_type);
           if (!dirtyFields.solution && !solution && ivOffer.service_type) setSolution(ivOffer.service_type);
           const pm = String(ivOffer.pricing_model || "").toLowerCase();
-          if (pm && pricingModel === "Subscription") {
+          if (pm && !pricingModel) {
             if (pm === "hourly") setPricingModel("Hourly");
             else if (pm === "retainer") setPricingModel("Retainer");
             else if (pm === "fixed_job") setPricingModel("One-time");
@@ -985,7 +988,7 @@ export default function BlueprintPage() {
             setSelectedServices(wpServices.map((s) => String(s?.service_name || "").trim()).filter(Boolean));
           }
         }
-        if (workspaceProfile.primary_revenue_model && pricingModel === "Subscription") {
+        if (workspaceProfile.primary_revenue_model && !pricingModel) {
           const rm = String(workspaceProfile.primary_revenue_model).toLowerCase();
           if (rm.includes("hourly")) setPricingModel("Hourly");
           else if (rm.includes("retainer")) setPricingModel("Retainer");
@@ -1997,6 +2000,17 @@ export default function BlueprintPage() {
       }
     }
 
+    // QA R7-5: a proposal is never written on a guessed pricing model or industry: asked for, before anything is charged.
+    if (selectedDoc === "client_proposal") {
+      const ind = String(resolveWithWorkspace(industry, workspaceProfile?.primary_industry, dirtyFields.industry) || "").trim().toLowerCase();
+      const missing = [!pricingModel && "how you charge (the pricing model)", ["", "other", "others", "not specified", "n/a", "none", "unknown", "general"].includes(ind) && "your industry"].filter(Boolean);
+      if (missing.length) {
+        setError(`Before I write the proposal, tell me ${missing.join(" and ")}. Nothing has been generated or charged.`);
+        setShowInputs(true);
+        return;
+      }
+    }
+
 	    // Sections behavior:
 	    // - For narrative docs (business plan / proposal): allow section-scoped generation.
 	    // - For sales letters: always generate the full letter (section drafts are handled separately).
@@ -2063,7 +2077,10 @@ export default function BlueprintPage() {
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null,
         proposal_length: selectedDoc === "client_proposal" ? proposalLength : null,
       };
-      const res = await apiRequestWithRetry("/blueprint/generate", "POST", generateBody, { timeoutMs: 900000 });
+      setStreamed([]);
+      const res = STREAMED_DOCS.includes(selectedDoc)
+        ? await streamBlueprint(generateBody, { onSection: (heading, text) => setStreamed((had) => [...had, { heading, text }]) })
+        : await apiRequestWithRetry("/blueprint/generate", "POST", generateBody, { timeoutMs: 900000 });
       let resolvedDocumentId = res?.document_id || null;
       if (!resolvedDocumentId) {
         const latestDocs = await refreshSavedDocs();
@@ -2176,7 +2193,9 @@ export default function BlueprintPage() {
         friendlyError = "Connection error. Check your internet and try again. Your inputs are saved.";
       } else {
         // QA PF1: a refusal says why in words (the plan that includes it, or the credits needed). Never a code.
-        friendlyError = refusalMessage(e, rawMsg.match(/^HTTP 5\d\d/) ? "Something went wrong on our end. Please try again shortly. Nothing was charged." : "Blueprint generation failed. Nothing was charged.");
+        // A stream that stopped (a time-out, a section that failed) says so in its own words, with a way to try again.
+        friendlyError = e?.retry ? e.message : refusalMessage(e, rawMsg.match(/^HTTP 5\d\d/) ? "Something went wrong on our end. Please try again shortly. Nothing was charged." : "Blueprint generation failed. Nothing was charged.");
+        setRetryable(Boolean(e?.retry));
       }
       setError(friendlyError);
       setShowInputs(true);
@@ -3867,8 +3886,12 @@ export default function BlueprintPage() {
             </div>
 
             {error ? (
-              <div className="mx-5 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {error}
+              <div className="mx-5 mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700" data-generate-error>
+                <span>{error}</span>
+                {retryable && !isLoading && (
+                  <button type="button" data-generate-retry onClick={() => { setRetryable(false); generateSelected(); }}
+                    className="rounded-lg bg-rose-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-rose-700">Try again</button>
+                )}
               </div>
             ) : null}
 
@@ -4091,6 +4114,20 @@ export default function BlueprintPage() {
                           ? "This can take a little longer while we assemble sections from your inputs and save drafts as we go."
                           : DID_YOU_KNOW_FACTS[didYouKnowIndex]}
                       </div>
+                      {STREAMED_DOCS.includes(selectedDoc) && (
+                        // QA R7-5: each section as soon as it is written, never a blank wait.
+                        <div className="mt-3 max-h-64 overflow-y-auto text-left" data-streamed-sections aria-live="polite">
+                          <p className="text-[12px] font-semibold text-slate-600" data-streamed-count>
+                            {streamed.length ? `${streamed.length} of ${(sectionsByDoc[selectedDoc] || []).filter((x) => x !== "cover_page").length || generationSectionsForDoc(selectedDoc).length} sections ready` : "Writing the first sections…"}
+                          </p>
+                          {streamed.map((sct) => (
+                            <details key={sct.heading} className="mt-1 rounded-lg border border-slate-100 px-2 py-1">
+                              <summary className="cursor-pointer text-[12.5px] font-semibold text-slate-800">{sct.heading}</summary>
+                              <p className="mt-1 whitespace-pre-line text-[12px] text-slate-600">{sct.text.slice(0, 600)}{sct.text.length > 600 ? "…" : ""}</p>
+                            </details>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : null}
@@ -4207,7 +4244,8 @@ export default function BlueprintPage() {
 
                       <div>
                         <div className="ea-label">Pricing model</div>
-                        <select value={pricingModel} onChange={(e) => setPricingModel(e.target.value)} className="ea-input">
+                        <select value={pricingModel} onChange={(e) => setPricingModel(e.target.value)} className="ea-input" aria-invalid={selectedDoc === "client_proposal" && !pricingModel}>
+                          <option value="">Choose how you charge…</option>
                           <option>Subscription</option>
                           <option>One-time</option>
                           <option>Usage-based</option>

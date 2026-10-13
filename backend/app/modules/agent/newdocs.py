@@ -181,7 +181,8 @@ async def invoice_details(ctx):
     customer = await _customer(ctx, text)
     priced, _suggested, _products_ = await _items(ctx, text)
     vat = _vat(ctx)
-    if not customer or not valid_email(customer.get("email")) or not priced or vat is None:
+    later = bool(ctx.answers.get("email_later"))      # "I'll add it later": drafted now, the address is asked for when it is sent
+    if not customer or not (valid_email(customer.get("email")) or later) or not priced or vat is None:
         fields = await _invoice_form(ctx, text, quotes if not ctx.answers else [], data)
         return WaitForInput("What should this invoice include?" if any(f["key"] == "items" for f in fields) else "Who is this invoice for?", fields)
     extras: dict = {}

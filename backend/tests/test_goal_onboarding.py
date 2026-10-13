@@ -133,7 +133,9 @@ def test_the_homepage_offers_goals_first_then_quick_tasks_all_backed_by_a_regist
     s = goals.suggestions()
     assert s["prompt"] == "What do you want EnterprateAI to do for your business?"
     assert [g["label"] for g in s["goals"]] == ["I need funding", "I need more customers", "Help me price my product/service", "I want to launch a product/service",
-                                              "Improve my cash flow", "Help me grow my business", "Test a business idea", "Help me understand my business risks"]
+                                              "Test a business idea", "Help me understand my business risks"]
+    # Off the chips (13 Oct 2026), still understood when typed.
+    assert goals.resolve(text="Improve my cash flow")["goal_key"] == "cash_flow" and goals.resolve(text="Help me grow my business")["goal_key"] == "grow"
     assert [t["label"] for t in s["tasks"]] == ["Create Invoice", "Create Quotation", "Create Business Plan", "Prepare Proposal"]
     assert s["reassurance"] == "Free essential business tools. 50 AI Credits to get started." and s["retention_days"] == 7
     assert not any(word in g["label"].lower() for g in s["goals"] for word in ("get funding", "get customers", "guarantee"))      # no promise in the copy
@@ -768,3 +770,12 @@ def test_a_request_nothing_fits_is_refused_only_when_the_model_agrees(world, mon
     monkeypatch.setattr(und, "understand", agrees)
     none = client.post("/task-sessions", json={"text": "book me a flight to Lagos"}).json()
     assert none["state"] == "blocked" and none["next"] == "none" and none["questions"] == []
+
+
+def test_a_price_typed_in_another_currency_sets_it_to_confirm(world):  # noqa: F811
+    _env, _store, client, _who = world
+    s = client.post("/task-sessions", json={"key": "create_quotation", "entry_mode": "quick_task"}).json()
+    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"customer": "Investors", "amount": 300, "currency_said": "USD"}}).json()
+    assert s["currency"] == "USD" and s["currency_note"] == "In USD" and s["currency_options"] == ["USD", "GBP"]      # shown, with the switch back
+    row = next(r for r in s["summary"] if r["key"] == "currency")
+    assert row["value"] == "USD" and row["proposed"] is True      # theirs to confirm, not taken as settled

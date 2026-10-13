@@ -5,8 +5,8 @@ import { briefingOf, firstNameOf, getGreeting, greetingAt, hourIn, workspaceName
 const at = (iso) => new Date(iso);
 
 describe("the greeting", () => {
-  it("follows the time of day: morning from 05:00, afternoon from 12:00, evening from 17:00, night (Hello) from 22:00 to 04:59 (QA E10)", () => {
-    expect([4, 5, 11, 12, 16, 17, 23, 0].map(greetingAt)).toEqual(["Hello", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Hello", "Hello"]);
+  it("follows the time of day: morning from 05:00, afternoon from 12:00, evening from 17:00, and evening on through the night to 04:59", () => {
+    expect([4, 5, 11, 12, 16, 17, 23, 0].map(greetingAt)).toEqual(["Good evening", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening", "Good evening"]);
     expect(hourIn("Africa/Lagos", at("2026-10-08T13:30:00Z"))).toBe(14);      // by the timezone given, not the device
     expect(hourIn("Not/AZone", at("2026-10-08T13:30:00Z"))).toBe(at("2026-10-08T13:30:00Z").getHours());
   });
@@ -16,7 +16,7 @@ describe("the greeting", () => {
     expect(getGreeting({ subject: "QA Onboarding Test Ltd", tz: "Europe/London", now })).toBe("Good afternoon, QA Onboarding Test Ltd");
     expect(getGreeting({ subject: "Munah", tz: "Europe/London", now })).toBe("Good afternoon, Munah");
     expect(getGreeting({ tz: "Europe/London", now })).toBe("Good afternoon");
-    expect(getGreeting({ subject: "  ", tz: "Asia/Tokyo", now })).toBe("Hello");      // 22:30 in Tokyo: night (QA E10)
+    expect(getGreeting({ subject: "  ", tz: "Asia/Tokyo", now })).toBe("Good evening");      // 22:30 in Tokyo: evening, never "Hello"
   });
 
   it("takes a first name from what is on record, and tells a real workspace name from a placeholder", () => {

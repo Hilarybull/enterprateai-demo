@@ -11,6 +11,7 @@ import { agentErrorMessage, cancelRun, clearConversation, getConversation, reply
 import { Icon, OUT_OF_CREDITS_TIP, OutOfCreditsNote } from "./AgentBits";
 import { WORKING_TEXT, useTaskFlow } from "./TaskFlow";
 import { DraftDrawer } from "./DraftEditor";
+import QuickCheck from "../QuickCheck";
 
 // A button elsewhere on the dashboard (an insight card) hands its task to the Agent box, so its
 // question or result shows here and the owner stays on the page.
@@ -214,6 +215,10 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
       setReply({ tone: "slate", text: res.message, evidence: res.evidence, actions: res.actions, source: res.source });
       if (res.conversational) window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // a written answer uses credits
       setPrompt("");
+    } else if (res.kind === "check") {
+      // Funding or launch readiness, customer growth: the Agent runs the check here, in the card (never a dead end).
+      setReply({ tone: "plan", text: res.message, check: { goalKey: res.goal_key, said: res.said } });
+      setPrompt("");
     } else if (res.kind === "unavailable") {
       setReply({ tone: "amber", text: res.message, offers: res.offers });
     } else if (res.kind === "blocked") {
@@ -319,12 +324,13 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
               actions: [{ label: "Upgrade", to: "/pricing", upgrade: true }, { label: "Cancel this task", cancel: c.held.run_id }] })) : lockedFor(c.action) ? setReply(blockedReply({ reason: "plan", message: `${c.label || "This"} is on the ${lockedFor(c.action)} plan.`, plan_required_label: lockedFor(c.action),
               actions: [{ label: "Upgrade", to: "/pricing", upgrade: true }] })) : c.question ? flow.openQuestion(c.question) : act(c.action))}
             data-locked={c.held?.plan_required_label || lockedFor(c.action) || undefined}
-            className="group flex h-[4.5rem] items-center gap-3 rounded-xl border border-white/15 bg-white/10 px-3.5 text-left transition hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:opacity-60">
+            className="group flex min-h-[4.5rem] items-center gap-3 overflow-hidden rounded-xl border border-white/15 bg-white/10 px-3.5 py-2 text-left transition hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:opacity-60">
             <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 ${TILE_TONE[c.tone] || TILE_TONE.indigo}`}>
               <Icon name={c.icon} />
             </span>
-            <span className="min-w-0 flex-1">
-              <span className={`block break-normal text-sm leading-snug text-white ${c.detail ? "line-clamp-1" : "line-clamp-2"}`}>{c.text}</span>
+            <span className="min-w-0 flex-1 overflow-hidden">
+              {/* No "block" here: it comes after line-clamp in the stylesheet and would undo the clamp, letting long text spill over the next tile. */}
+              <span title={c.text} className={`break-normal text-sm leading-snug text-white ${c.detail ? "line-clamp-1" : "line-clamp-2"}`}>{c.text}</span>
               {c.detail && <span data-tile-detail className="block truncate text-[12px] text-white/60" title={c.detail}>{c.detail}</span>}
               {/* What it costs to start, or the plan it is on: said before anything is pressed. */}
               {lockedFor(c.action) ? <span data-tile-plan className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-200"><LockMark />{lockedFor(c.action)} plan</span>
@@ -395,6 +401,11 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
             {reply.text}
           </p>
           {reply.detail && <p className="mt-1 text-[13px]" data-blocked-detail>{reply.detail}</p>}
+          {reply.check && businessId && (
+            <div className="mt-3 text-left" data-agent-check={reply.check.goalKey}>
+              <QuickCheck key={`${reply.check.goalKey}:${reply.check.said}`} businessId={businessId} goalKey={reply.check.goalKey} open said={reply.check.said} />
+            </div>
+          )}
           {reply.working && <div className="mt-2"><WorkingSteps /></div>}
           {reply.next && <p className="mt-1 text-[13px] opacity-80">{reply.next}</p>}
           {reply.evidence?.length > 0 && (

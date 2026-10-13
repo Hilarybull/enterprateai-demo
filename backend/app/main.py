@@ -185,6 +185,13 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
+    @app.get("/health/research")
+    async def health_research() -> dict:
+        """QA R9-1: can the premium research run here? {search, model}: "ok", "missing" (not configured) or "failing"
+        (its last live call failed). No keys or values are shown."""
+        from app.modules.agent import research
+        return research.health()
+
     @app.get("/")
     async def root() -> dict:
         return {"status": "ok"}

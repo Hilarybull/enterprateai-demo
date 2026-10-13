@@ -41,6 +41,15 @@ const FALLBACK = {
 };
 const SESSION_KEY = "ea_task_session";
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+// The name a visitor gave in one flow, kept in this browser so a later flow never asks for it again.
+const NAME_KEY = "enterprate_visitor_name";
+export function rememberedName() {
+  try { return (localStorage.getItem(NAME_KEY) || "").trim(); } catch { return ""; }
+}
+function rememberName(name) {
+  const called = String(name || "").replace(/\s+/g, " ").trim();
+  if (called) { try { localStorage.setItem(NAME_KEY, called); } catch { /* fine without it */ } }
+}
 const inputCls = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 md:text-sm";
 
 export const GOALS_SHOWN = 3;
@@ -55,6 +64,17 @@ export function goalSets(goals, size = GOALS_SHOWN) {
 }
 
 /** The number in an answer: "£45 per groom" is 45, "£2.5k" is 2500. Null when there is none. (The server reads it the same way.) */
+/** The currency an amount was written in: "$300" or "300 usd" is USD. Null when it says none. */
+export function currencyIn(value) {
+  const text = String(value ?? "");
+  const sign = { "£": "GBP", "$": "USD", "€": "EUR", "₦": "NGN" }[(text.match(/[£$€₦]/) || [])[0]];
+  if (sign) return sign;
+  const code = (text.match(/\b(gbp|usd|eur|ngn|dollars?|euros?|pounds?|naira)\b/i) || [])[1];
+  if (!code) return null;
+  const c = code.toLowerCase();
+  return c.startsWith("dollar") ? "USD" : c.startsWith("euro") ? "EUR" : c.startsWith("pound") ? "GBP" : c === "naira" ? "NGN" : c.toUpperCase();
+}
+
 export function numberIn(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   const m = String(value ?? "").replace(/[£$€₦]/g, " ").match(/(-?\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?\b/i);
@@ -97,6 +117,8 @@ export function useGoalFlow() {
   const here = Boolean(authToken) && authEmail !== "demo";
   const sessionKey = here && authEmail ? `${SESSION_KEY}:${authEmail.toLowerCase()}` : `${SESSION_KEY}:anon`;
   useEffect(() => {
+    // Signed in by a code, with the new account's password still to set: the same task stays on screen.
+    if (passwordHold.current) { try { localStorage.setItem(sessionKey, session?.id || ""); } catch { /* fine without it */ } return undefined; }
     let alive = true;
     apiRequest("/goal-suggestions", "GET").then((res) => { if (alive && res?.goals) setOffer(res); }).catch(() => {});
     try {
@@ -177,7 +199,9 @@ export function useGoalFlow() {
     if (email !== undefined && !EMAIL.test(address)) return "Enter your email address to continue.";
     setBusy(true);
     try {
-      keep(await retryOnce(() => apiRequest(`/task-sessions/${session.id}/email`, "POST", email === undefined ? {} : { email: address, ...(called ? { name: called } : {}), marketing_consent: Boolean(consent) })));
+      const reply = await retryOnce(() => apiRequest(`/task-sessions/${session.id}/email`, "POST", email === undefined ? {} : { email: address, ...(called ? { name: called } : {}), marketing_consent: Boolean(consent) }));
+      rememberName(called || session?.first_name);      // given and accepted: a later flow won't ask again
+      keep(reply);
       return "";
     } catch (e) {
       return e?.status === 429 ? "That's a lot of codes. Please try again in a little while." : e?.status === 422 ? "Enter a valid email address." : "Couldn't continue. Try again.";
@@ -193,7 +217,11 @@ export function useGoalFlow() {
       let zone;
       try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { zone = undefined; }
       const res = await retryOnce(() => apiRequest(`/task-sessions/${session.id}/verify`, "POST", { code: String(code).replace(/\s/g, ""), ...(zone ? { timezone: zone } : {}) }));
+      // A new account has no password yet: it is asked for here, then the task carries on. An existing one goes straight on.
+      // Held before the sign-in lands, so being signed in doesn't carry the card on past the question.
+      if (res.new_account) { passwordHold.current = true; setNewPassword(true); }
       await useAuthStore.getState().tokenLogin(res.access_token, res.email);
+      if (res.new_account) return "";
       navigate(startPath(session.id));
       return "";
     } catch (e) {
@@ -202,12 +230,36 @@ export function useGoalFlow() {
       setBusy(false);
     }
   }, [navigate, retryOnce, session]);
+  const [newPassword, setNewPassword] = useState(false);      // a new account, signed in by its code, sets its password
+  const passwordHold = useRef(false);
+  /** The new account's first password, then on to the task. */
+  const setPassword = useCallback(async (password) => {
+    const pw = String(password || "");
+    if (pw.length < 8) return "Use at least 8 characters.";
+    if (pw.length > 72) return "Use 72 characters or fewer.";
+    setBusy(true);
+    try {
+      await apiRequest("/auth/me/set-password", "POST", { new_password: pw });
+      useAuthStore.setState({ hasPassword: true });
+      passwordHold.current = false;
+      setNewPassword(false);
+      navigate(startPath(session.id));
+      return "";
+    } catch (e) {
+      if (e?.status === 409) { passwordHold.current = false; setNewPassword(false); navigate(startPath(session.id)); return ""; }      // it has one already: carry on
+      return "Couldn't save the password. Try again.";
+    } finally {
+      setBusy(false);
+    }
+  }, [navigate, session]);
+  const skipPassword = useCallback(() => { passwordHold.current = false; setNewPassword(false); navigate(startPath(session.id)); }, [navigate, session]);
   /** Google: signed in with the Google account, then on to the task. */
   const withGoogle = useCallback(async (credential) => {
     await useAuthStore.getState().googleLogin(credential);
     if (useAuthStore.getState().token) navigate(startPath(session.id));
   }, [navigate, session]);
-  return { offer, session, busy, problem, begin, answer, startOver, carryOn, here, closed, setClosed, sendCode, verifyCode, withGoogle };
+  return { offer, session, busy, problem, begin, answer, startOver, carryOn, here, closed, setClosed, sendCode, verifyCode, withGoogle,
+    newPassword, passwordHold, setPassword, skipPassword };
 }
 
 /** The launcher on its own: it runs its own flow and shows the task card beneath it. */
@@ -515,9 +567,14 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   const [marketing, setMarketing] = useState(false);    // tips and the newsletter: unticked unless they tick it
   const [code, setCode] = useState("");
   const [changing, setChanging] = useState(false);      // "Change email": back to the address, the task untouched
-  const [identityPhase, setIdentityPhase] = useState(() => (session?.first_name ? "email" : "name"));
+  // Their name, from this message or from an earlier flow in this browser: asked for only when neither has it.
+  const [remembered] = useState(rememberedName);
+  const knownName = session?.first_name || remembered;
+  const [identityPhase, setIdentityPhase] = useState(() => (knownName ? "email" : "name"));
   const [note, setNote] = useState("");
-  const { sendCode, verifyCode, withGoogle } = flow;
+  const { sendCode, verifyCode, withGoogle, newPassword, setPassword, skipPassword } = flow;
+  const [password, setPasswordText] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const sent = !here && Boolean(session?.verification?.sent) && !changing;      // a code is out: the card asks for it (a refresh comes back to this)
   const googleOn = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID || import.meta.env.REACT_APP_GOOGLE_CLIENT_ID);
   const key = `${session?.id}:${session?.goal_key}:${session?.next}`;
@@ -537,7 +594,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
     setEditing(new Set());
     setCurrency(null);
     setError("");
-    setIdentityPhase(session?.first_name ? "email" : "name");
+    setIdentityPhase(session?.first_name || remembered ? "email" : "name");
   }, [key]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   const res = session?.resolution;
@@ -546,7 +603,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   const sign = { GBP: "£", USD: "$", EUR: "€", NGN: "₦" }[shownCurrency] || "";
   // Given: answered by the person, or read from their own message. A default alone is not an answer.
   const given = (q) => Object.prototype.hasOwnProperty.call(session?.inputs || {}, q.key) || Object.prototype.hasOwnProperty.call(session?.proposed || {}, q.key) || answeredHere.has(q.key);
-  const open_ = (q) => values[q.key] === "" || values[q.key] == null || !given(q);
+  // An empty answer is still open, unless it was the question's own "I'll add it later": that was answered, and is not asked again.
+  const laterSaid = (q) => Boolean(q.unsure) && Object.prototype.hasOwnProperty.call(session?.inputs || {}, q.key) && (session.inputs[q.key] === "" || session.inputs[q.key] === "unknown");
+  const open_ = (q) => !given(q) || ((values[q.key] === "" || values[q.key] == null) && !laterSaid(q));
   const currentQuestion = useMemo(() => {
     if (session?.next !== "questions") return null;
     const editedKey = [...editing].find((value) => questions.some((question) => question.key === value));
@@ -611,11 +670,11 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   const open = (k) => setEditing((s) => new Set(s).add(k));
 
   useEffect(() => {
-    if (here && step === "identity") carryOn();
-  }, [here, step, carryOn]);
+    if (here && step === "identity" && !newPassword && !flow.passwordHold?.current) carryOn();
+  }, [here, step, carryOn, newPassword]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!session) return null;
-  if (here && step === "identity") return null;
+  if (here && step === "identity" && !newPassword) return null;      // signed in: on to the task, unless a new account is setting its password
 
   function submitQuestion(nextValue = draftValue) {
     const activeQuestion = currentQuestion;
@@ -625,6 +684,8 @@ export function GoalTaskCard({ flow, placement = "column" }) {
       setError(`${activeQuestion.label} is required.`);
       return;
     }
+    // A price written with its currency ("$300", "300 USD"): the currency goes with it, to be confirmed, never dropped for £.
+    const writtenIn = activeQuestion.prefix ? currencyIn(answerValue) : null;
     if (activeQuestion.type === "number" && answerValue !== "unknown" && answerValue !== "") {
       const figure = numberIn(answerValue);
       // Digits are read here; words ("about sixty", "standard rate") go to the server, which reads them (QA H) or says why not.
@@ -639,6 +700,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
     const answers = Object.fromEntries(questions.filter((question) => nextValues[question.key] !== "" && nextValues[question.key] != null
       && (question.key === activeQuestion.key || given(question))).map((question) => [question.key, nextValues[question.key]]));
     if (currency && currency !== session.currency) answers.currency = currency;
+    if (writtenIn && writtenIn !== (currency || session.currency || "GBP")) answers.currency_said = writtenIn;
     answer(answers, questions.some((question) => question.proposed));
   }
 
@@ -648,6 +710,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
       submitQuestion();
     } else if (step === "identity") {
       setNote("");
+      if (newPassword) { setPassword(password).then(setError); return; }
       if (here) { setError(carryOn()); return; }
       if (sent) { verifyCode(code).then(setError); return; }
       if (identityPhase === "name") {
@@ -661,7 +724,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
         return;
       }
       if (!email.trim() || !EMAIL.test(email)) { setError("Simple - what's your email address?"); return; }
-      sendCode(email, renaming || !session.first_name ? name : "", marketing).then((problem) => { setError(problem); if (!problem) { setChanging(false); setCode(""); } });
+      sendCode(email, renaming ? name : session.first_name ? "" : (name.trim() || knownName), marketing).then((problem) => { setError(problem); if (!problem) { setChanging(false); setCode(""); } });
     }
   }
   const resend = () => { setError(""); sendCode(undefined).then((problem) => { setError(problem); setNote(problem ? "" : "A new code is on its way. The last one no longer works."); }); };
@@ -672,7 +735,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
     // Under 768px: a full-screen sheet. From 1024px: the right-hand column, where the product preview was, never taller than the hero.
     : `${closed ? "max-md:hidden" : "max-md:flex"} flex-col bg-white max-md:fixed max-md:inset-0 max-md:z-[70] max-md:motion-safe:animate-[ea-sheet-up_.22s_ease-out] md:hidden `
       + "lg:absolute lg:left-6 lg:right-0 lg:top-10 lg:z-10 lg:flex lg:max-h-[calc(100%-2.5rem)] lg:rounded-2xl lg:border-2 lg:border-brand-500 lg:shadow-2xl lg:shadow-brand-900/10 lg:ring-4 lg:ring-brand-500/10 lg:motion-safe:animate-[ea-slide-in_.3s_ease-out]";
-  const primary = step === "questions" ? "Send" : step === "identity" ? "Send" : null;
+  const primary = step === "questions" ? "Send" : step === "identity" ? (newPassword ? "Save and continue" : "Send") : null;
 
   const sheet = (
     <section ref={card} aria-label="Your task" data-task-card data-placement={placement} className={`text-left ${shell}`}>
@@ -712,9 +775,6 @@ export function GoalTaskCard({ flow, placement = "column" }) {
         <div ref={body} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3" data-task-body>
           <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
             <p className="min-w-0 flex-1 text-[13px] font-medium text-slate-800" data-says>{session.value_line || res.message}</p>
-            {res.credit_badge && step !== "none" && step !== "clarify" && (
-              <span data-credit-badge title={res.credit_implication || undefined} className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">{res.credit_badge}</span>
-            )}
           </div>
           {res.execution_boundary && (
             <p className="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[12px] text-amber-900" data-boundary role="note">
@@ -723,7 +783,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
           )}
           {res.recommended_path?.length > 1 && (
             <p data-path className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] font-medium text-emerald-900">
-              I’ll check what looks ready and show you the gaps. Free.
+              I’ll check what looks ready and show you the gaps.
             </p>
           )}
 
@@ -740,10 +800,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
             </div>
           )}
 
-          {step === "questions" && (session.acknowledged || session.progress) && (
+          {step === "questions" && session.acknowledged && (
             <p className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-slate-600" data-conversation>
               {session.acknowledged && <span data-acknowledged>{session.acknowledged}</span>}
-              {session.progress && <span className="ml-auto font-semibold text-slate-500" data-progress>{session.progress.answered} of {session.progress.total}</span>}
             </p>
           )}
           {step === "questions" && said.length > 0 && (
@@ -871,11 +930,21 @@ export function GoalTaskCard({ flow, placement = "column" }) {
             <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3" data-checkpoint>
               <div className="space-y-2" data-identity-turn>
                 <div className="rounded-2xl bg-white px-3 py-2 text-[13px] leading-5 text-slate-800 shadow-sm ring-1 ring-slate-100">
-                  {sent ? <>I sent a code to <span data-masked>{session.verification.masked}</span>.</>
+                  {newPassword ? "You're in. Set a password so you can sign in with it next time."
+                    : sent ? <>I sent a code to <span data-masked>{session.verification.masked}</span>.</>
                     : here ? "I already have your account. Let’s keep going."
                       : identityPhase === "name" ? "What name should I use for this?" : "What email should I send the code to?"}
                 </div>
-                {sent ? (
+                {newPassword ? (
+                  <div className="rounded-xl border border-white bg-white p-3 shadow-sm" data-password-step>
+                    <div className="relative">
+                      <input type={showPassword ? "text" : "password"} aria-label="New password" placeholder="At least 8 characters" autoComplete="new-password" maxLength={72}
+                        value={password} onChange={(e) => setPasswordText(e.target.value)} className={`${inputCls} pr-16`} />
+                      <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[12px] font-semibold text-brand-700">{showPassword ? "Hide" : "Show"}</button>
+                    </div>
+                    <button type="button" disabled={busy} onClick={skipPassword} className="mt-2 text-[12px] font-semibold text-slate-500 underline-offset-2 hover:underline" data-skip-password>Skip for now</button>
+                  </div>
+                ) : sent ? (
                   <div data-code-step>
                     {googleOn && session.verification.google && (
                       <div className="mt-2" data-google-first>
@@ -893,9 +962,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
                   </div>
                 ) : identityPhase === "name" ? (
                   <div className="rounded-xl border border-white bg-white p-3 shadow-sm">
-                    {session.first_name && !renaming ? (
+                    {knownName && !renaming ? (
                       <p className="text-[13px] font-semibold text-slate-900" data-continue-as>
-                        I'll use {session.first_name}.
+                        I'll use {knownName}.
                         <button type="button" onClick={() => { setRenaming(true); setIdentityPhase("name"); }} className="ml-2 text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline">Change</button>
                       </p>
                     ) : (
@@ -904,9 +973,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
                   </div>
                 ) : (
                   <div className="rounded-xl border border-white bg-white p-3 shadow-sm">
-                    {session.first_name && !renaming && (
+                    {knownName && !renaming && (
                       <p className="mb-2 text-[13px] font-semibold text-slate-900" data-continue-as>
-                        I'll use {session.first_name}.
+                        I'll use {knownName}.
                         <button type="button" onClick={() => { setRenaming(true); setIdentityPhase("name"); }} className="ml-2 text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline">Change</button>
                       </p>
                     )}
@@ -936,7 +1005,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-b-2xl border-t border-slate-100 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" data-task-footer>
           <div className="flex items-center gap-3">
             <button type="button" onClick={startOver} className="text-[13px] font-medium text-slate-500 hover:text-slate-700">{step === "none" ? "Ask for something else" : "Start again"}</button>
-            {step === "identity" && !here && !sent && <button type="button" onClick={() => setError(carryOn())} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">Sign in with a password</button>}
+            {step === "identity" && !here && !sent && !newPassword && <button type="button" onClick={() => setError(carryOn())} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">Sign in with a password</button>}
           </div>
           {primary && (
             <button type="submit" disabled={busy} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1F5BFF] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[#1747CC] disabled:opacity-60">

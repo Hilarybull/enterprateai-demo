@@ -52,17 +52,115 @@ async def _select_users_with_block(columns: str = "id,email,name,phone,company,c
 
 # ── Read endpoints ────────────────────────────────────────────────────────────
 
-async def _select_ai_usage_events() -> list:
-    try:
-        return await sb_select(
-            "ai_usage_events",
-            columns="id,user_id,feature,provider,model,input_tokens,output_tokens,total_tokens,estimated_cost_usd,created_at",
-            order="created_at",
-            desc=True,
-            limit=1000,
-        )
-    except Exception:
-        return []
+AI_WINDOW_DAYS = 30
+_PAGE = 1000
+_MAX_PAGES = 50      # 50,000 rows a window; past that the totals say they are partial
+
+
+async def _select_window(table: str, columns: str, since: str, filters: list | None = None) -> tuple[list, bool]:
+    """Every row since `since`, newest first, read a page at a time. (rows, complete). [] when the table is missing."""
+    rows: list = []
+    before = None
+    for _ in range(_MAX_PAGES):
+        page_filters = [("created_at", "gte", since), *(filters or [])]
+        if before:
+            page_filters.append(("created_at", "lt", before))
+        try:
+            page = await sb_select(table, columns=columns, filters=page_filters, order="created_at", desc=True, limit=_PAGE)
+        except Exception:
+            return rows, not rows
+        rows.extend(page or [])
+        if len(page or []) < _PAGE:
+            return rows, True
+        last = page[-1].get("created_at")
+        if not last or last == before:
+            return rows, False
+        before = last
+    return rows, False
+
+
+async def _select_ai_usage_events(since: str) -> tuple[list, bool]:
+    return await _select_window(
+        "ai_usage_events",
+        "id,user_id,feature,provider,model,input_tokens,output_tokens,total_tokens,estimated_cost_usd,metadata,created_at",
+        since,
+    )
+
+
+async def _select_agent_charges(since: str) -> tuple[list, bool]:
+    """Credits the Agent took (committed charges on agent_* features)."""
+    rows, complete = await _select_window(
+        "credit_transactions",
+        "id,user_id,feature_code,credits,transaction_type,status,created_at",
+        since,
+        filters=[("feature_code", "like", "agent%"), ("transaction_type", "eq", "deduction")],
+    )
+    return [r for r in rows if is_agent_feature(r.get("feature_code"))], complete
+
+
+def is_agent_feature(feature) -> bool:
+    return str(feature or "").startswith("agent_")
+
+
+SEARCH_PROVIDERS = {"serpapi", "serper"}
+
+
+def _rollup_agent(rows: list, charges: list, user_email_map: dict[str, str]) -> dict:
+    """What the Agent cost to run (its model and search calls) and what it charged in credits, side by side."""
+    def amount(value) -> float:
+        try:
+            return float(value or 0)
+        except Exception:
+            return 0.0
+
+    calls = [r for r in rows if is_agent_feature(r.get("feature"))]
+    searches = [r for r in calls if r.get("provider") in SEARCH_PROVIDERS]
+
+    def search_count(r) -> int:
+        meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
+        return int(meta.get("searches") or 1)
+
+    features: dict[str, dict] = {}
+    people: dict[str, dict] = {}
+
+    def feature(name) -> dict:
+        return features.setdefault(name, {"label": name, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0, "credits": 0})
+
+    def person(user_id: str) -> dict:
+        label = user_email_map.get(user_id, user_id or "unknown")
+        return people.setdefault(label, {"user_id": user_id, "email": label, "calls": 0, "estimated_cost_usd": 0.0, "credits": 0})
+
+    for r in calls:
+        f = feature(str(r.get("feature") or "unknown"))
+        f["calls"] += 1
+        f["tokens"] += int(r.get("total_tokens") or 0)
+        f["estimated_cost_usd"] += amount(r.get("estimated_cost_usd"))
+        p = person(str(r.get("user_id") or ""))
+        p["calls"] += 1
+        p["estimated_cost_usd"] += amount(r.get("estimated_cost_usd"))
+    for c in charges:
+        credits = abs(int(amount(c.get("credits"))))
+        feature(str(c.get("feature_code") or "unknown"))["credits"] += credits
+        person(str(c.get("user_id") or ""))["credits"] += credits
+
+    def ranked(items) -> list[dict]:
+        out = sorted(items, key=lambda x: (x["estimated_cost_usd"], x["credits"], x["calls"]), reverse=True)
+        for item in out:
+            item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
+        return out
+
+    return {
+        "calls": len(calls) - len(searches),
+        "searches": sum(search_count(r) for r in searches),
+        "tokens": sum(int(r.get("total_tokens") or 0) for r in calls),
+        "model_cost_usd": round(sum(amount(r.get("estimated_cost_usd")) for r in calls if r.get("provider") not in SEARCH_PROVIDERS), 6),
+        "search_cost_usd": round(sum(amount(r.get("estimated_cost_usd")) for r in searches), 6),
+        "estimated_cost_usd": round(sum(amount(r.get("estimated_cost_usd")) for r in calls), 6),
+        "credits_charged": sum(abs(int(amount(c.get("credits")))) for c in charges),
+        "charges": len(charges),
+        "by_feature": ranked(features.values())[:12],
+        "by_user": ranked(people.values())[:8],
+    }
 
 
 def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
@@ -135,19 +233,26 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
 
 
 @router.get("/stats")
-async def get_system_stats(user=Depends(require_admin)) -> dict:
-    (workspaces, users, members, invitations, upgrade_clicks, ai_usage_events) = await asyncio.gather(
+async def get_system_stats(days: int = AI_WINDOW_DAYS, user=Depends(require_admin)) -> dict:
+    days = max(1, min(int(days or AI_WINDOW_DAYS), 365))
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    (workspaces, users, members, invitations, upgrade_clicks, (ai_usage_events, ai_complete),
+     (agent_charges, charges_complete)) = await asyncio.gather(
         sb_select("workspaces", columns="id,name,user_id,created_at,data"),
         _select_users_with_block(),
         sb_select("workspace_members", columns="id,workspace_id,user_id,permission_type,created_at"),
         sb_select("workspace_invitations", columns="id,workspace_id,email,status,created_at"),
         sb_select("upgrade_clicks", columns="id"),
-        _select_ai_usage_events(),
+        _select_ai_usage_events(since),
+        _select_agent_charges(since),
     )
 
     user_email_map = {u["id"]: u["email"] for u in users}
     workspace_name_map = {ws["id"]: (ws.get("name") or "Unnamed") for ws in workspaces}
     ai_usage = _rollup_ai_usage(ai_usage_events, user_email_map)
+    ai_usage["agent"] = _rollup_agent(ai_usage_events, agent_charges, user_email_map)
+    ai_usage["window_days"] = days
+    ai_usage["complete"] = ai_complete and charges_complete
 
     sim_count = 0
     blueprint_count = 0

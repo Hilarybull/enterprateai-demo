@@ -60,3 +60,22 @@ def test_missing_it_is_suggested_from_the_profile_not_from_the_sign_in():
     assert _asked({"contact_email": "bookings@sparkle.test"})["business_email"]["default"] == "bookings@sparkle.test"
     assert "default" not in _asked({})["business_email"]                      # nothing on the profile: nothing assumed
     assert _asked({"contact_email": SIGN_IN})["business_email"]["default"] == SIGN_IN      # the same address on the profile: offered
+
+
+@pytest.mark.parametrize("said, goal", [("i need funding readiness", "need_funding"), ("check my launch readiness", "launch")])
+def test_the_agent_runs_funding_and_launch_readiness_in_place(said, goal):
+    """Asked in the Agent box, funding or launch readiness is run there (the check, in the card), never "not available"."""
+    from test_agent import Env
+    res = Env().submit(text=said)
+    assert res["kind"] == "check" and res["goal_key"] == goal and res["said"] == said
+    assert "isn't available" not in res["message"]
+
+
+def test_pricing_and_customers_without_records_open_their_check_like_the_homepage():
+    from test_agent import Env
+    env = Env(plan="strategic_business_os", credits=50)
+    for text, goal in (("Help me price my product/service", "price_offer"), ("I need more customers", "more_customers")):
+        r = env.submit(text=text)
+        assert r["kind"] == "check" and r["goal_key"] == goal and r["said"] == text
+        assert "instead" in r["message"] and "\u2014" not in r["message"] and "\u2013" not in r["message"]
+    assert env.meter.charges == []      # nothing was charged for the handover

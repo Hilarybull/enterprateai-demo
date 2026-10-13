@@ -10,17 +10,18 @@ import InlineAlert from "../components/InlineAlert";
 import { apiRequest, apiRequestCached } from "../api/client";
 import { useWorkspaceStore, workspaceStatusOf } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
-import { formatCurrency, formatNumber } from "../lib/format";
+import { formatCurrency, formatNumber, invoiceNumbers } from "../lib/format";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
-import { planRank } from "../lib/plans";
+import { hasPaidAccess, planRank } from "../lib/plans";
 import AgentPanel, { NeedsApprovalPanel, followInAgentBox, taskIn } from "../components/agent/AgentPanel";
 import { Icon } from "../components/agent/AgentBits";
 import { agentErrorMessage, getAgentSummary, submitAgentRequest } from "../lib/agent";
 import { alertDialog } from "../lib/dialog";
-import { RANGES, buildKpiTrends } from "../lib/dashboardTrends";
+import { RANGES, buildKpiTrends, kpiBreakdown } from "../lib/dashboardTrends";
+import KpiDetails from "../components/dashboard/KpiDetails";
 import AdaptiveInsights, { DashboardContext, DashboardSkeleton, LaunchReadiness, ValueTile } from "../components/dashboard/AdaptiveInsights";
 import { actionCardsFor } from "../lib/dashboardLayout";
 import { recallDashboard, rememberDashboard } from "../lib/dashboard";
@@ -99,6 +100,8 @@ export default function DashboardPage() {
   // fetch or render it for lower-plan accounts.
   const hasLivePlanAccess = subscription?.status === "grandfathered"
     || planRank(subscription?.plan_key) >= planRank("decision_engine");
+  // What makes up each dashboard figure is a paid feature: a free plan sees the figures only.
+  const kpiDetailsOpen = hasPaidAccess(subscription?.plan_key, subscription?.status);
   const isExplorerPlan = subscription?.status !== "grandfathered" && planRank(subscription?.plan_key) <= planRank("explorer");
 
   const [loading, setLoading] = useState(true);
@@ -471,14 +474,30 @@ export default function DashboardPage() {
 
   // `goodWhenUp` decides the colour: more revenue is good, more cost or risk is not.
   const financialHealthCards = [
-    { label: "Total Revenue", value: formatCurrency(trends.revenue.value, currency, "en-GB"), trend: trends.revenue, goodWhenUp: true },
-    { label: "Cash", value: formatCurrency(trends.cash.value, currency, "en-GB"), trend: trends.cash, goodWhenUp: true },
-    { label: "Expenses & CoS", value: formatCurrency(trends.costs.value, currency, "en-GB"), trend: trends.costs, goodWhenUp: false },
-    { label: "Receivables", trend: trends.receivables, goodWhenUp: true,
+    { kind: "revenue", label: "Total Revenue", value: formatCurrency(trends.revenue.value, currency, "en-GB"), trend: trends.revenue, goodWhenUp: true },
+    { kind: "cash", label: "Cash", value: formatCurrency(trends.cash.value, currency, "en-GB"), trend: trends.cash, goodWhenUp: true },
+    { kind: "costs", label: "Expenses & CoS", value: formatCurrency(trends.costs.value, currency, "en-GB"), trend: trends.costs, goodWhenUp: false },
+    { kind: "receivables", label: "Receivables", trend: trends.receivables, goodWhenUp: true,
       value: formatCurrency(adaptive && typeof dashboard?.financial_summary?.receivables === "number"
         ? dashboard.financial_summary.receivables : trends.receivables.value, currency, "en-GB") },
-    { label: "Active Risks", value: formatNumber(Array.isArray(agentSummary?.risks) ? agentSummary.risks.length : trends.risks.value), trend: trends.risks, goodWhenUp: false },
+    { kind: "risks", label: "Active Risks", value: formatNumber(Array.isArray(agentSummary?.risks) ? agentSummary.risks.length : trends.risks.value), trend: trends.risks, goodWhenUp: false },
   ];
+
+  // Clicking a tile opens the records behind its figure, worked out by the same rules.
+  const [openKpi, setOpenKpi] = useState(null);
+  const kpiDetail = useMemo(() => {
+    if (!openKpi || !kpiDetailsOpen) return null;
+    const wsIso = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
+    const toWs = (amount, cur) => {
+      const num = Number(amount || 0);
+      const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
+      if (!iso || iso === wsIso) return num;
+      const rate = fxRates[iso];
+      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+    };
+    return kpiBreakdown({ kind: openKpi.kind, invoices: snapshot.invoices, expenses: snapshot.expenses, toWs, rangeKey,
+      refs: invoiceNumbers(snapshot.invoices), risks: Array.isArray(agentSummary?.risks) ? agentSummary.risks : null });
+  }, [openKpi, kpiDetailsOpen, snapshot, fxRates, currency, rangeKey, agentSummary]);
 
   const trendTile = { revenue: financialHealthCards[0], cash: financialHealthCards[1], costs: financialHealthCards[2],
     receivables: financialHealthCards[3], risks: financialHealthCards[4] };
@@ -540,7 +559,10 @@ export default function DashboardPage() {
           const direction = pct != null && (up || down) ? Math.sign(pct) : Math.sign(avg(raw.slice(half)) - avg(raw.slice(0, half)));
           const lineTone = !hasData ? "text-slate-300" : direction === 0 || (direction > 0) === card.goodWhenUp ? "text-emerald-600" : "text-rose-600";
           return (
-            <div key={card.label} title={card.hint || undefined} data-kpi={card.key || card.label} {...enter("fadeUp", index, 120)} className={`flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900`}>
+            <div key={card.label} title={card.hint || (card.kind ? `See what makes up ${card.label}` : undefined)} data-kpi={card.key || card.label} {...enter("fadeUp", index, 120)}
+              {...(card.kind ? { role: "button", tabIndex: 0, "aria-haspopup": "dialog", onClick: () => setOpenKpi(card),
+                onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenKpi(card); } } } : {})}
+              className={`flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900 ${card.kind ? "cursor-pointer transition hover:border-brand-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" : ""}`}>
               <div className="text-[15px] font-medium text-slate-500">{card.label}</div>
               {/* Never cut off: a long amount is shown short (£1.25M), with the full amount in the tooltip and the accessible name. */}
               <div className="mt-1 min-w-0">
@@ -578,6 +600,9 @@ export default function DashboardPage() {
           );
         })}
       </div>
+      {openKpi && (kpiDetail || !kpiDetailsOpen) && (
+        <KpiDetails title={openKpi.label} value={openKpi.value} detail={kpiDetail} locked={!kpiDetailsOpen} currency={currency} onClose={() => setOpenKpi(null)} />
+      )}
     </section>
   );
 

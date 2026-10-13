@@ -83,3 +83,13 @@ def test_a_paid_pilot_counts_as_demand_evidence_in_the_owner_s_words():
     interest = first_value.assess("launch", {**LAUNCH, "evidence": "3 mates who said they'd pay"})
     assert "Early interest: 3 mates who said they'd pay" in interest["strengths"]
     assert first_value.demand_level("Five paid trial cleans") == ("paid_pilot", "Paid pilot")
+
+
+def test_the_last_result_is_shown_on_return(world):  # noqa: F811
+    """QA R8-8: leaving /launch and coming back shows the latest result, not the seven questions again."""
+    env, _store, client, who = world
+    who["user"] = OWNER
+    assert client.get("/businesses/A/quick-check/launch").json()["last"] is None
+    done = client.post("/businesses/A/quick-check/launch", json={"answers": LAUNCH}).json()["result"]
+    last = client.get("/businesses/A/quick-check/launch").json()["last"]
+    assert last["result"]["score"] == done["score"] and last["answers"]["evidence"] == LAUNCH["evidence"]

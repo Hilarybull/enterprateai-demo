@@ -1795,8 +1795,12 @@ export default function BusinessOperationsPage() {
     if (sub) {
       if (tab === "Sales") setSalesSub(sub);
       if (tab === "Procurement") setProcSub(sub);
+      if (tab === "Transactions") setTxnSub(sub);
     }
+    if (p.get("new") === "quote" || p.get("new") === "invoice") setCreateFromLink(p.get("new"));      // "Create a quotation" from a check: the form, open
   }, [location.search]);
+  const [createFromLink, setCreateFromLink] = useState(null);
+  const [recordsIn, setRecordsIn] = useState(false);      // the workspace's records have been read at least once
   const [reqCreateTrigger, setReqCreateTrigger] = useState(0);
   const [contractSub, setContractSub] = useState("All Contracts");
   const [txnSub, setTxnSub] = useState("All Transactions");
@@ -1887,6 +1891,7 @@ export default function BusinessOperationsPage() {
     setSentRfqs(Array.isArray(fin.sent_rfqs) ? fin.sent_rfqs : []);
     setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
     setCatalogueProducts(Array.isArray(cat.products) ? cat.products : []);
+    setRecordsIn(true);
   }
 
   useEffect(() => {
@@ -2348,6 +2353,12 @@ export default function BusinessOperationsPage() {
       document.head.appendChild(s);
     }
   }
+
+  useEffect(() => {      // once the records are in, so the new number follows the ones already used
+    if (!createFromLink || loading || !recordsIn) return;
+    openCreate(createFromLink);
+    setCreateFromLink(null);
+  }, [createFromLink, loading, recordsIn]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   function openCreate(type, initialData = null) {
     const prefix = type === "invoice" ? "INV" : type === "quote" ? "QUO" : type === "expense" ? "EXP" : "CON";

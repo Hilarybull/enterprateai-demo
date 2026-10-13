@@ -193,7 +193,7 @@ async def e2q_customer(ctx):
     if not valid_email(customer.get("email")):
         if valid_email(a.get("customer_email")):
             customer["email"] = a["customer_email"].strip()
-        else:
+        elif not a.get("email_later"):      # "I'll add it later": drafted now, the address is asked for when it is sent
             return WaitForInput(f"I need an email address to send the quotation to {customer['name']}.", [
                 {"key": "customer_email", "label": "Customer email", "type": "email", "required": True},
                 *(await _rest_of_the_quotation(ctx, enquiry))])
@@ -1006,7 +1006,7 @@ async def price_test_step(ctx):
     monthly = bz.money(sum(recent.values()) / 3)
     if monthly <= 0:
         return Done("A price test works from revenue paid in the last three months, and none is on record yet.",
-                    next_action="Ask me for a new invoice, or to record a payment, and I'll test the price from there.", outcome={"reason": "no_revenue"}, skipped=True)
+                    next_action="Ask me for a new invoice, or to record a payment, and I'll test the price from there.", outcome={"reason": "no_revenue", "check": "price_offer"}, skipped=True)
     priced = [(p_price, p_cost) for p_price, p_cost in ((float(p.get("base_price") or 0), float(p.get("cost_of_sales") or p.get("unit_cost") or 0))
                                                         for p in (data.get("catalogue") or {}).get("products") or [] if isinstance(p, dict))
               if p_price > 0 and p_cost > 0]
@@ -1232,7 +1232,7 @@ async def business_plan_step(ctx):
     ask = _ask_idea(idea, ("description", "customer"))
     if ask:
         return ask
-    r = await _studio(ctx, "business_plan", ctx.rt.studio.draft_plan(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea))
+    r = await _studio(ctx, "business_plan_full", ctx.rt.studio.draft_plan(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea))
     await _keep(ctx, "plan", r)
     return Done("Business plan draft ready for review" + (f": {r['sections']} sections" if r.get("sections") else "") + ". Nothing has been sent to anyone.",
                 next_action="I'll redraft it when you ask, or when your figures change.",
@@ -1286,7 +1286,7 @@ async def offer_review_step(ctx):
             sold[name] = sold.get(name, 0) + bz.invoice_total(inv)
     if not sold:
         return Done("To review what sells I need invoices that say what they were for, and those paid in the last three months don't.",
-                    next_action="Ask me for your next invoice with its items and I'll review what sells from there.", outcome={"reason": "no_item_detail"}, skipped=True)
+                    next_action="Ask me for your next invoice with its items and I'll review what sells from there.", outcome={"reason": "no_item_detail", "check": "more_customers"}, skipped=True)
     total = sum(sold.values())
     best, earned = max(sold.items(), key=lambda kv: kv[1])
     listed = [str(p.get("name") or "").strip() for p in (data.get("catalogue") or {}).get("products") or [] if isinstance(p, dict) and p.get("name")]

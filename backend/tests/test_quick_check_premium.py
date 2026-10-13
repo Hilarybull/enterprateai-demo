@@ -38,9 +38,7 @@ def test_e3_e4_the_answers_go_on_a_launch_plan_and_the_premium_step_is_research(
     made = client.post("/businesses/A/quick-check/launch/attach", json={"answers": ANSWERS}).json()
     assert made["created"] is True and made["to"].startswith("/launch/")
 
-    async def nothing(_q):
-        return {}
-    monkeypatch.setattr(research, "_search", nothing)
+    monkeypatch.setattr(research, "connected", lambda: {"connected": False, "search": False, "model": False})
     before = {r["id"] for r in run(env.store.list_runs("A"))}
     out = client.post("/businesses/A/quick-check/launch/premium", json={"answers": ANSWERS}).json()
     assert out["started"] is True and out["capability"] == "launch_evidence_gaps"      # its plan gate, from the registry

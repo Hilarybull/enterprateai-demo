@@ -1267,7 +1267,60 @@ async def create_document(tc: ToolContext, a: dict) -> dict:
         records.append(rec)
         return {"document_id": rec["id"], "reference": rec["reference"], "created": True, "total": bz.invoice_total(rec)}
 
-    return await tc.mutate(_apply)
+    out = await tc.mutate(_apply)
+    if a["kind"] == "proposal" and out.get("document_id"):
+        doc = await file_proposal(tc.rt, tc.owner_id, tc.business_id, out["document_id"])
+        if doc:
+            out["blueprint_document_id"] = doc
+    return out
+
+
+def proposal_markdown(rec: dict, company: str, currency: str) -> str:
+    """The proposal as a document: what was agreed with the owner, in the order a client reads it. Only what the
+    record holds; a part with nothing in it is left out, never filled with words of its own."""
+    from app.modules.agent.documents import fmt_money
+    client = rec.get("customer_name") or rec.get("party_name") or "Client"
+    lines = [f"# Proposal {rec.get('reference') or ''}".rstrip(), "", f"**Prepared for:** {client}"]
+    if company:
+        lines.append(f"**Prepared by:** {company}")
+    if rec.get("issued_at"):
+        lines.append(f"**Date:** {str(rec['issued_at'])[:10]}")
+    for key, heading in (("problem", "The need"), ("solution", "What we propose"), ("timeline", "Timeline")):
+        text = str(rec.get(key) or "").strip()
+        if text:
+            lines += ["", f"## {heading}", "", text]
+    lines += ["", "## Investment", "", f"**{fmt_money(bz.invoice_total(rec), currency)}**"]
+    if rec.get("valid_until"):
+        lines.append(f"This proposal is valid until {str(rec['valid_until'])[:10]}.")
+    notes = str(rec.get("notes") or "").strip()
+    if notes:
+        lines += ["", "## Notes", "", notes]
+    return "\n".join(lines) + "\n"
+
+
+async def file_proposal(rt, owner_id: str, business_id: str, proposal_id: str) -> str | None:
+    """Keep the Agent's proposal in Business Blueprints too, as a Client Proposal to open, edit or download, and
+    keep the two in step after an edit. Filing it never stops the task: the proposal itself is already saved."""
+    try:
+        data = await rt.business.load(business_id)
+        rec = bz.find((data.get("financials") or {}).get("proposals") or [], proposal_id)
+        if not rec:
+            return None
+        company = bz.company_of(data)["name"] or ""
+        doc_id = await rt.studio.file_document(user_id=owner_id, business_id=business_id, type="client_proposal",
+                                               title=f"Proposal {rec.get('reference') or ''}: {rec.get('customer_name') or rec.get('party_name') or 'Client'}".replace(" :", ":"),
+                                               company=company, markdown=proposal_markdown(rec, company, _currency(rec, data)),
+                                               document_id=rec.get("blueprint_document_id"))
+        if doc_id and doc_id != rec.get("blueprint_document_id"):
+            def _link(d: dict) -> None:
+                r = bz.find(bz.records(d, "proposals"), proposal_id)
+                if r:
+                    r["blueprint_document_id"] = doc_id
+            await rt.business.mutate(business_id, _link)
+        return doc_id
+    except Exception:      # noqa: BLE001
+        logger.warning("proposal %s not filed in Business Blueprints", proposal_id, exc_info=True)
+        return None
 
 
 def _document_builder(name: str):

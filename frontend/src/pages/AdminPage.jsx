@@ -11,6 +11,7 @@ import logoUrl from "../enterprate-logo.png";
 import ConfirmDialog from "../components/ConfirmDialog";
 import AdminClaims from "../components/marketplace/AdminClaims";
 import ActivationAdmin from "../components/admin/ActivationAdmin";
+import AgentSpend from "../components/admin/AgentSpend";
 import { ADMIN_NAV, AdminDrawer, AdminHeader, AdminInsight, AdminSidebar, AdminTable, KpiTile, weeklySeries } from "../components/admin/AdminUI";
 import { moderatorAccess } from "../lib/directory";
 
@@ -2665,10 +2666,11 @@ export default function AdminPage() {
                   </div>
                 )}
                 {!(stats.ai_usage.by_feature || []).length && (
-                  <p className="text-xs text-slate-400">No AI usage recorded yet. Create the <code className="font-mono text-[11px]">ai_usage_events</code> table to start tracking.</p>
+                  <p className="text-xs text-slate-400">No AI usage recorded yet. Apply migration <code className="font-mono text-[11px]">041_ai_usage_events</code> to start tracking.</p>
                 )}
               </section>
             )}
+            {stats?.ai_usage?.agent && <AgentSpend usage={stats.ai_usage} compact />}
 
             {/* 4 — Recent workspaces + users (compact reference) */}
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -2840,6 +2842,8 @@ export default function AdminPage() {
                 <p className="text-sm text-slate-400">No AI usage data yet. Run any AI feature to start tracking.</p>
               )}
             </section>
+
+            <AgentSpend usage={stats?.ai_usage} />
 
             {/* By feature + By model side by side */}
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">

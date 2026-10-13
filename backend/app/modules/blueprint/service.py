@@ -1247,6 +1247,37 @@ def _format_section_prompt(*, doc_type: str, section_title: str, inputs_text: st
     )
 
 
+# QA R7-5: streaming. While a document is generated for the stream endpoint, this holds a callback that receives each
+# section as soon as it is written (heading, text). The single full-document call is skipped then, and the sections are
+# written in parallel, each reported the moment it is ready, each with its own time limit.
+import contextvars as _contextvars
+
+SECTION_STREAM: "_contextvars.ContextVar[Any]" = _contextvars.ContextVar("blueprint_section_stream", default=None)
+SECTION_TIMEOUT_SECONDS = 90
+
+
+
+def _known_figures(ws_data: Any, offering: str | None = None) -> str:
+    """QA R9-5: the figures the workspace already holds (any check, any adopted review, the catalogue), each with where it
+    came from, for the document to use instead of inventing or asking again. Empty when there are none."""
+    if not isinstance(ws_data, dict):
+        return ""
+    try:
+        from app.modules.agent import research
+        i = research.inputs_of("price_offer", {"sell": offering} if offering else {}, ws_data)
+        cur = research.context_of(ws_data, i).get("currency")
+    except Exception:      # noqa: BLE001 - the document is written without them
+        return ""
+    src = i.get("_from") or {}
+    lines = []
+    for f in ("price", "cost", "monthly_sales", "fixed_costs", "team_size", "cash_in_bank"):
+        if i.get(f) is None:
+            continue
+        v = research.money(i[f], cur) if f in research.MONEY_FIELDS else f"{i[f]:g}"
+        lines.append(f"{research.INPUT_LABEL[f]}: {v} ({src.get(f) or 'on record'})")
+    return "; ".join(lines)
+
+
 async def _ensure_section_bodies(
     llm: LLMClient,
     *,
@@ -1279,27 +1310,39 @@ async def _ensure_section_bodies(
         )
         missing.append((heading, title, prompt))
 
+    stream = SECTION_STREAM.get()
+    for heading in wanted_headings:      # what was already written (a full document) goes out at once
+        if stream and heading not in {m[0] for m in missing} and (section_map.get(heading) or "").strip():
+            await stream(heading, section_map[heading])
     if missing:
         async def gen_one(heading: str, title: str, prompt: str):
-            text, _, _ = await _generate_section_required(
+            text, _, _ = await asyncio.wait_for(_generate_section_required(
                 llm,
                 prompt=prompt,
                 label=f"{doc_type}_{title}",
                 warnings=warnings,
                 error_label=f"{doc_type} section '{title}'",
                 feature=f"blueprint.{doc_type.lower().replace(' ', '_')}.section",
-            )
+            ), timeout=SECTION_TIMEOUT_SECONDS)
             return heading, text.strip()
 
-        results = await asyncio.gather(
-            *[gen_one(h, t, p) for h, t, p in missing],
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, Exception):
-                continue  # warning already added in _generate_section_required
-            heading, text = result
-            section_map[heading] = text
+        if stream:
+            # Each section is sent the moment it is written. One that fails or times out fails the document: it is
+            # not delivered half-written, and nothing is charged (the guard releases the hold).
+            for done in asyncio.as_completed([gen_one(h, t, p) for h, t, p in missing]):
+                heading, text = await done
+                section_map[heading] = text
+                await stream(heading, text)
+        else:
+            results = await asyncio.gather(
+                *[gen_one(h, t, p) for h, t, p in missing],
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    continue  # warning already added in _generate_section_required
+                heading, text = result
+                section_map[heading] = text
 
     return _rebuild_with_headings(preamble=preamble, headings=wanted_headings, primary=section_map, fallback={})
 
@@ -1813,6 +1856,9 @@ async def generate_blueprint(
                 enriched[key] = fallback_fn(key) if fill_missing else ""
 
         doc_prompt    = build_prompt_fn(enriched)
+        if SECTION_STREAM.get() and not allow_fallback:
+            # Streaming: no single full-document call; every section is written on its own, and sent when ready.
+            return "", "sections", "sections"
         doc, prov, mdl = await _generate_section(
             llm,
             prompt=doc_prompt,
@@ -1927,6 +1973,7 @@ async def generate_blueprint(
         registration_status = "Registered" if registration_number else "Registration details not provided"
 
         raw_inputs = {
+            "known_figures": _known_figures(ws.data if ws else None),      # QA R9-5
             "company_name": company,
             "registration_status": registration_status,
             "registration_number": registration_number,
@@ -2129,6 +2176,7 @@ async def generate_blueprint(
         ).strip()
 
         raw_inputs = {
+            "known_figures": _known_figures(ws.data if ws else None),      # QA R9-5
             "company_name": company,
             "client_name": client_name,
             "proposal_title": proposal_title,

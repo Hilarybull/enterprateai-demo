@@ -138,7 +138,10 @@ def test_with_no_cost_on_record_it_asks_the_one_thing_only_the_owner_knows_then_
 @pytest.mark.parametrize("plan", agent_config.PLAN_ORDER)
 def test_the_price_test_checks_the_plan(plan):
     res = Env(plan=plan).submit(capability="price_test", channel="ui_action")
-    assert res["kind"] == ("blocked" if plan == "explorer" else "workflow")
+    if plan == "explorer":
+        assert res["kind"] == "blocked"
+    else:      # it runs; with no revenue on record yet it hands over to the pricing check, from the owner's answers
+        assert res["run"]["workflow_key"] == "price_test" and res["kind"] == "check" and res["goal_key"] == "price_offer"
 
 
 def test_a_growing_business_gets_it_once_a_month_and_the_tile_shows_the_result():

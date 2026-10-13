@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.core.config import get_settings
 from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.shared.auth.google import verify_google_id_token
-from app.shared.auth.schemas import ChangePasswordRequest, DeleteAccountRequest, ForgotPasswordRequest, GoogleAuthRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, TokenResponse, UpdateProfileRequest, UserPublic
+from app.shared.auth.schemas import ChangePasswordRequest, DeleteAccountRequest, ForgotPasswordRequest, GoogleAuthRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, SetPasswordRequest, TokenResponse, UpdateProfileRequest, UserPublic
 from app.shared.auth.security import create_access_token, hash_password, verify_password
 from app.shared.auth.deps import forget_user, get_current_user
 from app.shared.email.resend import send_password_reset_email, send_password_otp_email, send_email_verification_email
@@ -536,6 +536,18 @@ async def change_password(payload: ChangePasswordRequest, user=Depends(get_curre
     if not verify_password(payload.current_password, user.get("password_hash") or ""):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
     await sb_update("users", filters=[("id", "eq", user["id"])], payload={"password_hash": hash_password(payload.new_password)})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/me/set-password", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def set_first_password(payload: SetPasswordRequest, user=Depends(get_current_user)) -> Response:
+    """The first password on an account that has none: one made by a verified email code (a task saved from the
+    homepage), so it can sign in with a password next time. An account that has a password changes it with the
+    current one (/me/password) or by email (/forgot-password), never here."""
+    if user.get("password_hash"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This account already has a password. Change it in Account settings.")
+    await sb_update("users", filters=[("id", "eq", user["id"])], payload={"password_hash": hash_password(payload.new_password)})
+    forget_user(user["id"])      # the next /auth/me says has_password
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -30,7 +30,7 @@ def test_one_message_answers_several_questions_and_only_the_rest_are_asked():
     assert s["proposed"] == {"amount": 25000.0, "use": "a van", "stage": "trading", "timing": "By March"}
     assert shown["missing"] == ["route", "traction"]                        # only what was not said is asked
     assert shown["acknowledged"] == "Got your amount, purpose, stage and timing." and shown["progress"] == {"answered": 4, "total": 6}
-    assert shown["value_line"] == "I'll check how funding-ready you are and show you the gaps. Free." and shown["resolution"]["recommended_path"] == []
+    assert shown["value_line"] == "I'll check how funding-ready you are and show you the gaps." and shown["resolution"]["recommended_path"] == []
     assert any(e.get("name") == "questions_avoided" for e in store.events) or True
     # "Not sure" is an answer: kept as unknown, never guessed.
     s = asyncio.run(goals.add_inputs(store, s, {"route": "unknown", "traction": "No traction yet"}))

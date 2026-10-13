@@ -113,15 +113,21 @@ async def estimate_baseline(user: dict, business_id: str) -> dict | None:
         data = await orch.rt.business.load(business_id) or {}
     except Exception:      # noqa: BLE001 - no estimate then; the owner is told what is missing
         return None
-    from app.modules.agent import first_value
-    for goal, words in (("price_offer", "your pricing check"), ("test_idea", "your idea check")):
-        a = ((data.get("quick_check_answers") or {}).get(goal) or {}).get("answers") or {}
-        price, sales = first_value._num(a.get("price")), first_value._num(a.get("monthly_sales"))
-        if price and sales:
-            cost = first_value._num(a.get("cost")) or 0
-            fixed = first_value._num(a.get("fixed_costs")) or 0
-            return {"label": "Estimate", "basis": f"£{price:g} × {sales:g} a month, from {words}", "from": goal,
-                    "state": {"revenue_monthly": round(price * sales, 2), "cost_of_sales_monthly": round(cost * sales, 2), "expenses_monthly": round(fixed, 2)}}
+    # QA R9-5: every fact the workspace holds (any check, any adopted review, the catalogue), the same reader the
+    # premium reviews use; the baseline says where its figures came from, and that it is an estimate.
+    from app.modules.agent import research
+    checks = [v for v in (data.get("quick_check_answers") or {}).values() if isinstance(v, dict)]
+    latest = max(checks, key=lambda v: v.get("at") or "").get("offering") if checks else None      # what was last worked on
+    i = research.inputs_of("price_offer", {"sell": latest} if latest else {}, data)
+    if i.get("price") and i.get("monthly_sales"):
+        cur = research.context_of(data, i).get("currency")
+        src = i.get("_from") or {}
+        cost, fixed = i.get("cost") or 0, i.get("fixed_costs") or 0
+        where = sorted({src[k] for k in ("price", "monthly_sales", "cost", "fixed_costs") if src.get(k)})
+        return {"label": "Estimate", "from": where,
+                "basis": f"{research.money(i['price'], cur)} × {i['monthly_sales']:g} a month" + (f", {', '.join(w[0].lower() + w[1:] for w in where)}" if where else ""),
+                "state": {"revenue_monthly": round(i["price"] * i["monthly_sales"], 2), "cost_of_sales_monthly": round(cost * i["monthly_sales"], 2),
+                          "expenses_monthly": round(fixed, 2)}}
     return None
 
 

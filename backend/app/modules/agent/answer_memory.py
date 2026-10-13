@@ -32,12 +32,14 @@ def same_offering(a: Any, b: Any) -> bool:
     return x == y or (min(len(x), len(y)) >= 4 and (x in y or y in x))
 
 
-def remember(data: dict, goal: str, answers: dict, now: datetime | None = None) -> None:
-    """Keep what this check was told, with the offering it was about."""
+def remember(data: dict, goal: str, answers: dict, now: datetime | None = None, result: dict | None = None) -> None:
+    """Keep what this check was told, with the offering it was about, and its latest result (QA R8-8: shown again on
+    return, so the check is never redone just to reach its premium step)."""
     now = now or datetime.now(timezone.utc)
     offering = answers.get("sell") or answers.get("description")
     clean = {k: v for k, v in (answers or {}).items() if isinstance(v, (str, int, float)) and str(v).strip() and str(v).strip().lower() != "unknown"}
-    data.setdefault("quick_check_answers", {})[goal] = {"answers": clean, "offering": str(offering or "")[:200], "at": now.isoformat()}
+    data.setdefault("quick_check_answers", {})[goal] = {"answers": clean, "offering": str(offering or "")[:200], "at": now.isoformat(),
+                                                        **({"result": result} if result else {})}
     shared = data.setdefault("shared_answers", {})
     for key, value in clean.items():
         field = ALIAS.get(key, key)

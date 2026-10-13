@@ -838,7 +838,7 @@ class Orchestrator:
             return await self._reply_to_requests(req, email)
         if capability in FUTURE:
             # Planned, not built: say so, and offer what is possible. Nothing is executed.
-            return answers.unavailable(capability, FUTURE[capability])
+            return answers.unavailable(capability, FUTURE[capability], said=req.raw_input)
         if not capability:
             # No workflow fits: nothing is executed (s5.1). Questions about the business are
             # answered from authoritative records, with the evidence; anything else goes to
@@ -925,6 +925,10 @@ class Orchestrator:
         if not runs:
             return {"kind": "answer", "capability": capability, "message": "There was nothing to start."}
         used = sum(int(c.get("credits") or 0) for r in runs for c in (r.get("state") or {}).get("credits") or [])
+        # Stopped for want of records (no revenue yet to test a price on): the same goal's check, from the owner's answers.
+        gap = ((runs[0].get("state") or {}).get("outcome") or {}).get("check")
+        if len(runs) == 1 and runs[0]["status"] == RUN_SUCCEEDED and gap in answers.CHECK_OF_GOAL:
+            return {**answers.check_instead(gap, req.raw_input, runs[0].get("summary") or ""), "run": runs[0], "credits_used": used}
         return {"kind": "workflow", "capability": capability, "runs": runs, "run": runs[0],
                 "credits_used": used, "credits_left": await self.rt.meter.balance(actor.user_id)}
 
@@ -1343,7 +1347,7 @@ class Orchestrator:
                 return await self._stop(ctx, step, "action_failed", f"{e} Nothing was sent. I'll have another go shortly.", SUB_RETRY_AVAILABLE)
             except Exception as e:      # noqa: BLE001 - any unexpected error becomes a recoverable state
                 logger.exception("agent step %s failed", step_def.key)
-                return await self._stop(ctx, step, "unexpected_error", f"Something went wrong: {e}. I'll have another go shortly.", SUB_RETRY_AVAILABLE)
+                return await self._stop(ctx, step, "unexpected_error", "Something went wrong on my side. Nothing was sent or charged; I'll have another go shortly.", SUB_RETRY_AVAILABLE)
 
             summary = " ".join(ctx.notes) or None
             if isinstance(result, WaitForInput):
@@ -2041,6 +2045,9 @@ class Orchestrator:
                         rec["description"] = ", ".join(i["description"] for i in amounts["items"])
                 rec["updated_at"] = self.rt.clock().isoformat()
             await self.rt.business.mutate(run["business_id"], _apply)
+            if coll == "proposals":      # its copy in Business Blueprints says what the proposal now says
+                from app.modules.agent.tools import file_proposal
+                await file_proposal(self.rt, (await self.entitlement(run["business_id"]))["owner_id"], run["business_id"], target)
 
         open_approvals = [a for a in await self.rt.store.list_approvals(run_id=run["id"]) if a["status"] in (APPROVAL_PENDING, APPROVAL_APPROVED)]
         await self._supersede(run, open_approvals, actor.user_id, "draft_edited")

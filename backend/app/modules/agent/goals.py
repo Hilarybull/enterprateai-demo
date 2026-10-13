@@ -103,14 +103,14 @@ GOALS: list[dict[str, Any]] = [
      "boundary": "I work from what you tell me and what is on record: I won't invent market evidence.",
      "questions": [_f("sell", "What are you launching?", "text", required=True), _f("customer", "Who is it for?", "text", required=True),
                    _f("target_date", "When do you want to launch?", "date")]},
-    {"key": "cash_flow", "mode": "business_goal", "label": "Improve my cash flow", "outcome": "See what drives cash and act on it",
+    {"key": "cash_flow", "mode": "business_goal", "label": "Improve my cash flow", "chip": False, "outcome": "See what drives cash and act on it",
      "class": COMPOSITE, "start": "scenario_help", "path": ["payment_followup", "new_invoice", "record_expense", "scenario_help", "risk_concentration"],
      "say": "I can show what is driving your cash, chase unpaid invoices for you, get invoices out faster and model what a change would do.",
      "boundary": "The figures come from your own records, worked out exactly: nothing is estimated for you.",
      "questions": [_f("owed", "Are customers paying you late?", "choice",
                       options=[{"value": "yes", "label": "Yes, often"}, {"value": "some", "label": "Sometimes"}, {"value": "no", "label": "No"}]),
                    _f("pressure", "What is the biggest pressure on cash right now?", "text")]},
-    {"key": "grow", "mode": "business_goal", "label": "Help me grow my business", "outcome": "Find what limits growth and a path through it",
+    {"key": "grow", "mode": "business_goal", "label": "Help me grow my business", "chip": False, "outcome": "Find what limits growth and a path through it",
      "class": COMPOSITE, "start": "expansion_scenario", "path": ["expansion_scenario", "capacity_check", "offer_review", "scenario_help"],
      "say": "I can work out what growing would do to your revenue and costs, check whether you have the capacity for it, and review what sells.",
      "boundary": "I can't guarantee a growth result.",
@@ -159,7 +159,7 @@ def _choice(key: str, label: str, options: list[tuple[str, str]], **extra: Any) 
 
 
 _CONVERSATIONS: dict[str, dict[str, Any]] = {
-    "need_funding": {"value": "I'll check how funding-ready you are and show you the gaps. Free.", "questions": [
+    "need_funding": {"value": "I'll check how funding-ready you are and show you the gaps.", "questions": [
         _money("amount", "How much funding do you think you need?", required=True, chips=_FUNDING_AMOUNTS, unsure=_NOT_SURE, q=1, noun="amount"),
         _f("use", "What do you need the money for?", "textarea", required=True, q=2, noun="purpose"),
         _choice("stage", "What stage is the business at?", [("idea", "Just an idea"), ("pre_revenue", "Not trading yet"), ("trading", "Trading"), ("growing", "Trading and growing")], required=True, q=3, noun="stage"),
@@ -169,7 +169,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _f("traction", "What traction do you have so far? Customers, revenue, pilots, contracts or other evidence.", "textarea", required=True, q=6, noun="traction",
            unsure="No traction yet", unsure_value="No traction yet"),
     ]},
-    "test_idea": {"value": "I'll give you a first look at whether the idea can work, from your own numbers. Free.", "questions": [
+    "test_idea": {"value": "I'll give you a first look at whether the idea can work, from your own numbers.", "questions": [
         _f("description", "What is your product or service idea?", "textarea", required=True, q=1, noun="idea"),
         _f("customer", "Who is it for, and where?", "text", required=True, q=2, noun="customer"),
         _money("price", "What price are you thinking of charging?", required=True, unsure=_NOT_SURE, q=3, noun="price"),
@@ -180,7 +180,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _choice("demand", "What evidence of demand do you already have?", [("assumption", "None yet, it is my assumption"), ("research", "Research"), ("enquiries", "Enquiries"),
                 ("lois", "Letters of intent"), ("pilot", "A paid pilot"), ("paying", "Paying customers"), ("repeat", "Repeat customers")], required=True, q=6, noun="demand evidence"),
     ]},
-    "launch": {"value": "I'll check how ready the launch is and show you what is missing. Free.", "questions": [
+    "launch": {"value": "I'll check how ready the launch is and show you what is missing.", "questions": [
         _choice("kind", "What are you launching?", [("product", "A product"), ("service", "A service"), ("both", "Both")], required=True, q=1, noun="kind"),
         _f("sell", "Briefly describe it.", "textarea", required=True, q=2, noun="description"),
         _choice("stage", "What stage is it at?", [("idea", "Idea"), ("prototype", "Prototype"), ("testing", "Testing"), ("ready", "Ready")], required=True, q=3, noun="stage"),
@@ -190,7 +190,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
            chips=[{"value": v, "label": v} for v in ("Within a month", "In 1 to 3 months", "In 3 to 6 months")]),
         _f("evidence", "What customer testing or demand evidence do you already have?", "textarea", required=True, q=6, noun="demand evidence", unsure="None yet", unsure_value="None yet"),
     ]},
-    "price_offer": {"value": "I'll show what your price means for your margin, from your own numbers. Free.", "questions": [
+    "price_offer": {"value": "I'll show what your price means for your margin, from your own numbers.", "questions": [
         _f("sell", "What are you pricing?", "text", required=True, q=1, noun="what you are pricing"),
         _f("customer", "Who are you selling it to?", "text", required=True, unsure=_NOT_SURE, q=2, noun="customer"),
         _money("price", "What price are you considering or charging now?", required=True, unsure=_NOT_SURE, q=3, noun="price"),
@@ -198,7 +198,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _f("monthly_sales", "How many could you realistically sell each month?", "number", required=True, unsure=_NOT_SURE, q=5, noun="monthly sales"),
         _choice("positioning", "How do you want to position it?", [("affordable", "Affordable"), ("mid", "Mid-market"), ("premium", "Premium"), (UNSURE, _NOT_SURE)], required=True, q=6, noun="positioning"),
     ]},
-    "more_customers": {"value": "I'll check what is in place for winning customers and show you the gaps. Free.", "questions": [
+    "more_customers": {"value": "I'll check what is in place for winning customers and show you the gaps.", "questions": [
         _f("sell", "What do you sell?", "text", required=True, q=1, noun="what you sell"),
         _f("customer", "Who do you believe your ideal customers are?", "text", required=True, unsure="I'm not sure", q=2, noun="ideal customer"),
         _f("where", "Where do you want to find customers?", "text", required=True, unsure=_NOT_SURE, q=3, noun="where"),
@@ -449,7 +449,8 @@ def _valid_path(goal: dict, reg: dict[str, str]) -> list[str]:
 def suggestions(reg: dict[str, str] | None = None) -> dict:
     """What the homepage may show: only goals and tasks that resolve to something registered now."""
     reg = registry() if reg is None else reg
-    shown = [g for g in GOALS if _valid_path(g, reg)]
+    # "chip": False keeps a goal off the homepage chips (the owner's choice, 13 Oct 2026); typed, it is still understood.
+    shown = [g for g in GOALS if _valid_path(g, reg) and g.get("chip", True)]
     return {"prompt": "What do you want EnterprateAI to do for your business?",
             "reassurance": "Free essential business tools. 50 AI Credits to get started.",
             "goals": [{"key": g["key"], "label": g["label"]} for g in shown if g["mode"] == "business_goal"],
@@ -1009,6 +1010,10 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
     if answers.get("currency") in SIGNS and session.get("said_currency"):      # switched in the form: the figure stays, the currency is theirs to say
         session["currency"], session["currency_confirmed"] = answers["currency"], True
     answers.pop("currency", None)
+    # A price typed with its own currency ("$300" in a GBP workspace): that currency, shown with the switch, for them to confirm.
+    typed = answers.pop("currency_said", None)
+    if typed in SIGNS and typed != session.get("currency") and not session.get("currency_confirmed"):
+        session["currency"] = session["said_currency"] = typed
     picked = answers.pop("subject_choice", None)
     if picked and session.get("choose") and picked in [o["value"] for o in session["choose"]["options"]]:
         session["subject_choice"] = picked
@@ -1100,6 +1105,8 @@ def _answers_for_task(session: dict) -> dict:
         out["customer_id"], out["customer_name"] = "new", str(a["customer"])
     if a.get("customer_email"):
         out["customer_email"] = a["customer_email"]
+    elif "customer_email" in a:
+        out["email_later"] = True      # "I'll add it later": the draft is made now, the address is asked for when it is sent
     if a.get("item") and isinstance(a.get("amount"), (int, float)):
         qty = a.get("quantity") if isinstance(a.get("quantity"), (int, float)) and a.get("quantity") > 0 else 1
         out["items"] = [{"name": str(a["item"]), "quantity": qty, "unit_price": a["amount"]}]
@@ -1128,6 +1135,18 @@ async def attach(store: SessionStore, session: dict, user_id: str, clock=None) -
     return session
 
 
+def _keep_answers(d: dict, session: dict, now: datetime) -> None:
+    """What the visitor told the homepage check goes into the workspace as they sign in, with its result, so the
+    dashboard, the same check later and every other check start from it instead of asking again."""
+    goal = session.get("goal_key")
+    answers = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
+    if not first_value.covered(goal) or not answers:
+        return
+    from app.modules.agent import answer_memory
+    result = first_value.assess(goal, answers, d, now=now, sign=SIGNS.get(session.get("currency") or DEFAULT_CURRENCY, "£"))
+    answer_memory.remember(d, goal, answers, now=now, result=result)
+
+
 async def resume(store: SessionStore, session: dict, orch, user_id: str, *, business_name: str | None = None, business_id: str | None = None, clock=None) -> dict:
     """Connect the session to the user's business: the one they already have, else a new one
     (only ever after sign-in). The workspace is marked as set up through a goal, so the
@@ -1154,6 +1173,7 @@ async def resume(store: SessionStore, session: dict, orch, user_id: str, *, busi
         d.setdefault("onboarding", {"via": "goal_first", "goal": session.get("goal_key"), "at": now.isoformat()})
         if name and not (d.get("workspace_profile") or {}).get("company_name"):
             d.setdefault("workspace_profile", {})["company_name"] = name
+        _keep_answers(d, session, now)
     await orch.rt.business.mutate(session["business_id"], _mark)
     session["state"] = READY if not _missing(session) else COLLECTING_REQUIRED
     if session["state"] == READY:
@@ -1372,7 +1392,14 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                 noun = {"create_invoice": "invoice", "create_quotation": "quotation"}.get(session.get("goal_key") or "")
                 if noun:      # said on the dashboard when the draft opens for review
                     who = (session.get("inputs") or {}).get("customer")
-                    handoff.update({"ready": True, "ready_message": f"Your {noun}{' for ' + str(who) if who else ''} is ready to review."})
+                    whose = f" for {who}" if who else ""
+                    if run.get("status") == "awaiting_approval":
+                        handoff.update({"ready": True, "ready_message": f"Your {noun}{whose} is ready to review."})
+                    elif run.get("reason_code") == "invalid_customer_destination" or _answers_for_task(session).get("email_later"):
+                        # Drafted; held only for the address the owner said they'd add later.
+                        handoff.update({"ready": False, "ready_message": f"Your {noun}{whose} is drafted. Add their email and I'll get it ready to send."})
+                    else:
+                        handoff.update({"ready": False, "ready_message": f"I've started your {noun}{whose}. There's one more thing to answer on your dashboard."})
                 session["state"] = AWAITING_REVIEW
             else:
                 # Not started (plan, credits, nothing to act on): said as it is, with the dashboard still to go to.

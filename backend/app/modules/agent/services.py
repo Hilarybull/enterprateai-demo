@@ -298,7 +298,12 @@ class CreditMeter(Meter):
             detail = e.detail if isinstance(e.detail, dict) else {}
             if e.status_code == 402 and detail.get("error") in ("INSUFFICIENT_CREDITS", "WALLET_NOT_FOUND"):
                 raise InsufficientCredits(int(detail.get("available") or 0), int(detail.get("required") or 0)) from e
-            raise
+            # Any other refusal (a plan that doesn't include it, a feature switched off) is said in its own words,
+            # never as the raw response ("403: {'error': ...}").
+            from app.modules.agent.tools import ToolStop
+            said = detail.get("message") if isinstance(detail.get("message"), str) else (e.detail if isinstance(e.detail, str) else "")
+            reason = "plan_required" if detail.get("error") == "FEATURE_NOT_ENTITLED" else "feature_unavailable"
+            raise ToolStop(reason, (said or "This isn't available on your account just now.").rstrip(".") + ". Nothing was charged.") from e
 
 
 # ── Classifier ────────────────────────────────────────────────────────────────
@@ -370,6 +375,11 @@ class Studio:
     async def size_market(self, *, user_id: str, business_id: str, idea: dict) -> dict: raise NotImplementedError
     async def draft_plan(self, *, user_id: str, business_id: str, idea: dict) -> dict: raise NotImplementedError
 
+    async def file_document(self, *, user_id: str, business_id: str, type: str, title: str, company: str, markdown: str,
+                            document_id: str | None = None) -> str | None:
+        """Keep a document the Agent made (a proposal) in Business Blueprints, beside the generated ones. Its id."""
+        return None
+
 
 class MemoryStudio(Studio):
     """Stands in for the generators in tests: fixed, plausible results, and a record of what was asked."""
@@ -394,6 +404,12 @@ class MemoryStudio(Studio):
         return {"tam": "£2.4bn", "sam": "£180m", "som": "£1.2m", "assumptions": ["UK small businesses in the sector", "Average spend of £1,500 a year",
                                                                                  "A 0.7% share reachable in three years"],
                 "sources": [{"title": "Sector report", "url": "https://example.test/report"}]}
+
+    async def file_document(self, *, user_id, business_id, type, title, company, markdown, document_id=None):
+        self.filed = getattr(self, "filed", {})
+        doc_id = document_id or f"bp-{len(self.filed) + 1}"
+        self.filed[doc_id] = {"user_id": user_id, "business_id": business_id, "type": type, "title": title, "company": company, "markdown": markdown}
+        return doc_id
 
     async def draft_plan(self, *, user_id, business_id, idea):
         self._note("draft_plan", idea)
@@ -429,6 +445,12 @@ class ModuleStudio(Studio):
         return {"tam": m.get("total_addressable_market") or m.get("market_size"), "sam": m.get("serviceable_addressable_market"),
                 "som": m.get("serviceable_obtainable_market"), "assumptions": [str(a) for a in (m.get("assumptions") or report.get("assumptions") or [])][:6],
                 "sources": [s for s in flat if isinstance(s, dict)][:6]}
+
+    async def file_document(self, *, user_id, business_id, type, title, company, markdown, document_id=None):
+        from app.modules.blueprint.repository import save_document
+        return await save_document(user_id=user_id, type=type, title=title[:200], company_name=(company or "")[:64], industry=None, pricing_model=None,
+                                   workspace_id=business_id, document_markdown=markdown, document_html=None, provider="enterprateai_agent",
+                                   model=None, document_id=document_id)
 
     async def draft_plan(self, *, user_id, business_id, idea):
         from app.modules.blueprint.schemas import BlueprintGenerateRequest

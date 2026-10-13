@@ -177,7 +177,7 @@ describe("the homepage launcher", () => {
 });
 
 describe("the task card", () => {
-  it("opens beside the launcher, which stays in view: the goal, 'Change goal', one line of promise, a credits badge, the limit and the numbered path", async () => {
+  it("opens beside the launcher, which stays in view: the goal, 'Change goal', one line of promise, no credits label, the limit and the numbered path", async () => {
     answer = starts(funding({ resolution: { ...funding().resolution, credit_badge: "Free" } }));
     mountLauncher();
     await click(screen.getByRole("button", { name: "I need funding" }));
@@ -189,7 +189,7 @@ describe("the task card", () => {
     expect(screen.getByRole("button", { name: "I need funding" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Help me price my product/service" }).getAttribute("aria-pressed")).toBe("false");
     expect(panel.querySelector("[data-says]").textContent).toMatch(/^I can help you become more funding-ready/);
-    expect(panel.querySelector("[data-credit-badge]").textContent).toBe("Free");
+    expect(panel.querySelector("[data-credit-badge]")).toBeNull();      // no Free or credits label on the task card
     const limit = within(panel).getByRole("note");
     expect(limit.textContent).toBe("I can't guarantee funding, or a yes from any investor or lender.");
     expect(limit.querySelector("svg")).toBeTruthy();                       // a note with an icon, not a line of body text
@@ -295,6 +295,16 @@ describe("the task card", () => {
       fireEvent.change(within(card()).getByLabelText("6-digit code"), { target: { value: "482 913" } });
       await click(send());
       expect(posts(/\/verify$/).pop().body.code).toBe("482913");
+      // A new account sets its password here, then carries on to the task.
+      const pw = await within(card()).findByLabelText("New password");
+      expect(screen.queryByTestId("where")).toBeNull();      // still here: not on to the task yet
+      const save = () => within(card()).getByRole("button", { name: "Save and continue" });
+      fireEvent.change(pw, { target: { value: "short" } });
+      await click(save());
+      expect(within(card()).getByRole("alert").textContent).toBe("Use at least 8 characters.");
+      fireEvent.change(pw, { target: { value: "correct horse 1" } });
+      await click(save());
+      expect(posts(/\/auth\/me\/set-password$/).pop().body).toEqual({ new_password: "correct horse 1" });
       await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/start/sess-1"));
       expect(localStorage.getItem("ea_token")).toBe("tok-1");
       expect(useAuthStore.getState().token).toBe("tok-1");
@@ -441,9 +451,9 @@ describe("the hero", () => {
     expect(preview.querySelector("[data-mock-greeting]").textContent).toMatch(/^(Good (morning|afternoon|evening)|Hello)$/);      // the time of day, and no name
     expect(preview.textContent).toContain("Here's what happened today.");
     expect(preview.textContent).not.toMatch(/Jordan/);
-    // QA E10: night is its own band (22:00 to 04:59): never "Good evening" at 01:53.
+    // Three greetings only: evening runs on through the night (never "Hello").
     expect([greetingAt(1), greetingAt(4), greetingAt(5), greetingAt(11), greetingAt(12), greetingAt(16), greetingAt(17), greetingAt(21), greetingAt(22), greetingAt(23)]).toEqual(
-      ["Hello", "Hello", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening", "Hello", "Hello"]);
+      ["Good evening", "Good evening", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening", "Good evening", "Good evening"]);
     expect(preview.textContent).toContain("Smarter");
     expect(preview.querySelector("[data-hero-dots]").className).toContain("lg:hidden");      // on a tablet the dot grid travels with the image
     expect(preview.querySelector("[data-hero-dots]").nextElementSibling.className).toContain("lg:rotate-1");
@@ -852,5 +862,55 @@ describe("the checkpoint knows a name already given, and asks before sending mar
     expect(posts(/\/email$/)[0].body).toEqual({ email: "a@example.test", name: "Ada Obi", marketing_consent: true });
   });
 
+  it("a name given in an earlier flow is used in the next one, never asked again", async () => {
+    localStorage.setItem("enterprate_visitor_name", "Ada Obi");      // what the first flow kept once its code was sent
+    answer = starts(ready());
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    expect(within(card()).queryByLabelText("Your name")).toBeNull();
+    expect(card().querySelector("[data-continue-as]").textContent).toBe("I'll use Ada Obi.Change");
+    fireEvent.change(within(card()).getByLabelText("Your email address"), { target: { value: "a@example.test" } });
+    await click(send());
+    expect(posts(/\/email$/)[0].body).toEqual({ email: "a@example.test", name: "Ada Obi", marketing_consent: false });      // this session learns it too
+  });
+
+  it("the name typed in a flow is kept for the next one", async () => {
+    answer = starts(ready());
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    fireEvent.change(within(card()).getByLabelText("Your name"), { target: { value: "Ada Obi" } });
+    await click(send());
+    fireEvent.change(within(card()).getByLabelText("Your email address"), { target: { value: "a@example.test" } });
+    await click(send());
+    expect(localStorage.getItem("enterprate_visitor_name")).toBe("Ada Obi");
+  });
+
 });
 
+
+describe("an answer of \"I'll add it later\"", () => {
+  it("is answered: the email is not asked again further on", async () => {
+    const questions = [
+      { key: "customer", label: "Who is it for?", type: "text", required: true, default: "Investors" },
+      { key: "customer_email", label: "What is their email address?", type: "email", required: true, default: "", unsure: "I'll add it later" },
+      { key: "item", label: "What are you quoting for?", type: "text", required: true, default: "" },
+    ];
+    answer = starts(session({ goal_key: "create_quotation", goal_label: "Create Quotation", questions,
+      inputs: { customer: "Investors", customer_email: "" }, missing: ["item"] }));
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "Create Invoice" }));
+    expect(within(card()).getByText("What are you quoting for?")).toBeTruthy();
+    expect(within(card()).queryByLabelText("What is their email address?")).toBeNull();
+  });
+});
+
+describe("a price typed with its currency", () => {
+  it("reads the currency it was written in", async () => {
+    const { currencyIn } = await import("./GoalLauncher");
+    expect(currencyIn("$300")).toBe("USD");
+    expect(currencyIn("300 usd")).toBe("USD");
+    expect(currencyIn("€45 each")).toBe("EUR");
+    expect(currencyIn("about 300")).toBeNull();
+    expect(currencyIn("supportive")).toBeNull();      // a word that only contains a code is not a currency
+  });
+});

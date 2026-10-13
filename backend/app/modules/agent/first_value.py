@@ -147,21 +147,42 @@ def _quoted(text: Any, limit: int = 90) -> str:
 RESEARCHED, ESTIMATED = "researched", "estimated"
 
 
+CONFIRMED, SKIPPED = "confirmed", "skipped"
+
+
 def _with_research(criteria: list[dict], a: dict) -> list[dict]:
-    """A criterion not known yet, for which the owner adopted researched or estimated evidence, is partly met: it has
-    evidence now, and it is still not confirmed. Never met, whatever the research says (it is not the business's own
-    fact). Weights are unchanged. `a["research"]`: {criterion key: {"value", "state", "label"?}}."""
+    """What the owner adopted from a premium run, criterion by criterion (QA PF3, R7-2):
+      - researched or estimated evidence: a criterion not known yet is partly met (evidence, still not confirmed);
+        never met, whatever the research says (it is not the business's own fact);
+      - a private fact the owner confirmed (their cash, a named owner, a test run): met, or not met when the figures
+        they gave say so (`met: False`, a capacity below the planned volume);
+      - skipped: still not known, and said to be skipped. Weights are unchanged.
+    `a["research"]`: {criterion key: {"value", "state", "label"?, "met"?}}."""
     adopted = a.get("research") if isinstance(a.get("research"), dict) else {}
     for c in criteria:
         got = adopted.get(c["key"])
-        if not got or c["state"] != UNKNOWN or not _known(got.get("value")):
+        if not got:
             continue
-        word = "Researched" if got.get("state") == RESEARCHED else "Estimated"
-        c["state"] = PARTIAL
-        c["strengths"] = [f"{word}, not yet confirmed: {got.get('label') or c['label']}"]
-        c["gap_kind"] = "partial"
-        c["gap"] = f"{c['gap']} (researched evidence to confirm)" if c.get("gap") else None
-        c["research"] = {"state": got.get("state"), "value": got.get("value")}
+        state = got.get("state")
+        if state == SKIPPED:
+            if c["state"] == UNKNOWN:
+                c["gap"] = f"{c['gap']} (you skipped this)" if c.get("gap") else "Not known yet (you skipped this)"
+            continue
+        if not _known(got.get("value")):
+            continue
+        if state == CONFIRMED and c["state"] in (UNKNOWN, PARTIAL):
+            ok = got.get("met") is not False
+            c["state"] = MET if ok else UNMET
+            c["strengths"] = [f"Confirmed by you: {got.get('label') or c['label']}"] if ok else []
+            c["gap"] = None if ok else (got.get("gap") or c.get("gap"))
+            c["research"] = {"state": state, "value": got.get("value")}
+        elif state in (RESEARCHED, ESTIMATED) and c["state"] == UNKNOWN:
+            word = "Researched" if state == RESEARCHED else "Estimated"
+            c["state"] = PARTIAL
+            c["strengths"] = [f"{word}, not yet confirmed: {got.get('label') or c['label']}"]
+            c["gap_kind"] = "partial"
+            c["gap"] = f"{c['gap']} (to confirm)" if c.get("gap") else None
+            c["research"] = {"state": state, "value": got.get("value")}
     return criteria
 
 
@@ -360,7 +381,34 @@ def assess(goal_key: str, answers: dict, data: dict | None = None, *, now: datet
     out = run(dict(answers or {}), data, now, sign)
     if offering_on_record(answers, data):
         out["free_next_actions"] = [x for x in out["free_next_actions"] if x.get("label") != "Add it to your catalogue"]
+    out["free_next_actions"] = [_doable(x, answers or {}) for x in out["free_next_actions"]]
     return out
+
+
+def _amount(value: Any) -> float | None:
+    try:
+        n = float(str(value).replace(",", "").strip().lstrip("£$€₦"))
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _doable(action: dict, answers: dict) -> dict:
+    """A free next action that does the thing, not only opens the page: the catalogue ones save what this check was
+    told (the offering, its price and cost), and "Create a quotation" opens a new quotation."""
+    label = action.get("label")
+    name = str(answers.get("sell") or answers.get("description") or "").strip()[:120]
+    if label in ("Save the price in your catalogue", "Add it to your catalogue") and name:
+        item = {"name": name}
+        if label == "Save the price in your catalogue":
+            price, cost = _amount(answers.get("price")), _amount(answers.get("cost"))
+            if price is None:
+                return action      # no price to save: the catalogue page, to add it there
+            item.update({"base_price": price, **({"cost_of_sales": cost} if cost is not None else {})})
+        return {**action, "catalogue": item}
+    if label == "Create a quotation":
+        return {**action, "to": "/operations?tab=Sales&sub=Quotations&new=quote"}
+    return action
 
 
 def _norm(text: Any) -> str:
@@ -412,7 +460,8 @@ def known_sources(goal_key: str, data: dict | None) -> dict[str, dict]:
         came_from = (p.get("source") or {}).get("offering")
         if offering and not (came_from and answer_memory.same_offering(came_from, offering)):
             continue
-        if key and key in asked and key not in out:
+        # A proposal for this gap wins over an earlier check's answer (the same answer, kept from it): it can be saved to the profile.
+        if key and key in asked and (key not in out or out[key].get("from_goal")):
             out[key] = {"value": p["value"], "source": FROM_PROPOSAL, "proposal_id": p["id"],
                         "from": (p.get("source") or {}).get("goal_label") or "another task"}
     return out

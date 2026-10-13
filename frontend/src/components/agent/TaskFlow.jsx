@@ -144,6 +144,12 @@ export function questionsLeft(fields, values, answered, changingSaid = false) {
     && (!field.show_if || Object.entries(field.show_if).every(([key, value]) => !answered.has(key) || values[key] === value))).length;
 }
 
+/** The email address in what was typed, if there is one ("email: info@asd.co.uk" gives "info@asd.co.uk"). */
+export function emailIn(text) {
+  const m = String(text ?? "").match(/[^\s@<>(),;:"']+@[^\s@<>(),;:"']+\.[A-Za-z]{2,}/);
+  return m ? m[0].replace(/[.]+$/, "") : "";
+}
+
 export function ChatQuestionThread({ title, question, fields = [], step = null, submitLabel = "Send", submitting, onSubmit, onCancel, onDiscard = null, error = "", clearError = null, aside = null, askedBefore = 0, planned = null, onTotal = null }) {
   const [discarding, setDiscarding] = useState(false);      // "Discard this request" asked: confirm before the task is cancelled
   const [values, setValues] = useState(() => Object.fromEntries((fields || []).map((field) => [field.key, questionDefault(field)])));
@@ -174,6 +180,8 @@ export function ChatQuestionThread({ title, question, fields = [], step = null, 
       onSubmit(given, { asked: 0 });
       return;
     }
+    // An email asked for and given inside a sentence ("... email: info@asd.co.uk"): the address is what is kept.
+    if (current.type === "email") nextValue = emailIn(nextValue) || nextValue;
     const draft = current ? { ...values, [current.key]: nextValue } : values;
     const empty = questionIsEmpty(current, nextValue);
     if (current.required && empty) {
@@ -227,7 +235,10 @@ export function ChatQuestionThread({ title, question, fields = [], step = null, 
   // QA E5: one question asks once. With a single field, the server's own question is that field's question (no
   // opening line saying it a second way, as "What VAT rate should this quotation use?" + "What VAT rate do you charge?" did).
   const single = visible.length === 1 && Boolean(question);
-  const currentPrompt = single ? "" : (question || title || "");
+  // One question at a time: the form's opening line is shown only as a statement. A question there ("What should this
+  // proposal say?") read as a second question above the field's own, with one box for both.
+  const opening = question || title || "";
+  const currentPrompt = single || (current && /\?\s*$/.test(opening)) ? "" : opening;
   // Counted across the whole task (QA E5, U3): fixed when the task first asks, then only ever lower as answers rule
   // questions out. Should the task need more than it said, the "of" is dropped rather than the total raised.
   const answered = new Set(visible.slice(0, currentStage).map((field) => field.key));
@@ -244,11 +255,11 @@ export function ChatQuestionThread({ title, question, fields = [], step = null, 
     .map((field) => ({ key: field.key, text: field.said_text || field.said_note }));
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); submitCurrent(); }} className="space-y-4" data-thread>
+    <form noValidate onSubmit={(e) => { e.preventDefault(); submitCurrent(); }} className="space-y-4" data-thread>
       {stepLabel && <p className="-mt-2 text-[12px] font-semibold uppercase tracking-wide text-slate-400" data-step>{stepLabel}</p>}
       <div className="space-y-3">
         {saidItems.length > 0 && <SaidLine items={saidItems} onEdit={(fields || []).some(isSaid) ? () => { setChangingSaid(true); setStage(0); } : null} editing={changingSaid} />}
-        {!single && (
+        {!single && (currentPrompt || !current) && (
           <div className="flex gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white">EA</div>
             <div className="max-w-[calc(100%-3rem)] rounded-2xl rounded-tl-md bg-slate-50 px-3 py-2 text-[14px] leading-6 text-slate-800 dark:bg-slate-800/60 dark:text-slate-100" data-opening>

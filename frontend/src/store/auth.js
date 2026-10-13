@@ -381,3 +381,16 @@ if (typeof window !== "undefined") {
     if (useAuthStore.getState().token) useAuthStore.getState().logout();
   });
 }
+
+// Signing in, signing up or signing out in one tab reaches every other open tab at once: without this a tab
+// opened before (the homepage task, say) kept asking for an email or a login until it was reloaded.
+export function syncAuthAcrossTabs(event) {
+  if (event.key !== "ea_token" && event.key !== null) return;      // null: storage was cleared
+  const token = localStorage.getItem("ea_token");
+  const state = useAuthStore.getState();
+  if (token === state.token) return;
+  if (!token) { state.logout(); return; }
+  hydrating = null;      // a fresh check for the new token, not the one in flight for the old
+  state.hydrate();
+}
+if (typeof window !== "undefined") window.addEventListener("storage", syncAuthAcrossTabs);

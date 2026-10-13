@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timezone
 import time
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -455,21 +456,30 @@ async def _premium_context(user: dict, business_id: str, goal_key: str, raw: dic
     return data, answers, first_value.assess(goal_key, answers, data)
 
 
-async def _premium_quote(user: dict, goal_key: str, result: dict) -> dict:
+async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict | None = None, data: dict | None = None) -> dict:
     """QA PF1/PF3: entitlement first (the registry's plan for what the research stands for, admin grants included),
     then the cost, then what will be researched. Nothing has started; nothing is charged."""
     from app.modules.agent import config as agent_config, research
     orch = get_orchestrator()
     capability = research.CAPABILITY[goal_key]
     plan = await orch.rt.meter.plan(user["id"])
-    topics = research.topics_to_research(goal_key, result)
+    i = research.inputs_of(goal_key, answers or {}, data)
+    topics, items, waiting = research.plan_run(goal_key, result, i, research.context_of(data, i))
+    link = research.health()
+    # QA R7-1: said before it starts: what will be researched, worked out and asked, and whether research is connected.
     base = {"capability": capability, "label": result["premium_next_action"]["label"], "blockers": len(result["blockers"]),
-            "topics": [t["label"] for t in topics]}
+            "topics": [t["label"] for t in topics], "connected": link["connected"],
+            "not_connected": None if link["connected"] or not topics else
+            f"{research.NOT_CONNECTED}. What can be worked out from your figures, and asked, still is; nothing is charged.",
+            "plan": {"research": sum(1 for t in topics if not t.get("number")) if link["connected"] else 0,
+                     "estimate": sum(1 for t in topics if t.get("number")) if link["connected"] else 0,
+                     "worked_out": len(waiting), "asked": len(items)}}
     if not agent_config.plan_allows(plan, capability):
         need = agent_config.CAPABILITY_MIN_PLAN.get(capability) or "starter_insight"
         return {**base, "allowed": False, "gate": first_value.premium_gate(result, entitled=False),
                 "refusal": {"minimum_plan": need, "minimum_plan_label": agent_config.PLAN_LABEL.get(need, need)}}
-    cost = await orch.rt.meter.cost(research.FEATURE)
+    # Only the research is charged; calculations and questions are free (Credit System v2 §6).
+    cost = await orch.rt.meter.cost(research.FEATURE) if (topics and link["connected"]) else 0
     balance = await orch.rt.meter.balance(user["id"])
     if cost and balance is not None and balance < cost:
         return {**base, "allowed": False, "cost": cost, "balance": balance, "gate": first_value.premium_gate(result, entitled=True, credits=0)}
@@ -479,8 +489,8 @@ async def _premium_quote(user: dict, goal_key: str, result: dict) -> dict:
 @router.post("/businesses/{business_id}/quick-check/{goal_key}/premium/quote")
 async def quick_check_premium_quote(business_id: str, goal_key: str, body: QuickCheckIn, user=Depends(get_current_user)):
     """What the premium step would do and cost, before it starts (PRD 4.1, 12.3)."""
-    _data, _answers, result = await _premium_context(user, business_id, goal_key, body.answers)
-    return await _premium_quote(user, goal_key, result)
+    data, answers, result = await _premium_context(user, business_id, goal_key, body.answers)
+    return await _premium_quote(user, goal_key, result, answers, data)
 
 
 @router.post("/businesses/{business_id}/quick-check/{goal_key}/premium")
@@ -490,7 +500,7 @@ async def quick_check_premium(business_id: str, goal_key: str, body: QuickCheckI
     "Find my best price" is research too, never a Price Test (that needs three months of revenue)."""
     from app.modules.agent import research
     data, answers, result = await _premium_context(user, business_id, goal_key, body.answers)
-    quote = await _premium_quote(user, goal_key, result)
+    quote = await _premium_quote(user, goal_key, result, answers, data)
     if not quote["allowed"]:
         return {"started": False, "gate": quote["gate"], "quote": quote}
     run = await research.start(get_orchestrator(), user=user, business_id=business_id, goal=goal_key, answers=answers, data=data)
@@ -515,15 +525,15 @@ async def _session_premium_context(session_id: str, user: dict) -> tuple:
 
 @router.post("/task-sessions/{session_id}/premium/quote")
 async def session_premium_quote(session_id: str, user=Depends(get_current_user)):
-    _s, goal, _data, _answers, result = await _session_premium_context(session_id, user)
-    return await _premium_quote(user, goal, result)
+    _s, goal, data, answers, result = await _session_premium_context(session_id, user)
+    return await _premium_quote(user, goal, result, answers, data)
 
 
 @router.post("/task-sessions/{session_id}/premium")
 async def session_premium(session_id: str, user=Depends(get_current_user)):
     from app.modules.agent import research
     session, goal, data, answers, result = await _session_premium_context(session_id, user)
-    quote = await _premium_quote(user, goal, result)
+    quote = await _premium_quote(user, goal, result, answers, data)
     if not quote["allowed"]:
         return {"started": False, "gate": quote["gate"], "quote": quote}
     run = await research.start(get_orchestrator(), user=user, business_id=session["business_id"], goal=goal, answers=answers, data=data)
@@ -621,8 +631,11 @@ async def quick_check_questions(business_id: str, goal_key: str, said: str | Non
     kind = first_value.ASSESSMENT_OF[goal_key]
     # The owner's own sentence, when they started here from one: read by the same readers as the homepage (QA P5-1).
     read = {**(await goals.understood_answers(said, goal_key)), **goals.extract(said, goal_key)} if said and said.strip() else {}
+    # QA R8-8: the latest result for this check (and offering), shown on return instead of asking the questions again.
+    last = (data.get("quick_check_answers") or {}).get(goal_key) or {}
     return {"goal_key": goal_key, "headline": first_value.HEADLINE[kind], "value": goals.value_of(goal_key),
-            "questions": _quick_questions(goal_key, data, read)}
+            "questions": _quick_questions(goal_key, data, read),
+            "last": ({"result": last["result"], "answers": last.get("answers") or {}, "at": last.get("at")} if last.get("result") and not said else None)}
 
 
 @router.post("/businesses/{business_id}/quick-check/{goal_key}")
@@ -639,7 +652,7 @@ async def quick_check_result(business_id: str, goal_key: str, body: QuickCheckIn
     result = first_value.assess(goal_key, answers, data)
     try:
         from app.modules.agent import answer_memory
-        await get_orchestrator().rt.business.mutate(business_id, lambda d: answer_memory.remember(d, goal_key, answers))
+        await get_orchestrator().rt.business.mutate(business_id, lambda d: answer_memory.remember(d, goal_key, answers, result=result))
     except Exception:      # noqa: BLE001 - the result stands; the next check simply asks again
         logger.info("quick check: answers for %s not kept", goal_key)
     plan, credits = "explorer", None
@@ -650,6 +663,45 @@ async def quick_check_result(business_id: str, goal_key: str, body: QuickCheckIn
         pass
     result["premium_gate"] = first_value.premium_gate(result, entitled=plan != "explorer", credits=credits if plan != "explorer" else None)
     return {"goal_key": goal_key, "result": result}
+
+
+class CatalogueItemIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    base_price: float | None = Field(default=None, ge=0)
+    cost_of_sales: float | None = Field(default=None, ge=0)
+
+
+@router.post("/businesses/{business_id}/catalogue/from-check")
+async def catalogue_from_check(business_id: str, body: CatalogueItemIn, user=Depends(get_current_user)):
+    """A check's "Save the price in your catalogue" / "Add it to your catalogue": the offering it was about, with its
+    price and cost when given, saved in one press. An item of the same name is updated, never duplicated."""
+    orch = get_orchestrator()
+    try:
+        actor, _policy = await orch.actor_for(user["id"], business_id, user.get("email"))
+    except Exception as e:      # noqa: BLE001 - no access reads as not found
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    if not getattr(actor, "can_prepare", False):
+        raise HTTPException(status_code=403, detail="You can't change this workspace's catalogue.")
+    from app.modules.agent import answer_memory
+    name, now = body.name.strip(), datetime.now(timezone.utc).isoformat()
+    saved: dict = {}
+
+    def _put(d: dict) -> None:
+        products = d.setdefault("catalogue", {}).setdefault("products", [])
+        item = next((p for p in products if isinstance(p, dict) and not p.get("archived") and answer_memory.norm(p.get("name")) == answer_memory.norm(name)), None)
+        if item is None:
+            item = {"id": str(uuid4()), "name": name, "type": "service", "description": "", "base_price": 0, "cost_of_sales": 0, "discount": 0,
+                    "freight_cost": 0, "marketplace_listed": True, "archived": False, "created_at": now}
+            products.insert(0, item)
+            saved["created"] = True
+        if body.base_price is not None:
+            item["base_price"] = body.base_price
+        if body.cost_of_sales is not None:
+            item["cost_of_sales"] = body.cost_of_sales
+        item["updated_at"] = now
+        saved["product"] = dict(item)
+    await orch.rt.business.mutate(business_id, _put)
+    return {"saved": True, "created": bool(saved.get("created")), "product": saved.get("product")}
 
 
 @router.post("/task-sessions/{session_id}/attach-user")

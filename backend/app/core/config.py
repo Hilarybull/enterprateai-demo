@@ -7,6 +7,9 @@ from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_BACKEND = __import__("pathlib").Path(__file__).resolve().parents[2]
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(
@@ -16,6 +19,9 @@ class Settings(BaseSettings):
             "../.env.local",
             "backend/.env",
             "backend/.env.local",
+            # QA R9-1: the backend's own files, wherever the process is started from (a terminal, a process manager).
+            str(_BACKEND / ".env"),
+            str(_BACKEND / ".env.local"),
         ),
         env_file_encoding="utf-8",
         enable_decoding=False,
@@ -102,6 +108,9 @@ class Settings(BaseSettings):
     # Optional integrations (placeholders for future modules)
     serp_api_key: str | None = Field(default=None, validation_alias=AliasChoices("SERP_API_KEY", "SERPAPI_KEY"))
     serper_api_key: str | None = Field(default=None, validation_alias=AliasChoices("SERPER_API_KEY",))
+    # What one search costs on the plan in use, for AI tracking (the providers bill per search, not per token).
+    serpapi_cost_per_search_usd: float = Field(default=0.015, validation_alias=AliasChoices("SERPAPI_COST_PER_SEARCH_USD",))
+    serper_cost_per_search_usd: float = Field(default=0.001, validation_alias=AliasChoices("SERPER_COST_PER_SEARCH_USD",))
     perplexity_api_key: str | None = Field(default=None, validation_alias=AliasChoices("PERPLEXITY_API_KEY",))
     companies_house_api_key: str | None = Field(default=None, validation_alias=AliasChoices("COMPANIES_HOUSE_API_KEY",))
     fred_api_key: str | None = Field(default=None, validation_alias=AliasChoices("FRED_API_KEY",))

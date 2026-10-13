@@ -1,6 +1,7 @@
 import UkDateInput from "../UkDateInput";
 import { useExit } from "../../lib/motion";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { agentErrorMessage, approveAction, editDraft, getRun, rejectAction } from "../../lib/agent";
 import { formatCurrency } from "../../lib/format";
 import { ButtonSpinner, LoadError, SkeletonRegion, SkeletonTable, SkeletonText } from "../Skeleton";
@@ -514,7 +515,9 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
   const said = (res, fresh, fallback) => setDone(res?.message || fresh?.run?.summary || fallback);
   const button = "rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300";
 
-  return (
+  // Rendered at the top of the page: inside a section with an entrance animation (a transform), a fixed drawer
+  // would be held to that section and cut off, instead of covering the window.
+  return createPortal(
     <div className={`m-backdrop fixed inset-0 z-[80] flex items-start justify-end bg-slate-950/40 ${leaving ? "m-leaving" : ""}`} onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) close(); }}>
       {/* As tall as what it holds, up to the height of the window (then it scrolls and the buttons stay in view). */}
       <aside role="dialog" aria-modal="true" aria-label={editing ? "Edit draft" : "Approval"} data-drawer
@@ -561,5 +564,5 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
           )}
       </aside>
     </div>
-  );
+  , document.body);
 }

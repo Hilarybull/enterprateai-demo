@@ -216,7 +216,30 @@ UNAVAILABLE: dict[str, dict[str, Any]] = {
 }
 
 
-def unavailable(capability: str, label: str | None = None) -> dict:
+# What now has a free check of its own (and its premium step: research that closes the gaps). Asked for in the Agent
+# box, it opens that check with the owner's own words, never "isn't available as an Agent action yet".
+CHECKS = {"funding_readiness": ("need_funding", "Funding readiness"),
+          "launch": ("launch", "Launch readiness"),
+          "growth": ("more_customers", "Customer growth")}
+# A task that needs records the workspace doesn't have yet (three months of revenue for a price test) hands over to
+# the homepage's check for the same goal: worked out from the owner's answers, so it still gives a result.
+CHECK_OF_GOAL = {"price_offer": "Pricing", "more_customers": "Customer growth", "need_funding": "Funding readiness", "launch": "Launch readiness"}
+
+
+def check_instead(goal: str, said: str | None, why: str) -> dict:
+    what = CHECK_OF_GOAL[goal]
+    return {"kind": "check", "capability": goal, "goal_key": goal, "said": (said or "")[:500],
+            "message": f"{why} So I'll work it out from what you tell me instead: {what.lower()} check below."}
+
+
+def unavailable(capability: str, label: str | None = None, said: str | None = None) -> dict:
+    if capability in CHECKS:
+        # The Agent runs it, here: the check opens in the Agent card with the owner's own words and what the
+        # workspace already knows; its result, then the research that closes the gaps, follow in place.
+        goal, what = CHECKS[capability]
+        return {"kind": "check", "capability": capability, "goal_key": goal, "said": (said or "")[:500],
+                "message": f"{what}: I'll check where you stand now, from what you've told me and what's on record. "
+                           "Answer anything I still need below, then I can research and close the gaps."}
     spec = UNAVAILABLE.get(capability) or {"what": label or "That task", "explain": None, "draft": None}
     offers = []
     if spec.get("explain"):

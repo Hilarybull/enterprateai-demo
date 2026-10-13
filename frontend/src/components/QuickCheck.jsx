@@ -12,11 +12,11 @@ import { premiumFlow } from "./ResearchReview";
 // the value, and its gate (plan before credits) only when it is chosen.
 
 export const QUICK_CHECKS = {
-  launch: { title: "Launch Readiness quick check", intro: "A few questions, about two minutes. Free." },
-  need_funding: { title: "Funding quick check", intro: "A few questions, about two minutes. Free." },
-  price_offer: { title: "Pricing health check", intro: "A few questions about your price. Free." },
-  more_customers: { title: "Customer growth check", intro: "A few questions about winning customers. Free." },
-  test_idea: { title: "Idea check", intro: "A few questions about your idea and its numbers. Free." },
+  launch: { title: "Launch Readiness quick check", intro: "A few questions, about two minutes." },
+  need_funding: { title: "Funding quick check", intro: "A few questions, about two minutes." },
+  price_offer: { title: "Pricing health check", intro: "A few questions about your price." },
+  more_customers: { title: "Customer growth check", intro: "A few questions about winning customers." },
+  test_idea: { title: "Idea check", intro: "A few questions about your idea and its numbers." },
 };
 
 const ukDay = (iso) => { const [y, m, d] = String(iso).split("-"); return d && m && y ? `${d}/${m}/${y}` : iso; };
@@ -44,6 +44,11 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
       .then((r) => {
         setQuestions(r.questions || []);
         setValues(Object.fromEntries((r.questions || []).filter((q) => q.default != null && q.default !== "").map((q) => [q.key, q.default])));
+        // QA R8-8: the last result for this check, on return: never the questions again just to reach its next step.
+        if (r.last?.result) {
+          setValues((had) => ({ ...had, ...(r.last.answers || {}) }));
+          setResult(r.last.result);
+        }
       })
       .catch(() => setError("The quick check couldn't load just now. Please try again."));
   }, [open, questions, businessId, goalKey, said]);
@@ -82,7 +87,9 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
     const attach = () => apiRequest(`/businesses/${businessId}/quick-check/launch/attach`, "POST", { answers: values });
     // QA PF1/PF3: the premium step, here on the page. The plan first, then the cost (shown before it starts), then
     // research of what is missing, reviewed item by item. Nothing else is started.
-    const premium = premiumFlow({ base: `/businesses/${businessId}/quick-check/${goalKey}/premium`, body: { answers: values }, businessId, onError: setError });
+    // R9-4: once adopted, the card shows the new result (never the old score left on screen).
+    const premium = premiumFlow({ base: `/businesses/${businessId}/quick-check/${goalKey}/premium`, body: { answers: values }, businessId, onError: setError,
+      onAdopted: (out) => { if (out?.result) setResult({ ...out.result, premium_gate: result.premium_gate }); } });
     // QA E4: the answers belong on the launch plan, which otherwise still shows 0% evidence.
     const extra = goalKey === "launch" ? (
       <div className="mt-3 text-[13px]" data-launch-link>
@@ -96,7 +103,8 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
           : <button type="button" className="font-semibold text-brand-700 underline-offset-2 hover:underline" onClick={async () => { try { setLinked(await attach()); } catch { setError("Your launch plan couldn't be updated just now. Nothing was changed."); } }}>
             Add these answers to your launch plan</button>}
       </div>) : null;
-    return <FirstValueCard result={result} onPremium={premium} extra={extra} onDismiss={() => { setResult(null); setAt(0); setOpen(false); }} />;
+    return <FirstValueCard result={result} onPremium={premium} extra={extra} onDismiss={() => { setResult(null); setAt(0); setOpen(false); }}
+      onContinue={() => { setResult(null); setAt(0); setOpen(true); }} continueLabel="Start again" />;
   }
 
   return (

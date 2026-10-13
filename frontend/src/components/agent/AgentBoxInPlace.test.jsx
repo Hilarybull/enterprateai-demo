@@ -71,7 +71,7 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     // Counted in the task's own questions, never the workflow's steps (QA P2-1). A new customer's name and email
     // count until a customer on record is chosen, so the total only ever goes down (QA U3).
     expect(dialog.querySelector("[data-step]").textContent).toBe("Question 1 of 4");
-    expect(within(dialog).getByText(QUESTION.question)).toBeTruthy();
+    expect(within(dialog).queryByText(QUESTION.question)).toBeNull();      // one question at a time: the form's own question isn't asked over the field's
     // Customers on record, searchable, with "+ New customer"; a new customer's name and email are asked only once chosen.
     expect(within(dialog).getByLabelText("Search your customers")).toBeTruthy();
     fireEvent.click(within(dialog).getByLabelText("+ New customer"));

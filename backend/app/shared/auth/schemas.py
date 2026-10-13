@@ -51,6 +51,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=72)
 
 
+class SetPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=8, max_length=72)
+
+
 class GoogleAuthRequest(BaseModel):
     credential: str = Field(min_length=20)
     ref_click_id: str | None = None

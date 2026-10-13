@@ -228,3 +228,25 @@ def test_the_catalogue_is_migration_016_as_written():
     assert len(rows) >= 30
     for code, name, cost, enabled, minimum, refundable, controlled in rows:
         assert catalogue.FEATURES[code] == (name, int(cost), enabled == "TRUE", minimum, refundable == "TRUE", controlled == "TRUE"), code
+
+
+def test_a_research_run_id_is_charged_through_the_wallet_s_uuid_key_once(wallets, monkeypatch):
+    """QA R9-1: the wallet's generation_id is a UUID column. A research run's "rr_…" id made the reserve fail in the
+    running app, so every live research run reported "nothing found". Any key is now a stable UUID."""
+    import uuid as _uuid
+    real = wallets.rpc
+
+    async def like_postgres(fn, p):
+        _uuid.UUID(str(p["p_generation_id"]))      # raises, as the uuid column does, for anything else
+        return await real(fn, p)
+    monkeypatch.setattr(credits, "_rpc", like_postgres)
+    user = "decision_engine"
+    start = wallets.available.get(user, wallets.start)
+
+    async def go():
+        async with credits.credit_guard(user, "scenario_ai_interpretation", "rr_8f2c1a9b0d3e4f56"):
+            pass
+    run(go())
+    run(go())
+    assert wallets.available[user] == start - 3      # charged, and only once for the same run
+    assert credits.generation_uuid("rr_x") == credits.generation_uuid("rr_x") != credits.generation_uuid("rr_y")

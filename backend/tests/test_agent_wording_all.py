@@ -105,7 +105,7 @@ def _described(env):
     env.businesses["A"]["data"]["workspace_profile"].update({"description": "Bookkeeping for independent cafés", "target_customer": "Independent cafés in Manchester",
                                                              "problem": "Owners lose evenings to paperwork", "primary_industry": "accounting", "location": "Manchester"})
     env.businesses["A"]["data"].pop("validation", None)
-    env.meter.costs.update({"idea_validation": 5, "business_plan": 8})
+    env.meter.costs.update({"idea_validation": 5, "business_plan_full": 8})
 
 
 def _tile(env, key):

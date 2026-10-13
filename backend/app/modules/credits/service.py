@@ -347,7 +347,7 @@ async def reserve_credits(
     if not entitled:
         return {"ok": False, **not_entitled_detail(feature_code, config, plan_code)}
 
-    gen_id = generation_id or str(uuid.uuid4())
+    gen_id = generation_uuid(generation_id)
     idempotency_key = f"{user_id}:{feature_code}:{gen_id}"
 
     if not _is_credit_controlled(config) or credit_cost <= 0:
@@ -388,6 +388,7 @@ async def commit_credits(
     """Confirm a successful AI generation — finalize credit deduction."""
     if no_hold:
         return {"ok": True, "no_hold": True}
+    generation_id = generation_uuid(generation_id)
     idempotency_key = f"{user_id}:{feature_code}:{generation_id}"
     return await _rpc("commit_credits", {
         "p_generation_id": generation_id,
@@ -404,6 +405,7 @@ async def release_credits(
     """Return held credits if generation failed."""
     if no_hold:
         return {"ok": True, "no_hold": True}
+    generation_id = generation_uuid(generation_id)
     idempotency_key = f"{user_id}:{feature_code}:{generation_id}"
     return await _rpc("release_credits", {
         "p_generation_id": generation_id,
@@ -543,6 +545,19 @@ async def check_credits(user_id: str, feature_code: str) -> dict:
 # Credit guard context manager
 # ---------------------------------------------------------------------------
 
+def generation_uuid(key: Any) -> str:
+    """The wallet's idempotency key is a UUID column (credit_transactions.generation_id). A caller's own key (a research
+    run's "rr_…") becomes a stable UUID from it, so the same action is still charged once (QA R9-1: an "rr_" id made
+    every live research run fail at the reserve, and the run then reported "nothing found")."""
+    text = str(key or "").strip()
+    if not text:
+        return str(uuid.uuid4())
+    try:
+        return str(uuid.UUID(text))
+    except ValueError:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"enterprate:charge:{text}"))
+
+
 @asynccontextmanager
 async def credit_guard(user_id: str, feature_code: str, generation_id: str | None = None):
     """
@@ -553,7 +568,7 @@ async def credit_guard(user_id: str, feature_code: str, generation_id: str | Non
     Atomically reserves credits before the AI call, commits on success,
     releases on failure. Raises HTTP 402 if the user has insufficient credits.
     """
-    gen_id = str(generation_id).strip() if generation_id and str(generation_id).strip() else str(uuid.uuid4())
+    gen_id = generation_uuid(generation_id)
     reservation = await reserve_credits(user_id, feature_code, gen_id)
 
     if not reservation.get("ok"):
