@@ -12,6 +12,7 @@ again for that record.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import time
 from datetime import timedelta
@@ -56,14 +57,21 @@ def enabled(policy: dict) -> bool:
 AUTOMATIC_CHANNELS = ("business_event", "marketplace_rfq")
 
 
+IN_FLIGHT = ("created", "running")
+
+
 def budget(policy: dict, runs: list[dict], now) -> dict:
-    """The month's automatic spend against the owner's cap: credits charged to tasks the Agent
-    started by itself this calendar month (as recorded on each task)."""
+    """The month's automatic spend against the owner's cap: credits charged to tasks the Agent started by itself this
+    calendar month (as recorded on each task), plus what is held for those still running and not yet charged (their
+    price, noted when they started). `left` is what can still be committed."""
     cap = int((policy.get("automation") or {}).get("monthly_credit_cap") or 0)
     month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    used = sum(int(c.get("credits") or 0) for r in runs if r.get("source_channel") in AUTOMATIC_CHANNELS and (r.get("created_at") or "") >= month
-               for c in (r.get("state") or {}).get("credits") or [])
-    return {"cap": cap, "used": used, "paused": used >= cap}
+    mine = [r for r in runs if r.get("source_channel") in AUTOMATIC_CHANNELS and (r.get("created_at") or "") >= month]
+    spent = sum(int(c.get("credits") or 0) for r in mine for c in (r.get("state") or {}).get("credits") or [])
+    held = sum(int((r.get("state") or {}).get("expected_credits") or 0) for r in mine
+               if r.get("status") in IN_FLIGHT and not (r.get("state") or {}).get("credits"))
+    used = spent + held
+    return {"cap": cap, "used": used, "spent": spent, "held": held, "left": max(0, cap - used), "paused": used >= cap}
 
 
 def item_on(policy: dict, key: str) -> bool:
@@ -93,12 +101,14 @@ def events(policy: dict, ent: dict) -> list[dict]:
             on = item_on(policy, key)
         if capability and not config.plan_allows(plan, capability):
             starts = "upgrade"
+        elif capability in config.SUGGEST_ONLY:
+            starts, on = "suggested", False      # §4: paid research or generation is suggested, never started by itself
         else:
             starts = "nothing" if not capability else ("automatic" if on else "suggested")
         need = config.CAPABILITY_MIN_PLAN.get(capability, "starter_insight") if capability else None
         return {"event": event, "task": task, "capability": capability, "starts": starts, "approval": approval, "setting": how,
                 "credits": config.AUTOMATIC_COST.get(capability) if capability else None,
-                "key": key, "switchable": bool(key), "on": bool(key and on), "minimum_plan": need,
+                "key": key, "switchable": bool(key) and capability not in config.SUGGEST_ONLY, "on": bool(key and on), "minimum_plan": need,
                 "minimum_plan_label": config.PLAN_LABEL[need] if need else None,
                 "available": bool(capability and config.plan_allows(plan, capability))}
 
@@ -211,6 +221,13 @@ async def preparation(orch, business_id: str, data: dict, policy: dict, runs: li
             stale = [p for p in (launch, funding) if p and p.get("freshness") == "stale" and p.get("assessment_id")]
             if stale:
                 add("readiness_refresh", "readiness:refresh:" + ",".join(sorted(p["assessment_id"] for p in stale)), "Started automatically: a readiness check was out of date")
+            # §2: an accepted figure that went into a launch or funding case has changed since: the case is assessed again.
+            from app.modules.agent import planned
+            now_figs = {k: v["value"] for k, v in planned.figures(data).items()}
+            moved = sorted(f"{kind}:{f}={now_figs[f]}" for kind, fed in (data.get("readiness_fed") or {}).items() for f, v in fed.items()
+                           if f in now_figs and now_figs[f] != v)
+            if moved:
+                add("readiness_refresh", "readiness:fed:" + ",".join(moved), "Started automatically: a figure in a launch or funding case changed")
         if "launch_evidence_gaps" in wanted and launch and launch.get("freshness") != "stale":
             if not launch.get("assessment_id"):      # a launch with no check yet: the Agent runs the first one itself
                 add("launch_evidence_gaps", f"launch:gaps:first:{launch['initiative_id']}", "Started automatically: a launch is on record and has not been checked")
@@ -280,10 +297,38 @@ async def answer_from_profile(orch, business_id: str, data: dict, runs: list[dic
     return changed
 
 
-async def sweep(orch, business_id: str, limit: int = MAX_PER_SWEEP, visit: bool = False) -> list[dict]:
+async def price_of(orch, capability: str) -> int:
+    """A task's price in credits, from the price list (0 for a free one)."""
+    from app.modules.agent import config as agent_config
+    feature = agent_config.feature_of(capability)
+    if not feature:
+        return 0
+    try:
+        return int(await orch.rt.meter.cost(feature) or 0)
+    except Exception:      # noqa: BLE001 - unknown price: treated as over the limit, so nothing is started on a guess
+        return 10 ** 6
+
+
+_SWEEPING: dict[str, asyncio.Lock] = {}
+IN_SWEEP: contextvars.ContextVar = contextvars.ContextVar("agent_in_sweep", default=False)      # a task finishing inside a sweep starts no sweep of its own
+
+
+async def sweep(orch, business_id: str, limit: int = MAX_PER_SWEEP, visit: bool = False, related: set | None = None) -> list[dict]:
     """Start the tasks the records call for, in the owner's name. Returns the tasks started.
     Does nothing unless the owner has switched automatic starting on. `visit`: the owner has only opened a
-    page, so nothing that asks about the business itself is started (QA U8)."""
+    page, so nothing that asks about the business itself is started (QA U8). C3: one sweep of a business at a time;
+    a second one at the same moment waits, then finds the first one's tasks already started."""
+    if IN_SWEEP.get():
+        return []
+    async with _SWEEPING.setdefault(business_id, asyncio.Lock()):
+        token = IN_SWEEP.set(True)
+        try:
+            return await _sweep(orch, business_id, limit, visit, related)
+        finally:
+            IN_SWEEP.reset(token)
+
+
+async def _sweep(orch, business_id: str, limit: int, visit: bool, related: set | None = None) -> list[dict]:
     policy = await orch.rt.store.get_policy(business_id)
     try:      # housekeeping that applies whether or not automatic starting is on
         await orch.close_unanswered(await orch.rt.store.list_runs(business_id, limit=500))
@@ -301,16 +346,23 @@ async def sweep(orch, business_id: str, limit: int = MAX_PER_SWEEP, visit: bool 
         runs = await orch.rt.store.list_runs(business_id, limit=500)      # picked up again before anything new is started
     started: list[dict] = []
     todo = [*candidates(data, policy, runs, orch.rt.clock()), *await preparation(orch, business_id, data, policy, runs, ent["owner_id"])]
+    if related is not None:      # a follow-on: only the work about the same record as the task that just finished
+        todo = [c for c in todo if {(k, str(v)) for k, v in (c.get("params") or {}).items() if v} & related]
     if visit:      # QA U8: opening a page never starts an Idea Validation (or a market size, or a plan draft)
         todo = [c for c in todo if c["capability"] not in NOT_ON_A_VISIT]
     from app.modules.agent import config as agent_config
-    if budget(policy, runs, orch.rt.clock())["paused"]:
-        # The month's automatic budget is used: work that costs credits waits. Free work carries on.
-        todo = [c for c in todo if c["capability"] in agent_config.FREE_CAPABILITIES]
+    # §4 (R4): what decides is the kind of task, never its price. Research and generation are suggestions only.
+    todo = [c for c in todo if c["capability"] not in agent_config.SUGGEST_ONLY]
+    left = budget(policy, runs, orch.rt.clock())["left"]
     for c in todo[:limit]:
+        price = await price_of(orch, c["capability"])
+        if price > left:
+            continue      # it would take the month's automatic budget over the cap: it waits, and free work carries on
         res = await orch.submit(AgentRequest(
             requesting_actor_id=ent["owner_id"], business_id=business_id, source_channel=CHANNEL,
-            source_reference=c["reference"], requested_capability=c["capability"], params=c["params"], resolved_goal=c["goal"]))
+            source_reference=c["reference"], requested_capability=c["capability"], params={**c["params"], "_expected_credits": price},
+            resolved_goal=c["goal"]))
+        left -= price
         if res.get("kind") == "blocked":
             break      # the plan's limit or the credit balance: the rest wait, like any other request
         if res.get("kind") == "workflow" and not res.get("duplicate") and not res.get("repeat"):
@@ -361,3 +413,5 @@ async def sweep_all(orch) -> int:
         except Exception:      # noqa: BLE001 - one business never stops the rest
             logger.warning("automatic start failed for business %s", business_id, exc_info=True)
     return started
+
+

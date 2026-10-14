@@ -83,22 +83,14 @@ def test_a_passing_fault_is_tried_again_up_to_three_times_with_longer_waits_and_
     run(env.orch.tick())
     final = run(env.store.get_run(failed["id"]))
     assert final["state"]["auto_retries"] == 3 and final["status"] == "failed" and bucket_of(final) == "needs_attention"
+    # A1: out of quick attempts it is parked for the owner, never tried again by itself (no daily retries holding credits).
     assert final["error"] == ("I've tried this 3 more times and it still didn't go through. provider rejected. "
-                              "Nothing was sent twice. My next attempt is on 2 Oct at 09:21 UTC.")
-    assert not chores([final["error"], final["next_action"]]) and env.comms.sent == []
-    shown = agent_router._public_run(final)
-    assert shown["next_attempt_at"] == "2026-10-02T09:21:00+00:00"        # the page shows when, and no button to press
-    env.now += timedelta(hours=3)
+                              "Nothing was sent twice and nothing is held for it. Try it again when you're ready.")
+    assert final["reason_code"] == "retries_exhausted" and not chores([final["error"], final["next_action"]]) and env.comms.sent == []
+    assert agent_router._public_run(final)["next_attempt_at"] is None
+    env.now += timedelta(days=2)
     run(env.orch.tick())
-    assert run(env.store.get_run(failed["id"]))["state"]["auto_retries"] == 3      # not before then
-    env.now += timedelta(hours=21)
-    run(env.orch.tick())
-    later = run(env.store.get_run(failed["id"]))
-    # A day on, a send can no longer be repeated safely (the email service would treat it as a new
-    # message), so the Agent stops and asks the one thing only the owner can tell it: did it arrive?
-    assert later["state"]["auto_retries"] == 4 and later["reason_code"] == "delivery_unconfirmed"
-    assert "tell me whether to mark it as delivered or send it again" in later["error"] and bucket_of(later) == "needs_attention"
-    assert agent_router._public_run(later)["next_attempt_at"] is None and env.comms.sent == []
+    assert run(env.store.get_run(failed["id"]))["state"]["auto_retries"] == 3 and env.comms.sent == []      # still waiting for the owner
 
 
 def test_a_fault_that_clears_is_finished_without_the_owner_doing_anything():

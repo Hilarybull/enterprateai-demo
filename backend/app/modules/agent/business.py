@@ -296,10 +296,38 @@ def parse_day(value: Any) -> date | None:
             return None
 
 
+# C5: a business with no time zone of its own keeps its country's (the main one where a country has several), never the
+# zone of whoever's browser opened the settings.
+COUNTRY_ZONES = {
+    "united kingdom": "Europe/London", "uk": "Europe/London", "gb": "Europe/London", "great britain": "Europe/London", "england": "Europe/London",
+    "scotland": "Europe/London", "wales": "Europe/London", "northern ireland": "Europe/London", "ireland": "Europe/Dublin", "ie": "Europe/Dublin",
+    "nigeria": "Africa/Lagos", "ng": "Africa/Lagos", "ghana": "Africa/Accra", "gh": "Africa/Accra", "kenya": "Africa/Nairobi", "ke": "Africa/Nairobi",
+    "south africa": "Africa/Johannesburg", "za": "Africa/Johannesburg", "egypt": "Africa/Cairo", "uganda": "Africa/Kampala", "rwanda": "Africa/Kigali",
+    "tanzania": "Africa/Dar_es_Salaam", "united states": "America/New_York", "usa": "America/New_York", "us": "America/New_York",
+    "canada": "America/Toronto", "ca": "America/Toronto", "australia": "Australia/Sydney", "au": "Australia/Sydney", "new zealand": "Pacific/Auckland",
+    "india": "Asia/Kolkata", "in": "Asia/Kolkata", "pakistan": "Asia/Karachi", "united arab emirates": "Asia/Dubai", "uae": "Asia/Dubai",
+    "singapore": "Asia/Singapore", "germany": "Europe/Berlin", "de": "Europe/Berlin", "france": "Europe/Paris", "fr": "Europe/Paris",
+    "spain": "Europe/Madrid", "es": "Europe/Madrid", "italy": "Europe/Rome", "netherlands": "Europe/Amsterdam", "nl": "Europe/Amsterdam",
+    "belgium": "Europe/Brussels", "portugal": "Europe/Lisbon", "poland": "Europe/Warsaw", "sweden": "Europe/Stockholm", "jamaica": "America/Jamaica",
+}
+
+
+def zone_of_country(country: str | None) -> str | None:
+    key = " ".join(str(country or "").lower().replace(".", "").split())
+    return COUNTRY_ZONES.get(key)
+
+
+def zone_name(data: dict) -> str:
+    """The business's time zone by name: its own, else its country's, else UTC."""
+    profile = (data or {}).get("workspace_profile") or {}
+    own = str(profile.get("timezone") or "").strip()
+    return own if own and valid_timezone(own) else (zone_of_country(profile.get("country")) or "UTC")
+
+
 def business_timezone(data: dict):
-    """The business's own time zone (workspace_profile.timezone, an IANA name), or UTC."""
-    name = str(((data or {}).get("workspace_profile") or {}).get("timezone") or "").strip()
-    if name:
+    """The business's own time zone (workspace_profile.timezone, an IANA name), else its country's (C5), else UTC."""
+    name = zone_name(data)
+    if name and name != "UTC":
         try:
             from zoneinfo import ZoneInfo
             return ZoneInfo(name)

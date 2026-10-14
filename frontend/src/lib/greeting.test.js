@@ -37,7 +37,8 @@ describe("the briefing: only what the Agent did or is doing", () => {
   });
 
   it("a task in progress comes first; with nothing done it asks what is next; a first visit asks for the first job", () => {
-    expect(briefingOf({ working_on: { title: "Your quotation for Mark" }, done_since_last_visit: { new_invoice: 1 } })).toEqual({ kind: "working", text: "I'm working on your quotation for Mark. I'll let you know when it's ready." });
+    expect(briefingOf({ working_on: { run_id: "r5", title: "Change a Customer, Supplier or Catalogue Item", doing: "updating your catalogue item" }, done_since_last_visit: { new_invoice: 1 } }))
+      .toEqual({ kind: "working", runId: "r5", text: "I'm updating your catalogue item. I'll let you know when it's ready." });      // F4: the task's own words, never its title
     expect(briefingOf({ done_since_last_visit: {}, needs_approval_count: 3, needs_input_count: 2 })).toEqual({ kind: "next", text: "What should I work on next?" });      // what is waiting is not repeated here
     expect(briefingOf({ done_since_last_visit: {}, first_visit: true })).toEqual({ kind: "first", text: "Tell me the first job and I'll get on it." });
     expect(briefingOf(null)).toEqual({ kind: "none", text: "" });

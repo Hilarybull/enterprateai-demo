@@ -1,7 +1,51 @@
 import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { useWorkspaceStore } from "../store/workspace";
+
+/**
+ * What each Agent task was charged, with the task's name and a link to it. The one place an Agent charge is listed:
+ * the Agent itself never says what anything cost.
+ */
+export function AgentCharges({ businessId }) {
+  const [rows, setRows] = useState(null);
+  const [total, setTotal] = useState(0);
+  useEffect(() => {
+    if (!businessId) return undefined;
+    let alive = true;
+    apiRequest(`/businesses/${businessId}/agent/charges`, "GET")
+      .then((res) => {
+        if (!alive) return;
+        const list = Array.isArray(res?.charges) ? res.charges : [];
+        setRows(list);
+        setTotal(typeof res?.total === "number" ? res.total : list.reduce((n, r) => n + (Number(r.credits) || 0), 0));
+      })
+      .catch(() => { if (alive) setRows([]); });
+    return () => { alive = false; };
+  }, [businessId]);
+  if (!rows || rows.length === 0) return null;
+  return (
+    <section data-agent-charges className="rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+      <h2 className="flex items-center justify-between border-b border-slate-100 px-4 py-3 text-sm font-bold text-slate-900 dark:border-slate-800 dark:text-slate-100">
+        <span>Agent tasks and answers</span><span data-agent-charges-total className="tabular-nums">{total}</span>
+      </h2>
+      <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+        {rows.map((r, i) => (
+          <li key={`${r.run_id}-${r.at}-${i}`} className="flex items-center justify-between gap-3 px-4 py-2.5 text-[13px]">
+            <span className="min-w-0">
+              {r.link
+                ? <Link to={r.link} className="block truncate font-semibold text-brand-700 hover:underline dark:text-brand-300">{r.task}</Link>
+                : <span className="block truncate font-semibold text-slate-800 dark:text-slate-100">{r.task}</span>}
+              <span className="block truncate text-[12px] text-slate-500">{r.what}{r.at ? ` · ${new Date(r.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : ""}</span>
+            </span>
+            <span className={`shrink-0 tabular-nums font-semibold ${r.credits < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-slate-700 dark:text-slate-200"}`}>{r.credits < 0 ? `+${-r.credits}` : r.credits}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 const FEATURE_LABELS = {
   idea_validation: "Idea Validation",
@@ -40,6 +84,7 @@ export default function CreditsPage() {
   const navigate = useNavigate();
   const creditInfo = useAuthStore((s) => s.creditInfo);
   const creditBalance = useAuthStore((s) => s.creditBalance);
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -113,6 +158,8 @@ export default function CreditsPage() {
           </div>
         </div>
       </div>
+
+      <AgentCharges businessId={workspaceId} />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2">

@@ -2,6 +2,7 @@
 session need no account; attaching, resuming and preparing need a signed-in user."""
 from __future__ import annotations
 
+import uuid
 import logging
 from datetime import datetime, timezone
 import time
@@ -574,7 +575,80 @@ async def research_review(business_id: str, run_id: str, body: ResearchReview, u
         raise HTTPException(status_code=404, detail="Not found.") from e
     except ValueError as e:
         raise HTTPException(status_code=409, detail="This research has already been reviewed, or has nothing to review.") from e
-    return {"research": {k: v for k, v in out.items() if k != "result"}, "result": out["result"]}
+    # §2 (R3): a launch or funding review feeds the one assessment, and what the page shows is that assessment's summary.
+    from app.modules.agent import assessment_summary
+    goal = (out.get("goal") or "")
+    if goal in assessment_summary.KIND_OF_GOAL:
+        inputs = ((((await orch.rt.business.load(business_id)).get("assessment_datasets") or {}).get(goal) or [{}])[-1]).get("inputs") or {}
+        accepted = [x for x in out.get("items") or [] if x.get("decision") in ("accepted", "edited") and x.get("kind") == "researched"]
+        summary = await assessment_summary.feed(orch, user, business_id, goal, inputs, out.get("answers") or {}, f"review:{run_id}:{out.get('dataset_version')}",
+                                                research=accepted)
+        out["assessment"] = summary
+
+        def _keep(d: dict) -> None:
+            (research._runs(d).get(run_id) or {})["assessment"] = summary
+        await orch.rt.business.mutate(business_id, _keep)
+    return {"research": {k: v for k, v in out.items() if k != "result"}, "result": out["result"], "assessment": out.get("assessment")}
+
+
+class RecordChoice(BaseModel):
+    field: str = Field(max_length=40)
+    choice: str = Field(pattern="^(update|case_only)$")
+
+
+@router.post("/businesses/{business_id}/research/{run_id}/record-choice")
+async def research_record_choice(business_id: str, run_id: str, body: RecordChoice, user=Depends(get_current_user)):
+    """§1: an accepted value differs from the business's own record. "update" writes the record (write permission needed,
+    logged, with Undo); "case_only" keeps the record as it is and uses the value for this case only."""
+    from app.modules.agent import record_sync, research
+    orch = get_orchestrator()
+    try:
+        actor, _policy = await orch.actor_for(user["id"], business_id, user.get("email"))
+    except Exception as e:      # noqa: BLE001
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    if body.choice == "update" and not (getattr(actor, "is_owner", False) or getattr(actor, "can_prepare", False)):
+        raise HTTPException(status_code=403, detail="Updating the Catalogue needs permission to edit this business. It is used for this case only.")
+    now = orch.rt.clock().isoformat()
+    out: dict = {}
+
+    def _apply(d: dict) -> None:
+        run = research._runs(d).get(run_id) or {}
+        conflict = next((c for c in (run.get("record_sync") or {}).get("conflicts") or [] if c.get("field") == body.field and not c.get("choice")), None)
+        if not conflict:
+            raise KeyError(body.field)
+        out.update(record_sync.choose(d, conflict, body.choice, now, user["id"]))
+    try:
+        await orch.rt.business.mutate(business_id, _apply)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail="There is nothing to decide for that figure.") from e
+    await orch.rt.store.audit({"id": uuid.uuid4().hex, "business_id": business_id, "run_id": None, "actor_id": user["id"], "event_type": "record_choice",
+                               "detail": {"research_run": run_id, "field": body.field, "choice": body.choice}, "created_at": now})
+    return out
+
+
+@router.post("/businesses/{business_id}/record-changes/{change_id}/undo")
+async def undo_record_change(business_id: str, change_id: str, user=Depends(get_current_user)):
+    """§1: Undo a value saved to the business's own record from a review: the field goes back as it was, and it is logged."""
+    from app.modules.agent import record_sync
+    orch = get_orchestrator()
+    try:
+        actor, _policy = await orch.actor_for(user["id"], business_id, user.get("email"))
+    except Exception as e:      # noqa: BLE001
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    if not (getattr(actor, "is_owner", False) or getattr(actor, "can_prepare", False)):
+        raise HTTPException(status_code=403, detail="Only someone who can edit this business can undo this.")
+    now = orch.rt.clock().isoformat()
+    out: dict = {}
+
+    def _apply(d: dict) -> None:
+        out.update(record_sync.undo(d, change_id, now, user["id"]))
+    try:
+        await orch.rt.business.mutate(business_id, _apply)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    await orch.rt.store.audit({"id": uuid.uuid4().hex, "business_id": business_id, "run_id": None, "actor_id": user["id"], "event_type": "record_change_undone",
+                               "detail": {"change_id": change_id, **out}, "created_at": now})
+    return out
 
 
 class ProposalDecision(BaseModel):
@@ -665,6 +739,11 @@ async def quick_check_result(business_id: str, goal_key: str, body: QuickCheckIn
     except Exception:      # noqa: BLE001
         pass
     result["premium_gate"] = first_value.premium_gate(result, entitled=plan != "explorer", credits=credits if plan != "explorer" else None)
+    # §2/§3: the quick check's own score is provisional; where the full assessment exists, its summary is what is shown.
+    result["provisional"] = True
+    from app.modules.agent import assessment_summary
+    if goal_key in assessment_summary.KIND_OF_GOAL:
+        result["assessment"] = await assessment_summary.current(get_orchestrator(), user["id"], business_id, assessment_summary.KIND_OF_GOAL[goal_key], user.get("email"))
     return {"goal_key": goal_key, "result": result}
 
 

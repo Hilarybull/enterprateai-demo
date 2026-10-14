@@ -98,6 +98,7 @@ class AgentRequest:
     source_channel: str = "text"
     source_reference: str | None = None       # message / recommendation / enquiry / invoice / risk / event id
     raw_input: str | None = None              # original text or transcript (untrusted data)
+    history: list[dict] = field(default_factory=list)      # the recent conversation, as context for reading raw_input
     raw_input_reference: str | None = None
     resolved_goal: str | None = None
     requested_capability: str | None = None   # candidate only: validated by the router/policy

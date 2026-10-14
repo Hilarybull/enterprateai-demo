@@ -1,9 +1,8 @@
 import { useAuthStore } from "../store/auth";
 import { firstNameOf, getGreeting } from "../lib/greeting";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Button from "./Button";
-import { apiRequestCached } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
 import { agentErrorMessage, clearConversation, getConversation, replyText, saveAgentFact, submitAgentRequest } from "../lib/agent";
 import { useTaskFlow } from "./agent/TaskFlow";
@@ -46,17 +45,6 @@ function toMessage(routed, businessId) {
 export default function BusinessAssistant() {
   // One name everywhere: the business name the sidebar and the Marketplace show.
   const workspaceName = useWorkspaceStore((state) => state.workspaceCompanyName || state.workspaceName);
-  const [answerCost, setAnswerCost] = useState(null);      // credits per conversational answer, from the price list
-  useEffect(() => {
-    let alive = true;
-    apiRequestCached("/credits/features")
-      .then((res) => {
-        const row = (res?.features || []).find((f) => f.feature_code === "chat_message");
-        if (alive && row && row.enabled !== false) setAnswerCost(Number(row.credit_cost) || 0);
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
   const person = firstNameOf(useAuthStore((st) => st.name));      // the person, by first name, as everywhere the Agent speaks to them
   const intro = `${getGreeting({ subject: person })}. Ask me anything about ${workspaceName || "your business"}. I'll answer from your workspace, documents, catalogue, financials, validations, registrations, and simulations.`;
   const [open, setOpen] = useState(false);
@@ -277,11 +265,6 @@ export default function BusinessAssistant() {
                 Send
               </Button>
             </div>
-            {answerCost > 0 && (
-              <p className="mt-2 text-[12px] text-slate-500 dark:text-slate-400">
-                A written answer uses {answerCost} AI Credit{answerCost === 1 ? "" : "s"}. Answers read straight from your records are free; Agent tasks are charged as they run.
-              </p>
-            )}
           </div>
         </div>
       ) : null}

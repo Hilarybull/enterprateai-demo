@@ -21,7 +21,7 @@ import logging
 import re
 import secrets
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from app.modules.agent import business as bz
@@ -458,46 +458,12 @@ def suggestions(reg: dict[str, str] | None = None) -> dict:
             "retention_days": SESSION_DAYS, "version": REGISTRY_VERSION}
 
 
-def _credit_text(capability: str | None) -> str:
-    if not capability or capability in _MODULES:
-        return "Free to start: working this out with you uses no AI Credits."
-    cost = config.cost_of(capability)
-    if cost != "Free" and config.FIRST_TASK_FREE and capability in config.FREE_FIRST_TASKS:
-        return f"Your first one on a new account is free: no AI Credits to prepare or send it. After that, {cost[0].lower() + cost[1:]}."
-    return "Free: this uses no AI Credits." if cost == "Free" else f"Working this out with you is free. Preparing it uses AI Credits ({cost[0].lower() + cost[1:]})."
-
-
-def _credit_badge(capability: str | None) -> str:
-    """The credit position in three or four words, for the task card."""
-    if not capability or capability in _MODULES:
-        return "Free"
-    if config.cost_of(capability) == "Free":
-        return "Free"
-    if config.FIRST_TASK_FREE and capability in config.FREE_FIRST_TASKS:
-        return "Free"
-    return "Uses AI Credits"
-
-def _display_credit_badge(session: dict) -> str:
-    """The badge says what the task will really cost (QA R13): "Free" only when it is, never because the visitor
-    hasn't signed in yet. A first task is free only while FIRST_TASK_FREE is on (it is off: the Agent charges)."""
-    start = (session.get("resolution") or {}).get("start_capability")
-    if first_value.covered(session.get("goal_key")):
-        return "Free"      # the first-value conversation and its result are free (First-Value PRD); the premium step is offered after
-    if config.FIRST_TASK_FREE and session.get("new_workspace") and start in config.FREE_FIRST_TASKS:
-        return "Free"
-    cost = config.cost_of(start) if start else "Free"
-    if cost == "Free":
-        return "Free"
-    match = re.search(r"(\d+)", cost)
-    return f"Uses {match.group(1)} credits" if match else "Uses AI Credits"
-
-
 def _no_match(original: str, rule: str = "none") -> dict:
     return {"original_goal": original, "goal_key": None, "underlying_outcome": None, "resolution_class": NO_MATCH, "candidate_capabilities": [],
             "start_capability": None, "confidence": 0.0, "execution_boundary": "",
             "message": "EnterprateAI doesn't do that at the moment, so I won't pretend it can. "
                        "It helps you plan, quote, invoice, get paid, check readiness for funding or a launch, and understand your risks.",
-            "recommended_path": [], "credit_implication": "Nothing was used.",
+            "recommended_path": [],
             "provenance": {"registry": _PROVENANCE, "version": REGISTRY_VERSION, "rule": rule}}
 
 
@@ -513,7 +479,7 @@ def _resolution(goal: dict, original: str, reg: dict[str, str], confidence: floa
         "candidate_capabilities": [{"capability": c, "label": reg[c]} for c in ordered],
         "start_capability": start, "confidence": confidence,
         "execution_boundary": goal.get("boundary") or "", "message": goal["say"],
-        "recommended_path": [reg[c] for c in ordered][:4], "credit_implication": _credit_text(start), "credit_badge": _credit_badge(start),
+        "recommended_path": [reg[c] for c in ordered][:4],
         "provenance": {"registry": _PROVENANCE, "version": REGISTRY_VERSION, "rule": rule},
     }
 
@@ -537,7 +503,7 @@ def resolve(*, text: str | None = None, key: str | None = None, reg: dict[str, s
         return {"original_goal": original, "goal_key": None, "underlying_outcome": reg[named], "resolution_class": DIRECT,
                 "candidate_capabilities": [{"capability": named, "label": reg[named]}], "start_capability": named, "confidence": 0.9, "execution_boundary": "",
                 "message": f"I can do that ({reg[named][0].lower() + reg[named][1:]}). I'll ask for anything I need once your work can be saved.",
-                "recommended_path": [reg[named]], "credit_implication": _credit_text(named), "credit_badge": _credit_badge(named),
+                "recommended_path": [reg[named]],
                 "provenance": {"registry": _PROVENANCE, "version": REGISTRY_VERSION, "rule": f"task_rule:{named}"}}
     specific = [k for k in outcomes if k != "grow"] or outcomes      # "grow" is the broadest: anything more specific wins
     if len(specific) == 1:
@@ -769,7 +735,7 @@ def public(session: dict) -> dict:
     return {
         "id": session["id"], "state": session["state"], "entry_mode": session.get("entry_mode"), "goal_key": session.get("goal_key"),
         "goal_label": goal.get("label") or res.get("underlying_outcome") or res.get("original_goal"),
-        "resolution": {**res, "credit_badge": _display_credit_badge(session), **({"recommended_path": [], "message": goal["value"]} if goal.get("value") else {})},
+        "resolution": {**res, **({"recommended_path": [], "message": goal["value"]} if goal.get("value") else {})},
         "questions": [{**f, "default": answers.get(f["key"], proposed.get(f["key"], f.get("default", ""))), "proposed": f["key"] in proposed}
                       for f in _in_currency(session, _questions(session))],
         # A currency other than the default was written: kept, said ("In USD"), and theirs to switch.
@@ -812,6 +778,75 @@ async def _understood_goal(text: str, no_match: dict) -> dict:
     return _clarify(text, ["launch", "test_idea", "need_funding", "create_invoice"], registry(), "understanding_unsure") or no_match
 
 
+# E1: a document asked for on the homepage is read by the same AI extractor as the Agent's own tasks.
+_EXTRACTED_AS = {"create_invoice": "new_invoice", "create_quotation": "enquiry_to_quote", "prepare_proposal": "new_proposal",
+                 "create_business_plan": "business_plan_draft"}
+
+
+async def _settled(orch, run: dict | None, seconds: float = 3.0) -> dict | None:
+    """A task started in the background, given a moment to get where it is going: a draft that is ready a second
+    later is said to be ready, never "one more thing to answer". One still working after that is said as started."""
+    if not run:
+        return run
+    deadline = time.monotonic() + seconds
+    while run.get("status") == "running" and not run.get("pending_question") and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+        run = await orch.rt.store.get_run(run["id"]) or run
+    return run
+
+
+async def proposed_from(text: str, goal_key: str | None) -> dict[str, Any]:
+    """What the visitor's sentence answers. A document is read by the shared extractor (the model reads, code checks),
+    mapped onto the homepage's questions; when the model can't be reached, the earlier readers answer, and what they
+    read is shown to confirm. Where both read something, the model's reading wins."""
+    if not text or not goal_key:
+        return {}
+    if goal_key in _EXTRACTED_AS:
+        read = await read_document_goal(text, goal_key)
+        if read is not None:
+            return read
+    return {**extract(text, goal_key), **(await understood_answers(text, goal_key))}
+
+
+async def read_document_goal(text: str, goal_key: str) -> dict[str, Any] | None:
+    from app.modules.agent import extraction
+    from app.modules.agent.services import LLMClassifier
+    today = datetime.now(timezone.utc).date()
+    got = await extraction.understand(LLMClassifier(), _EXTRACTED_AS[goal_key], text, {}, today, "homepage")
+    if got.get("by") != "model":
+        return None
+    f = {k: v["value"] for k, v in (got.get("fields") or {}).items() if v.get("confidence", 0) >= extraction.CONFIDENT}
+    # The questions this goal asks: its short conversation's, else the goal's own (a proposal, a plan).
+    wanted = {q["key"] for q in questions_for(goal_key) or (_BY_KEY.get(goal_key) or {}).get("questions") or []}
+    out: dict[str, Any] = {}
+    if f.get("customer_name"):
+        out["customer"] = f["customer_name"]
+    if f.get("customer_email"):
+        out["customer_email"] = f["customer_email"]
+    lines = f.get("items") or []
+    if lines:
+        first = lines[0]
+        out["item"] = first.get("name")
+        if first.get("quantity"):
+            out["quantity"] = float(first["quantity"])
+        if first.get("unit_price") not in (None, ""):
+            out["amount"] = float(first["unit_price"])
+    if f.get("vat_rate") is not None:
+        out["vat_rate"] = float(f["vat_rate"])
+    for key in ("due_date", "valid_until"):
+        if f.get(key):
+            out["due_days"] = max(0, (date.fromisoformat(f[key]) - today).days)
+    if goal_key == "prepare_proposal":
+        if f.get("solution"):
+            out["solution"] = f["solution"]
+        price = f.get("total") or f.get("price_amount")
+        if price:
+            out["amount"] = float(price)
+    if goal_key == "create_business_plan":
+        out.update({k: f[k] for k in ("description", "customer", "problem") if f.get(k)})
+    return {k: v for k, v in out.items() if k in wanted and v not in (None, "")}
+
+
 async def understood_answers(text: str, goal_key: str | None) -> dict[str, Any]:
     """QA H: answers the shared understanding layer finds in the visitor's own sentence, for this goal's questions.
     Only those good enough to show for confirmation (0.6 and over), each one quoted in the sentence."""
@@ -838,7 +873,7 @@ async def start(store: SessionStore, *, text: str | None, key: str | None, entry
         res = await _understood_goal(text, res)
     session = {"id": secrets.token_urlsafe(24), **({"visitor": visitor, "name": visitor["full_name"]} if visitor else {}), "state": INITIATED, "entry_mode": entry_mode if entry_mode in ("business_goal", "quick_task", "free_text") else "free_text",
                "goal_key": res.get("goal_key"), "original_goal": res["original_goal"], "resolution": res, "inputs": {},
-               "proposed": ({**(await understood_answers(text or "", res.get("goal_key"))), **extract(text or "", res.get("goal_key"))} if not key else {}),
+               "proposed": (await proposed_from(text or "", res.get("goal_key")) if not key else {}),
                "user_id": None, "business_id": None,
                "currency": None, "said_currency": None,
                "handoff": None, "events": [], "created_at": now.isoformat(), "updated_at": now.isoformat(),
@@ -991,7 +1026,7 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
     if session["resolution"]["resolution_class"] == "clarify" and answers.get("goal_key") in _BY_KEY:
         res = resolve(key=answers.pop("goal_key"))
         res["original_goal"] = session["original_goal"]
-        session.update({"resolution": res, "goal_key": res.get("goal_key"), "proposed": extract(session["original_goal"], res.get("goal_key"))})
+        session.update({"resolution": res, "goal_key": res.get("goal_key"), "proposed": await proposed_from(session["original_goal"], res.get("goal_key"))})
         _take_currency(session)
         session["from_message"] = sorted(session["proposed"])
         _event(session, "FallbackPathAccepted", now, resolution_class=res["resolution_class"])
@@ -1386,7 +1421,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                                                          **({"answers": _answers_for_task(session)} if _answers_for_task(session) else {})},
                                                  source_reference=f"goal:{session['id']}",
                                                  essential_handoff=True), email=email)
-            run = out.get("run")
+            run = await _settled(orch, out.get("run"))
             if run:
                 handoff.update({"to": f"/dashboard?task={run['id']}", "run_id": run["id"]})
                 noun = {"create_invoice": "invoice", "create_quotation": "quotation"}.get(session.get("goal_key") or "")

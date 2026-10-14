@@ -11,6 +11,8 @@ import { CapabilityTable } from "../../pages/AgentCentrePage";
 import { useAuthStore } from "../../store/auth";
 import { useWorkspaceStore } from "../../store/workspace";
 
+// What a task cost, in any words ("Used 2 credits"): never shown. A credit note is a document, not a price.
+const CREDIT_WORDS = /\bcredits?\b(?!\s*notes?\b)/i;
 const SUMMARY = { suggestions: [], needs_approval: [], entitlement: { is_paid: true, agent_tasks: true, monthly_runs: 50, monthly_runs_used: 0, credits: 40 } };
 const CATALOGUE = [{ id: "p4", name: "Bookkeeping", unit_price: 300 }];
 const invoiceForm = { question: "What should this invoice include?", fields: [
@@ -69,10 +71,10 @@ describe("a new document, asked for on the dashboard", () => {
     expect(within(dialog).getByText("New invoice")).toBeTruthy();                  // "Start from": New, or a quotation on record
     expect(within(dialog).getByText(/From quotation QUO-12/)).toBeTruthy();
     await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "New invoice" })); });      // a choice is answered with a tap
-    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 2 of 5");      // a new customer's name and email still count (QA U3)
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 2 of 3");      // a new customer's name and email are counted only once asked for (E4)
     fireEvent.click(within(dialog).getByText("QA Round Six Ltd"));
     await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
-    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 3 of 3");      // a customer on record: two fewer, never more
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 3 of 3");      // a customer on record: as counted
     fireEvent.change(within(dialog).getByLabelText("Item"), { target: { value: "p4" } });
     fireEvent.change(within(dialog).getByLabelText("Quantity"), { target: { value: "2" } });
     const totals = dialog.querySelector("[data-line-totals]");
@@ -82,7 +84,7 @@ describe("a new document, asked for on the dashboard", () => {
     expect(posts(/\/workflow-runs\/run-i\/input$/)[0].body.answers).toEqual({ start_from: "new", customer_id: "c6",
       items: [{ product_id: "p4", name: "", quantity: "2", unit_price: 300 }] });
     expect(await screen.findByText("Invoice INV-1071026 for £720.00 is ready. It's in Needs Approval.")).toBeTruthy();
-    expect(screen.getByText("Used 2 credits.")).toBeTruthy();                      // every result shows the credits used
+    expect(screen.queryByText(CREDIT_WORDS)).toBeNull();                              // what it cost is never said with it
     expect(screen.queryByTestId("elsewhere")).toBeNull();
   });
 
@@ -200,7 +202,7 @@ describe("every capability stays on the dashboard", () => {
     expect(screen.queryByTestId("elsewhere")).toBeNull();
     await sendAll(dialog);
     expect(await screen.findByText(/is ready\. It's in Needs Approval\.$/)).toBeTruthy();
-    expect(screen.getByText("Used 2 credits.")).toBeTruthy();
+    expect(screen.queryByText(CREDIT_WORDS)).toBeNull();
     expect(screen.queryByTestId("elsewhere")).toBeNull();
   });
 
@@ -215,13 +217,14 @@ describe("every capability stays on the dashboard", () => {
     expect(screen.queryByTestId("elsewhere")).toBeNull();
   });
 
-  it.each(ANALYSES)("%s: the answer comes back in place with its figures, next step and credits", async (capability) => {
+  it.each(ANALYSES)("%s: the answer comes back in place with its figures and next step, never what it cost", async (capability) => {
     replies.request = { kind: "workflow", run: { id: "run-x", status: "succeeded", workflow_key: capability, summary: "Monthly net goes from £900 to £1,020.",
       next_action: "I'll work it out again next month.", credits_used: 2 } };
     mount();
     await type("do it");
     expect(await screen.findByText("Monthly net goes from £900 to £1,020.")).toBeTruthy();
-    expect(screen.getByText("I'll work it out again next month. Used 2 credits.")).toBeTruthy();
+    expect(screen.getByText("I'll work it out again next month.")).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(CREDIT_WORDS);
     expect(screen.getByRole("button", { name: "See details" })).toBeTruthy();      // the full result is one click away, never forced
     expect(screen.queryByTestId("elsewhere")).toBeNull();
   });

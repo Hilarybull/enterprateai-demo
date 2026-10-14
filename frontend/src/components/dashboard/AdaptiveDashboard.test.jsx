@@ -95,7 +95,8 @@ describe("Adaptive insights", () => {
     render(<AdaptiveInsights dashboard={dash([card()], { entitlement: { credits_exhausted: true } })} {...h} />);
     expect(screen.getByText(/Agent actions are paused. Your records and these insights are unaffected/)).toBeTruthy();
     expect(screen.getAllByRole("article")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "See plans and credits" }));
+    expect(screen.getByText(/You have no credits left/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Top up" }));
     expect(h.onAction.mock.calls[0][1]).toEqual({ to: "/pricing", upgrade: true });
   });
 
@@ -179,7 +180,8 @@ describe("Card actions (QA round 1)", () => {
     const h = handlers();
     render(<AdaptiveInsights dashboard={dash([withAgent])} {...h} />);
     const ask = screen.getByRole("button", { name: /Ask Agent to help/ });
-    expect(ask.textContent).toMatch(/uses AI Credits/);
+    expect(ask.textContent).toMatch(/Agent task/);
+    expect(ask.textContent).not.toMatch(/credit/i);      // never what it costs
     fireEvent.click(ask);
     expect(h.onAction).toHaveBeenCalledTimes(1);
     expect(h.onAction.mock.calls[0][1]).toMatchObject({ capability: "risk_concentration", agent: true });

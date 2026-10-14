@@ -137,7 +137,8 @@ def test_invoice_c_from_a_quotation_uses_it_and_quote_to_cash_still_works():
 def test_invoice_g_only_what_the_records_do_not_hold_is_asked_for():
     env = _env()
     asked = env.submit(text="invoice QA Round Six")["run"]                 # the customer is on record; only the items are missing
-    assert list(_fields(asked)) == ["items", "discount", "due_date", "notes"]      # the items, with the optional extras beside them
+    assert [k for k in _fields(asked) if k != "customer_id"] == ["items", "discount", "due_date", "notes"]      # the items, with the optional extras beside them
+    assert _fields(asked)["customer_id"]["said_text"] == "QA Round Six Ltd"      # C4: the customer is shown under "From what you said", not asked
     assert {"id": "p4", "name": "Bookkeeping", "unit_price": 300} in _fields(asked)["items"]["catalogue"]
     asked = env.submit(text="I need an invoice for 3 months bookkeeping")["run"]      # the items are in the catalogue; only the customer is missing
     f = _fields(asked)
@@ -159,7 +160,8 @@ def test_contract_from_scratch_asks_once_then_waits_for_approval():
     env = _env()
     asked = env.submit(text="make a contract for QA Round Six")["run"]
     f = _fields(asked)
-    assert list(f) == ["description", "total", "term", "start_date"]      # the customer is on record: not asked for
+    assert [k for k in f if k != "customer_id"] == ["description", "total", "term", "start_date"]      # the customer is on record: not asked for
+    assert f["customer_id"]["said"] is True                                # C4: but shown, under "From what you said"
     assert f["start_date"]["default"] == "2026-10-01"                      # today, filled in
     r = run(env.orch.provide_input(asked["id"], OWNER, {"description": "Monthly bookkeeping and a quarterly review.", "total": 3600, "term": "12 months", "start_date": "2026-11-01"}))
     assert r["status"] == "awaiting_approval"
@@ -266,7 +268,7 @@ def test_add_a_catalogue_item_and_then_invoice_for_it_with_no_questions():
     f = _fields(asked)
     assert (f["name"]["default"], f["price"]["default"]) == ("Payroll", 120)
     done = run(env.orch.provide_input(asked["id"], OWNER, {"name": "Payroll", "price": 120}))
-    assert done["status"] == "succeeded" and done["summary"] == "Saved: Payroll is in your catalogue at £120.00."
+    assert done["status"] == "succeeded" and done["summary"] == "Saved: Payroll is in your catalogue at £120.00. Its cost isn't known yet, so its margin isn't shown."      # B4
     r = env.submit(text="invoice QA Round Six for 3 months payroll")["run"]
     assert r["status"] == "awaiting_approval" and _one(env, r)["payload"]["total"] == 360
 

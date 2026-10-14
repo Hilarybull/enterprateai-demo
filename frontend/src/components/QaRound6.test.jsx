@@ -58,7 +58,7 @@ describe("refusals in words", () => {
     expect(refusalMessage(err(402, { error: "FEATURE_NOT_FOUND", feature_code: "business_plan_full" }), "Fallback.")).toBe("Fallback.");
     expect(refusalMessage(err(403, { error: "FEATURE_NOT_ENTITLED", message: "Live Business Plan Intelligence is included from the Decision Engine plan. You're on Starter." })))
       .toBe("Live Business Plan Intelligence is included from the Decision Engine plan. You're on Starter.");
-    expect(refusalMessage(err(402, { error: "INSUFFICIENT_CREDITS", required: 40, available: 12 }))).toBe("This needs 40 AI Credits and you have 12. Nothing was charged.");
+    expect(refusalMessage(err(402, { error: "INSUFFICIENT_CREDITS", required: 40, available: 12 }))).toBe("This needs 40 credits; you have 12. Top up.");
     expect(refusalMessage(new Error("HTTP 402: FEATURE_DISABLED"), "Fallback.")).toBe("Fallback.");
   });
 });

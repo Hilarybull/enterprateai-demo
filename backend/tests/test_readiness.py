@@ -1429,16 +1429,13 @@ def test_s1_a_scenario_the_plan_cannot_run_says_so_and_never_opens_a_disabled_ru
     assert dash.plan_allows_scenario("starter_insight", "tmpl_hire_staff") is False
     env = Env(plan="explorer")                                          # the free plan can run no manual scenario
     card = _card(_pre(env), "scenario")
-    assert card["cta"] == {"label": "See the scenario \u00b7 Pro", "to": "/pricing", "upgrade": True, "locked": True, "note": dash.SCENARIO_LOCK_NOTE,
-                           "unlocked_to": "/simulation?template=tmpl_cost_increase"}
-    assert card["note"] == dash.SCENARIO_LOCK_NOTE and card["detail"] is None and card["text"] == "I need your planned monthly costs in a launch plan before I can work out what a cost rise does to your runway."
+    # The free plan sees each insight in outline, with one way on (the free-plan insights rule): never a run it can't open.
+    assert card["cta"] == dash.UPGRADE and card["detail"] is None and card["note"] is None and card["agent_action"] is None
     env = Env(plan="explorer")
     operating(env)
     invoice(env, "late1", "Aftred", 149, paid=False, due_in=-8)
     step = _card(_dashboard(env), "next_step")
-    assert step["cta"] == {"label": "See plans", "to": "/pricing"}
-    assert step["text"] == "1 overdue (\u00a3149.00). Reminders are part of Agent tasks, which your plan doesn't include."
-    assert step["detail"] == "1 overdue \u00b7 \u00a3149.00"
+    assert step["cta"] == dash.UPGRADE and step["detail"] is None      # in outline on the free plan
     assert step["agent_action"] is None                                # nothing for the owner to start
     for d in (_pre(Env(plan="explorer")), _dashboard(env)):
         assert not [c for c in d["insights"] if str((c["cta"] or {}).get("to", "")).startswith("/simulation")]

@@ -7,7 +7,7 @@ import { useListChanges } from "../../lib/motion";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../../api/client";
-import { agentErrorMessage, cancelRun, clearConversation, getConversation, replyText, submitAgentRequest } from "../../lib/agent";
+import { agentErrorMessage, cancelRun, clearConversation, getConversation, getRun, replyText, submitAgentRequest } from "../../lib/agent";
 import { Icon, OUT_OF_CREDITS_TIP, OutOfCreditsNote } from "./AgentBits";
 import { WORKING_TEXT, useTaskFlow } from "./TaskFlow";
 import { DraftDrawer } from "./DraftEditor";
@@ -62,17 +62,17 @@ const LockMark = () => (
 /**
  * A task the server would not start, as a reply. Outside the plan: a card in the brand colour with
  * the plan's name, what happened (nothing ran, nothing was charged), Upgrade and, where there is
- * one, something the plan does include. It is information, not an error. Out of credits: the
- * balance, the price and a way to top up.
+ * one, something the plan does include. It is information, not an error. Out of credits: the one
+ * sentence the Agent says about credits ("This needs 40 credits; you have 31. Top up.") and Top up.
  */
 export function blockedReply(res) {
   if (res.reason === "plan") {
     return { tone: "plan", card: "plan", text: res.message, actions: res.actions || [{ label: "Upgrade", to: "/pricing", upgrade: true }],
-      detail: `${res.plan_required_label ? `It is included from the ${res.plan_required_label} plan. ` : ""}Nothing was started and no credits were used.` };
+      detail: `${res.plan_required_label ? `It is included from the ${res.plan_required_label} plan. ` : ""}Nothing was started.` };
   }
   if (res.reason === "credits") {
     return { tone: "amber", card: "credits", text: res.message, actions: res.actions || [{ label: "Top up", to: "/pricing", upgrade: true }],
-      detail: `You have ${res.balance ?? 0} credit${res.balance === 1 ? "" : "s"}${res.cost ? `. This costs ${res.cost}` : ""}. Nothing was started.` };
+      detail: "Nothing was started." };
   }
   return { tone: "amber", text: res.message, upgrade: res.upgrade };
 }
@@ -95,7 +95,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   const outOfCredits = credits === 0;
   const [creditNote, setCreditNote] = useState(false);
   const promptBox = useRef(null);
-  const [spent, setSpent] = useState(null);      // what the last task used, and what is left
+  const [answered, setAnswered] = useState(false);      // something was answered or started here (their name is asked after that)
   // What the Agent did since the owner was last here, for the line under the greeting. It belongs to the active workspace: switching
   // workspace clears it at once and asks again, so nothing from the last workspace is ever shown. Leaving the dashboard, or a minute
   // on it, is what "last here" means: a refresh does not reset it.
@@ -115,6 +115,28 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     window.addEventListener("pagehide", seen);
     return () => { clearTimeout(timer); window.removeEventListener("pagehide", seen); };
   }, [businessId]);
+  // F4: "I'm …" lasts only as long as the task: it is watched, and the line is read again once the task is finished.
+  const workingRun = briefing?.working_on?.run_id || null;
+  useEffect(() => {
+    if (!workingRun || !businessId) return undefined;
+    let live = true;
+    let tries = 0;
+    const check = async () => {
+      tries += 1;
+      try {
+        const res = await getRun(workingRun);
+        const status = (res?.run || res)?.status;
+        if (!live) return;
+        if (status && !["running", "created"].includes(status)) {
+          const b = await apiRequest(`/businesses/${businessId}/agent/briefing`, "GET");
+          if (live && b && typeof b === "object" && "done_since_last_visit" in b) setBriefing(b);
+          else if (live) setBriefing((was) => (was ? { ...was, working_on: null } : was));
+        }
+      } catch { /* checked again on the next tick */ }
+    };
+    const timer = setInterval(() => { if (tries < 120) check(); }, 5000);
+    return () => { live = false; clearInterval(timer); };
+  }, [workingRun, businessId]);
   const told = briefingOf(briefing);
   // "By the way, what should I call you?": asked once, only when no name is known, and only after a first result has been
   // shown, so it never stands between someone and their task. Skipping it, or answering it, means it is not asked again.
@@ -125,7 +147,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   const [calling, setCalling] = useState("");
   const [nameProblem, setNameProblem] = useState("");
   const knownName = firstNameOf(accountName) || firstNameOf(briefing?.first_name);
-  const askName = Boolean(spent) && !knownName && !nameAsked && !reply?.working;
+  const askName = answered && !knownName && !nameAsked && !reply?.working;
   const doneAsking = () => { setNameAsked(true); try { localStorage.setItem(askedKey, "1"); } catch { /* asked again next time at worst */ } };
   async function saveName(e) {
     e.preventDefault();
@@ -143,7 +165,6 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   const startsTask = (action) => Boolean(action?.capability) && !action.to && !action.run_id;
   // From the plan map, by way of the summary: the plan a task is on when this one doesn't include it, and what a task costs to start.
   const lockedFor = (action) => (startsTask(action) && ent?.locked?.[action.capability]) || null;
-  const priceOf = (action) => (startsTask(action) && ent?.prices?.[action.capability]) || null;
 
   // Shortcuts and the prompt hint follow the business stage when the dashboard composes them
   // (summary.shortcuts / summary.placeholder); otherwise the standard set is used.
@@ -192,11 +213,12 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   }
 
   async function handle(res, req) {
+    // What a reply cost is never said with it: the sidebar balance is refreshed, and the Credits page lists each charge.
+    if (res.kind === "workflow" || (res.kind === "answer" && res.conversational)) setAnswered(true);
     if (res.kind === "workflow") {
       const run = res.run;
       onChanged?.();
       window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
-      if (res.credits_used > 0 && typeof res.credits_left === "number") setSpent({ used: res.credits_used, left: res.credits_left });
       if (res.runs?.length > 1) {
         setReply({ tone: "indigo", text: `I started ${res.runs.length} tasks. Each one needs your review before anything is sent.`, to: "/agent" });
       } else {
@@ -212,8 +234,9 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
       setReply({ tone: "emerald", text: res.message });
       setPrompt("");
     } else if (res.kind === "answer") {
-      setReply({ tone: "slate", text: res.message, evidence: res.evidence, actions: res.actions, source: res.source });
-      if (res.conversational) window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // a written answer uses credits
+      // E2: asked for something no task does yet: the closest tasks are offered as buttons, never done by the chat.
+      setReply({ tone: "slate", text: res.message, evidence: res.evidence, actions: res.actions, offers: res.offers, source: res.source });
+      if (res.conversational) window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // the sidebar balance
       setPrompt("");
     } else if (res.kind === "check") {
       // Funding or launch readiness, customer growth: the Agent runs the check here, in the card (never a dead end).
@@ -239,7 +262,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     setBusy(true);
     try {
       await cancelRun(runId);
-      setReply({ tone: "slate", text: "That task is cancelled. Nothing was sent and no credits were used." });
+      setReply({ tone: "slate", text: "That task is cancelled. Nothing was sent." });
       onChanged?.();
     } catch (e) {
       setReply({ tone: "rose", text: agentErrorMessage(e, "That couldn't be cancelled just now. Please try again.") });
@@ -258,10 +281,10 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     if (task) return flow.followId(task);      // its question, problem or result shows here
     if (action.to) return navigate(action.to);
     // A shortcut with a question writes it into the box for the user to read, change and send.
-    // Nothing runs, and no AI Credits are used, until they press send.
+    // Nothing runs until they press send.
     if (action.prompt) {
       setPrompt(action.prompt);
-      setReply({ tone: "slate", text: "Your question is in the box below. Press send to run it: it uses AI Credits." });
+      setReply({ tone: "slate", text: "Your question is in the box below. Press send to run it." });
       promptBox.current?.focus({ preventScroll: true });
       return;
     }
@@ -290,7 +313,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
           {counted && ent.is_paid && ent.agent_tasks !== false && (
             <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/80 2xl:text-[12px]"
               title={`Your access includes ${ent.monthly_runs} Agent tasks a month (${ent.monthly_runs_used} used).`}>
-              {runsLeft} of {ent.monthly_runs} tasks left this month{credits != null ? ` · ${credits} credits` : ""}
+              {runsLeft} of {ent.monthly_runs} tasks left this month
             </span>
           )}
           {freePlan && ent.agent_tasks === false && (
@@ -302,13 +325,13 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
           {counted && freePlan && ent.agent_tasks !== false && !freeLimitReached && (
             <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/80 2xl:text-[12px]"
               title="Free plan allowance for the Agent this month">
-              {runsLeft} of {ent.monthly_runs} tasks left{credits != null ? ` · ${credits} credits` : ""}
+              {runsLeft} of {ent.monthly_runs} tasks left
             </span>
           )}
           {freeLimitReached && ent.agent_tasks !== false && (
             <button type="button" onClick={() => navigate("/pricing")}
               className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-amber-400/15 px-2.5 py-1 text-left text-[11px] font-semibold text-amber-200 hover:bg-amber-400/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white 2xl:text-[12px]">
-              <Icon name="crown" className="h-3 w-3 shrink-0" /> {runsLeft === 0 ? "Monthly Agent tasks used" : "Out of AI Credits"} · Upgrade
+              <Icon name="crown" className="h-3 w-3 shrink-0" /> {runsLeft === 0 ? "Monthly Agent tasks used · Upgrade" : "No credits left · Top up"}
             </button>
           )}
         </div>
@@ -332,9 +355,8 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
               {/* No "block" here: it comes after line-clamp in the stylesheet and would undo the clamp, letting long text spill over the next tile. */}
               <span title={c.text} className={`break-normal text-sm leading-snug text-white ${c.detail ? "line-clamp-1" : "line-clamp-2"}`}>{c.text}</span>
               {c.detail && <span data-tile-detail className="block truncate text-[12px] text-white/60" title={c.detail}>{c.detail}</span>}
-              {/* What it costs to start, or the plan it is on: said before anything is pressed. */}
-              {lockedFor(c.action) ? <span data-tile-plan className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-200"><LockMark />{lockedFor(c.action)} plan</span>
-                : priceOf(c.action) ? <span data-tile-price className="mt-0.5 block text-[11px] font-medium text-white/70">{priceOf(c.action)} credits</span> : null}
+              {/* The plan it is on, said before anything is pressed. What it costs is on the Agent settings page, never on the tile. */}
+              {lockedFor(c.action) ? <span data-tile-plan className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-200"><LockMark />{lockedFor(c.action)} plan</span> : null}
             </span>
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/25 text-white/70 transition group-hover:border-white/60 group-hover:text-white">
               <Icon name="chevron" className="h-3.5 w-3.5" />
@@ -364,9 +386,6 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
         </button>
       </form>
 
-      {spent && !reply?.working && (
-        <p role="status" data-credits-used className="mt-2 text-[12px] font-medium text-indigo-100">Used {spent.used} credit{spent.used === 1 ? "" : "s"} · {spent.left} left</p>
-      )}
       {askName && (
         <form onSubmit={saveName} data-ask-name className="mt-3 rounded-xl border border-white/15 bg-white/10 p-3">
           <label htmlFor="agent-call-me" className="block text-[13px] font-semibold text-white">By the way, what should I call you?</label>

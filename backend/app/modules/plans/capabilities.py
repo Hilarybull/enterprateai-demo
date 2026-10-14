@@ -30,7 +30,7 @@ _ADDS: dict[str, tuple[str, ...]] = {
     # Starter: proposals, chasing payments, scenarios (a few a month), risk
     # and the fragility index, funding and launch preparation, and the wider document set.
     "starter_insight": (
-        "new_proposal", "payment_followup",
+        "new_proposal", "sales_letter_draft", "payment_followup",
         "scenario_help", "expansion_scenario", "risk_concentration",
         "funding_pack_draft", "readiness_refresh", "launch_evidence_gaps",
         "market_size", "price_test", "capacity_check", "offer_review",

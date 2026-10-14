@@ -97,7 +97,7 @@ def test_the_briefing_counts_what_was_done_since_the_last_visit_and_what_is_wait
     b = summary.briefing_of(runs, since="2026-10-07T18:00:00+00:00", needs_approval=1, now=now)
     assert b["done_since_last_visit"] == {"new_invoice": 1, "risk_concentration": 1}
     assert (b["needs_approval_count"], b["needs_input_count"], b["first_input_run_id"]) == (1, 1, "r4")
-    assert b["working_on"] == {"run_id": "r5", "title": "Quotation for Mark"} and b["first_visit"] is False
+    assert b["working_on"] == {"run_id": "r5", "title": "Quotation for Mark", "doing": "preparing your quotation"} and b["first_visit"] is False
     first = summary.briefing_of([], since=None, needs_approval=0, now=now)
     assert first["first_visit"] is True and first["done_since_last_visit"] == {}
     assert summary.briefing_of(runs, since=None, needs_approval=0, now=now)["first_visit"] is False      # not their first visit: there is work on record
@@ -113,3 +113,18 @@ def test_a_ticked_box_is_recorded_as_the_accounts_email_permission_and_an_untick
     assert 'get("marketing_consent")' in verify and "accounts.permit" in verify      # only a yes is recorded
     assert "marketing_consent" not in admin.CONTACT_COLUMNS                           # no second copy of the choice
 
+
+
+def test_f4_every_task_says_what_it_is_doing_in_words_that_follow_im():
+    from app.modules.agent.workflows import DOING, WORKFLOWS, doing_of
+    assert set(DOING) == set(WORKFLOWS)                                     # every task in the registry has its words
+    for key, words in DOING.items():
+        assert words == words.lower()[:1] + words[1:] and words.split()[0].endswith("ing") and "–" not in words and "—" not in words, key
+    assert doing_of({"workflow_key": "update_record", "state": {"answers": {"record": "item:p1"}}}) == "updating your catalogue item"
+    assert doing_of({"workflow_key": "update_record", "state": {"answers": {"record": "vendor:v1"}}}) == "updating your supplier"
+    assert doing_of({"workflow_key": "update_record", "state": {}}) == "updating your records"
+    # Finished: nothing is said to be in progress.
+    from datetime import datetime, timezone
+    from app.modules.agent import summary
+    done = [{"id": "r1", "workflow_key": "update_record", "status": "succeeded", "completed_at": "2026-10-14T09:00:00+00:00"}]
+    assert summary.briefing_of(done, since=None, needs_approval=0, now=datetime(2026, 10, 14, tzinfo=timezone.utc))["working_on"] is None

@@ -95,6 +95,13 @@ def _common_tail(result: dict, actions: list[dict]) -> list[dict]:
             _item(e.get("title") or "Evidence", f"{rules.EVIDENCE_TYPES.get(e.get('type'), 'Evidence')}, dated {e.get('effective_date')}",
                   f"{rules.VERIFICATION.get(e.get('verification') or 'unverified')}" + (f"; strength: {e['strength']}" if e.get("strength") else ""))
             for e in result.get("evidence_used") or []] or [_item("None", "No evidence items were attached")]),
+        # §5: every source behind the evidence, as references (title, where, when, what it says). A claim with no
+        # source is a named gap, never filled in.
+        _section("References", ["Each source was loaded and the quoted text found on the page when it was researched."],
+                 [_item(f"[{n}] {e.get('title') or 'Source'}", (e.get("source") or {}).get("reference"),
+                        f"Dated {e.get('effective_date')}" + (f". \"{e['claim']}\"" if e.get("claim") else ""))
+                  for n, e in enumerate([e for e in result.get("evidence_used") or [] if (e.get("source") or {}).get("kind") == "link"], start=1)]
+                 or [_item("None", "No sourced research is attached: any claim without a source is listed as a gap.")]),
         _section("Method and limitations", [result["status_note"], *result.get("limitations", []),
                                            "Each check is passed, failed or unknown. Two passed checks score 100, one 50, none 0; an unknown check leaves the criterion unknown. "
                                            "The score is the weighted sum and is shown only when every criterion is known."]),

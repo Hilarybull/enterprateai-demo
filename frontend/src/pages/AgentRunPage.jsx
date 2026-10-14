@@ -42,6 +42,15 @@ export default function AgentRunPage() {
   }, [runId]);
 
   useEffect(() => { load(); }, [load]);
+  // A3/C2: a task still in progress is looked at again until it ends, waits for an answer or an approval, or is
+  // stopped, so the page never shows a step that has already moved on (and refreshes by itself after Stop).
+  const live = Boolean(data?.run) && ["created", "running"].includes(data.run.status) && !data.run.pending_question
+    && !["waiting_for_external_event", "awaiting_approval"].includes(data.run.substatus || "");
+  useEffect(() => {
+    if (!live) return undefined;
+    const t = setTimeout(load, 2000);
+    return () => clearTimeout(t);
+  }, [live, data, load]);
 
   async function act(name, fn) {
     setBusy(name);
@@ -82,7 +91,11 @@ export default function AgentRunPage() {
   const timeline = run.steps_planned
     .map((s, i) => {
       const done = latest[s.key];
-      if (done) return { ...s, state: done.state, note: done.error || done.note, at: done.finished_at || done.started_at, external: done.external };
+      // A step that asked a question already answered is carrying on: it isn't "Waiting for you" any more (A3).
+      // C2: once the task is stopped (or finished), a step that was asking is no longer "Waiting for you".
+      if (done) return { ...s, state: done.state === "awaiting_input" && !run.pending_question
+        ? (["cancelled", "failed", "succeeded"].includes(run.status) ? (run.status === "succeeded" ? "skipped" : "cancelled") : "running") : done.state,
+        note: done.error || done.note, at: done.finished_at || done.started_at, external: done.external };
       if (terminal || i < currentIdx) return null;      // a step this run did not need
       // The step in hand is written to the record when it has something to record; until then it is the one in progress.
       return { ...s, state: i === currentIdx && ["running", "created"].includes(run.status) && !run.pending_question && !run.substatus ? "running" : "pending" };
@@ -109,12 +122,17 @@ export default function AgentRunPage() {
           <div className="rounded-xl bg-slate-50 p-3.5 dark:bg-slate-800/60">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">What happened</div>
             <p className="mt-1 text-sm text-slate-800 dark:text-slate-100">{run.summary || "The task has started."}</p>
+            {/* B9: what the task prepared, opened from here (a funding pack, a business plan, the invoices it made). */}
+            {(run.outcome?.links || []).length > 0 && (
+              <div data-outcome-links className="mt-2 flex flex-wrap gap-2">
+                {run.outcome.links.map((l) => (
+                  <Link key={`${l.to}-${l.label}`} to={l.to} className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-100">
+                    Open {String(l.label || "it").replace(/^./, (c) => c.toLowerCase())}
+                  </Link>
+                ))}
+              </div>
+            )}
             {sent > 0 && <p className="mt-1.5 text-[12px] text-slate-500">{sent} message{sent === 1 ? " has" : "s have"} been sent to the customer.</p>}
-            <p className="mt-1.5 text-[12px] text-slate-500" aria-label="Credits used">
-              {run.credits_used > 0
-                ? `Credits used: ${run.credits_used} (${(run.credits || []).map((c) => `${c.what}: ${c.credits}`).join(", ")})`
-                : "Credits used: none"}
-            </p>
           </div>
           <div className="rounded-xl bg-slate-50 p-3.5 dark:bg-slate-800/60">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">What happens next</div>
@@ -280,7 +298,7 @@ export default function AgentRunPage() {
               </button>
             )}
             {["credits_exhausted", "plan_limit"].includes(run.reason_code) && (
-              <Link to="/pricing" className="rounded-xl border border-brand-200 bg-brand-50 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-100">See plans</Link>
+              <Link to="/pricing" className="rounded-xl border border-brand-200 bg-brand-50 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-100">{run.reason_code === "credits_exhausted" ? "Top up" : "See plans"}</Link>
             )}
           </div>
         </section>

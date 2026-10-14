@@ -25,7 +25,8 @@ def test_invoice_for_mark_300_dollars_asks_only_email_vat_and_lands_ready_for_ap
     assert done.get("handoff", {}).get("run_id"), done
     run = client.get(f"/workflow-runs/{done['handoff']['run_id']}").json()["run"]
     assert run["status"] == "awaiting_approval", run.get("pending_question")      # no forms on the dashboard
-    assert done["handoff"]["ready"] is True and done["handoff"]["ready_message"] == "Your invoice for Mark is ready to review."
+    assert done["handoff"]["ready"] is True, done["handoff"]
+    assert done["handoff"]["ready_message"] == "Your invoice for Mark is ready to review."
     approval = env.pending(run)[0]["payload"]
     assert approval["currency"] == "USD" and "mark@example.test" in str(approval) and approval["total"] == 300
     assert env.meter.charges                                                # paid for in credits on Explorer

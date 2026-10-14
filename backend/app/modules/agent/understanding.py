@@ -266,9 +266,14 @@ def _rules(message: str, ctx: dict) -> Understanding:
     if questions and not rule and resolved.get("resolution_class") in (None, "no_match", "clarify"):
         out.intent, out.confidence = ANSWER, 0.9
     elif answers.topic_of(message) and not rule:
-        out.intent, out.confidence = QUESTION, 0.9
+        # Live check: a topic word ("paid", "cash", "marketplace") in a request to act ("Nova Labs still hasn't paid, send them
+        # a reminder") is not a question about it: the rules are sure only when it is asked as one; otherwise the model decides.
+        asked = bool(re.match(r"^\s*(?:what|why|how|when|who|which|is|are|do|does|did|can|could|should|have|has|tell me|show me)\b", message, re.I)
+                     or message.rstrip().endswith("?"))
+        out.intent, out.confidence = QUESTION, 0.9 if asked and not intent._ACTION.search(message) else 0.6
     elif rule:
-        out.intent, out.confidence = rule, 0.95
+        # A broad rule (one common word) is a guess the model may correct; a specific one is sure.
+        out.intent, out.confidence = rule, 0.8 if intent.broad_rule(message, supported) else 0.95
     elif start and start in supported:
         out.intent, out.confidence = start, 0.8 if resolved.get("resolution_class") != "direct_supported" else 0.9
     elif re.match(r"^\s*(?:what|why|how|when|who|which|is|are|do|does|can|could|should)\b.*\?\s*$", message, re.I):

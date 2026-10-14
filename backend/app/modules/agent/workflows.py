@@ -7,6 +7,8 @@ entitlements, approval binding and idempotency before anything happens.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 from datetime import timedelta
 
@@ -18,6 +20,8 @@ from app.modules.agent.models import (
     WorkflowDefinition, payload_hash,
 )
 from app.modules.agent.tools import ToolStop, similar_names, valid_email
+
+logger = logging.getLogger(__name__)
 
 _ENQUIRY_LABELS = {
     "quotation_request": "A request for a quotation",
@@ -59,13 +63,13 @@ async def e2q_classify(ctx):
     ctx.note(f"Classified the enquiry as: {_ENQUIRY_LABELS.get(cls, cls).lower()}.")
     if cls == "complaint":
         return Done("This is a complaint, not a sales enquiry, so I did not prepare a quotation.",
-                    next_action="Review the message and reply to the customer yourself.")
+                    next_action="Review the message and reply to the customer yourself.", skipped=True)
     if cls == "proposal_request":
         return Done("This is a request for a proposal rather than a quotation, so I did not price it as one.",
-                    next_action="Ask me for a proposal for this customer and I'll prepare it for your approval.")
+                    next_action="Ask me for a proposal for this customer and I'll prepare it for your approval.", skipped=True)
     if cls == "general_enquiry":
         return Done("This is a general enquiry with nothing to quote for.",
-                    next_action="Reply to the customer yourself.")
+                    next_action="Reply to the customer yourself.", skipped=True)
     return Next()
 
 
@@ -376,9 +380,29 @@ ENQUIRY_TO_QUOTE = WorkflowDefinition(
 
 # ══ Phase 2: Quote-to-Cash (s16) ══════════════════════════════════════════════
 
+_NEVER_SENT = ("draft", "pending_approval", "awaiting_approval", "new")
+
+
 async def q2c_acceptance(ctx):
     q = await ctx.call("read_quotation_status", quote_id=ctx.state["quote_id"])
     ctx.state["quote_reference"] = q.get("reference")
+    if q["status"] in _NEVER_SENT and not ctx.answers.get("unsent_quote"):
+        # B7: a quotation the customer was never sent can't have been accepted through it: say so, and offer both ways on.
+        ref = q.get("reference") or "This quotation"
+        return WaitForInput(f"{ref} was never sent to the customer. Should I send it now, or mark it as accepted (they agreed another way)?", [
+            {"key": "unsent_quote", "label": "What should happen", "type": "choice", "required": True,
+             "options": [{"value": "send", "label": "Send it to the customer"}, {"value": "accepted", "label": "Mark it as accepted"},
+                         {"value": "no", "label": "Neither, not yet"}]}])
+    if q["status"] in _NEVER_SENT:
+        choice = ctx.answers.get("unsent_quote")
+        if choice == "send":
+            sent = await ctx.call("send_quotation", quote_id=ctx.state["quote_id"])
+            return Done(f"Quotation {sent['reference']} was sent to {sent['sent_to']}.",
+                        next_action="When the customer accepts, tell me and I'll turn it into an invoice.",
+                        outcome={"quote_id": ctx.state["quote_id"], "reference": sent["reference"], "sent_to": sent["sent_to"]})
+        if choice == "no":
+            return Done("Nothing was sent or invoiced. The quotation is still a draft.", next_action="Ask me again when it should go out.", skipped=True)
+        ctx.answers["confirm_acceptance"] = "yes"      # accepted another way, said by the owner
     if q["status"] not in ("accepted", "won"):
         answer = ctx.answers.get("confirm_acceptance")
         if answer == "yes":
@@ -386,7 +410,7 @@ async def q2c_acceptance(ctx):
             await ctx.call("record_quotation_acceptance", quote_id=ctx.state["quote_id"])
         elif answer == "no":
             return Done("The quotation has not been accepted, so nothing was invoiced.",
-                        next_action="Ask me again once the customer accepts.")
+                        next_action="Ask me again once the customer accepts.", skipped=True)
         else:
             return WaitForInput(
                 f"Quotation {q.get('reference') or ''} is not marked as accepted. "
@@ -581,7 +605,7 @@ QUOTE_TO_CASH = WorkflowDefinition(
         StepDefinition("receipt", "Send the receipt", q2c_receipt),
         StepDefinition("close", "Close the sale", q2c_close),
     ],
-    tools=("read_quotation_status", "record_quotation_acceptance", "create_contract_draft", "send_contract",
+    tools=("read_quotation_status", "record_quotation_acceptance", "send_quotation", "create_contract_draft", "send_contract",
            "read_contract_status", "record_contract_acceptance", "create_invoice_draft", "send_invoice",
            "read_invoice_status", "read_payment_status", "prepare_payment_reminder", "send_payment_reminder",
            "create_receipt", "send_receipt"),
@@ -695,7 +719,7 @@ async def risk_explain(ctx):
     c = (await ctx.call("read_risk"))["concentration"]
     if not c["customer_count"]:
         return Done("Customer concentration is measured from paid or delivered invoices, and none is on record yet.",
-                    next_action="Ask me for a new invoice, or to record a payment, and I'll measure it from there.")
+                    next_action="Ask me for a new invoice, or to record a payment, and I'll measure it from there.", skipped=True)
     top = c["top_customers"][0]
     lines = [f"{t['customer']}: {t['share_pct']}% of revenue" for t in c["top_customers"][:3]]
     verdict = (f"Customer concentration is high: {top['customer']} is {top['share_pct']}% of your revenue"
@@ -822,6 +846,12 @@ async def scenario_run(ctx):
         except Exception:      # noqa: BLE001 - the launch plan is optional here
             planned = None
         if not planned:
+            # B6: the costs adopted in a review (or planned anywhere) count as planned costs.
+            from app.modules.agent import planned as pl
+            pm = pl.monthly(data)
+            if pm.get("costs"):
+                planned = {"amount": pm["costs"], "source": "planned: " + pl.said(pm["sources"], "fixed_costs", "cost", "monthly_sales")}
+        if not planned:
             return Done("This needs your costs, and none are recorded or planned yet.",
                         next_action="Ask me to record an expense (or a supplier bill) and I'll run it from there.",
                         outcome={"reason": "no_costs", "link": "/launch", "links": [{"label": "Planned costs", "to": "/launch"}]}, skipped=True)
@@ -832,7 +862,7 @@ async def scenario_run(ctx):
     if scenario == "client_loss":
         if not r["customer"]:
             return Done("This needs customer revenue from the last three months to simulate losing, and none is on record.",
-                        next_action="Ask me for a new invoice, or to record a payment, and I'll run it from there.")
+                        next_action="Ask me for a new invoice, or to record a payment, and I'll run it from there.", skipped=True)
         # One reply with the whole picture: how exposed the business is, what losing the customer
         # does to revenue and cash, and what to do about it. All from the invoices and expenses on record.
         alert = float((ctx.policy.get("risk") or {}).get("concentration_alert_pct") or 40)
@@ -905,29 +935,58 @@ async def _check(ctx, svc, kind: str, subject_id: str, tag: str) -> None:
                                  idempotency_key=f"agent:{ctx.run['id']}:{tag}", email=ctx.actor.email)
 
 
+async def _feed_changed_figures(ctx) -> list[dict]:
+    """§2: an accepted figure that changed since it went into the launch or funding case (a price given in another tool,
+    say) goes in again, where the case still holds the earlier fed value (never over the case's own edit), and the case is
+    assessed again. Returns what was fed: [{kind, fields}]."""
+    from app.modules.agent import assessment_summary, planned as pl
+    data = await ctx.rt.business.load(ctx.run["business_id"])
+    fed = data.get("readiness_fed") or {}
+    now = {k: v["value"] for k, v in pl.figures(data).items()}
+    out = []
+    for goal, kind in assessment_summary.KIND_OF_GOAL.items():
+        before = fed.get(kind) or {}
+        changed = {f: v for f, v in now.items() if f in assessment_summary.FEEDS[kind] and f in before and before[f] != v}
+        if changed:
+            await assessment_summary.feed(ctx.orch, {"id": ctx.actor.user_id, "email": ctx.actor.email}, ctx.run["business_id"], goal, changed, {},
+                                          f"refresh:{ctx.run['id']}:{kind}")
+            out.append({"kind": kind, "fields": sorted(changed)})
+    return out
+
+
 async def readiness_refresh_step(ctx):
     from app.modules.readiness import rules as rr
     svc, _data, picks = await _readiness_picks(ctx)
+    # B6: asked for by the owner, it runs again whatever the dates say; started by the Agent, only what is out of date.
+    asked = ctx.run.get("source_channel") in ("text", "voice", "ui_action")
     redone, links = [], []
     for name, kind, id_key, base in (("funding", rr.FUNDING, "case_id", "/funding"), ("launch", rr.LAUNCH, "initiative_id", "/launch")):
         p = picks.get(name)
-        if not p or p.get("freshness") != "stale":
+        if not p or (p.get("freshness") != "stale" and not asked):
             continue
         await _check(ctx, svc, kind, p[id_key], name)
         links.append({"label": p.get("title") or name.capitalize(), "to": f"{base}/{p[id_key]}?tab=results"})
         redone.append(name)
-    if not redone:
+    reviews = await _feed_changed_figures(ctx)      # §2: accepted figures that changed go into the case, which is assessed again
+    if reviews:
+        redone = sorted(set(redone) | {r["kind"] for r in reviews})
+    if not redone and not reviews:
         return Done("Your readiness checks are up to date: nothing has changed since the last check.",
                     outcome={"reason": "nothing_out_of_date"}, skipped=True)
-    after = (await _readiness_picks(ctx))[2]
-    return Done("The details changed, so I ran the check again. " + "; ".join(_result_words(after[n]) for n in redone if after.get(n)) + ".",
-                next_action="I'll check again whenever the details change.", outcome={"refreshed": redone, "links": links})
+    after = (await _readiness_picks(ctx))[2] if redone else {}
+    said = [_result_words(after[n]) for n in redone if after.get(n)]
+    lead = ("Your figures changed, so I ran the check again" if reviews else "I ran the check again" if asked
+            else "The details changed, so I ran the check again")
+    joined = "; ".join(said)
+    return Done(f"{lead}. " + joined[:1].upper() + joined[1:] + ".", next_action="I'll check again whenever the details change.",
+                outcome={"refreshed": redone, "fed": reviews, "links": links})
 
 
 async def launch_gaps_step(ctx):
     from app.modules.readiness import rules as rr
     svc, _data, picks = await _readiness_picks(ctx)
     p = picks.get("launch")
+    # §2 (R3): the one launch assessment's own result, never a second engine's.
     if not p:
         return Done("Launch evidence is checked against a launch plan, and you haven't started one yet.", next_action="Start a launch plan in Launch Readiness and I'll list what its evidence is missing.",
                     outcome={"reason": "no_launch", "links": [{"label": "Launch Readiness", "to": "/launch"}]}, skipped=True)
@@ -997,6 +1056,28 @@ async def registration_checklist_step(ctx):
                 outcome={"checklist": items, "links": [{"label": "Business Registration", "to": "/registration"}]})
 
 
+async def _planned(ctx) -> dict:
+    """B6: the planned month (planned.monthly) with any planned figure answered in this task kept first in the shared
+    store, so every other check and tool reads it too, with where it came from."""
+    from app.modules.agent import planned as pl
+    given = {k: ctx.answers[k] for k in pl.PLANNED_FIELDS if ctx.answers.get(k) not in (None, "")}
+    if given:
+        now, words = ctx.now().isoformat(), f"From your {ctx.wf.title.lower()}"
+
+        def _apply(d: dict) -> None:
+            shared = d.setdefault("shared_answers", {})
+            for k, v in given.items():
+                shared[k] = {"value": float(v), "offering": "", "goal": ctx.run.get("workflow_key"), "at": now, "source": words + " (planned)",
+                             "state": "accepted", "basis": "forecast"}
+        await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
+    return pl.monthly(await ctx.rt.business.load(ctx.run["business_id"]))
+
+
+def _ask_planned(intro: str, missing: list[str]):
+    from app.modules.agent import planned as pl
+    return WaitForInput(intro, pl.ask_fields(missing))
+
+
 async def price_test_step(ctx):
     """What a 5% and a 10% price rise would do, from the revenue on record and the margins in the
     Catalogue: the extra a month if volume holds, and how much volume could be lost before it stops paying."""
@@ -1004,9 +1085,20 @@ async def price_test_step(ctx):
     amt = lambda v: fmt_money(v, bz.currency_of(data))      # noqa: E731
     recent = bz.revenue_by_customer(data, since=ctx.now().date() - timedelta(days=92))
     monthly = bz.money(sum(recent.values()) / 3)
+    planned_basis = ""
     if monthly <= 0:
-        return Done("A price test works from revenue paid in the last three months, and none is on record yet.",
-                    next_action="Ask me for a new invoice, or to record a payment, and I'll test the price from there.", outcome={"reason": "no_revenue", "check": "price_offer"}, skipped=True)
+        # B6: no sales yet: the price is tested on the planned figures (adopted in a review, or given here), said as planned.
+        from app.modules.agent import planned as pl
+        pm = await _planned(ctx)
+        fig = pm["figures"]
+        if not (fig.get("price") and fig.get("monthly_sales")):
+            # Nothing planned either: the pricing check (the homepage's) asks for the planned figures, never a dead end.
+            return Done("A price test works from revenue paid in the last three months, and none is on record yet.",
+                        next_action="Ask me for a new invoice, or to record a payment, and I'll test the price from there.", outcome={"reason": "no_revenue", "check": "price_offer"}, skipped=True)
+        monthly = bz.money(pm["revenue"])
+        planned_basis = pl.said(pm["sources"], "price", "monthly_sales", "cost")
+        if ctx.answers.get("cost_pct") in (None, "") and pm.get("margin"):
+            ctx.answers["cost_pct"] = round((1 - pm["margin"]) * 100, 1)
     priced = [(p_price, p_cost) for p_price, p_cost in ((float(p.get("base_price") or 0), float(p.get("cost_of_sales") or p.get("unit_cost") or 0))
                                                         for p in (data.get("catalogue") or {}).get("products") or [] if isinstance(p, dict))
               if p_price > 0 and p_cost > 0]
@@ -1029,6 +1121,12 @@ async def price_test_step(ctx):
         drop = round(p / (p + margin) * 100, 1)
         results.append({"pct": pct, "extra_monthly": extra, "break_even_volume_drop_pct": drop})
         lines.append(f"+{pct}% price: +{amt(extra)}/month if volume holds; break-even volume drop {drop:g}%.")
+    if planned_basis:
+        return Done("Planned figures, as there are no sales on record yet. " + " ".join(lines)
+                    + f" Worked out from a planned {amt(monthly)} a month and a {margin * 100:.0f}% margin ({planned_basis}).",
+                    next_action="Once sales are on record I'll test it on what you actually earn.",
+                    outcome={"price_test": results, "monthly_revenue": monthly, "margin_pct": round(margin * 100, 1), "planned": True,
+                             "links": [{"label": "Catalogue prices", "to": "/catalogue"}]})
     return Done(" ".join(lines) + f" Worked out from {amt(monthly)} a month of paid revenue and a {margin * 100:.0f}% margin ({basis}).",
                 next_action="I'll work it out again next month, or sooner if your prices change.",
                 outcome={"price_test": results, "monthly_revenue": monthly, "margin_pct": round(margin * 100, 1),
@@ -1157,11 +1255,31 @@ def _ask_idea(idea: dict, needed: tuple[str, ...]):
 
 
 async def _studio(ctx, feature: str, call):
-    """Run one generator, charged at its price on the price list, and note what it cost on the task."""
-    async with ctx.rt.meter.charge(ctx.actor.user_id, feature):
-        result = await call
-    await ctx.orch.note_spend(ctx.run, feature, feature)
-    return result
+    """Run one generator, charged at its price on the price list, and note what it cost on the task. F1: what it made is
+    kept on the task at once, so a step tried again (after a restart, a heartbeat or a retry) uses the same document and
+    is never charged or filed a second time."""
+    # The same task advanced twice at once (four plan drafts in seventy seconds, F1): one generator call at a time per
+    # task, and the second reads what the first made from the store before doing anything.
+    async with _STUDIO_LOCKS.setdefault((ctx.run["id"], feature), asyncio.Lock()):
+        stored = await ctx.rt.store.get_run(ctx.run["id"]) or {}
+        earlier = ((stored.get("state") or {}).get("made") or {}).get(feature)
+        for k in ("paid", "credits"):
+            if (stored.get("state") or {}).get(k) and not ctx.run.setdefault("state", {}).get(k):
+                ctx.run["state"][k] = stored["state"][k]
+        made = ctx.run.setdefault("state", {}).setdefault("made", {})
+        if earlier and not made.get(feature):
+            made[feature] = earlier
+        if made.get(feature):
+            call.close()      # never awaited: the generator is not run again
+            return made[feature]
+        async with ctx.orch.charge_once(ctx.run, ctx.actor.user_id, feature, f"{feature}:{ctx.run['id']}", feature):
+            result = await call
+        made[feature] = result
+        await ctx.rt.store.update_run(ctx.run["id"], {"state": ctx.run["state"]})
+        return result
+
+
+_STUDIO_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 
 
 async def _keep(ctx, key: str, value: dict) -> None:
@@ -1194,49 +1312,247 @@ async def _keep(ctx, key: str, value: dict) -> None:
     await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
 
 
+def known_for_validation(data: dict, answers: dict | None = None) -> dict:
+    """What the workspace already holds that the Idea Validation wizard asks for, so the Agent's score is built from the
+    same information the wizard would have: the stage, the figures (price, cost, fixed costs, capacity, from every check
+    and the catalogue), the competitors and the channels. Only what is on record; nothing is guessed."""
+    from app.modules.agent import research
+    p = data.get("workspace_profile") or {}
+    figures = {k: v for k, v in research.inputs_of("test_idea", answers or {}, data).items() if not k.startswith("_") and v not in (None, "")}
+    text = lambda *v: next((str(x).strip() for x in v if isinstance(x, str) and x.strip()), "")      # noqa: E731
+    return {"stage": text(p.get("operating_stage"), p.get("business_stage")), "competitors": text(p.get("competitors"), p.get("main_competitors")),
+            "channels": text(p.get("channels"), p.get("acquisition_channels"), p.get("marketing_channels")),
+            "price": figures.get("price"), "cost": figures.get("cost"), "fixed_costs": figures.get("fixed_costs"),
+            "capacity": figures.get("capacity"), "monthly_sales": figures.get("monthly_sales")}
+
+
+async def separate_idea(ctx, data: dict) -> bool:
+    """A2: is the idea named in the owner's message a different one from the business's own offer? Decided by the
+    understanding layer (the classifier); the same offering said two ways is the business's own. When it can't be told,
+    it is kept apart: a new idea never overwrites the business's own validation or borrows its answers."""
+    if not (ctx.run.get("state") or {}).get("idea_from_message"):
+        return False
+    said = str(ctx.answers.get("description") or "").strip()
+    own = idea_of(data)
+    offer = str(own.get("description") or "").strip()
+    if not said or not offer or own.get("description_guessed") and not offer:
+        return False      # the business has no offer of its own yet: this is it
+    from app.modules.agent import answer_memory
+    if answer_memory.same_offering(said, offer):
+        return False
+    if getattr(ctx.rt.classifier, "available", False):
+        try:
+            verdict = await ctx.rt.classifier.choose(
+                task="Is the idea in the message the business's current offer (same) or a different business idea (different)?",
+                text=f"Message: {said}\nThe business's current offer: {offer}", options=["same", "different"], user_id=ctx.actor.user_id)
+            if verdict:
+                return verdict == "different"
+        except Exception:      # noqa: BLE001 - not known: kept apart
+            logger.info("idea comparison not available for run %s", ctx.run["id"])
+    return True
+
+
+def plain(text: str) -> str:
+    """B5: nothing that reads as code reaches the owner: a dict or list written out ({'..': ..}) is a bug, said plainly."""
+    if re.search(r"\{'|':|\[\{|\{\"", str(text or "")):
+        logger.error("a summary carried a raw structure: %s", str(text)[:200])
+        return re.sub(r"\{[^{}]*\}", "", str(text)).replace("  ", " ").strip()
+    return text
+
+
+def _idea_key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(text or "").lower()).strip("-")[:60] or "idea"
+
+
+async def _keep_separate_idea(ctx, idea: dict, result: dict, plan: dict | None = None) -> None:
+    """A separate idea's own record: what it is and its result, beside the business's (which is left exactly as it was).
+    `plan`: a business plan made for this idea, linked from its record (F1)."""
+    key = _idea_key(idea.get("description"))
+
+    def _apply(data: dict) -> None:
+        ideas = data.setdefault("agent_ideas", {})
+        record = dict(ideas.get(key) or {})
+        record.update({"description": idea.get("description"), "customer": idea.get("customer"), "problem": idea.get("problem"),
+                       "updated_at": ctx.now().isoformat(), "run_id": ctx.run["id"]})
+        record.setdefault("created_at", ctx.now().isoformat())
+        record.setdefault("results", []).append({**result, "at": ctx.now().isoformat(), "run_id": ctx.run["id"]})      # merged, never replaced
+        if plan:
+            record["plan"] = {**plan, "at": ctx.now().isoformat(), "run_id": ctx.run["id"]}
+        ideas[key] = record
+    await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
+
+
 async def idea_validation_step(ctx):
     data = await _business_and_launch(ctx)
-    idea = idea_of(data, ctx.answers)
+    separate = await separate_idea(ctx, data)
+    if separate:
+        # Only what was said about this idea: nothing from the profile or another plan ("Is this your customer?" from a
+        # launch plan for something else), and nothing written back to the business.
+        own = idea_of(data, {})
+        idea = {k: str(ctx.answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
+        idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP"})
+    else:
+        idea = idea_of(data, ctx.answers)
     ask = _ask_idea(idea, ("description", "customer", "problem"))
     if ask:
         return ask
-    r = await _studio(ctx, "idea_validation", ctx.rt.studio.validate_idea(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea))
-    await _keep(ctx, "validation", r)
-    risks, steps = r.get("risks") or [], r.get("next_steps") or []
-    return Done(f"Idea scored {r['score']}/100: {len(risks)} risk{'s' if len(risks) != 1 else ''}, {len(steps)} next step{'s' if len(steps) != 1 else ''}."
-                + (f" Biggest risk: {risks[0]}." if risks else "") + (f" First step: {steps[0]}." if steps else ""),
+    idea = {**idea, "known": {} if separate else known_for_validation(data, ctx.answers)}
+    r = await _studio(ctx, "idea_validation", ctx.rt.studio.validate_idea(user_id=ctx.actor.user_id,
+                                                                           business_id=None if separate else ctx.run["business_id"], idea=idea))
+    if separate:
+        await _keep_separate_idea(ctx, idea, r)
+    else:
+        await _keep(ctx, "validation", r)
+    from app.modules.agent.services import risk_sentence
+    risks, steps = [risk_sentence(x) for x in r.get("risks") or []], [str(x) for x in r.get("next_steps") or []]
+    summary = (f"Idea scored {r['score']}/100: {len(risks)} risk{'s' if len(risks) != 1 else ''}, {len(steps)} next step{'s' if len(steps) != 1 else ''}."
+               + (f" Biggest risk: {risks[0].rstrip('.')}." if risks else "") + (f" First step: {steps[0].rstrip('.')}." if steps else "")
+               + (" The full report, with its research, will be on Idea Validation in a few minutes." if r.get("full_report") == "pending" else ""))
+    return Done(plain(summary),
                 next_action="I'll score it again when what you've told me about the business changes.",
                 outcome={"score": r["score"], "risks": risks, "next_steps": steps, "links": [{"label": "Idea Validation", "to": "/validation"}]})
 
 
 async def market_size_step(ctx):
     data = await _business_and_launch(ctx)
-    idea = idea_of(data, ctx.answers)
+    idea, separate = await _idea_for(ctx, data)
     ask = _ask_idea(idea, ("description", "industry", "location"))
     if ask:
         return ask
-    r = await _studio(ctx, "idea_validation", ctx.rt.studio.size_market(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea))
-    if not (r.get("sam") or r.get("tam")):
-        return Done("I couldn't find enough to size this market: the research returned no figures I can stand behind.",
-                    outcome={"reason": "no_market_figures", **r}, skipped=True)
-    await _keep(ctx, "market", r)
+    # C8: charged only for a market actually sized. The figures are checked inside the charge, so research that comes
+    # back with words and no figures ("an active category") is released, not charged. A3: never more than a few minutes.
+    r: dict = {}
+    try:
+        async with ctx.orch.charge_once(ctx.run, ctx.actor.user_id, "idea_validation", f"market_size:{ctx.run['id']}", "market_size"):
+            r = await asyncio.wait_for(ctx.rt.studio.size_market(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea),
+                                       timeout=MARKET_SIZE_SECONDS)
+            if not any(_is_figure(r.get(k)) for k in ("tam", "sam", "som")):
+                raise _NoFigures()
+    except _NoFigures:
+        return Done("I couldn't size this market: the research came back without figures I can stand behind. Nothing was charged.",
+                    next_action="Tell me the region and who exactly you sell to, and I'll try again.",
+                    outcome={"reason": "no_market_figures", "sources": r.get("sources") or []}, skipped=True)
+    except asyncio.TimeoutError:
+        return Done("I couldn't size this market in time: the research took too long. Nothing was charged.",
+                    next_action="Ask me again in a little while.", outcome={"reason": "market_size_timeout"}, skipped=True)
+    r = {**r, **{k: (r.get(k) if _is_figure(r.get(k)) else None) for k in ("tam", "sam", "som")}}
+    if separate:
+        await _keep_separate_idea(ctx, idea, {"kind": "market", **r})
+    else:
+        await _keep(ctx, "market", r)
+    assumed, sources = r.get("assumptions") or [], r.get("sources") or []
+    sizing = market_sizing(r)
+    sized = "; ".join(f"{s['level']} {s['value']}" for s in sizing if s["value"])
+    return Done(plain(f"Market sized (estimated): {sized}. {len(sources)} source{'s' if len(sources) != 1 else ''}, {len(assumed)} assumption{'s' if len(assumed) != 1 else ''}. "
+                      "Each figure shows its formula; none is corroborated by checked sources yet, so confirm them before relying on them."),
+                next_action=None, outcome={"market": r, "sizing": sizing, "links": [{"label": "Idea Validation", "to": "/validation"}]})
+
+
+def market_sizing(r: dict) -> list[dict]:
+    """§5: TAM, SAM and SOM, each with its formula, inputs and sources, and its label. A figure the research service read
+    from search results, with no quote checked on its page, is Estimated; a level with no figure is Missing."""
+    from app.modules.agent import credibility
+    srcs = [{"title": s.get("title"), "url": s.get("url"), "tier": credibility.tier_of(s.get("url") or ""),
+             "publisher": credibility.host_of(s.get("url") or "")} for s in r.get("sources") or [] if isinstance(s, dict) and s.get("url")]
+    srcs = [s for s in srcs if s["tier"]]
     assumed = r.get("assumptions") or []
-    return Done(f"Market sized: {r.get('sam') or r.get('tam')} serviceable" + (f" ({r['tam']} total, {r['som']} obtainable)" if r.get("tam") and r.get("som") else "")
-                + (f", {len(assumed)} assumption{'s' if len(assumed) != 1 else ''} listed." if assumed else ", assumptions listed."),
-                next_action=None, outcome={"market": r, "links": [{"label": "Idea Validation", "to": "/validation"}]})
+    formulas = {"TAM": r.get("tam_basis") or (assumed[0] if assumed else ""), "SAM": r.get("sam_basis") or (assumed[1] if len(assumed) > 1 else ""),
+                "SOM": r.get("som_basis") or (assumed[2] if len(assumed) > 2 else "")}
+    out = []
+    for key, level in (("tam", "TAM"), ("sam", "SAM"), ("som", "SOM")):
+        value = r.get(key)
+        out.append({"level": level, "value": value, "label": "Estimated" if value else "Missing", "formula": formulas[level] or "Not stated by the research",
+                    "inputs": [a for a in assumed if a], "sources": srcs if value else []})
+    return out
+
+
+MARKET_SIZE_SECONDS = 180
+
+
+class _NoFigures(Exception):
+    pass
+
+
+def _is_figure(value) -> bool:
+    """A market size that is a figure (£2.4bn, 180,000 businesses, $3m), not words about one."""
+    return bool(re.search(r"\d", str(value or "")))
+
+
+_PLAN_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
+REUSE_ASKED_PLAN_SECONDS = 600      # an asked-for plan the same as one made this recently is that one, asked twice
+
+
+def _plan_on_record(data: dict, key: str | None) -> dict | None:
+    """The plan already made for this idea (a separate idea's own record) or for the business itself."""
+    plan = ((data.get("agent_ideas") or {}).get(key) or {}).get("plan") if key else (data.get("agent_studio") or {}).get("plan")
+    return plan if isinstance(plan, dict) and plan.get("document_id") else None
+
+
+async def _idea_for(ctx, data: dict) -> tuple[dict, bool]:
+    """The idea a task is about, and whether it is a separate one (A2). F1: a plan, a letter or a market size for an idea
+    other than the business's own is that idea's: only what was said about it, named for it (never the business's
+    name), and kept on its own record."""
+    separate = await separate_idea(ctx, data)
+    if not separate:
+        return idea_of(data, ctx.answers), False
+    own = idea_of(data, {})
+    idea = {k: str(ctx.answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
+    idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP"})
+    return idea, True
 
 
 async def business_plan_step(ctx):
     data = await _business_and_launch(ctx)
-    idea = idea_of(data, ctx.answers)
+    idea, separate = await _idea_for(ctx, data)
     ask = _ask_idea(idea, ("description", "customer"))
     if ask:
         return ask
-    r = await _studio(ctx, "business_plan_full", ctx.rt.studio.draft_plan(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea))
-    await _keep(ctx, "plan", r)
+    key = _idea_key(idea.get("description")) if separate else None
+
+    def reusable(found: dict | None) -> dict | None:
+        """F1: tasks asked twice (or started by the Agent again) share one document. Only an owner's own request for a
+        new draft, some time after the last one, makes another."""
+        if not found:
+            return None
+        from app.modules.agent import autostart
+        if ctx.run.get("source_channel") == autostart.CHANNEL:
+            return found
+        made = bz._moment(found.get("at"))
+        return found if made and (ctx.now() - made).total_seconds() < REUSE_ASKED_PLAN_SECONDS else None
+
+    lock = _PLAN_LOCKS.setdefault((ctx.run["business_id"], key or ""), asyncio.Lock())
+    async with lock:      # two tasks at once for the same idea: the second waits, then uses the first one's document
+        r = reusable(_plan_on_record(await ctx.rt.business.load(ctx.run["business_id"]) or data, key))
+        reused = bool(r)
+        if not r:
+            r = await _studio(ctx, "business_plan_full", ctx.rt.studio.draft_plan(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea))
+            if separate:
+                await _keep_separate_idea(ctx, idea, {"kind": "plan", **r}, plan=r)
+            else:
+                await _keep(ctx, "plan", r)
+    if reused:
+        return Done("You already have this business plan draft" + (f" ({r['title']})" if r.get("title") else "") + ", so I haven't made another. Nothing was charged.",
+                    next_action="Ask me to redraft it when you want a new version.",
+                    outcome={"plan": r, "reused": True, "links": [{"label": "Business plan", "to": "/blueprint?tab=business-plans"}]}, skipped=True)
     return Done("Business plan draft ready for review" + (f": {r['sections']} sections" if r.get("sections") else "") + ". Nothing has been sent to anyone.",
                 next_action="I'll redraft it when you ask, or when your figures change.",
                 outcome={"plan": r, "links": [{"label": "Business plan", "to": "/blueprint?tab=business-plans"}]})
+
+
+async def sales_letter_step(ctx):
+    data = await _business_and_launch(ctx)
+    idea, separate = await _idea_for(ctx, data)
+    ask = _ask_idea(idea, ("description", "customer"))
+    if ask:
+        return ask
+    r = await _studio(ctx, "sales_letter_full", ctx.rt.studio.draft_sales_letter(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea))
+    if separate:
+        await _keep_separate_idea(ctx, idea, {"kind": "sales_letter", **r})
+    else:
+        await _keep(ctx, "sales_letter", r)
+    return Done("Sales letter draft ready for review" + (f": {r['sections']} sections" if r.get("sections") else "") + ". Nothing has been sent to anyone.",
+                next_action="Open it in Business Blueprints to edit, copy or download it.",
+                outcome={"sales_letter": r, "links": [{"label": "Sales letter", "to": "/blueprint?tab=sales-docs"}]})
 
 
 # ── Growth stage: capacity, what sells, and growing ────────────────────────────
@@ -1255,9 +1571,18 @@ def _paid(data: dict, since) -> list[dict]:
 async def capacity_check_step(ctx):
     data = await ctx.rt.business.load(ctx.run["business_id"])
     jobs = len(_paid(data, ctx.now().date() - timedelta(days=92)))
+    planned_note = ""
     if not jobs:
-        return Done("A capacity check works from work paid for in the last three months, and none is on record yet.",
-                    next_action="Ask me to record a payment and I'll check your capacity from there.", outcome={"reason": "no_work"}, skipped=True)
+        # B6: no work paid for yet: checked against the planned sales a month, said as planned.
+        from app.modules.agent import planned as pl
+        pm = await _planned(ctx)
+        fig = pm["figures"]
+        stated_cap = ctx.answers.get("capacity") or (data.get("workspace_profile") or {}).get("monthly_capacity") or fig.get("capacity")
+        missing = [k for k, have in (("monthly_sales", fig.get("monthly_sales")), ("capacity", stated_cap)) if not have]
+        if missing:
+            return _ask_planned("No work is paid for yet, so I'll check your capacity against your planned sales. What are they?", missing)
+        jobs, planned_note = fig["monthly_sales"] * 3, pl.said(pm["sources"], "monthly_sales", "capacity")
+        ctx.answers.setdefault("capacity", stated_cap)
     stated = ctx.answers.get("capacity") or (data.get("workspace_profile") or {}).get("monthly_capacity")
     if stated in (None, ""):
         return WaitForInput("How many jobs can you deliver in a month, at most?", [{
@@ -1268,7 +1593,10 @@ async def capacity_check_step(ctx):
     used = round(monthly / capacity * 100) if capacity else 0
     text = (f"You delivered about {monthly:g} job{'s' if monthly != 1 else ''} a month against a capacity of {capacity:g}: "
             + (f"room for about {room:g} more ({used}% used)." if room > 0 else f"you are at or over capacity ({used}% used), so more work means more hands or longer lead times."))
-    return Done(text, next_action="I'll check again next month.", outcome={"jobs_per_month": monthly, "capacity": capacity, "room": room, "used_pct": used})
+    if planned_note:
+        text = "Planned figures, as no work is paid for yet. " + text.replace("You delivered about", "You plan about") + f" (Planned: {planned_note}.)"
+    return Done(text, next_action="I'll check again next month.", outcome={"jobs_per_month": monthly, "capacity": capacity, "room": room, "used_pct": used,
+                                                                          **({"planned": True} if planned_note else {})})
 
 
 def _what_it_was(inv: dict) -> str:
@@ -1284,6 +1612,18 @@ async def offer_review_step(ctx):
         name = _what_it_was(inv)
         if name:
             sold[name] = sold.get(name, 0) + bz.invoice_total(inv)
+    if not sold and not _paid(data, ctx.now().date() - timedelta(days=92)):
+        # B6: nothing sold yet: the planned offer, with its planned margin, instead of a dead end.
+        from app.modules.agent import planned as pl
+        pm = await _planned(ctx)
+        fig = pm["figures"]
+        if fig.get("price") and fig.get("monthly_sales"):      # a plan of the owner's, not only a catalogue price
+            offer = str(idea_of(data).get("description") or "Your offer").strip()
+            text = (f"Nothing has sold yet, so there is no best seller to name. Planned: {offer[:80]} at {amt(fig['price'])}"
+                    + (f", a {round(pm['margin'] * 100)}% margin" if pm.get("margin") else "")
+                    + (f", {fig['monthly_sales']:g} sales a month" if fig.get("monthly_sales") else "") + f" ({pl.said(pm['sources'], 'price', 'cost', 'monthly_sales')}).")
+            return Done(text, next_action="Once sales are on record I'll show what actually sells.",
+                        outcome={"planned": True, "price": fig["price"], "links": [{"label": "Catalogue", "to": "/catalogue"}]})
     if not sold:
         return Done("To review what sells I need invoices that say what they were for, and those paid in the last three months don't.",
                     next_action="Ask me for your next invoice with its items and I'll review what sells from there.", outcome={"reason": "no_item_detail", "check": "more_customers"}, skipped=True)
@@ -1304,14 +1644,23 @@ async def expansion_step(ctx):
     amt = lambda v: fmt_money(v, bz.currency_of(data))      # noqa: E731
     today = ctx.now().date()
     monthly = bz.money(sum(bz.revenue_by_customer(data, since=today - timedelta(days=92)).values()) / 3)
-    if monthly <= 0:
-        return Done("Modelling growth starts from revenue paid in the last three months, and none is on record yet.",
-                    next_action="Ask me for a new invoice, or to record a payment, and I'll model growing from there.", outcome={"reason": "no_revenue"}, skipped=True)
     burn = bz.cash_position(data, today)["monthly_burn"]
+    planned_note = ""
+    if monthly <= 0:
+        # B6: no revenue yet: growth is modelled on the planned month, said as planned.
+        from app.modules.agent import planned as pl
+        pm = await _planned(ctx)
+        fig = pm["figures"]
+        missing = [k for k in ("price", "monthly_sales") if not fig.get(k)] + (["fixed_costs"] if pm.get("costs") is None and not burn else [])
+        if missing:
+            return _ask_planned("You have no revenue on record yet, so I'll model growing on your planned figures. What are they?", missing)
+        monthly, burn = bz.money(pm["revenue"]), burn or bz.money(pm.get("costs") or 0)
+        planned_note = pl.said(pm["sources"], "price", "monthly_sales", "fixed_costs", "cost")
     more, cost = bz.money(monthly * 0.20), bz.money(burn * 0.10)
     before, after = bz.money(monthly - burn), bz.money(monthly + more - burn - cost)
-    return Done(f"Growing revenue by 20% adds {amt(more)} a month. If costs rise 10% with it ({amt(cost)}), you keep {amt(more - cost)} of that: "
-                f"monthly net goes from {amt(before)} to {amt(after)}.",
+    return Done(("Planned figures, as there is no revenue on record yet. " if planned_note else "")
+                + f"Growing revenue by 20% adds {amt(more)} a month. If costs rise 10% with it ({amt(cost)}), you keep {amt(more - cost)} of that: "
+                f"monthly net goes from {amt(before)} to {amt(after)}." + (f" (Planned: {planned_note}.)" if planned_note else ""),
                 next_action="I'll work it out again next month.",
                 outcome={"extra_revenue": more, "extra_cost": cost, "net_before": before, "net_after": after,
                          "links": [{"label": "Full scenario in Simulation", "to": "/simulation"}]})
@@ -1335,6 +1684,7 @@ WORKFLOWS: dict[str, WorkflowDefinition] = {w.workflow_key: w for w in [
     _prep("idea_validation", "Idea Validation", "Score the idea", idea_validation_step),
     _prep("market_size", "Market Size", "Size the market", market_size_step),
     _prep("business_plan_draft", "Business Plan Draft", "Draft the business plan", business_plan_step),
+    _prep("sales_letter_draft", "Sales Letter Draft", "Draft the sales letter", sales_letter_step),
     _prep("capacity_check", "Capacity Check", "Compare work delivered with capacity", capacity_check_step),
     _prep("offer_review", "Offer Review", "Review what sells", offer_review_step),
     _prep("expansion_scenario", "Expansion Scenario", "Model growing the business", expansion_step),
@@ -1370,3 +1720,32 @@ INVENTORY = [
     {"family": "Decision Intelligence", "capability": "business_health", "label": "Business Health", "posture": "Future"},
     {"family": "Business Operations", "capability": "operational", "label": "Operational", "posture": "Future"},
 ]
+
+
+# F4: what the Agent says it is doing, per task, in words that read after "I'm …" ("I'm updating your catalogue item").
+DOING: dict[str, str] = {
+    "add_catalogue_item": "adding an item to your catalogue", "add_customer": "adding your new customer", "add_vendor": "adding your new supplier",
+    "update_record": "updating your records", "new_invoice": "preparing your invoice", "enquiry_to_quote": "preparing your quotation",
+    "quote_to_cash": "turning your quotation into an invoice", "receipt_send": "preparing your receipt", "record_payment": "recording your payment",
+    "credit_note": "preparing your credit note", "new_purchase_order": "preparing your purchase order", "supplier_bill": "recording your supplier bill",
+    "record_expense": "recording your expense", "new_contract": "preparing your contract", "new_proposal": "preparing your proposal",
+    "payment_followup": "preparing your payment reminders", "marketplace_profile": "updating your Marketplace profile",
+    "marketplace_offering": "listing your item on the Marketplace", "price_test": "testing your prices", "capacity_check": "checking your capacity",
+    "scenario_help": "running your scenario", "expansion_scenario": "modelling your expansion", "risk_concentration": "checking your risks",
+    "offer_review": "reviewing what you sell", "idea_validation": "scoring your idea", "market_size": "sizing your market",
+    "business_plan_draft": "drafting your business plan", "sales_letter_draft": "drafting your sales letter", "funding_pack_draft": "drafting your funding pack",
+    "launch_evidence_gaps": "checking what your launch is missing", "readiness_refresh": "refreshing your readiness score",
+    "registration_checklist": "preparing your registration checklist",
+}
+_RECORD_WORDS = {"item": "your catalogue item", "customer": "your customer", "vendor": "your supplier"}
+
+
+def doing_of(run: dict) -> str:
+    """ "updating your catalogue item": the task's own words, with the kind of record when it is a change to one."""
+    key = run.get("workflow_key") or ""
+    if key == "update_record":
+        record = str(((run.get("state") or {}).get("answers") or {}).get("record") or "")
+        kind = record.split(":", 1)[0] if ":" in record else ""
+        if kind in _RECORD_WORDS:
+            return f"updating {_RECORD_WORDS[kind]}"
+    return DOING.get(key) or "working on your task"

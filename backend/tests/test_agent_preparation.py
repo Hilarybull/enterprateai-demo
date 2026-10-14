@@ -35,7 +35,7 @@ def test_each_checks_the_plan_like_every_other_agent_task(plan, capability):
         assert res["kind"] == "blocked" and res["reason_codes"] == ["plan_capability"] and run(env.store.list_runs("A")) == []
     else:
         assert res["kind"] == "workflow" and res["run"]["status"] == "succeeded"
-        assert agent_router._public_run(res["run"])["credits_used"] == (2 if (res["run"].get("state") or {}).get("task_charged") else 0)      # the task price once, when it did something; nothing when there was nothing to do
+        assert agent_router.credits_of(res["run"]) == (2 if (res["run"].get("state") or {}).get("task_charged") else 0)      # the task price once, when it did something; nothing when there was nothing to do
 
 
 def test_with_nothing_on_record_each_says_exactly_what_it_needs_and_prepares_nothing():
@@ -92,11 +92,12 @@ def test_a_check_that_goes_out_of_date_is_run_again_without_being_asked():
     assert len(run(svc.history(OWNER, "A", rr.LAUNCH, lid))) == 2 and started(env) == {}
 
 
-def test_a_funding_case_gets_its_pack_drafted_and_nothing_is_sent():
+def test_a_funding_case_gets_its_pack_drafted_when_asked_and_nothing_is_sent():
     env = Env()
     svc, cid = funding_case(env)
     only(env, "funding_pack_draft")
-    r = started(env)["funding_pack_draft"]
+    assert "funding_pack_draft" not in started(env)                        # §4: generation is suggested, never started by itself
+    r = env.submit(capability="funding_pack_draft", channel="ui_action")["run"]
     assert r["status"] == "succeeded" and env.comms.sent == []
     assert r["summary"] == ("Funding pack draft ready for review: Funding readiness report, Executive summary draft, Pitch content outline. "
                             "Nothing has been sent to anyone.")
@@ -118,8 +119,9 @@ def test_the_tiles_say_what_the_agent_needs_is_doing_or_has_done():
     only(env, "launch_evidence_gaps", "funding_pack_draft", "registration_checklist")      # the idea-stage work has its own tests
     d = _pre(env)
     assert (_suggestion(d, "stage_funding")["text"], _suggestion(d, "stage_blockers")["text"]) == ("Draft my funding pack", "Check my launch evidence for gaps")      # not started yet: offers, not "I'm …" (QA P1-5)
-    done = started(env)                                                   # the Agent does all of it
-    assert {"launch_evidence_gaps", "funding_pack_draft", "registration_checklist"} <= set(done)
+    done = started(env)                                                   # the free checks run by themselves; the pack is suggested (§4)
+    assert {"launch_evidence_gaps", "registration_checklist"} <= set(done) and "funding_pack_draft" not in done
+    done["funding_pack_draft"] = env.submit(capability="funding_pack_draft", channel="ui_action")["run"]      # the owner presses it
     d = _pre(env)
     funding, register, gaps = (_suggestion(d, k) for k in ("stage_funding", "stage_register", "stage_blockers"))
     assert (funding["text"], funding["action"]) == ("Funding pack draft ready for review.", {"to": f"/agent/runs/{done['funding_pack_draft']['id']}"})
@@ -144,6 +146,9 @@ def test_each_new_item_has_its_own_switch_and_the_plan_it_needs():
     env = Env()
     rows = {e["key"]: e for e in autostart.events(run(env.store.get_policy("A")), run(env.orch.entitlement("A"))) if e["key"]}
     for key in PREP:
+        if rows[key]["capability"] == "funding_pack_draft":      # §4: generation is suggested, never automatic
+            assert not rows[key]["switchable"] and rows[key]["starts"] == "suggested"
+            continue
         assert rows[key]["switchable"] and rows[key]["on"] and rows[key]["starts"] == "automatic" and rows[key]["minimum_plan_label"] in ("Explorer", "Starter")
     assert "never automatic" in rows["registration_checklist"]["approval"] and "never sent" in rows["funding_pack_draft"]["approval"]
     only(env)                                                             # every one switched off

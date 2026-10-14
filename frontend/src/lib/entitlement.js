@@ -27,7 +27,8 @@ export function refusalMessage(err, fallback = "That couldn't be done just now. 
   if (d.error === "INSUFFICIENT_CREDITS") {
     const need = Number(d.required) || 0;
     const have = Number(d.available) || 0;
-    return need ? `This needs ${need} AI Credits and you have ${have}. Nothing was charged.` : "Not enough AI Credits for this. Nothing was charged.";
+    // The same sentence everywhere credits run short: "This needs 40 credits; you have 31. Top up."
+    return need ? `This needs ${need} credit${need === 1 ? "" : "s"}; you have ${have}. Top up.` : `You have ${have ? have : "no"} credit${have === 1 ? "" : "s"} left. Top up.`;
   }
   if (d.message && !looksLikeACode(d.message)) return d.message;
   return fallback;

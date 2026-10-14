@@ -44,11 +44,11 @@ async function ask(text) {
 const sent = (pattern) => calls.filter((c) => c.method === "POST" && pattern.test(c.path));
 
 describe("the chat bubble is the Agent", () => {
-  it("uses the business name the rest of the app shows, and says what an answer costs", async () => {
+  it("uses the business name the rest of the app shows, and never says what an answer costs", async () => {
     await open();
     expect(screen.getAllByText(/Alchemy Test/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Apex Consulting/)).toBeNull();
-    expect(await screen.findByText(/A written answer uses 2 AI Credits\./)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/credit/i);
   });
 
   it("sends every message to the Agent, for the business on screen, and never to a second chat", async () => {
@@ -92,10 +92,10 @@ describe("the chat bubble is the Agent", () => {
   });
 
   it("says exactly what is blocking it: credits, or the plan, with the way to upgrade", async () => {
-    replies = [{ kind: "blocked", upgrade: true, reason_codes: ["credits_exhausted"], message: "You're out of AI Credits: a written answer needs 2 and you have 0. Nothing was charged. Top up or upgrade and ask again." }];
+    replies = [{ kind: "blocked", upgrade: true, reason_codes: ["credits_exhausted"], message: "This needs 2 credits; you have 0. Top up." }];
     await open();
     await ask("How is my revenue?");
-    expect(await screen.findByText(/You're out of AI Credits: a written answer needs 2 and you have 0\./)).toBeTruthy();
+    expect(await screen.findByText("This needs 2 credits; you have 0. Top up.")).toBeTruthy();
     expect(screen.getByText("See plans").getAttribute("href")).toBe("/pricing");
     cleanup();
     replies = [{ kind: "blocked", upgrade: true, reason_codes: ["plan_capability"], message: "Upgrade to use the Agent for this. Enquiry to Quote is included from the Starter plan." }];

@@ -62,7 +62,7 @@ describe("PF3 the premium research, walked through in the browser", () => {
     expect(calls.filter((c) => /\/premium$/.test(c.path)).length).toBe(1);
     const review = screen.getByRole("region", { name: "Review the research" });
     const items = review.querySelectorAll("[data-research-item]");
-    expect([...items].map((i) => i.querySelector("[data-research-state]").textContent)).toEqual(["Researched", "Estimate"]);
+    expect([...items].map((i) => i.querySelector("[data-research-state]").textContent)).toEqual(["Researched", "Estimated"]);
     expect(items[0].querySelector("[data-research-sources]").textContent).toBe("How cleaners find clients · Mar 2026");
     expect(items[0].querySelector("a").getAttribute("rel")).toContain("noopener");
     expect(items[1].querySelector("[data-research-sources]")).toBeNull();      // an estimate with no source shows none

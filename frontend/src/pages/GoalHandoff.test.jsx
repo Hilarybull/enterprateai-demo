@@ -51,7 +51,7 @@ describe("the dashboard, arriving with a task from the homepage", () => {
       await waitFor(() => expect(followed).toEqual([{ runId: "run-7" }]), { timeout: 4000 });      // the task is handed to the Agent box, once
       await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard"));      // a refresh won't open it again
       const dialog = await screen.findByRole("dialog");
-      expect(within(dialog).getByText("Who is this invoice for, and what is it for?")).toBeTruthy();
+      expect(within(dialog).queryByText("Who is this invoice for, and what is it for?")).toBeNull();      // one question at a time: the field asks its own
       expect(within(dialog).getByLabelText("Customer name").value).toBe("ABC Consulting Ltd");      // filled in from what was said
       await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });      // one question at a time
       expect(within(dialog).getByLabelText("Customer email").value).toBe("");      // only what wasn't said is left to answer

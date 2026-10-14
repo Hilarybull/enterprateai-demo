@@ -1,4 +1,5 @@
 import UkDateInput from "../components/UkDateInput";
+import { pipelineCounts } from "../lib/pipelineCounts";
 import Pagination, { pageSlice, useUrlValue } from "../components/Pagination";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { alertDialog } from "../lib/dialog";
@@ -2050,7 +2051,9 @@ export default function BusinessOperationsPage() {
 
     // Contracts (active ones regardless of range; contract value filtered by range)
     const activeContracts = contracts.filter(c => ["active","signed"].includes(st(c.status)) || !c.status).length;
-    const awaitingApproval = contracts.filter(c => ["pending","awaiting_approval"].includes(st(c.status))).length;
+    // C6: counted as they are. A draft (the Agent's, waiting in Needs Approval, or one made here) has not gone out; a
+    // contract that is "pending" is out with the customer for signature.
+    const { contractDrafts: awaitingApproval, contractsOut } = pipelineCounts(contracts, []);
     const expiringSoon = contracts.filter(c => st(c.status) === "expiring_soon").length;
     const rangeContracts = contracts.filter(c => inRange(cAnchor(c)));
     const totalContractValue = rangeContracts.reduce((s, c) => s + toWs(rawAmt(c), c.currency), 0);
@@ -2060,7 +2063,7 @@ export default function BusinessOperationsPage() {
     const proposalsSubmitted = rangeQuotes.filter(q => ["sent","viewed","submitted"].includes(st(q.status))).length;
     const quotationsSent = rangeQuotes.filter(q => SENT_QUOTE_STATUSES.includes(st(q.status))).length;
     const quotationsViewed = rangeQuotes.filter(q => st(q.status) === "viewed").length;
-    const awaitingResponse = rangeQuotes.filter(q => ["pending","awaiting_response"].includes(st(q.status))).length;
+    const { quotesAwaitingReply: awaitingResponse, quoteDrafts } = pipelineCounts([], rangeQuotes);
     const wonQuotes = rangeQuotes.filter(q => ["won","accepted"].includes(st(q.status))).length;
     const winRate = rangeQuotes.length > 0 ? Math.round((wonQuotes / rangeQuotes.length) * 100) : 0;
     const potentialValue = rangeQuotes
@@ -2079,7 +2082,7 @@ export default function BusinessOperationsPage() {
     }).length;
 
     return {
-      activeContracts, awaitingApproval, expiringSoon, totalContractValue,
+      activeContracts, awaitingApproval, contractsOut, quoteDrafts, expiringSoon, totalContractValue,
       cashIn, cashOut, receivables, payables, netCash: cashIn - cashOut, totalRevenue,
       proposalsSubmitted, quotationsSent, quotationsViewed, awaitingResponse, potentialValue,
       activeRfqs, rfqProposalsReceived, awaitingEvaluation, upcomingDeadlines,
@@ -2747,8 +2750,10 @@ export default function BusinessOperationsPage() {
                 <div className="space-y-3">
                   {[
                     { dot: "bg-emerald-500", label: "Requests Open", val: m.activeRfqs },
-                    { dot: "bg-blue-500", label: "Quotations Pending", val: m.awaitingResponse },
-                    { dot: "bg-amber-500", label: "Contracts Awaiting Approval", val: m.awaitingApproval },
+                    { dot: "bg-blue-500", label: "Quotations sent, waiting for a reply", val: m.awaitingResponse },
+                    { dot: "bg-slate-400", label: "Quotation drafts, not sent yet", val: m.quoteDrafts },
+                    { dot: "bg-amber-500", label: "Contract drafts, not sent yet", val: m.awaitingApproval },
+                    { dot: "bg-indigo-500", label: "Contracts out for signature", val: m.contractsOut },
                   ].map(row => (
                     <div key={row.label} className="flex items-center justify-between text-sm">
                       <div className="flex items-center gap-2.5">
@@ -3141,7 +3146,7 @@ export default function BusinessOperationsPage() {
               <>
                 <div className="flex gap-3 overflow-x-auto">
                   <KpiCard icon={IDoc} label="Active Contracts" value={m.activeContracts} numColor="text-blue-600" iconBg="bg-blue-50" iconColor="text-blue-600" />
-                  <KpiCard icon={IClock} label="Awaiting Approval" value={m.awaitingApproval} numColor="text-amber-500" iconBg="bg-amber-50" iconColor="text-amber-500" />
+                  <KpiCard icon={IClock} label="Drafts, not sent yet" value={m.awaitingApproval} numColor="text-amber-500" iconBg="bg-amber-50" iconColor="text-amber-500" />
                   <KpiCard icon={ICalendar} label="Expiring Soon" value={m.expiringSoon} numColor="text-orange-500" iconBg="bg-orange-50" iconColor="text-orange-500" />
                   <KpiCard icon={IPound} label="Total Contract Value" value={fmtMoney(m.totalContractValue)} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
                 </div>
@@ -3149,8 +3154,8 @@ export default function BusinessOperationsPage() {
                 <div className="rounded-xl border border-slate-200 bg-white p-5">
                   <div className="mb-3 text-sm font-semibold text-slate-900">Contract Lifecycle</div>
                   <Pipeline stages={[
-                    { label: "Draft", value: contracts.filter(c => c.status === "draft").length, bg: "bg-slate-100", textColor: "text-slate-500" },
-                    { label: "Awaiting Approval", value: m.awaitingApproval, bg: "bg-amber-100", textColor: "text-amber-600" },
+                    { label: "Draft", value: m.awaitingApproval, bg: "bg-slate-100", textColor: "text-slate-500" },
+                    { label: "Out for signature", value: m.contractsOut, bg: "bg-amber-100", textColor: "text-amber-600" },
                     { label: "Active", value: m.activeContracts, bg: "bg-emerald-100", textColor: "text-emerald-600" },
                     { label: "Expiring Soon", value: m.expiringSoon, bg: "bg-orange-100", textColor: "text-orange-500" },
                     { label: "Expired", value: contracts.filter(c => c.status === "expired").length, bg: "bg-rose-100", textColor: "text-rose-600" },
@@ -3158,7 +3163,7 @@ export default function BusinessOperationsPage() {
                 </div>
 
                 <IntelBox
-                  message={m.expiringSoon > 0 ? `${m.expiringSoon} contracts expire within 30 days - renew to avoid lapse` : m.awaitingApproval > 0 ? `${m.awaitingApproval} contracts awaiting approval` : contracts.length === 0 ? "No contracts yet" : "All contracts are current"}
+                  message={m.expiringSoon > 0 ? `${m.expiringSoon} contracts expire within 30 days: renew them to avoid a lapse` : m.awaitingApproval > 0 ? `${m.awaitingApproval} contract drafts not sent yet` : contracts.length === 0 ? "No contracts yet" : "All contracts are current"}
                   btnLabel="Review Risks"
                   onBtn={() => { setActiveTab("Reports"); setReportSub("Contracts"); }}
                 />

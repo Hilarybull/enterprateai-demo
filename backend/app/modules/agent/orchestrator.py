@@ -177,11 +177,11 @@ class Ctx:
             found = await work()
             cache["charged"] = True
             return found
-        async with self.rt.meter.charge(self.actor.user_id, "agent_classify"):
+        # F2: once per step of this task, however often the step is tried again (the cache above lives only as long as one try).
+        async with self.orch.charge_once(self.run, self.actor.user_id, "agent_classify", f"agent_classify:{self.run['id']}:{self.step_key}", what):
             self.run["budget"]["llm_calls"] += 1
             found = await work()
         cache["charged"] = True
-        await self.orch.note_spend(self.run, "agent_classify", what)
         return found
 
     async def classify_enquiry(self, text: str) -> tuple[str, str]:
@@ -378,8 +378,7 @@ class Orchestrator:
             return {"reason": "plan", "task": wf.title, "plan_required": need, "plan_required_label": config.PLAN_LABEL[need],
                     "actions": [{"label": "Upgrade", "to": "/pricing", "upgrade": True}] + ([other] if other else [])}
         if code == "credits_exhausted":
-            return {"reason": "credits", "balance": await self.rt.meter.balance(actor.user_id), "cost": config.cost_of(wf.capability),
-                    "actions": [{"label": "Top up", "to": "/pricing", "upgrade": True}]}
+            return {"reason": "credits", "actions": [{"label": "Top up", "to": "/pricing", "upgrade": True}]}
         return {}
 
     async def check_start(self, actor: Actor, wf: WorkflowDefinition, ent: dict, essential: bool = False) -> GuardrailDecision:
@@ -408,9 +407,11 @@ class Orchestrator:
             return GuardrailDecision(DECISION_BLOCKED, ["plan_active_limit"],
                                      f"Your plan allows {ent['max_active_runs']} Agent tasks in progress at once. Finish or cancel one, or upgrade.")
         # Every task costs credits (its steps' own prices, or the task price), so none starts on an empty balance.
-        if await self.rt.meter.balance(actor.user_id) <= 0:
+        balance = await self.rt.meter.balance(actor.user_id)
+        if balance <= 0:
+            from app.modules.agent import autostart
             return GuardrailDecision(DECISION_BLOCKED, ["credits_exhausted"],
-                                     "You're out of AI Credits. Your records are safe; top up or upgrade to keep using the Agent.")
+                                     config.short_of(await autostart.price_of(self, wf.capability), balance))
         return GuardrailDecision(DECISION_ALLOWED)
 
     # ══ Tool gateway ══════════════════════════════════════════════════════════
@@ -563,9 +564,9 @@ class Orchestrator:
             })
         try:
             if feature:
-                async with self.rt.meter.charge(charge_user, feature):
+                # F2: one charge per tool call (its idempotency key), however often the step is tried again.
+                async with self.charge_once(ctx.run, charge_user, feature, f"{feature}:{ctx.run['id']}:{key or tool_id}", tool_id):
                     result = await asyncio.wait_for(tool.handler(tc, exec_args), timeout=tool.timeout_s)
-                await self.note_spend(ctx.run, feature, tool_id)      # reached only when the charge was kept
             else:
                 result = await asyncio.wait_for(tool.handler(tc, exec_args), timeout=tool.timeout_s)
         except asyncio.TimeoutError as e:
@@ -595,6 +596,28 @@ class Orchestrator:
                                                           "output_ref": {k: v for k, v in result.items() if k != "draft"}})
         return result
 
+    def charge_once(self, run: dict, user_id: str, feature: str, action: str, what: str):
+        """F2: one action of a task is charged once, however often its step is tried again (charges.charge_once)."""
+        from app.modules.agent import charges
+        return charges.charge_once(self.rt, run, user_id, feature, action, what)
+
+    async def refund_undelivered(self, run: dict) -> int:
+        """F1: work the Agent started by itself that never reached the owner (it was cancelled, or it stopped and won't be
+        tried again) costs nothing: what it was charged is given back, once. Returns the credits given back."""
+        from app.modules.agent import autostart
+        state = run.setdefault("state", {})
+        spent = sum(int(c.get("credits") or 0) for c in state.get("credits") or [])
+        if run.get("source_channel") != autostart.CHANNEL or not spent or state.get("refunded"):
+            return 0
+        try:
+            payer = run.get("requester_id") if run.get("requester_id") not in (None, "system") else await self.rt.business.owner_id(run["business_id"])
+            given = await self.rt.meter.refund(payer, spent, f"Refund: {run.get('title') or 'Agent task'} didn't finish", f"refund:{run['id']}")
+        except Exception:      # noqa: BLE001 - tried again the next time the task is looked at
+            logger.warning("refund not given yet for task %s", run.get("id"), exc_info=True)
+            return 0
+        state["refunded"] = {"credits": spent, "at": self.rt.clock().isoformat(), "given": bool(given)}
+        return spent if given else 0
+
     async def note_spend(self, run: dict, feature: str, what: str) -> None:
         """Write down what was just charged, on the task that caused it, so its cost can be seen."""
         try:
@@ -603,6 +626,43 @@ class Orchestrator:
             credits = 0
         if credits:
             run["state"].setdefault("credits", []).append({"feature": feature, "for": what, "credits": credits, "at": self.rt.clock().isoformat()})
+
+    async def _read_fields(self, state: dict, capability: str, req: AgentRequest) -> None:
+        """The task's fields read from the owner's message by the shared extractor (extraction.py). Confident values become
+        the task's answers (anything already given wins); every value read is kept, with its words, for "From what you said".
+        Never a reason for a task not to start."""
+        from app.modules.agent import extraction
+        try:
+            data = await self.rt.business.load(req.business_id) or {}
+            today = bz.local_now(data, self.rt.clock()).date()
+            # C9: reading the message never holds a task up. A simple record (a customer, an item) is read by the model
+            # within a few seconds or by the rules, and confirmed either way; no task waits more than FIELD_READ_SECONDS.
+            budget = config.FIELD_READ_SECONDS_SIMPLE if capability in config.SIMPLE_WRITES else config.FIELD_READ_SECONDS
+            read = await asyncio.wait_for(extraction.understand(self.rt.classifier, capability, req.raw_input or "", data, today,
+                                                                req.requesting_actor_id, history=req.history), timeout=budget)
+        except asyncio.TimeoutError:
+            logger.info("fields read by the rules for %s: the model took longer than %ss", capability, budget)
+            state["understood"] = {"by": "rules", "fields": {}, "slow": True}
+            return
+        except Exception:      # noqa: BLE001
+            logger.warning("fields not read for %s", capability, exc_info=True)
+            return
+        state["understood"] = read
+        if read.get("by") == "model":
+            for key, value in extraction.as_answers(capability, read.get("fields") or {}).items():
+                state["answers"].setdefault(key, value)
+
+    async def _said_lines(self, run: dict) -> dict:
+        """E3: every field the model read from the message, one line each, for "From what you said" (with Edit)."""
+        understood = (run.get("state") or {}).get("understood") or {}
+        if understood.get("by") != "model" or not understood.get("fields"):
+            return {}
+        from app.modules.agent import extraction
+        try:
+            data = await self.rt.business.load(run["business_id"]) or {}
+            return {"said": extraction.said_lines(run.get("workflow_key") or "", understood["fields"], bz.currency_of(data))}
+        except Exception:      # noqa: BLE001 - never a reason for a question not to be asked
+            return {}
 
     async def _with_what_was_said(self, run: dict, fields: list[dict]) -> list[dict]:
         """The form about to be shown, with whatever the owner already said in their message filled
@@ -613,6 +673,9 @@ class Orchestrator:
                 return fields
             from app.modules.agent import said
             state = run.get("state") or {}
+            understood = state.get("understood") or {}
+            if understood.get("by") == "model":
+                return extraction_defaults(fields, understood.get("fields") or {}, state.get("answers") or {})
             text = str((state.get("params") or {}).get("body") or run.get("goal") or "")
             if not text.strip():
                 return fields
@@ -822,6 +885,17 @@ class Orchestrator:
             capability = None      # a requested capability is only a candidate (s5.1)
         if not capability and req.raw_input:
             capability = await intent.resolve_capability(req.raw_input, Classifier(), actor.user_id, self.supported_capabilities())
+            # Live check: placed only by a broad rule ("receipts", "invoice"): the understanding layer may correct it, and
+            # its choice is taken only when it is a registered task chosen with confidence.
+            if capability and not req.part_of_message and intent.broad_rule(req.raw_input, self.supported_capabilities()):
+                from app.modules.agent.understanding import understand
+                try:
+                    u = await understand(req.raw_input, {"capabilities": {k: WORKFLOWS[k].title for k in self.supported_capabilities()},
+                                                          "user_id": actor.user_id, "task_id": f"request:{req.request_id}"})
+                    if u.intent in WORKFLOWS and u.intent != capability and u.confidence >= 0.8:
+                        capability = u.intent
+                except Exception:      # noqa: BLE001 - the rule's choice stands
+                    logger.warning("understanding failed for a request", exc_info=True)
         if not capability and req.raw_input and not req.part_of_message:
             # QA H: where the rules can't place a request, the understanding layer may (rules, then a model only when
             # unsure). It chooses only from the registered workflows; a question or "unsupported" leaves it to the answer path.
@@ -864,7 +938,10 @@ class Orchestrator:
             return {"kind": "needs_confirmation", "reason_codes": ["voice_confirmation_required"], "capability": capability,
                     "message": f"I heard: “{req.raw_input}”. Shall I start “{wf.title}”?"}
 
-        dedupe = req.source_reference and AUTONOMY_RANK[wf.autonomy] >= AUTONOMY_RANK["A3"]
+        # C3: every trigger the Agent starts by itself is one task per trigger and period (its reference carries the
+        # period: "price:test:2026-10"), so two sweeps at the same moment can't both start it; the store's unique key
+        # decides between them. Tasks that act externally are deduplicated the same way whoever starts them.
+        dedupe = req.source_reference and (AUTONOMY_RANK[wf.autonomy] >= AUTONOMY_RANK["A3"] or req.source_channel == "business_event")
         if dedupe:
             existing = await self._runs_for_reference(req.business_id, capability, req.source_reference)
             if existing:
@@ -924,13 +1001,12 @@ class Orchestrator:
                     "message": f"{lead} {first.get('summary') or ''}".strip()}
         if not runs:
             return {"kind": "answer", "capability": capability, "message": "There was nothing to start."}
-        used = sum(int(c.get("credits") or 0) for r in runs for c in (r.get("state") or {}).get("credits") or [])
         # Stopped for want of records (no revenue yet to test a price on): the same goal's check, from the owner's answers.
         gap = ((runs[0].get("state") or {}).get("outcome") or {}).get("check")
         if len(runs) == 1 and runs[0]["status"] == RUN_SUCCEEDED and gap in answers.CHECK_OF_GOAL:
-            return {**answers.check_instead(gap, req.raw_input, runs[0].get("summary") or ""), "run": runs[0], "credits_used": used}
-        return {"kind": "workflow", "capability": capability, "runs": runs, "run": runs[0],
-                "credits_used": used, "credits_left": await self.rt.meter.balance(actor.user_id)}
+            return {**answers.check_instead(gap, req.raw_input, runs[0].get("summary") or ""), "run": runs[0]}
+        # What a task cost is never said with it: the sidebar balance and the Credits page show it.
+        return {"kind": "workflow", "capability": capability, "runs": runs, "run": runs[0]}
 
     async def _reply_to_requests(self, req: AgentRequest, email: str | None) -> dict:
         """One Enquiry to Quote task for each marketplace request still waiting for a reply. Each
@@ -1110,14 +1186,31 @@ class Orchestrator:
             ready = [q for q in bz.quotes_of(data) if bz.status_of(q) in ("accepted", "won") and q["id"] not in invoiced and not q.get("archived")]
             # A quotation named by its number ("invoice QUO-2041026") is that one: nothing to ask.
             wanted = str(req.raw_input or "").lower()
-            numbered = next((q for q in bz.quotes_of(data) if bz.status_of(q) in ("accepted", "won", "sent") and q["id"] not in invoiced and not q.get("archived")
-                             and str(q.get("reference") or q.get("quotation_id") or "").strip()
-                             and str(q.get("reference") or q.get("quotation_id")).lower() in wanted), None)
+            # B7: whatever state it is in (a draft never sent is said so by the task, with the offer to send it), never a
+            # blank new invoice in its place.
+            import re as _re
+            named_q = [q for q in bz.quotes_of(data) if not q.get("archived") and str(q.get("reference") or q.get("quotation_id") or "").strip()
+                       and _re.search(r"(?<![\w-])" + _re.escape(str(q.get("reference") or q.get("quotation_id")).lower()) + r"(?![\w-])", wanted)]
+            numbered = next((q for q in named_q if q["id"] not in invoiced), None)
             if numbered:
                 return {"runs": [{**p, "quote_id": numbered["id"]}]}
+            if named_q:
+                ref = named_q[0].get("reference") or named_q[0].get("quotation_id")
+                done = next((i for i in invoices if i.get("quote_id") == named_q[0]["id"] and not i.get("archived")), {})
+                return {"kind": "answer", "message": f"{ref} has already been invoiced"
+                        + (f" as {done.get('reference') or done.get('invoice_number')}" if done.get("reference") or done.get("invoice_number") else "")
+                        + ", so I haven't made another invoice."}
             if len(ready) == 1:
                 return {"runs": [{**p, "quote_id": ready[0]["id"]}]}
             options = ready or [q for q in bz.quotes_of(data) if bz.status_of(q) == "sent" and q["id"] not in invoiced]
+            # Live check: "Delta are happy with the quotation, go ahead and invoice": the one open quotation for the customer
+            # named is that one (its first distinctive word is enough: "Delta" for Delta Offices Ltd).
+            def _first_word(name: str) -> str:
+                return next((w for w in _re.findall(r"[a-z0-9&']+", name.lower()) if w not in ("the", "and", "mr", "mrs", "ms", "dr") and len(w) > 2), "")
+            for_named = [q for q in options if _first_word(str(q.get("customer_name") or ""))
+                         and _re.search(r"\b" + _re.escape(_first_word(str(q.get("customer_name") or ""))) + r"\b", wanted)]
+            if len(for_named) == 1:
+                return {"runs": [{**p, "quote_id": for_named[0]["id"]}]}
             if not options:
                 return {"switch": "new_invoice"}      # no quotation to convert: a new invoice instead, never a dead end
             return {"kind": "needs_input", "message": "Which quotation should I turn into an invoice?",
@@ -1190,12 +1283,26 @@ class Orchestrator:
         now = self.rt.clock().isoformat()
         budget = dict(config.PAID_BUDGET if ent["is_paid"] else config.DEFAULT_BUDGET)
         # Answers given before the task existed (the homepage conversation) are its answers from the start: not asked again.
-        state: dict[str, Any] = {"params": params, "answers": dict(params.get("answers") or {}) if isinstance(params.get("answers"), dict) else {}}
-        if wf.workflow_key in ("idea_validation", "market_size", "business_plan_draft") and req.raw_input:
+        params = dict(params or {})
+        expected = params.pop("_expected_credits", None)      # A1: what an automatic task will hold, counted in the budget until it is charged
+        state: dict[str, Any] = {"params": params, "answers": dict(params.get("answers") or {}) if isinstance(params.get("answers"), dict) else {},
+                                 **({"expected_credits": int(expected)} if expected else {})}
+        if wf.workflow_key == "quote_to_cash" and req.raw_input and intent.says_accepted(req.raw_input):
+            # B7: "Customer accepted QUO-1131026" is the owner confirming the acceptance: not asked again.
+            state["answers"].setdefault("confirm_acceptance", "yes")
+        if wf.workflow_key in ("idea_validation", "market_size", "business_plan_draft", "sales_letter_draft") and req.raw_input:
             from app.modules.agent import said
             named = said.idea_in(req.raw_input)
             if named:      # "Validate my idea: a mobile car wash in Abuja": that is the idea, whatever the profile says
                 state["answers"]["description"] = named
+                state["idea_from_message"] = True
+        if req.raw_input and req.source_channel in ("text", "voice"):
+            await self._read_fields(state, wf.workflow_key, req)
+            # F1: an idea the model read from the message is the message's idea, as one the rules read is: it is compared
+            # with the business's own offer (A2) before anything is made under the business's name.
+            read = ((state.get("understood") or {}).get("fields") or {}).get("description") or {}
+            if wf.workflow_key in ("idea_validation", "market_size", "business_plan_draft", "sales_letter_draft") \
+                    and (state.get("understood") or {}).get("by") == "model" and read.get("value"):
                 state["idea_from_message"] = True
         for k in ("enquiry_id", "quote_id", "invoice_id", "classification", "rfq_id"):
             if params.get(k):
@@ -1231,6 +1338,24 @@ class Orchestrator:
         return {**run, "status": RUN_RUNNING}
 
     PICK_UP_AFTER = timedelta(seconds=90)
+    HEARTBEAT_SECONDS = 30      # A3: a step still working says so well inside PICK_UP_AFTER, so it is never run a second time alongside
+
+    async def _beating(self, run_id: str, work):
+        """Run one step while telling the store it is still alive. A long step (an idea scored with its research and
+        write-up) took longer than PICK_UP_AFTER without a change to the task, was taken for abandoned and started
+        again beside itself: a second hold, and the page watching the wrong copy (QA round 10, A1 and A3)."""
+        async def beat() -> None:
+            while True:
+                await asyncio.sleep(self.HEARTBEAT_SECONDS)
+                try:
+                    await self.rt.store.update_run(run_id, {"updated_at": self.rt.clock().isoformat()})
+                except Exception:      # noqa: BLE001 - a missed beat is caught by the next one
+                    logger.info("heartbeat missed for task %s", run_id)
+        beating = asyncio.ensure_future(beat())
+        try:
+            return await work
+        finally:
+            beating.cancel()
 
     def abandoned(self, run: dict) -> bool:
         """Started in the background, mid-step, with nothing here carrying it on and no change for
@@ -1325,16 +1450,16 @@ class Orchestrator:
             ctx.step = step
             ctx.step_key, ctx.step_id, ctx.notes = step_def.key, step["id"], []
             try:
-                result = await step_def.handler(ctx)
+                result = await self._beating(run["id"], step_def.handler(ctx))
             except NeedsInformation as ni:
                 result = WaitForInput(ni.question, ni.fields)
             except NeedsApproval as na:
                 return await self._await_approval(ctx, step, na)
             except GuardrailBlocked as g:
                 return await self._stop(ctx, step, g.decision.reason_codes[0], g.decision.message, SUB_BLOCKED)
-            except InsufficientCredits:
+            except InsufficientCredits as e:
                 return await self._stop(ctx, step, "credits_exhausted",
-                                        "You're out of AI Credits. Nothing was lost; top up or upgrade, then retry.", SUB_BLOCKED)
+                                        f"{config.short_of(e.required, e.available)} Nothing was lost; retry once you have.", SUB_BLOCKED)
             except DeliveryUnconfirmed as e:
                 return await self._stop(ctx, step, "delivery_unconfirmed", str(e), SUB_DELIVERY_UNCERTAIN)
             except DeliveryUncertain as e:
@@ -1352,7 +1477,8 @@ class Orchestrator:
             summary = " ".join(ctx.notes) or None
             if isinstance(result, WaitForInput):
                 await self._step_update(step, {"state": STEP_AWAITING_INPUT, "finished_at": self.rt.clock().isoformat(), "note": result.question})
-                run.update({"substatus": SUB_WAITING_INFO, "pending_question": {"question": result.question, "fields": _offer_vat_default(await self._with_what_was_said(run, result.fields))},
+                run.update({"substatus": SUB_WAITING_INFO, "pending_question": {"question": result.question, "fields": _offer_vat_default(await self._with_what_was_said(run, result.fields)),
+                                                                                 **(await self._said_lines(run))},
                             "next_action": result.question})
                 return await self._save(run, summary)
             if isinstance(result, WaitForEvent):
@@ -1399,6 +1525,14 @@ class Orchestrator:
         return await self._save(run, None)
 
     async def _save(self, run: dict, summary: str | None) -> dict:
+        if run.get("status") != RUN_CANCELLED:
+            # C2: stopped by the owner while a step was still working: what the step comes back with never undoes the
+            # stop (the task stays cancelled, and the page shows it at once).
+            stored = await self.rt.store.get_run(run["id"])
+            if stored and stored.get("status") == RUN_CANCELLED:
+                run.update({k: stored.get(k) for k in ("status", "substatus", "reason_code", "pending_question", "completed_at", "summary", "next_action")})
+                await self.rt.store.update_run(run["id"], {"state": run["state"], "budget": run["budget"]})
+                return run
         patch = {k: run[k] for k in ("status", "substatus", "reason_code", "state", "budget", "current_step", "seq",
                                      "wake_at", "next_action", "pending_question", "error", "completed_at")}
         if summary:
@@ -1417,6 +1551,10 @@ class Orchestrator:
             run["state"]["failed_at"] = self.rt.clock().isoformat()      # the back-off before trying again counts from here
         if status == RUN_SUCCEEDED:
             await self._charge_for_the_task(run)
+            if run.get("source_channel") in ("text", "voice", "ui_action"):
+                await self._follow_on(run)      # a receipt started by a payment is said with the payment, never "ask me for it"
+        elif status == RUN_CANCELLED or (status == RUN_FAILED and self.next_attempt_at(run) is None):
+            await self.refund_undelivered(run)      # F1: final, and nothing reached the owner
         await self._save(run, summary)
         if status == RUN_CANCELLED:
             await self.rt.store.release_dedupe(run["id"])
@@ -1424,6 +1562,38 @@ class Orchestrator:
         await self._event(run, {RUN_SUCCEEDED: "WorkflowSucceeded", RUN_FAILED: "WorkflowFailed"}.get(status, "WorkflowStatusChanged"),
                           {"reason_code": reason})
         return run
+
+    async def _follow_on(self, run: dict) -> None:
+        """The work a finished task calls for next (the receipt for a payment just recorded), started now when the owner has
+        switched automatic starting on, and said in this task's own reply with where to find it."""
+        from app.modules.agent import autostart
+        keys = ("invoice_id", "quote_id", "contract_id", "customer_id")
+        mine = {(k, str(run["state"].get(k))) for k in keys if run["state"].get(k)} | {(k, str((run["state"].get("answers") or {}).get(k))) for k in keys
+                                                                                       if (run["state"].get("answers") or {}).get(k)}
+        if not mine or (run["state"].get("outcome") or {}).get("skipped"):
+            return      # nothing done here (a skipped reminder, say): nothing follows from it
+        try:
+            started = [r for r in await autostart.sweep(self, run["business_id"], related=mine) if r.get("workflow_key") != run.get("workflow_key")]
+        except Exception:      # noqa: BLE001 - the next sweep starts it; this task is done either way
+            logger.warning("follow-on not started for task %s", run.get("id"), exc_info=True)
+            return
+        said, links = [], []
+        for r in started:
+            if r.get("status") == RUN_AWAITING_APPROVAL:
+                pending = await self.rt.store.list_approvals(run_id=r["id"], status=APPROVAL_PENDING)
+                p = (pending[0].get("payload") or {}) if pending else {}
+                ref = p.get("receipt_number") or p.get("reference") or ""
+                noun = {"receipt_send": "A receipt", "payment_followup": "A payment reminder", "quote_to_cash": "An invoice"}.get(r.get("workflow_key"), r.get("title") or "It")
+                said.append(f"{noun}{' ' + ref if ref else ''} is ready for your approval.")
+                links.append({"label": "Review it", "to": f"/agent/runs/{r['id']}"})
+            elif r.get("status") in (RUN_RUNNING, RUN_SUCCEEDED):
+                said.append(f"I've started {str(r.get('title') or 'the next task').lower()} for you.")
+                links.append({"label": r.get("title") or "The next task", "to": f"/agent/runs/{r['id']}"})
+        if said:
+            run["next_action"] = " ".join(said)
+            out = run["state"].setdefault("outcome", {})
+            out["links"] = [*links, *(out.get("links") or [])]
+            run["state"]["follow_on"] = [{"run_id": r["id"], "workflow_key": r.get("workflow_key"), "status": r.get("status")} for r in started]
 
     async def _charge_for_the_task(self, run: dict) -> None:
         """The task price, taken once when a task has succeeded and none of its steps charged
@@ -1435,15 +1605,13 @@ class Orchestrator:
             return
         if run.get("workflow_key") in config.SELF_PRICED or state.get("first_task_free"):
             return
-        from app.modules.agent import autostart
-        if run.get("source_channel") == autostart.CHANNEL:
-            return      # started by the system, not asked for: its spending is what the automatic budget governs, and unpriced preparation stays free
+        # A5: one price per task, whoever starts it. A task the Agent started by itself costs what it costs when asked for,
+        # and is counted in the month's automatic budget (autostart.budget), which decides whether it starts at all.
         state["task_charged"] = True      # decided once, whatever happens next: a retry never charges again
         try:
             payer = run.get("requester_id") if run.get("requester_id") not in (None, "system") else await self.rt.business.owner_id(run["business_id"])
-            async with self.rt.meter.charge(payer, config.BASE_TASK_FEATURE):
+            async with self.charge_once(run, payer, config.BASE_TASK_FEATURE, f"{config.BASE_TASK_FEATURE}:{run['id']}", "task"):
                 pass
-            await self.note_spend(run, config.BASE_TASK_FEATURE, "task")
         except InsufficientCredits:
             state["task_charge_missed"] = True      # the work is done and kept; the balance was already too low to take it
         except Exception:      # noqa: BLE001 - the price list is unreachable: the finished task is not undone for it
@@ -1623,6 +1791,10 @@ class Orchestrator:
             raise Conflict("run_finished", f"This task has already {_ended(run)}, so there's nothing to cancel.")
         for a in await self.rt.store.list_approvals(run_id=run_id, status=APPROVAL_PENDING):
             await self.rt.store.update_approval(a["id"], {"status": APPROVAL_CANCELLED})
+        # C2: a step that was waiting for the owner is closed with the task, never left saying "Waiting for you".
+        for st in await self.rt.store.list_steps(run_id):
+            if st.get("state") in ("awaiting_input", "awaiting_approval", "running"):
+                await self.rt.store.update_step(st["id"], {"state": "cancelled", "finished_at": self.rt.clock().isoformat()})
         await self._close_unsent_quote(run, "cancelled", user_id)
         done = [s for s in await self.rt.store.list_steps(run_id) if s.get("external_ref")]
         # Cancellation stops future steps; it never claims to undo what was already sent (AC-14).
@@ -2208,7 +2380,7 @@ class Orchestrator:
         attempt = int(state.get("auto_retries") or 0)
         failed_at = bz._moment(state.get("failed_at")) or self.rt.clock()
         if attempt >= len(self.AUTO_RETRY_AFTER):
-            return failed_at + self.AUTO_RETRY_DAILY
+            return None      # A1: out of quick attempts, it waits for the owner (no daily retries holding credits again)
         return failed_at + (timedelta(minutes=1) if attempt == 0 and run.get("reason_code") != "stalled" else self.AUTO_RETRY_AFTER[attempt])
 
     async def _after_retry(self, run: dict | None, stale: str | None) -> None:
@@ -2241,7 +2413,8 @@ class Orchestrator:
                 continue
             state = run.get("state") or {}
             attempt = int(state.get("auto_retries") or 0)
-            if self.rt.clock() < self.next_attempt_at(run):
+            due = self.next_attempt_at(run)
+            if due is None or self.rt.clock() < due:
                 continue
             state["auto_retries"] = attempt + 1
             await self.rt.store.update_run(run["id"], {"state": state, "status": RUN_RUNNING, "substatus": None, "reason_code": None, "error": None})
@@ -2260,11 +2433,12 @@ class Orchestrator:
                     .replace(" I'm picking it up again from where it stopped.", "")
                 why = why.split(" Nothing was sent twice.")[0].split("it still didn't go through. ")[-1].replace(" Nothing was sent.", "").strip()
                 why = why if why.endswith((".", "!", "?")) else f"{why}."
-                due = self.next_attempt_at(again)
-                when = f"{due.day} {due.strftime('%b')} at {due.strftime('%H:%M')} UTC" if due else "tomorrow"
+                # A1: parked in Needs attention, not tried again by itself: every attempt's hold was released when it
+                # failed, and nothing more is held while it waits for the owner.
                 message = (f"I've tried this {int(again['state']['auto_retries'])} more times and it still didn't go through. {why} "
-                           f"Nothing was sent twice. My next attempt is on {when}.")
-                await self.rt.store.update_run(again["id"], {"error": message, "next_action": message, "summary": message})
+                           "Nothing was sent twice and nothing is held for it. Try it again when you're ready.")
+                await self.rt.store.update_run(again["id"], {"error": message, "next_action": message, "summary": message,
+                                                             "reason_code": "retries_exhausted", "substatus": SUB_BLOCKED})
         return tried
 
     async def tick(self) -> int:
@@ -2308,3 +2482,21 @@ class Orchestrator:
                 await self.advance(run["id"])
                 woken += 1
         return woken
+
+
+def extraction_defaults(fields: list[dict], understood: dict, answers: dict) -> list[dict]:
+    """The form, with what the model read from the message filled in and marked as said ("From what you said", each with
+    Edit). A value it wasn't sure of is filled in to confirm. Nothing is read here from the text itself."""
+    out = []
+    for f in fields:
+        got = understood.get(f.get("key"))
+        if not got:
+            out.append(f)
+            continue
+        value = answers.get(f.get("key")) if answers.get(f.get("key")) not in (None, "") else got["value"]
+        if f.get("type") == "line_items" and isinstance(value, list):
+            out.append({**f, "suggested": value, "said": True, "said_text": "; ".join(f"{l['quantity']} x {l['name']}" for l in value)})
+            continue
+        text = got.get("name") or got.get("span") or value
+        out.append({**f, "default": value, "said": True, "said_text": str(text), **({"confirm": True} if got.get("confidence", 0) < 0.7 else {})})
+    return out

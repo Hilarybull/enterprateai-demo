@@ -68,14 +68,14 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     await type("need a quotation");
     const dialog = screen.getByRole("dialog", { name: "A few details" });
     expect(onTheDashboard()).toBeTruthy();                                // no route change
-    // Counted in the task's own questions, never the workflow's steps (QA P2-1). A new customer's name and email
-    // count until a customer on record is chosen, so the total only ever goes down (QA U3).
-    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 1 of 4");
+    // Counted in the task's own questions, never the workflow's steps (QA P2-1), and only those it will ask (E4): a new
+    // customer's name and email are not counted until "+ New customer" is chosen.
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 1 of 2");
     expect(within(dialog).queryByText(QUESTION.question)).toBeNull();      // one question at a time: the form's own question isn't asked over the field's
     // Customers on record, searchable, with "+ New customer"; a new customer's name and email are asked only once chosen.
     expect(within(dialog).getByLabelText("Search your customers")).toBeTruthy();
     fireEvent.click(within(dialog).getByLabelText("+ New customer"));
-    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 1 of 4");      // their name and email to come: no change
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 1 of 4");      // "+ New customer": their name and email are now to be asked
     fireEvent.change(within(dialog).getByLabelText("Search your customers"), { target: { value: "fra" } });
     expect(within(dialog).queryByText("QA Round Six Ltd")).toBeNull();
     fireEvent.click(within(dialog).getByText("Frank"));

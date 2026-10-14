@@ -8,6 +8,7 @@ import AgentPanel from "../components/agent/AgentPanel";
 import { Icon, Modal, Pill, QuestionForm } from "../components/agent/AgentBits";
 import { agentErrorMessage, answerRun, forgetAgentFact, getAgentMemory, getAgentPolicy, getAgentSummary, listDocuments, listRuns, queryOf, runStateLabel, runTone, saveAgentFact, saveAgentPolicy } from "../lib/agent";
 import { useWorkspaceStore } from "../store/workspace";
+import { apiRequestCached } from "../api/client";
 import Pagination, { PAGE_SIZE, pageSlice } from "../components/Pagination";
 
 const TABS = [
@@ -21,6 +22,7 @@ const TABS = [
 const DOC_TONE = { awaiting_approval: "amber", draft: "slate", sent: "indigo", viewed: "indigo", pending: "indigo", accepted: "emerald", won: "emerald", paid: "emerald",
   signed: "emerald", overdue: "rose", declined: "rose", lost: "rose", disputed: "rose", credited: "slate", void: "slate", voided: "slate", cancelled: "slate", expired: "slate" };
 const docMoney = (d) => {
+  if (d.total == null) return "";      // B9: a prepared document (a funding pack, a plan) has no amount
   try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: d.currency || "GBP" }).format(Number(d.total || 0)); } catch { return String(d.total ?? ""); }
 };
 
@@ -57,7 +59,7 @@ export function DocumentList({ documents, kind, onKind, onOpen, onEdit, search: 
           <option value="newest">Newest first</option>
           <option value="oldest">Oldest first</option>
         </select>
-        <p className="w-full text-[12px] text-slate-500">Quotations, invoices, contracts, proposals, purchase orders, credit notes and receipts. A draft can be edited while it waits for your approval.</p>
+        <p className="w-full text-[12px] text-slate-500">Quotations, invoices, contracts, proposals, purchase orders, credit notes and receipts, and what the Agent prepares for you to review (funding packs, business plans, sales letters). A draft can be edited while it waits for your approval.</p>
       </div>
       {items.length === 0 ? (
         <p className="px-5 py-10 text-center text-sm text-slate-500">{(paged ? documents?.all_total : all.length) && (words.length || kind) ? "No documents match." : TABS.find((t) => t.key === "documents").empty}</p>
@@ -95,13 +97,23 @@ export function DocumentList({ documents, kind, onKind, onOpen, onEdit, search: 
     </div>
   );
 }
-const CAPABILITIES = [
-  ["enquiry_to_quote", "Enquiry to Quote"], ["quote_to_cash", "Quote to Cash"], ["payment_followup", "Payment Follow-up"],
-  ["receipt_send", "Receipt Sending"], ["risk_concentration", "Risk & Concentration"], ["scenario_help", "Scenario Help"],
-  ["readiness_refresh", "Readiness Refresh"], ["launch_evidence_gaps", "Launch Evidence Gaps"], ["funding_pack_draft", "Funding Pack Draft"],
-  ["registration_checklist", "Registration Checklist"], ["price_test", "Price Test"],
-];
-const STATUSES = [["running", "In progress"], ["awaiting_approval", "Needs approval"], ["succeeded", "Completed"], ["failed", "Needs attention"], ["cancelled", "Cancelled"]];
+/** C1: the History filter lists every task in the registry, by its own title (never a list kept by hand). */
+export function useCapabilityOptions() {
+  const [options, setOptions] = useState([]);
+  useEffect(() => {
+    let live = true;
+    apiRequestCached("/agent/capabilities")
+      .then((res) => {
+        if (!live) return;
+        const rows = (res?.workflows || []).map((w) => [w.workflow_key, w.title]).filter(([k, t]) => k && t);
+        setOptions(rows.sort((a, b) => a[1].localeCompare(b[1])));
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  return options;
+}
+const STATUSES = [["running", "In progress"], ["awaiting_approval", "Needs approval"], ["succeeded", "Completed"], ["nothing_to_do", "Nothing to do"], ["failed", "Needs attention"], ["cancelled", "Cancelled"]];
 const fmt = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 const browserZone = () => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; }
@@ -116,7 +128,7 @@ function zoneOptions(current) {
 const selectCls = "rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
 
 const STARTS = {
-  automatic: ["Starts by itself", "emerald"], suggested: ["Suggested to you", "slate"],
+  automatic: ["Starts by itself", "emerald"], suggested: ["Suggests it", "slate"],
   upgrade: ["Needs an upgrade", "amber"], nothing: ["No task", "slate"],
 };
 const STARTS_TONE = { emerald: "bg-emerald-50 text-emerald-700", amber: "bg-amber-50 text-amber-700", slate: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300" };
@@ -265,7 +277,7 @@ function Settings({ businessId, onClose }) {
         automation_items: form.items, automation_credit_cap: Math.max(0, Number(form.credit_cap) || 0),
         reminder_cadence_days: String(form.cadence).split(",").map((s) => Number(s.trim())).filter((n) => n > 0),
         max_reminders: Number(form.max_reminders), concentration_alert_pct: Number(form.concentration_alert_pct),
-        ...(form.timezone && form.timezone !== state.timezone ? { timezone: form.timezone } : {}),
+        ...(form.timezone && form.timezone !== state.timezone ? { timezone: form.timezone, timezone_source: "owner" } : {}),
       });
       onClose(true);
     } catch (e) {
@@ -361,6 +373,7 @@ function Settings({ businessId, onClose }) {
 }
 
 export default function AgentCentrePage() {
+  const capabilityOptions = useCapabilityOptions();
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const [params, setParams] = useSearchParams();
@@ -459,7 +472,7 @@ export default function AgentCentrePage() {
         <div className="flex flex-wrap items-end gap-3">
           <select aria-label="Capability" className={selectCls} value={filters.capability} onChange={(e) => setFilters((f) => ({ ...f, capability: e.target.value }))}>
             <option value="">All capabilities</option>
-            {CAPABILITIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            {capabilityOptions.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
           <select aria-label="Status" className={selectCls} value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
             <option value="">All statuses</option>
@@ -477,7 +490,7 @@ export default function AgentCentrePage() {
           <DocumentList documents={documents} kind={docKind} onKind={setDocKind} search={docSearch} order={docOrder}
             onSearch={(v) => look({ q: v })} onOrder={(v) => look({ sort: v === "newest" ? "" : v })}
             onEdit={(d) => setDraft({ runId: d.run_id, edit: true })}
-            onOpen={(d) => (d.status === "awaiting_approval" ? setDraft({ runId: d.run_id, edit: false }) : navigate(`/agent/runs/${d.run_id}`))} />
+            onOpen={(d) => (d.to ? navigate(d.to) : d.status === "awaiting_approval" ? setDraft({ runId: d.run_id, edit: false }) : navigate(`/agent/runs/${d.run_id}`))} />
         ) : visible.length === 0 ? (
           <p className="px-5 py-10 text-center text-sm text-slate-500">{TABS.find((t) => t.key === tab).empty}</p>
         ) : (
@@ -498,9 +511,7 @@ export default function AgentCentrePage() {
                       {r.question_title ? `${r.question_title}${r.question_detail ? ` (${r.question_detail})` : ""}` : r.status === "succeeded" ? r.summary : r.next_action || r.summary || r.goal}
                     </span>
                   </span>
-                  <span className="hidden shrink-0 text-right text-[12px] text-slate-400 sm:block">{fmt(r.updated_at || r.created_at)}
-                    {r.credits_used > 0 && <span className="block">{r.credits_used} credit{r.credits_used === 1 ? "" : "s"}</span>}
-                  </span>
+                  <span className="hidden shrink-0 text-right text-[12px] text-slate-400 sm:block">{fmt(r.updated_at || r.created_at)}</span>
                   <span className="shrink-0 text-slate-300"><Icon name="chevron" className="h-4 w-4" /></span>
                 </button>
                 {r.status === "running" && r.pending_question && !r.pending_question.optional && (

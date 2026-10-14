@@ -22,6 +22,9 @@ const remembered = () => { try { return localStorage.getItem(KEY); } catch { ret
 
 export const fetchFirstValue = (sessionId) => apiRequest(`/task-sessions/${sessionId}/first-value`, "GET");
 
+// The full assessment's classification, as LR §8 / FR §8 word it.
+const CLASS_WORD = { ready: "Ready", conditionally_ready: "Conditionally ready", not_ready: "Not ready", insufficient_evidence: "Insufficient evidence" };
+
 export default function FirstValueCard({ result, onDismiss = null, onContinue = null, continueLabel = "Open my dashboard", className = "", onPremium = null, extra = null }) {
   const navigate = useNavigate();
   const [gate, setGate] = useState(false);      // the premium step was chosen: its gate, shown after the value and never before it
@@ -35,6 +38,9 @@ export default function FirstValueCard({ result, onDismiss = null, onContinue = 
   const failed = result.blockers.filter((b) => b.kind === "failed");
   const missing = result.blockers.filter((b) => b.kind !== "failed");
   const numeric = typeof result.score === "number";
+  // §2/§3: where the full assessment exists, its summary is the one shown (never a second score); until then the quick
+  // check's own score, labelled Provisional, with its coverage beside it.
+  const full = result.assessment?.assessment_id ? result.assessment : null;
   const g = served?.gate || result.premium_gate;
   const act = async (a) => {
     if (a.save) { setSaved(true); return; }
@@ -69,14 +75,22 @@ export default function FirstValueCard({ result, onDismiss = null, onContinue = 
       </div>
 
       <div className="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
-        <p data-fv-score className="text-3xl font-extrabold tabular-nums text-slate-950 dark:text-slate-100">
-          {result.score}{result.score_label && <span className="ml-1.5 text-sm font-semibold text-slate-500">{result.score_label}</span>}
-        </p>
+        {full ? (
+          <p data-fv-score data-fv-assessment className="text-3xl font-extrabold tabular-nums text-slate-950 dark:text-slate-100">
+            {full.score ?? "No score yet"}
+            <span className="ml-1.5 text-sm font-semibold text-slate-500">{CLASS_WORD[full.classification] || ""} · from your full readiness check</span>
+          </p>
+        ) : (
+          <p data-fv-score className="text-3xl font-extrabold tabular-nums text-slate-950 dark:text-slate-100">
+            {result.score}{result.score_label && <span className="ml-1.5 text-sm font-semibold text-slate-500">{result.score_label}</span>}
+            {numeric && <span data-fv-provisional className="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 align-middle text-[11px] font-semibold text-amber-800">Provisional</span>}
+          </p>
+        )}
         {/* Evidence coverage: how much is known. Shown beside the result, never as part of it. */}
         <div className="min-w-[10rem] flex-1" data-fv-coverage>
-          <p className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Evidence coverage {result.evidence_coverage}%</p>
-          <div role="progressbar" aria-label="Evidence coverage" aria-valuemin={0} aria-valuemax={100} aria-valuenow={result.evidence_coverage} className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-            <div className="m-bar-fill h-full rounded-full bg-brand-500" style={{ width: `${result.evidence_coverage}%` }} />
+          <p className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Evidence coverage {(full ? full.evidence_coverage : result.evidence_coverage) ?? 0}%</p>
+          <div role="progressbar" aria-label="Evidence coverage" aria-valuemin={0} aria-valuemax={100} aria-valuenow={(full ? full.evidence_coverage : result.evidence_coverage) ?? 0} className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+            <div className="m-bar-fill h-full rounded-full bg-brand-500" style={{ width: `${(full ? full.evidence_coverage : result.evidence_coverage) ?? 0}%` }} />
           </div>
         </div>
       </div>

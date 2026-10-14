@@ -288,6 +288,12 @@ def read(text: str, today: date) -> dict[str, Any]:
     if party and not _REF.search(party):
         out["party"] = re.sub(r"\s+", " ", party).strip(" .,:;-")
     extra = [c for c in clauses[1:] if c and not re.fullmatch(r"(?:and|plus|also)?", c, re.I)]
+    # "150 back", "£20 off", "refund 30": an amount, never the work or the reason (the reason on a credit note is words).
+    back = [c for c in extra if _MONEY_BACK.fullmatch(c.strip(" .,;"))]
+    if back:
+        m = re.search(r"\d[\d,]*(?:\.\d+)?", back[0])
+        out["back"] = float(m.group(0).replace(",", "")) if m else None
+        extra = [c for c in extra if c not in back]
     if not work and extra and not _REF.fullmatch(extra[0]):
         # The next thing said after the name: the work ("Mark, website redesign"), or the reason on a credit note.
         work = extra.pop(0)
@@ -324,6 +330,8 @@ def _lines(work: str, money: list[dict]) -> list[dict]:
         if i < len(money):
             x = money[i]
             price = x["value"] if (x["each"] or qty == 1) else round(x["value"] / qty, 2)      # a total over several: what each comes to
+        # B3: "the website build" is the website build: a leading article or connecting word is never part of a name.
+        name = re.sub(r"^(?:the|a|an|my|our|for|of|some)\s+", "", name.strip(), flags=re.I).strip()
         lines.append({"name": name, "quantity": int(qty) if float(qty).is_integer() else qty, "unit_price": price})
     return lines
 
@@ -495,6 +503,9 @@ def apply(fields: list[dict], text: str, today: date, *, default_currency: str =
     f = by_key.get("paid")
     if f and told.get("paid_on") and empty(f) and any(o.get("value") == "yes" for o in f.get("options") or []):
         fill(f, "yes", "Paid")
+    f = by_key.get("amount")
+    if f and told.get("back") and empty(f) and "refund_amount" in by_key:      # a credit note: "150 back" is the amount credited
+        fill(f, told["back"], money_text(told["back"], default_currency))
     work = told.get("work")
     for key in ("solution", "description", "reason"):
         f = by_key.get(key)
@@ -528,13 +539,20 @@ def apply(fields: list[dict], text: str, today: date, *, default_currency: str =
 _AFTER = r"\s*(?:[:,-]|\bof\b|\bfor\b|\babout\b|\bis\b|\bthat\b|\bcalled\b)?\s*(?P<idea>.+)$"
 _IDEA = re.compile(r"\b(?:validate|test|check|assess|evaluate|size|plan)\b[^:.]*?\b(?:idea|concept)\b" + _AFTER, re.I)
 _IDEA_LOOSE = re.compile(r"\b(?:validate|test|check|assess|evaluate|size|plan)\b[^:.]*?\b(?:business|startup|market)\b" + _AFTER, re.I)
+# F1: "a business plan for a mobile dog grooming van", "a sales letter for…", "the market for…": the idea is what follows.
+# "…for my business" or "for our cleaning firm" is the business's own, so it is no idea of its own.
+_FOR_IDEA = re.compile(r"\b(?:business\s+plan|plan|sales\s+letter|market)\s+for\s+(?!(?:my|our|this|the)\s+(?:own\s+)?(?:business|company|firm)\b)"
+                       r"(?!my\b|our\b)(?P<idea>.+)$", re.I)
+
+
+_MONEY_BACK = re.compile(r"(?:refund(?:ed)?\s+|give\s+(?:them\s+)?)?(?:[£$€₦]\s?)?\d[\d,]*(?:\.\d+)?\s*(?:pounds?|dollars?|euros?)?\s*(?:back|off|refund(?:ed)?)?", re.I)
 
 
 def idea_in(text: str | None) -> str:
     """The business idea named in a message ("Validate my idea: a mobile car wash in Abuja" gives
     "Mobile car wash in Abuja"), or "" when the message names none ("validate my idea")."""
     said = re.sub(r"\s+", " ", str(text or "")).strip()
-    m = _IDEA.search(said) or _IDEA_LOOSE.search(said)
+    m = _IDEA.search(said) or _IDEA_LOOSE.search(said) or _FOR_IDEA.search(said)
     if not m:
         return ""
     idea = re.sub(r"^(?:an?|the|my|our|this)\s+", "", m.group("idea").strip(" .,:;-\"'"), flags=re.I).strip()
@@ -542,3 +560,74 @@ def idea_in(text: str | None) -> str:
         return ""
     return idea[:1].upper() + idea[1:300]
 
+
+
+# ── B1: a price that recurs, and for how long ──────────────────────────────────
+_EVERY = {"day": "day", "daily": "day", "week": "week", "weekly": "week", "wk": "week", "fortnight": "fortnight", "fortnightly": "fortnight",
+          "month": "month", "monthly": "month", "mo": "month", "pcm": "month", "pm": "month", "quarter": "quarter", "quarterly": "quarter",
+          "year": "year", "yearly": "year", "annum": "year", "annually": "year", "yr": "year"}
+_RECURS = re.compile(r"(?:\s*(?:a|an|per|each|every|/)\s*(?P<u1>day|week|wk|fortnight|month|mo|quarter|year|yr|annum)\b|\s*(?P<u2>daily|weekly|fortnightly|monthly|quarterly|yearly|annually|pcm|p\.?m\.?)(?!\w))", re.I)
+_TERM = re.compile(rf"\bfor\s+(?:a\s+(?:period|term)\s+of\s+)?(?P<n>{_NUM}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|eighteen|twenty[- ]four|thirty[- ]six)"
+                   r"\s+(?P<u>days?|weeks?|fortnights?|months?|quarters?|years?)\b", re.I)
+_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+          "eighteen": 18, "twenty-four": 24, "twenty four": 24, "thirty-six": 36, "thirty six": 36}
+_PER_YEAR = {"day": 365, "week": 52, "fortnight": 26, "month": 12, "quarter": 4, "year": 1}
+
+
+def recurring_in(text: str | None) -> dict[str, Any] | None:
+    """"£450 a month for 12 months" -> {amount: 450, every: "month", count: 12, total: 5400}. The count is how many
+    periods the term covers (a 1-year term at a monthly price is 12). None when no price recurs."""
+    said = str(text or "")
+    for m in _MONEY.finditer(said):
+        after = said[m.end():m.end() + 24]
+        r = _RECURS.match(after)
+        if not r:
+            continue
+        every = _EVERY[(r.group("u1") or r.group("u2") or "").lower().replace(".", "")]
+        amount = _number(m.group("a") or m.group("b") or m.group("c"), m.group("as") or m.group("bs") or m.group("cs"))
+        count = None
+        t = _TERM.search(said[m.end():])
+        if t:
+            raw = t.group("n").lower()
+            n = _WORDS.get(raw) or float(raw.replace(",", "")) if not raw[0].isdigit() else float(raw.replace(",", ""))
+            unit = t.group("u").lower().rstrip("s")
+            count = round(n * _PER_YEAR[every] / _PER_YEAR[unit]) if unit in _PER_YEAR else None
+        return {"amount": amount, "every": every, "count": count, "total": round(amount * count, 2) if count else None}
+    return None
+
+
+def pricing_text(p: dict | None, currency: str = "GBP") -> str:
+    """"£450.00/month × 12 = £5,400.00", or "£450.00/month" when the term isn't set."""
+    if not p or not p.get("every"):
+        return ""
+    sign = SIGN_OF.get(currency, currency + " ")
+    base = f"{sign}{float(p['amount']):,.2f}/{p['every']}"
+    return f"{base} × {p['count']} = {sign}{float(p['total']):,.2f}" if p.get("count") else base
+
+
+# ── B2: what a contract is for, from the request ───────────────────────────────
+_SCOPE_DROP = re.compile(
+    r"\b(?:new|create|make|prepare|draft|write|send|set\s+up|i\s+need|please|can\s+you|could\s+you)\b"
+    r"|\b(?:a|an|the)?\s*(?:service\s+agreement|agreement|contract)s?\b"
+    r"|\bfor\s+(?:a\s+(?:period|term)\s+of\s+)?\S+\s+(?:days?|weeks?|fortnights?|months?|quarters?|years?)\b"
+    r"|\bstarting\b.*$|\bfrom\s+(?:next|this|the)\b.*$", re.I)
+
+
+def scope_in(text: str | None, party: str | None = None) -> str:
+    """"New contract for Nova Labs: weekly office clean, £450 a month for 12 months" -> "Weekly office clean". What is
+    left once the command, the document, who it is for, the price (with how often and how long) and dates are taken out.
+    Empty when nothing is left: then the scope is asked for, never filled with the customer's name."""
+    said = str(text or "")
+    said = _MONEY.sub(" ", said)
+    said = re.sub(r"(?:\s*(?:a|an|per|each|every|/)\s*(?:day|week|wk|fortnight|month|mo|quarter|year|yr|annum)\b|\s*(?:pcm|p\.?m\.?)(?!\w))", " ", said, flags=re.I)
+    if party:
+        said = re.sub(r"\b(?:for|with|to)\s+" + re.escape(party.strip()) + r"\b", " ", said, flags=re.I)
+        said = re.sub(re.escape(party.strip()), " ", said, flags=re.I)
+    said = _EMAIL.sub(" ", said)
+    said = _SCOPE_DROP.sub(" ", said)
+    parts = [p.strip(" .:-,;") for p in re.split(r"[,:;\n]|\s-\s", said)]
+    parts = [p for p in parts if len(re.sub(r"[^A-Za-z]", "", p)) >= 4 and not re.fullmatch(r"(?:for|with|to|at|and|of|the|a|an)(?:\s+\w+)?", p, re.I)]
+    best = max(parts, key=len) if parts else ""
+    best = re.sub(r"^(?:for|with|to|of|and)\s+", "", best, flags=re.I).strip()
+    best = re.sub(r"(?:\s+(?:at|for|of|with|and|to|on|by|from|costing|priced))+$", "", best, flags=re.I).strip()
+    return (best[:1].upper() + best[1:])[:400] if best else ""

@@ -33,30 +33,32 @@ def test_automatic_work_that_costs_credits_pauses_at_the_cap_and_says_so():
     env = Env()
     _overdue(env, 3)
     _only(env, "invoice_overdue", cap=2)
-    for r in run(autostart.sweep(env.orch, "A")):                         # three reminders prepared (preparing is free)
-        env.approve(r)                                                    # each one sent costs a credit
+    first = run(autostart.sweep(env.orch, "A"))
+    assert len(first) == 1                                                # A1: one at 2 credits fits the cap of 2; the next two would go over, so they wait
+    for r in first:
+        env.approve(r)
     runs = run(env.store.list_runs("A"))
     spend = autostart.budget(run(env.store.get_policy("A")), runs, env.now)
-    assert spend == {"cap": 2, "used": 6, "paused": True}                 # three sent at 2 credits each
+    assert spend == {"cap": 2, "used": 2, "spent": 2, "held": 0, "left": 0, "paused": True}
     _overdue(env, 5)
     for inv in env.fin["invoices"][3:]:
         inv["id"] += "-new"
     assert run(autostart.sweep(env.orch, "A")) == []                      # paused: nothing more is started
     tile = {s["key"]: s for s in run(build_summary(env.orch, OWNER, "A"))["suggestions"]}["budget"]
-    assert tile["text"] == "Paused: monthly automatic budget used (6 credits). Raise it in Agent settings." and tile["action"] == {"to": "/agent?settings=1"}
+    assert tile["text"] == "Paused: this month's automatic budget is used up. Raise it in Agent settings." and tile["action"] == {"to": "/agent?settings=1"}
     # Raised by the owner: it carries on. A new month starts the count again.
     run(env.store.set_policy("A", {"automation": {**run(env.store.get_policy("A"))["automation"], "monthly_credit_cap": 20}}, OWNER))
-    assert len(run(autostart.sweep(env.orch, "A"))) == 2
+    assert len(run(autostart.sweep(env.orch, "A"))) == 4                  # the two that waited and the two new ones
     assert autostart.budget({"automation": {"monthly_credit_cap": 2}}, runs, env.now + timedelta(days=31))["used"] == 0
 
 
-def test_free_work_carries_on_when_the_budget_is_used_and_work_the_owner_asked_for_is_never_counted():
+def test_nothing_priced_starts_by_itself_with_no_budget_and_work_the_owner_asked_for_is_never_counted():
     env = Env()
     _overdue(env, 1)
     _only(env, "invoice_overdue", "registration_checklist", cap=0)        # nothing may be spent automatically
     env.fin["invoices"] = []                                              # before the first invoice: the registration checklist applies
     started = [r["workflow_key"] for r in run(autostart.sweep(env.orch, "A"))]
-    assert started == ["registration_checklist"]                          # free, so it still runs
+    assert started == []                                                  # A5: it has a price like every task, so with no budget it waits
     asked = env.submit(capability="risk_concentration", channel="ui_action")      # the owner's own request is theirs to spend on
     assert asked["kind"] == "workflow"
     assert autostart.budget(run(env.store.get_policy("A")), run(env.store.list_runs("A")), env.now)["used"] == 0
@@ -84,9 +86,9 @@ def test_settings_show_each_items_cost_the_cap_and_what_has_been_used(monkeypatc
         with TestClient(app) as client:
             policy = client.get("/businesses/A/agent/policy").json()
             costs = {e["key"]: e["credits"] for e in policy["events"] if e["key"]}
-            assert costs["quote_accepted"] == "2 credits for the invoice draft, 2 when it is sent" and costs["rfq_arrives"] == "2 credits, when the reply is sent"
-            assert costs["funding_pack_draft"] == costs["price_test"] == "Free" and all(costs.values())
-            assert policy["automatic_budget"] == {"cap": 50, "used": 0, "paused": False}
+            assert costs["quote_accepted"] == "2 credits for the invoice draft, 2 when it is sent" and costs["rfq_arrives"] == "2 credits to prepare the quotation, 2 when it is sent"
+            assert costs["funding_pack_draft"] == costs["price_test"] == "2 credits" and all(costs.values())      # A5: the price list, not "Free"
+            assert policy["automatic_budget"] == {"cap": 50, "used": 0, "spent": 0, "held": 0, "left": 50, "paused": False}
             saved = client.put("/businesses/A/agent/policy", json={"automation_credit_cap": 120}).json()["policy"]
             assert saved["automation"]["monthly_credit_cap"] == 120 and saved["automation"]["auto_start"] is True
             assert client.put("/businesses/A/agent/policy", json={"automation_credit_cap": -1}).status_code == 422
@@ -95,7 +97,7 @@ def test_settings_show_each_items_cost_the_cap_and_what_has_been_used(monkeypatc
     from app.modules.agent import newdocs
     from app.modules.agent import moredocs
     on_request = {"scenario_help"} | {w.workflow_key for w in newdocs.NEW_WORKFLOWS + moredocs.MORE_WORKFLOWS}      # only ever started by asking
-    assert set(agent_config.AUTOMATIC_COST) == set(WORKFLOWS) - on_request      # every capability with an automatic trigger has a stated cost
+    assert set(WORKFLOWS) - on_request <= set(agent_config.AUTOMATIC_COST)      # every capability with an automatic trigger has a stated cost (A5: the same one as when asked)
 
 
 # ══ the price test ════════════════════════════════════════════════════════════
@@ -113,7 +115,7 @@ def test_the_price_test_gives_the_extra_a_month_and_the_break_even_for_five_and_
     env = Env()
     _selling(env, cost=600)                                               # a 60% margin
     r = env.submit(capability="price_test", channel="ui_action")["run"]
-    assert r["status"] == "succeeded" and agent_router._public_run(r)["credits_used"] == 2      # asked for by the owner: the task price
+    assert r["status"] == "succeeded" and agent_router.credits_of(r) == 2      # asked for by the owner: the task price
     assert r["summary"] == ("+5% price: +£50.00/month if volume holds; break-even volume drop 7.7%. "
                             "+10% price: +£100.00/month if volume holds; break-even volume drop 14.3%. "
                             "Worked out from £1,000.00 a month of paid revenue and a 60% margin (the average margin of the 1 catalogue item with a cost on record).")

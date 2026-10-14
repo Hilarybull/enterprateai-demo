@@ -167,9 +167,11 @@ export default function CataloguePage() {
     });
     const productRows = activeProducts.map(p => {
       const sellPrice = Math.max(0, Number(p.base_price || 0) - Number(p.discount || 0));
+      // B4: a cost never given is unknown, not 0 (a 0 cost showed a 100% margin).
+      const costKnown = [p.cost_of_sales, p.unit_cost].some((v) => v !== null && v !== undefined && v !== "");
       const cos = Number(p.cost_of_sales || p.unit_cost || 0);
-      const margin = sellPrice > 0 ? (((sellPrice - cos) / sellPrice) * 100).toFixed(1) : null;
-      return { name: p.name || "�", category: p.category || p.product_type || "�", price: p.price_needed && !(Number(p.base_price) > 0) ? "Price needed" : formatCurrency(sellPrice, cur), cos: formatCurrency(cos, cur), margin: margin != null ? `${margin}%` : "�" };
+      const margin = sellPrice > 0 && costKnown ? (((sellPrice - cos) / sellPrice) * 100).toFixed(1) : null;
+      return { name: p.name || "�", category: p.category || p.product_type || "�", price: p.price_needed && !(Number(p.base_price) > 0) ? "Price needed" : formatCurrency(sellPrice, cur), cos: costKnown ? formatCurrency(cos, cur) : "Unknown", margin: margin != null ? `${margin}%` : !costKnown && sellPrice > 0 ? "Cost unknown" : "�" };
     });
     const customerRows = figures
       .sort((a, b) => b.revenue - a.revenue || b.outstanding - a.outstanding)

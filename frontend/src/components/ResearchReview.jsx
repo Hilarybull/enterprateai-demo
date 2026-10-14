@@ -15,12 +15,17 @@ const STATE_WORD = { met: "Met", partially_met: "Partly met", unmet: "Not met", 
 const money = (v) => Number(v || 0).toLocaleString("en-GB", { maximumFractionDigits: 2 });
 const pill = (on) => `rounded-lg border px-2.5 py-1 text-[12px] font-semibold transition ${on ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-white text-slate-600 hover:border-brand-300"}`;
 
+// §5: market and demand evidence stays current for 180 days; price, cost, forecast and capacity for 30.
+const FRESH_NOTE = (i) => (["comparable_prices", "positioning"].includes(i.topic) || ["price", "cost", "fixed_costs", "monthly_sales", "capacity"].includes(i.field)
+  ? "Price, cost and forecast figures are current for 30 days." : "Market evidence is current for 180 days.");
+
 function badge(i) {
   if (i.kind === "researched") return ["Researched", "bg-sky-50 text-sky-800"];
   if (i.kind === "reused") return [i.source_note || "Already on record", "bg-emerald-50 text-emerald-800"];
   if (i.basis === "calculated") return ["Calculated", "bg-indigo-50 text-indigo-800"];
-  if (i.basis === "benchmark") return ["Estimate, please confirm", "bg-amber-50 text-amber-800"];
-  if (i.kind === "question") return [i.tag || "Only you know", i.tag === "Only you know" ? "bg-violet-50 text-violet-800" : "bg-amber-50 text-amber-800"];
+  if (i.basis === "benchmark" || i.kind === "estimated") return ["Estimated", "bg-amber-50 text-amber-800"];
+  // §5: a gap no checked source supports is Missing, and asked; "Only you know" is the owner's own information.
+  if (i.kind === "question") return i.tag === "Only you know" ? ["Only you know", "bg-violet-50 text-violet-800"] : ["Missing", "bg-rose-50 text-rose-800"];
   return ["Estimate", "bg-amber-50 text-amber-800"];
 }
 
@@ -29,9 +34,13 @@ function Sources({ list }) {
   return (
     <ul className="mt-1 space-y-0.5" data-research-sources>
       {list.map((s) => (
-        <li key={s.url} className="text-[12px] text-slate-500">
+        <li key={s.url} className="text-[12px] text-slate-500" data-research-source>
           <a href={s.url} target="_blank" rel="noopener noreferrer nofollow" className="font-medium text-brand-700 underline-offset-2 hover:underline">{s.title || s.url}</a>
-          {s.site ? ` · ${s.site}` : ""}{s.date ? ` · ${s.date}` : " · no date given"}
+          {s.publisher || s.site ? ` · ${s.publisher || s.site}` : ""}{s.date ? ` · ${s.date}` : " · no date given"}
+          {s.tier && <span data-source-tier className="ml-1.5 rounded bg-slate-100 px-1.5 text-[11px] font-semibold text-slate-600">{s.tier_label || `Tier ${s.tier}`}</span>}
+          {s.quote && <q data-source-quote className="mt-0.5 block italic text-slate-600">{s.quote}</q>}
+          {(s.accessed || s.region) && <span className="block text-[11px]">{s.region ? `Covers ${s.region}${s.period ? `, ${s.period}` : ""}. ` : ""}{s.accessed ? `Checked ${s.accessed}.` : ""}</span>}
+          {s.region_note && <span data-region-note className="block text-[11px] text-amber-700">{s.region_note}</span>}
         </li>
       ))}
     </ul>
@@ -89,6 +98,53 @@ function Figures({ list }) {
   );
 }
 
+/**
+ * §1: an accepted figure meets the business's own record. Saved where the field was empty (with Undo); asked about where the
+ * record says something else: update the Catalogue, or use it for this case only. Nothing is overwritten without asking.
+ */
+const CLASS_WORDS = { ready: "Ready", conditionally_ready: "Conditionally ready", not_ready: "Not ready", insufficient_evidence: "Insufficient evidence" };
+
+export function RecordSync({ businessId, runId, sync }) {
+  const [saved, setSaved] = useState(() => (sync?.saved || []).map((x) => ({ ...x, undone: false })));
+  const [conflicts, setConflicts] = useState(() => (sync?.conflicts || []).filter((c) => !c.choice));
+  const [note, setNote] = useState("");
+  if (!saved.length && !conflicts.length && !note) return null;
+  const undo = async (x) => {
+    try {
+      const out = await apiRequest(`/businesses/${businessId}/record-changes/${x.undo_id}/undo`, "POST", {});
+      setSaved((all) => all.map((s) => (s.undo_id === x.undo_id ? { ...s, undone: Boolean(out?.undone) } : s)));
+      if (!out?.undone) setNote(`Not undone: ${out?.reason || "it has changed since"}.`);
+    } catch { setNote("That couldn't be undone just now."); }
+  };
+  const choose = async (c, choice) => {
+    try {
+      await apiRequest(`/businesses/${businessId}/research/${runId}/record-choice`, "POST", { field: c.field, choice });
+      setConflicts((all) => all.filter((x) => x.field !== c.field));
+      setNote(choice === "update" ? `Your ${c.record} now says the new value.` : `Your ${c.record} is unchanged; the new value is used for this case only.`);
+    } catch (e) { setNote(e?.status === 403 ? "Updating needs permission to edit this business. It is used for this case only." : "That couldn't be saved just now."); }
+  };
+  return (
+    <div className="mt-3 space-y-2" data-record-sync>
+      {saved.map((x) => (
+        <p key={x.undo_id} className="text-[12.5px]" data-record-saved>
+          {x.undone ? `Undone: ${x.name} is back as it was.` : x.message}{" "}
+          {!x.undone && <button type="button" className="font-semibold underline" onClick={() => undo(x)}>Undo</button>}
+        </p>
+      ))}
+      {conflicts.map((c) => (
+        <div key={c.field} className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[12.5px] text-amber-950" data-record-conflict>
+          <p>{c.question}</p>
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            <button type="button" className="rounded-md bg-amber-600 px-2.5 py-1 font-semibold text-white" onClick={() => choose(c, "update")}>Update my {c.record}</button>
+            <button type="button" className="rounded-md border border-amber-300 px-2.5 py-1 font-semibold" onClick={() => choose(c, "case_only")}>This case only</button>
+          </div>
+        </div>
+      ))}
+      {note && <p role="status" className="text-[12px]">{note}</p>}
+    </div>
+  );
+}
+
 export default function ResearchReview({ businessId, run, onAdopted = null }) {
   const items = (run.items || []).map((i) => ({ ...i, kind: i.kind || i.state }));
   const [decisions, setDecisions] = useState({});
@@ -135,10 +191,19 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
     return (
       <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-[13px] text-emerald-950" data-research-adopted>
         <p className="font-semibold">Added to your dataset (version {done.dataset_version}) and checked again.</p>
+        {done.assessment ? (
+          // §2 (R3): a launch or funding review feeds the one assessment; its summary is what is shown, never a second score.
+          <dl className="mt-2 grid gap-1 sm:grid-cols-3" data-assessment-summary>
+            <div><dt className="text-emerald-800">Readiness</dt><dd className="font-semibold">{CLASS_WORDS[done.assessment.classification] || "Not checked yet"}</dd></div>
+            <div><dt className="text-emerald-800">Score</dt><dd className="font-semibold">{done.assessment.score ?? "No score yet"}</dd></div>
+            <div><dt className="text-emerald-800">Evidence coverage</dt><dd className="font-semibold">{done.assessment.evidence_coverage ?? 0}%</dd></div>
+          </dl>
+        ) : (
         <dl className="mt-2 grid gap-1 sm:grid-cols-2" data-before-after>
           <div><dt className="text-emerald-800">Score</dt><dd className="font-semibold" data-score-change>{b.score} → {a.score}{a.score_label ? ` ${a.score_label}` : ""}</dd></div>
           <div><dt className="text-emerald-800">Evidence coverage</dt><dd className="font-semibold" data-coverage-change>{b.evidence_coverage}% → {a.evidence_coverage}%</dd></div>
         </dl>
+        )}
         {draftOf(done) && <Draft r={done} />}
         {draftOf(done) && <div className="mt-3">{toggle("Check or review inputs")}</div>}
         {(reviewing || !draftOf(done)) && <>
@@ -165,6 +230,7 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
           </div>
         )}
         </>}
+        <RecordSync businessId={businessId} runId={done.id} sync={done.record_sync} />
         <p className="mt-2 text-[12px] text-emerald-900">Researched and estimated figures stay marked as such until you confirm them. Nothing else on your business was changed.</p>
       </div>
     );
@@ -228,9 +294,13 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
                   <p className="mt-1 text-[13px] text-slate-800" data-research-value>{String(i.value)}{i.basis === "benchmark" && i.number != null ? ` (using ${money(i.number)})` : ""}</p>
                   {i.working?.length > 0 && <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[12px] text-slate-600" data-working>{i.working.map((w) => <li key={w}>{w}</li>)}</ul>}
                   <Sources list={i.sources} />
+                  {i.standard && <p className="mt-1 text-[11px] text-slate-500" data-research-standard>{i.kind === "researched" ? "Researched: " : "Not researched: "}{i.standard}.</p>}
+                  {Array.isArray(i.range) && <p className="mt-0.5 text-[11px] text-amber-700" data-research-range>Sources disagree: {money(i.range[0])} to {money(i.range[1])}. Both are shown; neither is averaged.</p>}
+                  {i.kind !== "researched" && i.method && <p className="mt-0.5 text-[11px] text-slate-500" data-research-method>Method: {i.method}</p>}
+                  {i.retrieved_at && <p className="mt-0.5 text-[11px] text-slate-500" data-research-freshness>Found {String(i.retrieved_at).slice(0, 10)}. {FRESH_NOTE(i)}</p>}
                   {i.used_for && <p className="mt-1 text-[11px] text-slate-500" data-used-for>Used for: {i.used_for}</p>}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5" role="group" aria-label={`Your decision: ${i.label}`}>
-                    {[["accept", "Adopt"], ["edit", "Edit"], ["reject", "Reject"]].map(([k, label]) => (
+                    {[["accept", "Accept"], ["edit", "Edit"], ["reject", "Reject"]].map(([k, label]) => (
                       <button key={k} type="button" aria-pressed={d.decision === k} onClick={() => set(i.id, { decision: k, value: k === "edit" ? d.value ?? String(i.number ?? i.value) : d.value })} className={pill(d.decision === k)}>{label}</button>
                     ))}
                   </div>

@@ -49,11 +49,6 @@ export function clearConversation(businessId) {
   try { sessionStorage.removeItem(key); } catch { /* fine without it */ }
 }
 
-/** "Used 2 credits." for a task that cost something; nothing for one that didn't. */
-export function creditsText(run) {
-  const n = Number(run?.credits_used) || 0;
-  return n > 0 ? `Used ${n} credit${n === 1 ? "" : "s"}.` : "";
-}
 
 /** What the Agent said, in words, for any kind of reply (used in the chat and kept in the conversation). */
 export function replyText(res) {
@@ -62,8 +57,8 @@ export function replyText(res) {
   if (res.kind === "workflow") {
     const run = res.run || {};
     if ((res.runs || []).length > 1) return `I've started ${res.runs.length} tasks. Each one waits for your review before anything is sent.`;
-    if (run.status === "succeeded") return [run.summary, run.next_action, creditsText(run)].filter(Boolean).join(" ");
-    if (run.status === "awaiting_approval") return [`${run.summary || "I've prepared it."} It's in Needs Approval: nothing is sent until you approve it.`, creditsText(run)].filter(Boolean).join(" ");
+    if (run.status === "succeeded") return [run.summary, run.next_action].filter(Boolean).join(" ");
+    if (run.status === "awaiting_approval") return `${run.summary || "I've prepared it."} It's in Needs Approval: nothing is sent until you approve it.`;
     if (run.pending_question) return run.pending_question.question;
     return run.error || run.next_action || "I've started working on that.";
   }
@@ -124,10 +119,12 @@ const _zoneTried = new Set();
 export function ensureBusinessTimezone(businessId, workspace) {
   try {
     const profile = workspace?.data?.workspace_profile;
-    if (!businessId || !workspace || workspace.id !== businessId || profile?.timezone || _zoneTried.has(businessId)) return;
+    // C5: a business with a country works on its country's clock (the server's default): whoever's browser opens the
+    // page never sets it ("Africa/Lagos" for a UK business). The browser's zone is used only when no country is known.
+    if (!businessId || !workspace || workspace.id !== businessId || profile?.timezone || String(profile?.country || "").trim() || _zoneTried.has(businessId)) return;
     _zoneTried.add(businessId);
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (zone) apiRequest(`/businesses/${businessId}/agent/policy`, "PUT", { timezone: zone }).catch(() => {});
+    if (zone) apiRequest(`/businesses/${businessId}/agent/policy`, "PUT", { timezone: zone, timezone_source: "browser" }).catch(() => {});
   } catch {
     // A convenience only: never in the way of the page.
   }
@@ -193,7 +190,7 @@ export function agentErrorMessage(e, fallback = "Something went wrong. Please tr
     if (why === "FEATURE_NOT_FOUND") return "This isn't set up on the price list yet, so nothing was charged and nothing was run. Please tell support.";
     if (why === "FEATURE_DISABLED") return "This is switched off at the moment. Nothing was charged.";
     if (why === "FEATURE_NOT_ENTITLED") return "Your plan doesn't include this. Upgrade to use it.";
-    return said || "Out of AI Credits. Add credits or upgrade your plan to continue.";
+    return said || "You have no credits left. Top up.";
   }
   if (status === 403) return said ? `Permission changed: ${said}` : "Permission changed: you no longer have access to do this.";
   if (status === 404) return "This item no longer exists, or you don't have access to it.";
@@ -225,7 +222,7 @@ export const SUBSTATUS_LABEL = {
 const REASON_LABEL = {
   permission_changed: "Permission changed",
   source_state_changed: "Source data changed",
-  credits_exhausted: "Out of AI Credits",
+  credits_exhausted: "No credits left",
   plan_limit: "Plan limit reached",
   action_failed: "Didn't go through",
   delivery_status_uncertain: "Delivery status uncertain",
@@ -245,7 +242,7 @@ export function runStateLabel(run) {
   if (run.retrying) return "Trying again";      // the Agent is handling it: nothing for the owner to do
   if (run.status === "failed") return REASON_LABEL[run.reason_code] || SUBSTATUS_LABEL[run.substatus] || "Needs attention";
   if (run.status === "running" && run.substatus) return SUBSTATUS_LABEL[run.substatus] || "In progress";
-  if (run.status === "succeeded" && run.outcome?.skipped) return "No action needed";      // finished correctly, nothing sent
+  if (run.display_status === "nothing_to_do" || (run.status === "succeeded" && run.outcome?.skipped)) return "Nothing to do";      // C2: not "Completed"
   return RUN_STATUS_LABEL[run.status] || run.status;
 }
 

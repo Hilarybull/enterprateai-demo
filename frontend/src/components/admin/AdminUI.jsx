@@ -298,7 +298,8 @@ export function AdminTable({ columns, rows, emptyText = "Nothing here yet.", row
   const tickAll = (on) => { const next = new Set(selection.selected); keys.forEach((k) => (on ? next.add(k) : next.delete(k))); selection.onChange(next); };
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      <div className={`max-h-[70vh] overflow-auto ${HIDE_SCROLLBAR}`}>
+      {/* A visible scrollbar: the table scrolls in its own box, and a hidden one left no sign there were more rows. */}
+      <div className="ea-scroll max-h-[70vh] overflow-auto">
         <table className="w-full border-collapse text-sm" style={{ minWidth }}>
           {caption && <caption className="sr-only">{caption}</caption>}
           <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800">

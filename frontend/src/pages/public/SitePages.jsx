@@ -161,7 +161,7 @@ export function HowItWorksPage() {
         <ul className="mt-3 space-y-2 text-slate-700">
           <li>Every document the Agent prepares waits in Needs Approval until you approve it.</li>
           <li>Prices come from your catalogue or from what you type: the Agent never invents one.</li>
-          <li>AI Credits are used only for work the Agent does, and the cost is shown before it starts.</li>
+          <li>AI Credits are used only for work the Agent does. The prices are in Agent settings, and each charge is listed on your Credits page.</li>
         </ul>
       </section>
       <CtaRow />

@@ -127,7 +127,7 @@ TASK_NOUN = {
     "new_invoice": "Invoice", "quote_to_cash": "Invoice", "enquiry_to_quote": "Quotation", "new_proposal": "Proposal", "new_contract": "Contract",
     "receipt_send": "Receipt", "payment_followup": "Payment reminder", "credit_note": "Credit note", "new_purchase_order": "Purchase order",
     "supplier_bill": "Supplier bill", "record_expense": "Expense", "record_payment": "Payment", "add_customer": "New customer", "add_vendor": "New supplier",
-    "add_catalogue_item": "Catalogue item", "update_record": "Record update", "business_plan_draft": "Business plan", "market_size": "Market size",
+    "add_catalogue_item": "Catalogue item", "update_record": "Record update", "business_plan_draft": "Business plan", "sales_letter_draft": "Sales letter", "market_size": "Market size",
     "funding_pack_draft": "Funding pack", "registration_checklist": "Registration checklist", "marketplace_profile": "Marketplace profile",
     "marketplace_offering": "Marketplace offering", "scenario_help": "Scenario", "risk_concentration": "Risk check",
 }
@@ -425,7 +425,7 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
     spend = autostart.budget(policy, runs, now)
     if doing and spend["paused"] and spend["cap"] >= 0:
         suggestions.append({"key": "budget", "icon": "info", "tone": "amber", "mood": "needs_you",
-                            "text": f"Paused: monthly automatic budget used ({spend['used']} credit{'s' if spend['used'] != 1 else ''}). Raise it in Agent settings.",
+                            "text": "Paused: this month's automatic budget is used up. Raise it in Agent settings.",
                             "action": {"to": "/agent?settings=1"}})
     from app.modules.agent.twins import without_twins
     for r in sorted(without_twins(runs), key=lambda r: r.get("created_at") or "")[-40:]:      # a task asked twice is shown once (QA U8)
@@ -488,8 +488,6 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
                              "used": sum(1 for r in runs if r.get("workflow_key") == key and (r.get("created_at") or "") >= month_start)}
                        for key in agent_config.plan_map.QUOTA_WORDS},
             "allowance_counts": bool(agent_config.MONTHLY_TASK_ALLOWANCE_APPLIES),
-            # What a task costs to start, in credits (the first figure of its price in words); None where its own product sets the price.
-            "prices": {c: (int(m.group()) if (m := re.search(r"\d+", agent_config.cost_of(c))) else None) for c in sorted(agent_config.CAPABILITY_MIN_PLAN)},
             "agent_tasks_from": agent_config.PLAN_LABEL[min(agent_config.CAPABILITY_MIN_PLAN.values(), key=agent_config.plan_rank)],
             "monthly_runs": ent["monthly_runs"], "monthly_runs_used": used,
             "credits": credits,
@@ -599,6 +597,11 @@ _DONE = ("succeeded", "awaiting_approval")
 _ASKED_BY_OWNER = ("text", "voice", "ui_action")      # started by a person on the page, not by the Agent on its own
 
 
+def _doing(run: dict) -> str:
+    from app.modules.agent.workflows import doing_of
+    return doing_of(run)
+
+
 def briefing_of(runs: list[dict], *, since: str | None, needs_approval: int, now: datetime) -> dict:
     """Counts for the dashboard's greeting, from the business's own tasks. `since`: when the owner
     was last here (None if never recorded). Nothing here is a sentence: the page writes those, so the
@@ -619,7 +622,7 @@ def briefing_of(runs: list[dict], *, since: str | None, needs_approval: int, now
         "last_seen_at": since, "first_visit": since is None and not runs,
         "done_since_last_visit": done, "needs_approval_count": int(needs_approval), "needs_input_count": len(waiting),
         "first_input_run_id": waiting[0]["id"] if waiting else None,
-        "working_on": ({"run_id": working["id"], "title": working.get("title") or working.get("goal") or "your task"} if working else None),
+        "working_on": ({"run_id": working["id"], "title": working.get("title") or working.get("goal") or "your task", "doing": _doing(working)} if working else None),
         "generated_at": now.isoformat(),
     }
 

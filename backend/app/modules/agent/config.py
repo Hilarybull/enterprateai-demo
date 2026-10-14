@@ -6,6 +6,8 @@ configuration, not orchestration logic: the database rows seeded by migration
 """
 from __future__ import annotations
 
+import re
+
 
 def with_dev_overrides(limits: dict) -> dict:
     """Plan limits with the development/test overrides applied. Never in production."""
@@ -43,46 +45,90 @@ PLAN_LABEL = plan_map.PLAN_LABEL
 # The cheapest plan that includes each task, read from the plan map (app/modules/plans/capabilities.py).
 CAPABILITY_MIN_PLAN: dict[str, str] = {c: plan_map.min_plan_for(c) for c in sorted(plan_map.all_capabilities())}
 
-# What each capability costs when the owner asks for it, in words (default prices: the live
-# price list decides what is charged, and each task records what it actually used).
-CAPABILITY_COST: dict[str, str] = {
-    "enquiry_to_quote": "2 credits to prepare the quotation, 2 when it is sent",
-    "new_invoice": "2 credits to prepare the invoice, 2 when it is sent",
-    "quote_to_cash": "2 credits for the invoice draft, 2 when it is sent",
-    "new_contract": "2 credits to prepare the contract, 2 when it is sent",
-    "receipt_send": "2 credits to issue the receipt, 2 when it is sent",
-    "payment_followup": "2 credits per reminder sent",
-    "new_proposal": "2 credits when it is sent",
-    "new_purchase_order": "2 credits when it is sent",
-    "credit_note": "2 credits when it is sent",
-    "risk_concentration": "2 credits",
-    "scenario_help": "2 credits",
-    "expansion_scenario": "2 credits",
-    "record_expense": "2 credits",
-    "record_payment": "2 credits",
-    "add_customer": "2 credits",
-    "add_catalogue_item": "2 credits",
-    "add_vendor": "2 credits",
-    "update_record": "2 credits",
-    "supplier_bill": "2 credits",
-    "registration_checklist": "2 credits",
-    "funding_pack_draft": "2 credits",
-    "readiness_refresh": "2 credits",
-    "launch_evidence_gaps": "2 credits",
-    "price_test": "2 credits",
-    "capacity_check": "2 credits",
-    "offer_review": "2 credits",
-    "marketplace_profile": "2 credits",
-    "marketplace_offering": "2 credits",
-    "idea_validation": "The price of an Idea Validation on your price list",
-    "market_size": "The price of an Idea Validation on your price list",
-    "business_plan_draft": "The price of a Business Plan on your price list",
+# A5: what each task costs, in words, with every figure read from the price list (credits/catalogue.py, after the
+# minimum charge), never typed here. Agent settings' two lists, the run page and the charge itself all read this.
+# {feature} stands for that feature's price; the task is charged exactly the features named.
+COST_WORDS: dict[str, str] = {
+    "enquiry_to_quote": "{agent_quote_draft} to prepare the quotation, {agent_send} when it is sent",
+    "new_invoice": "{agent_invoice_draft} to prepare the invoice, {agent_send} when it is sent",
+    "quote_to_cash": "{agent_invoice_draft} for the invoice draft, {agent_send} when it is sent",
+    "new_contract": "{agent_contract_draft} to prepare the contract, {agent_send} when it is sent",
+    "receipt_send": "{agent_receipt} to issue the receipt, {agent_send} when it is sent",
+    "payment_followup": "{agent_reminder} per reminder sent",
+    "new_proposal": "{proposal_full} for the written proposal, {agent_send} when it is sent",
+    "new_purchase_order": "{agent_send} when it is sent",
+    "credit_note": "{agent_send} when it is sent",
+    "idea_validation": "{idea_validation} (an Idea Validation)",
+    "market_size": "{idea_validation} (an Idea Validation), only when the market is sized",
+    "business_plan_draft": "{business_plan_full} (a Complete Business Plan)",
+    "sales_letter_draft": "{sales_letter_full} (a Complete Sales Letter)",
 }
 
 
+def price_credits(feature: str) -> int:
+    """A feature's price from the price list file, as charged (0 stays free; anything else at least the minimum)."""
+    from app.modules.credits.catalogue import default_config
+    from app.modules.credits.service import charged
+    return charged((default_config(feature) or {}).get("credit_cost"))
+
+
+def short_of(needed: int | None, have: int | None) -> str:
+    """The one sentence where the Agent speaks of credits: there aren't enough to do what was asked.
+    "This needs 40 credits; you have 31. Top up." Everywhere else the Agent never mentions what anything cost."""
+    have = max(0, int(have or 0))
+    if needed and needed < 10 ** 6:
+        return f"This needs {int(needed)} credit{'s' if int(needed) != 1 else ''}; you have {have}. Top up."
+    return f"You have {'no' if not have else have} credit{'s' if have != 1 else ''} left. Top up."
+
+
+def _words(template: str) -> str:
+    """"2 credits to prepare the invoice, 2 when it is sent": the unit is said once, with the first figure."""
+    said = {"unit": False}
+
+    def one(m):
+        n = price_credits(m.group(1))
+        if not n:
+            return "free"
+        if said["unit"]:
+            return str(n)
+        said["unit"] = True
+        return f"{n} credit{'s' if n != 1 else ''}"
+    return re.sub(r"\{([a-z_]+)\}", one, template)
+
+
+def _all_task_costs() -> dict[str, str]:
+    """Every task: its own words, or the Agent task price for one with no priced steps of its own."""
+    return {c: _words(COST_WORDS.get(c, "{" + BASE_TASK_FEATURE + "}")) for c in CAPABILITY_MIN_PLAN}
+
+
 # Tasks whose work is priced by its own product (an Idea Validation, a Business Plan): the Agent adds no charge of its own to those.
-SELF_PRICED = ("idea_validation", "market_size", "business_plan_draft")
+SELF_PRICED = ("idea_validation", "market_size", "business_plan_draft", "sales_letter_draft")
 BASE_TASK_FEATURE = "agent_task"
+# The price-list feature each self-priced task is charged as (the rest are charged as an Agent task).
+PRICED_AS = {"idea_validation": "idea_validation", "market_size": "idea_validation", "business_plan_draft": "business_plan_full",
+             "sales_letter_draft": "sales_letter_full"}
+# A4: tasks that exist to answer a question ("which of my services sell best?", "what evidence am I missing before I
+# launch?"): asked as a question, they run at their listed price rather than as a written chat answer.
+ANSWERS_QUESTIONS = frozenset({"offer_review", "launch_evidence_gaps", "capacity_check", "readiness_refresh", "market_size",
+                               "price_test", "expansion_scenario"})      # live check: "should I put my prices up", "what would hiring two more do"      # risk questions are answered from the records, free (AC-02)
+# A11: an automatic task above this many credits is never started by itself (a chat remark, a record changing): it is
+# offered as a suggestion for the owner to start. Set per deployment.
+AUTO_START_MAX_CREDITS = 10      # kept for reference only: what decides now is the kind of task (SUGGEST_ONLY), not its price
+
+# PRD alignment §4 (FV §4.1, R4): paid research and generation run only when the owner asks. These are never started by
+# the Agent by itself, whatever their price: they are offered as a suggestion with a button, including when an idea is
+# mentioned in chat. Free deterministic checks (readiness refresh, launch gaps, registration, price test, capacity, offer
+# review, expansion) may still start by themselves.
+SUGGEST_ONLY = frozenset({"idea_validation", "market_size", "business_plan_draft", "sales_letter_draft", "funding_pack_draft"})
+FREE_DETERMINISTIC = frozenset({"readiness_refresh", "launch_evidence_gaps", "registration_checklist", "price_test", "capacity_check",
+                                "offer_review", "expansion_scenario"})
+
+
+def feature_of(capability: str) -> str | None:
+    """What a task is charged as on the price list; None for a free one."""
+    if capability in FREE_CAPABILITIES:
+        return None
+    return PRICED_AS.get(capability, BASE_TASK_FEATURE)
 
 # A request left waiting on the owner for an answer is closed after this many days with no activity.
 UNANSWERED_CLOSE_DAYS = 14
@@ -104,30 +150,13 @@ MONTHLY_TASK_ALLOWANCE_APPLIES = False
 
 def cost_of(capability: str) -> str:
     """The price shown for a capability; anything not listed costs nothing."""
-    return CAPABILITY_COST.get(capability) or AUTOMATIC_COST.get(capability) or "Free"
+    return CAPABILITY_COST.get(capability) or _words("{" + BASE_TASK_FEATURE + "}")
 
 
-# What one automatic item costs, in words, for Agent settings (the amounts are the default
-# prices; the live price list decides what is actually charged and is what each task records).
-AUTOMATIC_COST: dict[str, str] = {
-    "enquiry_to_quote": "2 credits, when the reply is sent",
-    "quote_to_cash": "2 credits for the invoice draft, 2 when it is sent",
-    "receipt_send": "2 credits to issue the receipt, 2 when it is sent",
-    "payment_followup": "2 credits per reminder sent",
-    "risk_concentration": "2 credits",
-    "price_test": "Free",
-    "readiness_refresh": "Free",
-    "launch_evidence_gaps": "Free",
-    "funding_pack_draft": "Free",
-    "registration_checklist": "Free",
-    "idea_validation": "The price of an Idea Validation on your price list",
-    "market_size": "The price of an Idea Validation on your price list",
-    "business_plan_draft": "The price of a Business Plan on your price list",
-    "capacity_check": "Free",
-    "offer_review": "Free",
-    "expansion_scenario": "Free",
-}
-FREE_CAPABILITIES = frozenset(c for c, cost in AUTOMATIC_COST.items() if cost == "Free")
+CAPABILITY_COST: dict[str, str] = _all_task_costs()
+# One price per task, whoever starts it (A5): what an automatic task costs is what an asked-for one costs.
+AUTOMATIC_COST: dict[str, str] = dict(CAPABILITY_COST)
+FREE_CAPABILITIES = frozenset(c for c, cost in CAPABILITY_COST.items() if cost == "free")
 
 
 def plan_rank(plan: str | None) -> int:
@@ -203,3 +232,10 @@ READING_INCLUDED_IN = frozenset({"enquiry_to_quote"})
 
 # Invoice states in which a reminder must never be sent (s16.6, AC-23).
 REMINDER_INELIGIBLE_STATUSES = {"paid", "void", "voided", "cancelled", "canceled", "credited", "disputed", "draft", "written_off"}
+
+
+# C9: how long the model may take to read a message before the rules read it instead. Simple records are written in a
+# few seconds, end to end, whatever the model's provider is doing.
+SIMPLE_WRITES = frozenset({"add_customer", "add_vendor", "add_catalogue_item", "record_expense", "update_record", "record_payment", "marketplace_offering"})
+FIELD_READ_SECONDS_SIMPLE = 4.5      # live check: the model reads a simple record in 3 to 4.5s; C9 keeps it at 5s or less
+FIELD_READ_SECONDS = 10.0

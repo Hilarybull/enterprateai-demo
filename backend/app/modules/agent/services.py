@@ -9,16 +9,20 @@ guardrail and workflow can be tested without a network or database.
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 
 class InsufficientCredits(Exception):
     def __init__(self, available: int = 0, required: int = 0):
-        super().__init__(f"Not enough AI Credits ({available} available, {required} needed).")
+        from app.modules.agent.config import short_of
+        super().__init__(short_of(required, available))
         self.available = available
         self.required = required
 
@@ -207,6 +211,7 @@ class Meter:
     async def rfq_unlocked(self, owner_id: str) -> bool: raise NotImplementedError      # may requests for a quotation be read
     async def cost(self, feature: str) -> int: raise NotImplementedError      # credits one use of this feature takes
     def charge(self, user_id: str, feature: str, key: str | None = None): raise NotImplementedError
+    async def refund(self, user_id: str, credits: int, reason: str, key: str) -> bool: raise NotImplementedError      # once per key
 
 
 @dataclass
@@ -247,6 +252,14 @@ class MemoryMeter(Meter):
         if key:
             done.add(key)
 
+    async def refund(self, user_id, credits, reason, key):
+        given = self.__dict__.setdefault("refunds", [])
+        if any(k == key for _, _, _, k in given) or credits <= 0:
+            return False
+        self.balances[user_id] = self.balances.get(user_id, 0) + int(credits)
+        given.append((user_id, int(credits), reason, key))
+        return True
+
 
 class CreditMeter(Meter):
     """The existing AI Credit wallet (credit_guard reserves, commits on success, releases on failure)."""
@@ -286,6 +299,19 @@ class CreditMeter(Meter):
     async def balance(self, user_id):
         from app.modules.credits.service import get_balance
         return int(await get_balance(user_id) or 0)
+
+    async def refund(self, user_id, credits, reason, key):
+        """Credits given back for work that never reached the owner. The wallet's grant has no key of its own, so the
+        key is written into the transaction's description and looked for first: the same refund is never given twice."""
+        from app.modules.credits.service import get_transactions, grant_credits
+        if int(credits or 0) <= 0:
+            return False
+        tag = f"[{key}]"
+        earlier = await get_transactions(user_id, limit=200, transaction_type="refund")
+        if any(tag in str(t.get("description") or "") for t in earlier or []):
+            return False
+        await grant_credits(user_id, int(credits), "refund", f"{reason} {tag}")
+        return True
 
     @asynccontextmanager
     async def charge(self, user_id, feature, key=None):
@@ -338,6 +364,12 @@ class LLMClassifier(Classifier):
         answer = re.sub(r"[^a-z_]", "", raw.strip().lower())
         return answer if answer in options else None      # anything else is discarded
 
+    async def read_fields(self, *, system: str, prompt: str, user_id: str) -> str:
+        """The field reading (extraction.understand): the model's JSON, as text. Checked by the caller, never trusted."""
+        from app.shared.llm.openai_client import AutoLLMClient
+        res = await AutoLLMClient(user_id=user_id).generate_text(system=system, prompt=prompt, feature="agent_extract", max_tokens=900)
+        return res.text or ""
+
     async def extract_items(self, *, text, user_id):
         system = (
             "Extract the products or services a customer is asking to be quoted for.\n"
@@ -374,6 +406,8 @@ class Studio:
     async def validate_idea(self, *, user_id: str, business_id: str, idea: dict) -> dict: raise NotImplementedError
     async def size_market(self, *, user_id: str, business_id: str, idea: dict) -> dict: raise NotImplementedError
     async def draft_plan(self, *, user_id: str, business_id: str, idea: dict) -> dict: raise NotImplementedError
+    async def draft_sales_letter(self, *, user_id: str, business_id: str, idea: dict) -> dict: raise NotImplementedError
+    async def draft_proposal(self, *, user_id: str, business_id: str, brief: dict) -> dict: raise NotImplementedError
 
     async def file_document(self, *, user_id: str, business_id: str, type: str, title: str, company: str, markdown: str,
                             document_id: str | None = None) -> str | None:
@@ -411,9 +445,65 @@ class MemoryStudio(Studio):
         self.filed[doc_id] = {"user_id": user_id, "business_id": business_id, "type": type, "title": title, "company": company, "markdown": markdown}
         return doc_id
 
+    async def draft_proposal(self, *, user_id, business_id, brief):
+        self._note("draft_proposal", brief)
+        return {"document_id": f"doc-pro-{len(self.calls)}", "title": brief.get("proposal_title") or "Proposal"}
+
+    async def draft_sales_letter(self, *, user_id, business_id, idea):
+        self._note("draft_sales_letter", idea)
+        return {"document_id": "doc-sl-1", "title": f"Sales letter: {idea.get('name') or 'your business'}", "sections": 5}
+
     async def draft_plan(self, *, user_id, business_id, idea):
         self._note("draft_plan", idea)
         return {"document_id": "doc-1", "title": f"Business plan: {idea.get('name') or 'your business'}", "sections": 9}
+
+
+_FULL: set = set()      # full validations running in the background
+
+
+def risk_sentence(flag) -> str:
+    """B5: a risk as a sentence ("Demand is unproven…"), never the engine's dict ({'dimension': ..., 'note': ...})."""
+    if isinstance(flag, str):
+        return flag.strip()
+    if isinstance(flag, dict):
+        note = str(flag.get("label") or flag.get("message") or flag.get("note") or "").strip()
+        first = re.split(r"(?<=[.!?])\s+", note)[0] if note else ""
+        return first or str(flag.get("dimension") or "A risk").replace("_", " ").capitalize() + " needs work."
+    return str(flag)
+
+
+def experiment_sentence(x) -> str:
+    if isinstance(x, str):
+        return x.strip()
+    if isinstance(x, dict):
+        name = str(x.get("name") or x.get("method") or "A test").strip()
+        how = ", ".join(str(x[k]) for k in ("sample_size", "duration") if x.get(k))
+        return f"{name}" + (f" ({how})" if how else "")
+    return str(x)
+
+
+def validation_payload(idea: dict, business_id: str | None) -> dict:
+    """The Idea Validation wizard's own steps, filled from what the workspace holds (the same fields the wizard asks
+    for), so the Agent's score comes from the same information as one made by hand. A step with nothing in it is left out."""
+    k = idea.get("known") or {}
+    # As the wizard sends them: text ("300", not 300). The engine reads every field as text.
+    num = lambda v: (f"{v:g}" if isinstance(v, float) else str(v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else None      # noqa: E731
+    steps = {
+        "step1": {"idea_name": idea.get("name") or "", "idea_description": idea.get("description") or "", "idea_sector": idea.get("industry") or "",
+                  "operating_country": idea.get("location") or "", "launch_geography": idea.get("location") or "", "business_stage": k.get("stage") or ""},
+        "step2": {"problem_description": idea.get("problem") or "", "who_affected": idea.get("customer") or ""},
+        "step3": {"primary_segment": idea.get("customer") or "", "channels": k.get("channels") or ""},
+        "step4": {"direct_competitors": k.get("competitors") or ""},
+        "step5": {"solution_description": idea.get("description") or ""},
+        "step7": {"proposed_price": num(k.get("price"))},
+        "step8": {"variable_cost_per_unit": num(k.get("cost")), "variable_cost_known": "yes" if num(k.get("cost")) is not None else "",
+                  "fixed_costs_monthly": num(k.get("fixed_costs"))},
+        "step9": {"capacity_per_month": num(k.get("capacity"))},
+    }
+    steps = {s: {f: v for f, v in fields.items() if v not in (None, "")} for s, fields in steps.items()}
+    steps = {s: fields for s, fields in steps.items() if fields}
+    return {"validation_mode": "basic", "workspace_id": business_id, "currency": idea.get("currency") or "GBP",
+            "steps_completed": sorted(int(s[4:]) for s in steps), **steps}
 
 
 class ModuleStudio(Studio):
@@ -426,15 +516,34 @@ class ModuleStudio(Studio):
                 "problem": idea.get("problem") or "", "currency": idea.get("currency") or "GBP"}
 
     async def validate_idea(self, *, user_id, business_id, idea):
+        """A3: the deterministic score at once (the wizard's own engine, from the same fields: well under a second), then
+        the full validation (AI enrichment, web research, the written report) in the background, saved where the wizard
+        saves it. The task never waits minutes for the research."""
+        from app.modules.idea_validation.engine_v4 import evaluate_v4, v4_payload_to_input
+        payload = validation_payload(idea, business_id)
+        quick = evaluate_v4(v4_payload_to_input(payload))
+        self._full_later(user_id, payload)
+        scores = quick.get("scores") or {}
+        return {"score": round(float(scores.get("potential_score") or 0)), "confidence": round(float(scores.get("evidence_confidence_score") or 0)),
+                "verdict": (quick.get("verdict") or {}).get("category"), "risks": [risk_sentence(f) for f in quick.get("risk_flags") or []][:6],
+                "next_steps": [experiment_sentence(x) for x in quick.get("experiments") or []][:6], "result_id": None, "full_report": "pending"}
+
+    @staticmethod
+    def _full_later(user_id: str, payload: dict) -> None:
+        import asyncio
         from app.modules.idea_validation.service import evaluate_v4_idea
-        res = await evaluate_v4_idea(user_id=user_id, payload={
-            "validation_mode": "basic", "workspace_id": business_id, "currency": idea.get("currency") or "GBP",
-            "step1": {"idea_name": idea.get("name") or "", "idea_description": idea.get("description") or "", "idea_sector": idea.get("industry") or "",
-                      "operating_country": idea.get("location") or "", "launch_geography": idea.get("location") or ""},
-            "step2": {"problem_description": idea.get("problem") or "", "who_affected": idea.get("customer") or ""}})
-        risks = [str(f.get("label") or f.get("message") or f) if isinstance(f, dict) else str(f) for f in res.get("risk_flags") or []] or list(res.get("reasons") or [])
-        return {"score": round(float(res.get("score") or 0)), "risks": risks[:6], "next_steps": [str(x) for x in (res.get("recommendations") or [])][:6],
-                "result_id": res.get("result_id")}
+
+        async def go() -> None:
+            try:
+                await evaluate_v4_idea(user_id=user_id, payload=payload)
+            except Exception:      # noqa: BLE001 - the quick score stands; the full report is only an addition
+                logger.warning("full idea validation did not finish", exc_info=True)
+        try:
+            task = asyncio.get_running_loop().create_task(go())
+        except RuntimeError:
+            return
+        _FULL.add(task)
+        task.add_done_callback(_FULL.discard)
 
     async def size_market(self, *, user_id, business_id, idea):
         from app.modules.idea_validation.market_research_service import run_market_research
@@ -442,8 +551,11 @@ class ModuleStudio(Studio):
         m = report.get("market_opportunity") or report
         sources = report.get("sources") or []
         flat = [s for group in sources.values() for s in group] if isinstance(sources, dict) else list(sources)
-        return {"tam": m.get("total_addressable_market") or m.get("market_size"), "sam": m.get("serviceable_addressable_market"),
-                "som": m.get("serviceable_obtainable_market"), "assumptions": [str(a) for a in (m.get("assumptions") or report.get("assumptions") or [])][:6],
+        sizing = report.get("market_sizing") or {}
+        return {"tam": m.get("total_addressable_market") or sizing.get("total_addressable_market") or m.get("market_size"),
+                "sam": m.get("serviceable_addressable_market") or sizing.get("serviceable_addressable_market"),
+                "som": m.get("serviceable_obtainable_market"), "tam_basis": sizing.get("tam_basis"), "sam_basis": sizing.get("sam_basis"),
+                "assumptions": [str(a) for a in (m.get("assumptions") or report.get("assumptions") or [])][:6],
                 "sources": [s for s in flat if isinstance(s, dict)][:6]}
 
     async def file_document(self, *, user_id, business_id, type, title, company, markdown, document_id=None):
@@ -451,6 +563,25 @@ class ModuleStudio(Studio):
         return await save_document(user_id=user_id, type=type, title=title[:200], company_name=(company or "")[:64], industry=None, pricing_model=None,
                                    workspace_id=business_id, document_markdown=markdown, document_html=None, provider="enterprateai_agent",
                                    model=None, document_id=document_id)
+
+    async def draft_proposal(self, *, user_id, business_id, brief):
+        """The Client Proposal the Business Blueprints page writes, from the same inputs the page asks for."""
+        from app.modules.blueprint.schemas import BlueprintGenerateRequest
+        from app.modules.blueprint.service import generate_blueprint
+        allowed = set(BlueprintGenerateRequest.model_fields)
+        res = await generate_blueprint(BlueprintGenerateRequest(type="client_proposal", workspace_id=business_id, include_validation_snapshot=True,
+                                                                **{k: v for k, v in brief.items() if k in allowed and v not in (None, "")}), user_id=user_id)
+        return {"document_id": getattr(res, "document_id", None), "title": brief.get("proposal_title") or "Proposal"}
+
+    async def draft_sales_letter(self, *, user_id, business_id, idea):
+        from app.modules.blueprint.schemas import BlueprintGenerateRequest
+        from app.modules.blueprint.service import generate_blueprint
+        res = await generate_blueprint(BlueprintGenerateRequest(
+            type="sales_letter", company_name=(idea.get("name") or "My business")[:64], workspace_id=business_id,
+            industry=(idea.get("industry") or None), problem=idea.get("problem") or None, solution=idea.get("description") or None,
+            target_market=idea.get("customer") or None), user_id=user_id)
+        return {"document_id": getattr(res, "document_id", None) or getattr(res, "id", None), "title": getattr(res, "title", None) or "Sales letter",
+                "sections": len(getattr(res, "sections", None) or []) or None}
 
     async def draft_plan(self, *, user_id, business_id, idea):
         from app.modules.blueprint.schemas import BlueprintGenerateRequest

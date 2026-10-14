@@ -225,9 +225,13 @@ function LineTotals({ rows, vatRate, discount, currency }) {
   );
 }
 
-/** Pick a customer already on record (searchable), or choose to add a new one. */
+/** E4: who the picker is for, in words: a supplier on a purchase order or a bill, otherwise a customer. */
+export const partyNoun = (field) => (/vendor|supplier/i.test(`${field?.key || ""} ${field?.label || ""}`) ? "supplier" : "customer");
+
+/** Pick a customer (or a supplier) already on record (searchable), or choose to add a new one. */
 export function CustomerPicker({ field, value, onChange }) {
   const [search, setSearch] = useState("");
+  const noun = partyNoun(field);
   const options = field.options || [];
   const term = search.trim().toLowerCase();
   const shown = term ? options.filter((o) => `${o.label} ${o.email || ""}`.toLowerCase().includes(term)) : options;
@@ -244,11 +248,11 @@ export function CustomerPicker({ field, value, onChange }) {
             {o.email && <span className="hidden shrink-0 truncate text-[12px] text-slate-400 sm:inline">{o.email}</span>}
           </label>
         ))}
-        {shown.length === 0 && <p className="px-1 py-1 text-[12px] text-slate-400">No customer matches “{search.trim()}”.</p>}
+        {shown.length === 0 && <p className="px-1 py-1 text-[12px] text-slate-400">No {noun} matches “{search.trim()}”.</p>}
       </div>
       <label className={row(value === "new")}>
         <input type="radio" name={field.key} className="accent-brand-600" checked={value === "new"} onChange={() => onChange("new")} />
-        {field.new_label || "+ New customer"}
+        {field.new_label || `+ New ${noun}`}
       </label>
     </div>
   );
@@ -289,7 +293,7 @@ export function QuestionForm({ question, fields, onSubmit, submitting, submitLab
       }
       const empty = v === "" || v == null || (Array.isArray(v) && !v.length);
       const fail = (text) => { if (f.said) setChanging(true); setError(text); };      // a problem in something tucked away opens it
-      if (f.required && empty) { fail(f.type === "customer" ? "Choose a customer, or add a new one." : `${f.label} is required.`); return; }
+      if (f.required && empty) { fail(f.type === "customer" ? `Choose a ${partyNoun(f)}, or add a new one.` : `${f.label} is required.`); return; }
       if (f.type === "email" && v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v).trim())) { fail("Enter a valid email address."); return; }
       if (f.type === "checkbox") {
         if (v === true) out[f.key] = true;
@@ -487,6 +491,7 @@ export function ApprovalReview({ approval, lastEdit = null, editedByYou = false 
         </p>
       )}
       <div className="mt-3 divide-y divide-slate-200/70 dark:divide-slate-700">
+        {p.price_text && <Row label="Price" value={<span data-price-text>{p.price_text}</span>} />}
         {p.subtotal != null && <Row label="Subtotal" value={money(p.subtotal)} />}
         {p.discount_amount > 0 && <Row label={p.discount_label || "Discount"} value={`-${money(p.discount_amount)}`} />}
         {p.vat_rate > 0 && <Row label={`VAT (${p.vat_rate}%)`} value={money(p.vat_amount)} />}
@@ -520,15 +525,15 @@ export function ApprovalReview({ approval, lastEdit = null, editedByYou = false 
   );
 }
 
-export const OUT_OF_CREDITS_TIP = "Out of AI Credits · Upgrade";
+export const OUT_OF_CREDITS_TIP = "No credits left · Top up";
 
 /** Shown in place of starting an Agent task when there are no AI Credits left. */
 export function OutOfCreditsNote({ onPlans, onClose, className = "" }) {
   return (
     <div role="status" className={`rounded-xl border border-amber-200 bg-amber-50 p-3 text-[13px] text-amber-900 ${className}`}>
-      <p>You're out of AI Credits. Your records are safe. Top up or upgrade to let the Agent do this.</p>
+      <p>You have no credits left. Top up. Your records are safe.</p>
       <div className="mt-2 flex flex-wrap gap-2">
-        <button type="button" onClick={onPlans} className="rounded-lg bg-amber-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-amber-700">See plans and credits</button>
+        <button type="button" onClick={onPlans} className="rounded-lg bg-amber-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-amber-700">Top up</button>
         <button type="button" onClick={onClose} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[12px] font-semibold text-amber-900 hover:bg-amber-100">Not now</button>
       </div>
     </div>

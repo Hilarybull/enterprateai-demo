@@ -611,7 +611,7 @@ describe("carrying on after sign-in", () => {
     const said = await screen.findByRole("alert");
     expect(said.textContent).toContain("I couldn't prepare that for you.");
     expect(said.textContent).toContain("Upgrade to use the Agent for this. New Proposal is included from the Starter plan.");
-    expect(said.textContent).toContain("What you told me is saved. Nothing was created or sent, and no AI Credits were used.");
+    expect(said.textContent).toContain("What you told me is saved. Nothing was created or sent.");
     expect(screen.queryByTestId("where")).toBeNull();                       // not dropped on the dashboard without a word
     expect(within(said).getByRole("button", { name: "Go to the dashboard" })).toBeTruthy();
     await click(within(said).getByRole("button", { name: "See plans" }));

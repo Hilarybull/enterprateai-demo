@@ -191,9 +191,9 @@ def test_reminder_names_the_invoice_and_goes_straight_to_approval():
 def test_contract_reads_who_scope_price_term_and_start():
     env = _world()
     r, f = _ask(env, "contract with QA Test Ltd for monthly bookkeeping, £300/month, 12 months from 1 Nov")
-    assert r["workflow_key"] == "new_contract" and "customer_id" not in f      # on record
+    assert r["workflow_key"] == "new_contract" and f["customer_id"]["said"] is True      # on record: shown, not asked (C4)
     assert (f["description"]["default"], f["total"]["default"], f["term"]["default"], f["start_date"]["default"]) == ("Monthly bookkeeping", 300, "12 months", "2026-11-01")
-    assert set(_said(f)) == {"description", "total", "term", "start_date"} and _still_to_ask(f) == []
+    assert set(_said(f)) == {"customer_id", "description", "total", "term", "start_date"} and _still_to_ask(f) == []
     done = _answer(env, r, _defaults(f))
     assert done["status"] == "awaiting_approval", done.get("pending_question")
     assert env.pending(done)[0]["payload"]["customer_name"] == "QA Test Ltd"

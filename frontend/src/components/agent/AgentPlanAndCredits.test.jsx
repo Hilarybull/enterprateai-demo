@@ -37,11 +37,11 @@ describe("the Agent card and the plan", () => {
     expect(locked.querySelector("[data-tile-plan]").textContent).toBe("Starter plan");
     const included = screen.getByText("Create an invoice for a customer.").closest("button");
     expect(included.getAttribute("data-locked")).toBeNull();
-    expect(included.querySelector("[data-tile-price]").textContent).toBe("2 credits");      // the price, before anything is pressed
+    expect(included.querySelector("[data-tile-price]")).toBeNull();                       // no price on a tile: it is in Agent settings
     await act(async () => { fireEvent.click(locked); });
     const card = screen.getByRole("status");
     expect(card.textContent).toContain("Scenario Help is on the Starter plan.");
-    expect(card.querySelector("[data-blocked-detail]").textContent).toBe("It is included from the Starter plan. Nothing was started and no credits were used.");
+    expect(card.querySelector("[data-blocked-detail]").textContent).toBe("It is included from the Starter plan. Nothing was started.");
     expect(card.className).toContain("bg-brand-50");                        // a card in the brand colour, not an error
     expect(card.className).not.toMatch(/rose|amber/);
     expect(globalThis.fetch.mock.calls.filter(([u, i]) => /agent\/requests/.test(String(u)) && i?.method === "POST").length).toBe(0);      // no request was made
@@ -49,26 +49,29 @@ describe("the Agent card and the plan", () => {
     expect(screen.getByTestId("where").textContent).toBe("/pricing");
   });
 
-  it("the plan card offers what the plan does include, and a refusal for credits says the balance and the price", () => {
+  it("the plan card offers what the plan does include, and a refusal for credits is the one sentence with Top up", () => {
     const plan = blockedReply({ reason: "plan", message: "Enquiry to Quote is on the Starter plan.", plan_required_label: "Starter",
       actions: [{ label: "Upgrade", to: "/pricing", upgrade: true }, { label: "Create an invoice instead", capability: "new_invoice" }] });
     expect(plan).toMatchObject({ tone: "plan", card: "plan", text: "Enquiry to Quote is on the Starter plan." });
     expect(plan.actions.map((a) => a.label)).toEqual(["Upgrade", "Create an invoice instead"]);
-    const credits = blockedReply({ reason: "credits", message: "You're out of AI Credits.", balance: 0, cost: "2 credits", actions: [{ label: "Top up", to: "/pricing", upgrade: true }] });
-    expect(credits.detail).toBe("You have 0 credits. This costs 2 credits. Nothing was started.");
+    const credits = blockedReply({ reason: "credits", message: "This needs 2 credits; you have 0. Top up.", actions: [{ label: "Top up", to: "/pricing", upgrade: true }] });
+    expect(credits.text).toBe("This needs 2 credits; you have 0. Top up.");
+    expect(credits.detail).toBe("Nothing was started.");
     expect(credits.actions[0].label).toBe("Top up");
     expect(blockedReply({ message: "Your role can't start this kind of work." })).toEqual({ tone: "amber", text: "Your role can't start this kind of work.", upgrade: undefined });
     for (const text of [plan.detail, credits.detail]) expect(text).not.toMatch(/[–—]/);
   });
 
-  it("after a task the card says what it used and what is left", async () => {
+  it("after a task the card never says what it used or what is left (the sidebar and the Credits page do)", async () => {
     reply = (url, method) => (method === "POST" && /agent\/requests/.test(url)
       ? { kind: "workflow", capability: "new_invoice", credits_used: 2, credits_left: 42, run: { id: "r1", status: "succeeded", summary: "The invoice is drafted.", workflow_key: "new_invoice", state: {} }, runs: [{ id: "r1" }] }
       : {});
     mount();
     fireEvent.change(screen.getByLabelText("Ask the EnterprateAI Agent"), { target: { value: "invoice Mark $50" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
-    await waitFor(() => expect(document.querySelector("[data-credits-used]")?.textContent).toBe("Used 2 credits · 42 left"));
+    await waitFor(() => expect(document.body.textContent).toContain("The invoice is drafted."));
+    expect(document.querySelector("[data-credits-used]")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/credit/i);
   });
 
   it("a question tile says what it is about, with what is being confirmed on a second line", () => {
@@ -96,7 +99,7 @@ describe("the Agent card and the plan", () => {
     await act(async () => { fireEvent.click(within(card).getByRole("button", { name: "Cancel this task" })); });
     const calls = globalThis.fetch.mock.calls.filter(([, i]) => i?.method === "POST").map(([u]) => String(u).replace(/^https?:\/\/[^/]+/, "").replace(/^.*(\/workflow-runs|\/agent)/, "$1"));
     expect(calls).toEqual(["/workflow-runs/r9/cancel"]);                     // cancelled, and no task was started
-    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("That task is cancelled. Nothing was sent and no credits were used."));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("That task is cancelled. Nothing was sent."));
   });
 
   it("asks what to call them once, only after a first result, and never again after Skip", async () => {
@@ -117,7 +120,7 @@ describe("the Agent card and the plan", () => {
     mount();                                                                // back on the dashboard later: not asked again
     fireEvent.change(screen.getByLabelText("Ask the EnterprateAI Agent"), { target: { value: "invoice Mark $50" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
-    await waitFor(() => expect(document.querySelector("[data-credits-used]")).toBeTruthy());
+    await waitFor(() => expect(document.body.textContent).toContain("The invoice is drafted."));
     expect(document.querySelector("[data-ask-name]")).toBeNull();
     // Someone whose name is known is never asked.
     cleanup();
@@ -126,7 +129,7 @@ describe("the Agent card and the plan", () => {
     mount();
     fireEvent.change(screen.getByLabelText("Ask the EnterprateAI Agent"), { target: { value: "invoice Mark $50" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
-    await waitFor(() => expect(document.querySelector("[data-credits-used]")).toBeTruthy());
+    await waitFor(() => expect(document.body.textContent).toContain("The invoice is drafted."));
     expect(document.querySelector("[data-ask-name]")).toBeNull();
   });
 });

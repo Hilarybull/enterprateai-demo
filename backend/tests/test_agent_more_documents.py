@@ -56,19 +56,21 @@ def test_proposal_from_scratch_asks_once_offers_what_is_known_and_waits_for_appr
     env.businesses["A"]["data"]["workspace_profile"]["problem"] = "Owners lose evenings to paperwork"
     asked = env.submit(text="write a proposal for QA Round Six for £4,500")["run"]
     f = _fields(asked)
-    assert list(f) == ["problem", "solution", "total", "timeline", "valid_until"]      # (g) the customer is on record: not asked for
+    assert [k for k in f if k != "customer_id"] == ["problem", "solution", "total", "timeline", "valid_until"]      # (g) the customer is on record: not asked for
+    assert f["customer_id"]["said"] is True                                # C4: shown under "From what you said"
     assert f["problem"]["default"] == "Owners lose evenings to paperwork" and f["total"]["default"] == 4500 and f["valid_until"]["default"] == "2026-10-31"
     r = _answer(env, asked, {"problem": "Month-end takes them a week.", "solution": "We take over bookkeeping and month-end.", "total": 4500, "timeline": "Live in 3 weeks"})
     assert r["status"] == "awaiting_approval"
     a = _one(env, r)
     p = a["payload"]
     assert a["tool_id"] == "send_proposal" and (p["customer_name"], p["to_email"], p["total"], p["timeline"]) == ("QA Round Six Ltd", "qa@six.test", 4500, "Live in 3 weeks")
-    assert env.fin["proposals"][0]["status"] == "draft" and not env.comms.sent and _charges(env) == []      # preparing it is free; nothing is sent yet
+    # The full proposal is written as the Business Blueprints page writes it, at its price; nothing is sent yet.
+    assert env.fin["proposals"][0]["status"] == "draft" and not env.comms.sent and _charges(env) == [("proposal_full", 0)]
     done = env.approve(r)
     assert done["status"] == "succeeded" and done["summary"] == f"Proposal {p['reference']} was sent to qa@six.test."
     mail = env.comms.sent[-1]
     assert "We take over bookkeeping and month-end." in mail["text"] and "Price: £4,500.00" in mail["text"]
-    assert _charges(env) == [("agent_send", 2)] and env.fin["proposals"][0]["status"] == "sent"
+    assert _charges(env) == [("proposal_full", 0), ("agent_send", 2)] and env.fin["proposals"][0]["status"] == "sent"
     run(env.orch.advance(r["id"]))
     assert len(env.fin["proposals"]) == 1 and len(env.comms.sent) == 1      # (e) once
 
@@ -288,6 +290,11 @@ def test_a_new_quotation_takes_a_discount_another_valid_until_date_and_a_note_fr
 def test_with_nothing_on_record_each_says_what_it_needs_and_the_step_that_provides_it(capability):
     r = _empty().submit(capability=capability, channel="ui_action")["run"]
     said = f"{r.get('summary') or ''} {r.get('next_action') or ''}"
+    if capability in ("capacity_check", "expansion_scenario"):
+        # B6: before any revenue, these work on the planned figures: asked for (kept, labelled planned), never a dead end.
+        q = r.get("pending_question") or {}
+        assert r["status"] == "running" and "planned" in q.get("question", "") and q.get("fields"), said
+        return
     assert r["status"] == "succeeded" and r["next_action"], said          # there is always a next step
     assert not any(phrase in said for phrase in ("I can't", "I cannot", "There is no ", "There are no ", "not automated", "Business Blueprints")), said
 
@@ -295,8 +302,9 @@ def test_with_nothing_on_record_each_says_what_it_needs_and_the_step_that_provid
 def test_every_capability_is_on_a_plan_states_its_cost_and_is_listed():
     assert set(config.CAPABILITY_MIN_PLAN) == set(WORKFLOWS)
     assert all(config.cost_of(c) for c in WORKFLOWS)
-    for key in ("new_proposal", "new_purchase_order", "credit_note"):
+    for key in ("new_purchase_order", "credit_note"):
         assert config.cost_of(key) == "2 credits when it is sent" and WORKFLOWS[key].autonomy == "A3"
+    assert config.cost_of("new_proposal") == "25 credits for the written proposal, 2 when it is sent" and WORKFLOWS["new_proposal"].autonomy == "A3"
     for key in ("supplier_bill", "add_vendor", "update_record", "marketplace_profile", "marketplace_offering"):
         assert config.cost_of(key) == "2 credits" and WORKFLOWS[key].autonomy == "A1"
 
@@ -354,7 +362,8 @@ def test_the_agent_centre_lists_every_document_with_its_status_and_whether_its_d
     assert other.status_code in (403, 404)                                 # another business's documents are never listed
     docs = {d["kind"]: d for d in body["items"]}
     assert set(docs) == {"quotation", "invoice", "proposal", "purchase_order", "credit_note", "receipt"} and body["total"] == 6
-    assert {k["key"] for k in body["kinds"]} == {"quotation", "invoice", "contract", "proposal", "purchase_order", "credit_note", "receipt"}
+    assert {k["key"] for k in body["kinds"]} == {"quotation", "invoice", "contract", "proposal", "purchase_order", "credit_note", "receipt",
+                                                  "funding_pack_draft", "business_plan_draft", "sales_letter_draft"}      # B9: prepared documents too
     for kind, task in (("quotation", quote), ("proposal", proposal), ("purchase_order", po), ("credit_note", note)):
         d = docs[kind]
         assert (d["status"], d["status_label"], d["can_edit"], d["run_id"]) == ("awaiting_approval", "Waiting for your approval", True, task["id"]), kind

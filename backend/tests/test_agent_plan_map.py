@@ -53,7 +53,7 @@ def test_with_no_credits_an_included_task_is_blocked_with_a_way_to_top_up():
     env = Env(plan="starter_insight", credits=0)
     res = env.submit(capability="enquiry_to_quote", params=dict(ENQUIRY))
     assert res["kind"] == "blocked" and res["reason_codes"] == ["credits_exhausted"] and res["reason"] == "credits"
-    assert res["balance"] == 0 and res["cost"] and res["actions"] == [{"label": "Top up", "to": "/pricing", "upgrade": True}]
+    assert res["message"] == "This needs 2 credits; you have 0. Top up." and res["actions"] == [{"label": "Top up", "to": "/pricing", "upgrade": True}]
     assert run(env.store.list_runs("A")) == [] and env.meter.charges == []
 
 
@@ -67,7 +67,7 @@ def test_every_task_has_a_price_and_an_asked_for_task_always_costs_the_same():
     for _ in range(2):                                                     # the same request twice: the same price twice
         env = Env(plan="starter_insight", credits=50)
         res = env.submit(capability="registration_checklist", channel="ui_action")
-        assert res["kind"] == "workflow" and res["credits_used"] == 2 and res["credits_left"] == 48
+        assert res["kind"] == "workflow" and env.meter.balances[env.meter.charges[0][0]] == 48 and "credits_used" not in res
         spent.append([c[1:] for c in env.meter.charges])
     assert spent[0] == spent[1] == [("agent_task", 2)]
 
@@ -78,7 +78,7 @@ def test_a_task_that_does_not_succeed_costs_nothing_and_none_starts_on_an_empty_
     assert res["kind"] == "blocked" and res["reason"] == "credits" and run(empty.store.list_runs("A")) == [] and empty.meter.charges == []
     env = Env(plan="explorer", credits=50)
     asked = env.submit(text="invoice BrightTech Ltd for a Strategy Workshop")      # waits for approval: only the draft is charged, the send is not
-    assert [c[1:] for c in env.meter.charges] == [("agent_invoice_draft", 2)] and asked["credits_used"] == 2 and asked["credits_left"] == 48
+    assert [c[1:] for c in env.meter.charges] == [("agent_invoice_draft", 2)] and "credits_used" not in asked and "credits_left" not in asked
 
 
 def test_the_pricing_page_is_given_the_same_map_the_agent_checks():

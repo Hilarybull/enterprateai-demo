@@ -73,8 +73,8 @@ def test_opening_a_page_never_starts_an_idea_validation(monkeypatch):
     monkeypatch.setattr(autostart, "preparation", an_unscored_idea)
     assert run(autostart.sweep(env.orch, "A", visit=True)) == []
     assert not [r for r in run(env.store.list_runs("A")) if r["workflow_key"] == "idea_validation"]
-    started = run(autostart.sweep(env.orch, "A"))      # the scheduler's own look still may, as before
-    assert [r["workflow_key"] for r in started] == ["idea_validation"]
+    started = run(autostart.sweep(env.orch, "A"))      # §4: nor the scheduler's own look: paid research is only ever suggested
+    assert [r["workflow_key"] for r in started] == []
 
 
 def test_the_dashboards_look_for_work_is_a_visit(monkeypatch):

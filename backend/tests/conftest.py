@@ -36,6 +36,17 @@ def _isolated_database(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_page_fetching(monkeypatch):
+    """§5: research fetches each source page on the server. No test ever reaches the web: a test gives its own fetcher;
+    without one, every page is unreachable (so nothing can be a checked source)."""
+    from app.modules.agent import credibility
+
+    async def _offline(_client, url):
+        return {"ok": False, "url": url, "reason": "offline in tests"}
+    monkeypatch.setattr(credibility, "fetch_page", _offline)
+
+
+@pytest.fixture(autouse=True)
 def _no_local_qa_overrides(monkeypatch):
     """Tests check the real plan limits, whatever a developer's local .env sets for QA."""
     settings = get_settings()

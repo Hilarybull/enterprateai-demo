@@ -1,6 +1,6 @@
 import UkDateInput, { ukDate } from "../UkDateInput";
 import { useEffect, useRef, useState } from "react";
-import { agentErrorMessage, answerRun, cancelRun, creditsText, fixCustomerEmail, getRun } from "../../lib/agent";
+import { agentErrorMessage, answerRun, cancelRun, fixCustomerEmail, getRun } from "../../lib/agent";
 import { formatCurrency } from "../../lib/format";
 import { CustomerPicker, LineItems, Modal, checkLines, linesFromText, startingLines } from "./AgentBits";
 import SaidLine from "../SaidLine";
@@ -12,7 +12,10 @@ import SaidLine from "../SaidLine";
 
 export const WORKING_TEXT = "Working on it…";
 const POLL_MS = 1500;
-const MAX_POLLS = 60;
+// A3: looked at every 1.5 seconds for the first 90 seconds, then every 5 seconds for 15 minutes more: a long task
+// (an idea's research) is followed to its end, never left showing "Working…".
+const FAST_POLLS = 60;
+const MAX_POLLS = FAST_POLLS + 180;
 
 /** "Working on it… Pricing items…": the step comes from the task while the Agent carries it on. */
 export const workingText = (run) => [WORKING_TEXT, run?.step?.doing].filter(Boolean).join(" ");
@@ -47,7 +50,7 @@ const ASKS = {
   notes: "Anything you'd like to say to the customer on it?",
   vat_rate: "What VAT rate do you charge?",
   discount: "Any discount to give?",
-  valid_until: "How long is the quotation valid for?",
+  valid_until: "How long should it stay valid?",      // C4: a proposal or a quotation alike, never the wrong document
   due_date: "When is payment due?",
   customer_email: "What is the customer's email address?",
   customer_name: "What is the customer's name?",
@@ -63,6 +66,9 @@ export function askFor(field) {
   const label = String(field.label || "").trim();
   if (!label) return "What should I put here?";
   if (/\?$/.test(label)) return label;
+  // C4: a label that is already a question's words ("What the customer needs", "How it was paid") is asked as it reads,
+  // never put inside another question ("What is the what the customer needs?").
+  if (/^(what|who|how|which|when|where|why)\b/i.test(label)) return `Tell me ${label.charAt(0).toLowerCase()}${label.slice(1)}.`;
   // "VAT rate (%)", "PO number": an acronym keeps its capitals; anything else reads naturally in the sentence.
   const thing = /^[A-Z]{2,}/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1);
   if (field.type === "checkbox") return label;
@@ -96,7 +102,7 @@ function questionSummary(field, value) {
     }).join(", ");
   }
   if (field.type === "customer") {
-    if (value === "new") return field.new_label?.replace(/^\+\s*/, "") || "New customer";
+    if (value === "new") return field.new_label?.replace(/^\+\s*/, "") || (/vendor|supplier/i.test(field.key) ? "New supplier" : "New customer");
     return (field.options || []).find((o) => String(o.value) === String(value))?.label || "";
   }
   if (field.type === "choice") {
@@ -136,12 +142,11 @@ const isSaid = (field) => Boolean(field?.said) && field.default !== undefined &&
 const shows = (field, values) => !field.show_if || Object.entries(field.show_if).every(([key, value]) => values[key] === value);
 
 /**
- * How many questions a dialog can ask (QA U3): one that depends on an answer counts until that answer rules it
- * out, so the number only ever goes down as the task goes on, never up.
+ * How many questions a dialog will ask (E4): only those it actually shows. A field read from the message, a companion
+ * shown inside another question, and a question whose condition the current answers rule out are not counted.
  */
 export function questionsLeft(fields, values, answered, changingSaid = false) {
-  return (fields || []).filter((field) => !isCompanion(field) && (changingSaid || !isSaid(field))
-    && (!field.show_if || Object.entries(field.show_if).every(([key, value]) => !answered.has(key) || values[key] === value))).length;
+  return (fields || []).filter((field) => !isCompanion(field) && (changingSaid || !isSaid(field)) && shows(field, values)).length;
 }
 
 /** The email address in what was typed, if there is one ("email: info@asd.co.uk" gives "info@asd.co.uk"). */
@@ -150,7 +155,7 @@ export function emailIn(text) {
   return m ? m[0].replace(/[.]+$/, "") : "";
 }
 
-export function ChatQuestionThread({ title, question, fields = [], step = null, submitLabel = "Send", submitting, onSubmit, onCancel, onDiscard = null, error = "", clearError = null, aside = null, askedBefore = 0, planned = null, onTotal = null }) {
+export function ChatQuestionThread({ title, question, fields = [], said = null, step = null, submitLabel = "Send", submitting, onSubmit, onCancel, onDiscard = null, error = "", clearError = null, aside = null, askedBefore = 0, planned = null, onTotal = null }) {
   const [discarding, setDiscarding] = useState(false);      // "Discard this request" asked: confirm before the task is cancelled
   const [values, setValues] = useState(() => Object.fromEntries((fields || []).map((field) => [field.key, questionDefault(field)])));
   const [stage, setStage] = useState(0);
@@ -251,14 +256,23 @@ export function ChatQuestionThread({ title, question, fields = [], step = null, 
   // What came from their message, with what it reads as ("Mark (new)", "$300.00"): one line, shown once (QA P5-1).
   // The same list as the Agent card's form: a field with words of its own for the line (a customer's name read as
   // "Mark (new)" stands for its name field too, so that one isn't listed twice).
-  const saidItems = (fields || []).filter((field) => ((field.said && field.said_text) || field.said_note) && shows(field, values))
-    .map((field) => ({ key: field.key, text: field.said_text || field.said_note }));
+  // E3: when the server sends what was read from the message, every field of it is listed (the supplier and items of a
+  // purchase order, a contract's price), not only those that are also on this form.
+  const saidItems = Array.isArray(said) && said.length
+    ? said.map((line) => ({ key: line.key, label: line.label, text: line.text }))
+    : (fields || []).filter((field) => ((field.said && field.said_text) || field.said_note) && shows(field, values))
+      .map((field) => ({ key: field.key, text: field.said_text || field.said_note }));
+  const editSaid = (key) => {
+    setChangingSaid(true);
+    const at = visible.findIndex((field) => field.key === key);
+    setStage(at >= 0 ? at : 0);
+  };
 
   return (
     <form noValidate onSubmit={(e) => { e.preventDefault(); submitCurrent(); }} className="space-y-4" data-thread>
       {stepLabel && <p className="-mt-2 text-[12px] font-semibold uppercase tracking-wide text-slate-400" data-step>{stepLabel}</p>}
       <div className="space-y-3">
-        {saidItems.length > 0 && <SaidLine items={saidItems} onEdit={(fields || []).some(isSaid) ? () => { setChangingSaid(true); setStage(0); } : null} editing={changingSaid} />}
+        {saidItems.length > 0 && <SaidLine items={saidItems} onEdit={(fields || []).some(isSaid) || (said || []).length ? editSaid : null} editing={changingSaid} />}
         {!single && (currentPrompt || !current) && (
           <div className="flex gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white">EA</div>
@@ -457,10 +471,10 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
         approval = ((await getRun(run.id))?.approvals || []).find((a) => a.status === "pending") || null;
       } catch { /* the confirmation is still given, without the figures */ }
       if (!alive.current) return undefined;
-      return settle({ tone: "emerald", text: readyText(run, approval), next: creditsText(run), runId: run.id });
+      return settle({ tone: "emerald", text: readyText(run, approval), runId: run.id });
     }
     if (status === "succeeded") {
-      return settle({ tone: "emerald", text: run.summary || "Done.", next: [run.next_action, creditsText(run)].filter(Boolean).join(" "),
+      return settle({ tone: "emerald", text: run.summary || "Done.", next: run.next_action || "",
         runId: run.id, links: run.outcome?.links });
     }
     if (status === "cancelled") return settle({ tone: "slate", text: run.summary || "That task was cancelled.", runId: run.id });
@@ -486,7 +500,7 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
       let next = run;
       try { next = (await getRun(run.id))?.run || run; } catch { /* look again next time */ }
       follow(next, tries + 1);
-    }, POLL_MS);
+    }, tries < FAST_POLLS ? POLL_MS : 5000);
     return undefined;
   }
 
@@ -586,7 +600,7 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
     const step = open.run.step;
     element = (
       <Modal compact title={confirm ? "Is this right?" : "A few details"} onClose={close}>
-        <ChatQuestionThread key={open.run.id + ":" + open.n} title={q.question || "A few details"} question={q.question} fields={fields} step={step}
+        <ChatQuestionThread key={open.run.id + ":" + open.n} title={q.question || "A few details"} question={q.question} fields={fields} said={q.said} step={step}
           askedBefore={answeredIn.current[open.run.id] || 0} planned={plannedIn.current[open.run.id] ?? null}
           onTotal={(n) => { const was = plannedIn.current[open.run.id]; if (was == null || n < was) plannedIn.current[open.run.id] = n; }}
           submitLabel={confirm ? "Confirm" : "Send"} submitting={sending || working} onSubmit={answer} onCancel={close} onDiscard={discard} clearError={() => setError("")}

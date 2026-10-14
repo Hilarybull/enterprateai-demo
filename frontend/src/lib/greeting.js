@@ -68,7 +68,8 @@ const list = (parts) => (parts.length <= 1 ? parts.join("") : `${parts.slice(0, 
  */
 export function briefingOf(b) {
   if (!b) return { kind: "none", text: "" };
-  if (b.working_on) return { kind: "working", text: `I'm working on ${String(b.working_on.title || "your task").replace(/^./, (c) => c.toLowerCase())}. I'll let you know when it's ready.` };
+  // F4: the task's own words from the server ("I'm updating your catalogue item"), never its title bent into a sentence.
+  if (b.working_on) return { kind: "working", runId: b.working_on.run_id, text: `I'm ${b.working_on.doing || "working on your task"}. I'll let you know when it's ready.` };
   const done = Object.entries(b.done_since_last_visit || {}).filter(([, n]) => n > 0);
   if (done.length) {
     const known = done.filter(([k]) => DID[k]).map(([k, n]) => DID[k](n));

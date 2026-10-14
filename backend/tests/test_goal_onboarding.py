@@ -53,7 +53,7 @@ def test_i_need_funding_is_partial_support_through_funding_readiness_and_never_p
     r = goals.resolve(key="need_funding")
     assert r["message"].startswith("I can help you become more funding-ready") and r["execution_boundary"] == "I can't guarantee funding, or a yes from any investor or lender."
     assert "will get you funding" not in r["message"].lower()
-    assert r["credit_implication"].startswith("Free to start")
+    assert not any(k.startswith("credit") for k in r)      # a task card never says what it costs
 
 
 def test_a_true_no_match_says_so_and_invents_nothing():
@@ -240,8 +240,7 @@ def test_create_an_invoice_from_the_homepage_through_sign_in_to_a_draft_waiting_
     assert all(len(e["session_id"]) == 12 for e in store.events)            # a prefix: the session itself can't be opened from an event
     # The first task is not free any more (config.FIRST_TASK_FREE is off): the badge and the line say what it costs,
     # and the meter moves by exactly that (QA R13: the badge said "Free" while 2 credits were charged).
-    assert s["resolution"]["credit_badge"] == "Uses 2 credits"
-    assert s["resolution"]["credit_implication"] == "Working this out with you is free. Preparing it uses AI Credits (2 credits to prepare the invoice, 2 when it is sent)."
+    assert not any(k.startswith("credit") for k in s["resolution"])      # a task card never says what it costs
     assert env.meter.charges == [(NEW_USER, "agent_invoice_draft", 2)] and env.meter.balances[NEW_USER] == 48
     sent = client.post(f"/workflow-runs/{run_id}/approvals/{approval['id']}/approve").json()
     assert sent.get("run", sent).get("status") != "failed" and len(env.comms.sent) == 1
@@ -459,7 +458,7 @@ def test_i_need_an_invoice_for_mark_300_dollars_on_the_homepage_reads_as_the_age
     assert [(q["key"], q["proposed"], q["default"]) for q in s["questions"] if q["key"] in ("customer", "item", "amount")] == [("customer", True, "Mark"), ("item", False, ""), ("amount", True, 300.0)]
     assert [q.get("prefix") for q in s["questions"] if q["key"] in ("customer", "item", "amount")] == [None, None, "$"]   # the sign follows what was written, not the default
     assert [(x["label"], x["value"]) for x in s["summary"]] == [("Who is it for?", "Mark"), ("What price for each?", "$300"), ("Currency", "USD")]
-    assert s["resolution"]["credit_badge"] == "Uses 2 credits"      # what preparing it will cost, signed in or not (QA R13)
+    assert not any(k.startswith("credit") for k in s["resolution"])      # no price on the card, signed in or not
     # One reader: the Agent chat takes the same name, amount and currency from the same words.
     told = said.read(text, date(2026, 10, 7))
     assert (told["party"].lower(), told["amount"], told["currency"]) == ("mark", 300.0, "USD") and "work" not in told
@@ -490,7 +489,7 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
     env.meter.plans[OWNER] = "explorer"                                     # the free plan, as that workspace was
     who["user"] = OWNER
     s = client.post("/task-sessions", json={"text": "I need an invoice for mark, $300", "entry_mode": "free_text"}).json()
-    assert s["resolution"]["credit_badge"] == "Uses 2 credits"      # the price, said before anything is done
+    assert not any(k.startswith("credit") for k in s["resolution"])      # charged as before, never said on the card
     client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"item": "Consulting", "customer_email": "mark@example.test", "vat_rate": 0}})
     client.post(f"/task-sessions/{s['id']}/resume")
     done = client.post(f"/task-sessions/{s['id']}/prepare").json()
@@ -521,7 +520,7 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
                "customer_email": "frank@example.test", "quantity": 1, "vat_rate": 0, "due_days": 14}
     for n, goal in enumerate(goals.GOALS):                                  # twelve tasks: well past Explorer's five a month, and still none refused
         g = client.post("/task-sessions", json={"key": goal["key"]}).json()
-        assert g["resolution"]["credit_badge"] == "Free" or g["resolution"]["credit_badge"].startswith("Uses "), goal["key"]      # never "needs a plan"
+        assert "credit_badge" not in g["resolution"], goal["key"]
         client.post(f"/task-sessions/{g['id']}/inputs", json={"answers": {q["key"]: answers[q["key"]] for q in g["questions"]}})
         client.post(f"/task-sessions/{g['id']}/resume")
         out = client.post(f"/task-sessions/{g['id']}/prepare").json()

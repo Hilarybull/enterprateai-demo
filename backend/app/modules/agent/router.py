@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from functools import lru_cache
 from typing import Any
@@ -14,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from app.modules.agent import config as agent_config
 from app.modules.agent import summary as summary_mod
 from app.modules.agent.models import AgentRequest, new_id
 from app.modules.agent.orchestrator import AccessDenied, Conflict, Orchestrator, Runtime
@@ -149,6 +151,16 @@ def _step_of(run: dict) -> dict | None:
             "doing": _DOING.get((run["workflow_key"], run["current_step"])) or f"{title}…"}
 
 
+def charges_of(run: dict) -> list[dict]:
+    """What a task was charged, and for what: listed on the Credits page only, never with the task itself."""
+    return [{"what": _SPEND_TEXT.get(c.get("feature"), "Agent work"), "credits": int(c.get("credits") or 0), "at": c.get("at")}
+            for c in (run.get("state") or {}).get("credits") or []]
+
+
+def credits_of(run: dict) -> int:
+    return sum(c["credits"] for c in charges_of(run))
+
+
 def _public_run(run: dict) -> dict:
     """User-facing view of a run. Internal working state is not exposed (s18.3)."""
     state = run.get("state") or {}
@@ -162,15 +174,13 @@ def _public_run(run: dict) -> dict:
         "bucket": summary_mod.bucket_of(run),
         "retrying": run.get("status") == "failed" and summary_mod.bucket_of(run) == "active",      # the Agent is trying again itself
         "next_attempt_at": (lambda due: due.isoformat() if due else None)(get_orchestrator().next_attempt_at(run)),
-        # What this task has cost so far, and what each charge was for.
-        "credits_used": sum(int(c.get("credits") or 0) for c in state.get("credits") or []),
         **({"question_title": summary_mod.question_title(run)["title"], "question_detail": summary_mod.question_title(run)["detail"]} if run.get("pending_question") else {}),
-        "credits": [{"what": _SPEND_TEXT.get(c.get("feature"), "Agent work"), "credits": int(c.get("credits") or 0), "at": c.get("at")}
-                    for c in state.get("credits") or []],
         "email_needed": state.get("email_needed") if run.get("reason_code") == "invalid_customer_destination" else None,
         # The last change made to the draft while it waited: who, which version, and what changed.
         "last_edit": state.get("last_edit") if run.get("status") == "awaiting_approval" else None,
         "outcome": state.get("outcome") or {},
+        # C2: a task that ended with nothing to do (refused, or no data to work from) is its own state, never "Completed".
+        "display_status": "nothing_to_do" if run.get("status") == "succeeded" and (state.get("outcome") or {}).get("skipped") else run.get("status"),
         "delivery_question": {k: (state.get("delivery_question") or {}).get(k) for k in ("tool", "to", "first_attempt_at")}
         if state.get("delivery_question") else None,
         "refs": {k: state.get(k) for k in ("enquiry_id", "quote_id", "quote_reference", "contract_id", "invoice_id", "invoice_reference") if state.get(k)},
@@ -249,14 +259,45 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
             source_reference=body.source_reference, raw_input=body.text, requested_capability=body.capability,
             params=body.params, transcript_confidence=body.transcript_confidence, confirmed=body.confirmed,
             locale=body.locale, recommendation_id=body.recommendation_id, background=body.background,
+            history=[{"role": t.role, "content": t.content} for t in (body.history or [])[-6:]],
         ), email=user.get("email"))
     except AccessDenied as e:
         raise _denied(e)
     except Conflict as e:
         raise _conflict(e)
     if res.get("kind") == "assistant" and (body.text or "").strip():
-        res = await _converse(user, body)
+        idea = idea_mentioned(body.text)
+        # §4 (R4): an idea mentioned in passing is never researched by itself, nor answered at a price: the paid work is
+        # offered as buttons, and nothing is charged until the owner presses one.
+        res = _idea_offer(idea) if idea else await _converse(user, body)
     return _result(res)
+
+
+_MENTION = re.compile(r"\b(?:i(?:'m| am) (?:thinking|wondering) (?:about|of) (?:starting |opening |launching |running )?|i (?:have|had|got) (?:an |a new )?idea (?:for |about |of )?"
+                      r"|my (?:new |other |next )?idea is |how about (?:starting |opening )?|what about (?:starting |opening )?)(?P<idea>an? [^.?!]{6,160})", re.I)
+
+
+def idea_mentioned(text: str | None) -> str:
+    """ "I'm thinking about starting a dog grooming van in Leeds" gives "a dog grooming van in Leeds"; "" otherwise."""
+    m = _MENTION.search(str(text or ""))
+    return m.group("idea").strip(" ,;:") if m else ""
+
+
+def _idea_offer(idea: str) -> dict:
+    params = {"answers": {"description": idea[:1].upper() + idea[1:]}}
+    return {"kind": "answer", "conversational": False,
+            "message": f"That sounds like a new idea: {idea}. I can score it, size its market or draft a plan for it whenever you like. Nothing has been started.",
+            "offers": [{"label": "Score this idea", "capability": "idea_validation", "params": params},
+                       {"label": "Size its market", "capability": "market_size", "params": params},
+                       {"label": "Draft a business plan", "capability": "business_plan_draft", "params": params}]}
+
+
+def _offer_tasks(text: str) -> list[tuple[str, str]]:
+    """Up to three tasks that come close to what was asked, offered as buttons (never as something the chat did)."""
+
+    words = set(re.findall(r"[a-z]+", (text or "").lower()))
+    scored = sorted(((len(words & set(re.findall(r"[a-z]+", wf.title.lower()))), cap, wf.title) for cap, wf in WORKFLOWS.items()), reverse=True)
+    return [(cap, title) for n, cap, title in scored[:3] if n]
 
 
 async def _converse(user: dict, body: AgentRequestIn) -> dict:
@@ -274,8 +315,7 @@ async def _converse(user: dict, body: AgentRequestIn) -> dict:
         if e.status_code == 402:
             if why == "INSUFFICIENT_CREDITS":
                 return {"kind": "blocked", "reason_codes": ["credits_exhausted"], "upgrade": True,
-                        "message": f"You're out of AI Credits: a written answer needs {detail.get('required', 2)} and you have {detail.get('available', 0)}. "
-                                   "Nothing was charged. Top up or upgrade and ask again."}
+                        "message": agent_config.short_of(detail.get("required", 2), detail.get("available", 0))}
             return {"kind": "blocked", "reason_codes": ["pricing_unavailable"], "upgrade": False,
                     "message": "Written answers aren't available right now because their price isn't set up. Nothing was charged; please tell support."}
         if e.status_code in (403, 404):
@@ -284,7 +324,40 @@ async def _converse(user: dict, body: AgentRequestIn) -> dict:
     except Exception:      # noqa: BLE001 - the model or its provider failed: the held credits were released
         logger.warning("agent written answer failed", exc_info=True)
         return {"kind": "answer", "message": "I couldn't write an answer just now. Nothing was charged; please ask again."}
+    action = getattr(out, "action", None)
+    if action:
+        # E2: asked for something done: the task that does it runs, at its own price; the chat said nothing and cost nothing.
+        if action in WORKFLOWS:
+            return await get_orchestrator().submit(AgentRequest(
+                requesting_actor_id=user["id"], business_id=body.business_id, source_channel="text", raw_input=body.text,
+                requested_capability=action, background=body.background,
+                history=[{"role": t.role, "content": t.content} for t in (body.history or [])[-6:]]), email=user.get("email"))
+        return {"kind": "answer", "message": "That's something I can't do as a task yet. Nothing was changed.",
+                "offers": [{"label": label, "capability": cap} for cap, label in _offer_tasks(body.text)]}
+    # What the answer cost is never said with it: the sidebar balance and the Credits page show it (F3: every charge is
+    # listed there, a written answer as much as a task, so the page is the record).
+    used = int(getattr(out, "credits_used", 0) or 0)
+    if used:
+        await _note_answer_charge(body.business_id, body.text, used)
     return {"kind": "answer", "message": out.answer, "conversational": True}
+
+
+ANSWER_CHARGES_KEPT = 2000
+
+
+async def _note_answer_charge(business_id: str, question: str, credits: int) -> None:
+    """F3: a written answer's charge, with the question it answered, for the Credits page."""
+    orch = get_orchestrator()
+    entry = {"at": orch.rt.clock().isoformat(), "question": " ".join(str(question or "").split())[:60], "credits": int(credits)}
+
+    def _apply(data: dict) -> None:
+        kept = data.setdefault("agent_answer_charges", [])
+        kept.append(entry)
+        del kept[:-ANSWER_CHARGES_KEPT]
+    try:
+        await orch.rt.business.mutate(business_id, _apply)
+    except Exception:      # noqa: BLE001 - the answer is never held up by its record
+        logger.warning("answer charge not recorded for %s", business_id, exc_info=True)
 
 
 class StartWorkflowIn(BaseModel):
@@ -660,6 +733,22 @@ async def list_documents(
                 "run_id": run["id"] if run else None, "approval_id": approval["id"] if approval else None,
                 "can_edit": bool(approval and actor.can_prepare), "from_agent": bool(run),
             })
+    # B9: what the Agent prepared for review (a funding pack, a business plan, a sales letter) is a document too: listed
+    # here, with the way to open it, from the task that made it.
+    for r in runs:
+        kind = _PREPARED_KINDS.get(r.get("workflow_key") or "")
+        out = (r.get("state") or {}).get("outcome") or {}
+        if not kind or r.get("status") != "succeeded" or out.get("reused") or not out.get("links") or (r.get("state") or {}).get("refunded"):
+            continue      # refunded: it never reached the owner (F1), so it is not one of their documents
+        label, part = kind
+        made = out.get(part) if isinstance(out.get(part), dict) else {}
+        named = ", ".join(out.get("documents") or []) if part == "documents" else (made.get("title") or label)
+        items.append({
+            "kind": r["workflow_key"], "kind_label": label, "id": f"run:{r['id']}", "reference": named or label, "party": "", "total": None,
+            "currency": None, "status": "prepared", "status_label": "Ready for your review", "date": str(r.get("completed_at") or r.get("updated_at") or "")[:10],
+            "updated_at": r.get("completed_at") or r.get("updated_at"), "run_id": r["id"], "approval_id": None, "can_edit": False, "from_agent": True,
+            "to": out["links"][0].get("to"),
+        })
     # Waiting for approval first; then newest first by the document's own date (its last change breaks a tie).
     items.sort(key=lambda d: (d["status"] == "awaiting_approval", str(d.get("date") or ""), str(d.get("updated_at") or "")), reverse=True)
     # A number held by two documents of a kind is said, so it can be put right (it should never happen for new ones).
@@ -667,7 +756,7 @@ async def list_documents(
     for d in items:
         held[(d["kind"], d["reference"].upper())] = held.get((d["kind"], d["reference"].upper()), 0) + 1
     for d in items:
-        d["duplicate_number"] = held[(d["kind"], d["reference"].upper())] > 1
+        d["duplicate_number"] = held[(d["kind"], d["reference"].upper())] > 1 and d["kind"] not in _PREPARED_KINDS
     counts: dict[str, int] = {}
     for d in items:
         counts[d["kind"]] = counts.get(d["kind"], 0) + 1
@@ -682,9 +771,18 @@ async def list_documents(
     if limit is not None:
         # `total` is what matches the filter and search; `all_total` and `counts` are every document, for the tab and the type list.
         return {"items": items[offset:offset + limit], "counts": counts, "total": len(items), "all_total": everything, "limit": limit, "offset": offset,
-                "kinds": [{"key": k, "label": l} for k, l, _c, _s in _DOCUMENT_KINDS] + [{"key": "receipt", "label": "Receipt"}]}
-    return {"items": items[:300], "counts": counts, "total": len(items), "all_total": everything,
-            "kinds": [{"key": k, "label": l} for k, l, _c, _s in _DOCUMENT_KINDS] + [{"key": "receipt", "label": "Receipt"}]}
+                "kinds": _document_kinds()}
+    return {"items": items[:300], "counts": counts, "total": len(items), "all_total": everything, "kinds": _document_kinds()}
+
+
+# B9: documents the Agent prepares for review, by the task that makes them: (label, where the outcome keeps it).
+_PREPARED_KINDS = {"funding_pack_draft": ("Funding pack", "documents"), "business_plan_draft": ("Business plan", "plan"),
+                   "sales_letter_draft": ("Sales letter", "sales_letter")}
+
+
+def _document_kinds() -> list[dict]:
+    return ([{"key": k, "label": l} for k, l, _c, _s in _DOCUMENT_KINDS] + [{"key": "receipt", "label": "Receipt"}]
+            + [{"key": k, "label": l} for k, (l, _part) in _PREPARED_KINDS.items()])
 
 
 @router.get("/businesses/{business_id}/agent/summary")
@@ -965,6 +1063,33 @@ async def list_approvals(business_id: str, status_: str = Query(default="pending
     return {"items": items, "count": len(items)}
 
 
+@router.get("/businesses/{business_id}/agent/charges")
+async def agent_charges(business_id: str, limit: int = Query(default=100, ge=1, le=500), user=Depends(get_current_user)):
+    """Each charge the Agent made, for the Credits page: the task it was for, what it paid for, and a link to the task.
+    The one place an Agent charge is listed; the Agent itself never says what anything cost."""
+    orch = get_orchestrator()
+    try:
+        await orch.actor_for(user["id"], business_id, user.get("email"))
+    except AccessDenied as e:
+        raise _denied(e)
+    except Conflict as e:
+        raise _conflict(e)
+    rows = []
+    for r in await orch.rt.store.list_runs(business_id, limit=500):
+        task = r.get("title") or (WORKFLOWS[r["workflow_key"]].title if r.get("workflow_key") in WORKFLOWS else "Agent task")
+        rows += [{"run_id": r["id"], "task": task, **c, "link": f"/agent/runs/{r['id']}"} for c in charges_of(r) if c["credits"] > 0]
+        given = (r.get("state") or {}).get("refunded") or {}
+        if given.get("given") and int(given.get("credits") or 0):      # F1: given back, shown against the charge
+            rows.append({"run_id": r["id"], "task": task, "what": "Refunded: it didn't finish", "credits": -int(given["credits"]),
+                         "at": given.get("at"), "link": f"/agent/runs/{r['id']}"})
+    # F3: written answers are charged too, and are on the page like any task: the question, as asked.
+    data = await orch.rt.business.load(business_id) or {}
+    rows += [{"run_id": None, "task": "Written answer", "what": a.get("question") or "A question", "credits": int(a.get("credits") or 0),
+              "at": a.get("at"), "link": None} for a in data.get("agent_answer_charges") or [] if int(a.get("credits") or 0) > 0]
+    rows.sort(key=lambda x: x.get("at") or "", reverse=True)
+    return {"charges": rows[:limit], "total": sum(x["credits"] for x in rows)}
+
+
 @router.get("/businesses/{business_id}/workflow-runs")
 async def list_runs(
     business_id: str,
@@ -1015,7 +1140,7 @@ async def list_runs(
     if capability:
         runs = [r for r in runs if r["capability"] == capability]
     if status_:
-        runs = [r for r in runs if r["status"] == status_]
+        runs = [r for r in runs if r["display_status"] == status_]      # "succeeded" is work done; "nothing_to_do" is its own
     if date_from:
         runs = [r for r in runs if (r["created_at"] or "") >= date_from]
     if date_to:
@@ -1142,6 +1267,7 @@ class PolicyIn(BaseModel):
     max_reminders: int | None = Field(default=None, ge=0, le=6)
     concentration_alert_pct: float | None = Field(default=None, ge=5, le=100)
     timezone: str | None = Field(default=None, max_length=64)      # IANA name, e.g. Europe/London
+    timezone_source: str | None = Field(default=None, max_length=16)      # "owner" (chosen in settings) or "browser" (set for them)
 
 
 @router.get("/businesses/{business_id}/agent/policy")
@@ -1156,8 +1282,10 @@ async def read_policy(business_id: str, user=Depends(get_current_user)):
     ent = await orch.entitlement(business_id)
     profile = (await orch.rt.business.load(business_id)).get("workspace_profile") or {}
     from app.modules.agent import autostart, config
+    from app.modules.agent import business as bz
     return {"policy": policy, "can_edit": actor.can_manage_policy, "auto_reminders_available": ent["max_autonomy"] == "A4",
-            "timezone": profile.get("timezone") or None,
+            "timezone": profile.get("timezone") or bz.zone_of_country(profile.get("country")) or None,      # C5: the country's when none is set
+            "timezone_set": bool(profile.get("timezone")),
             "plan": ent["plan"], "events": autostart.events(policy, ent),
             "automatic_budget": autostart.budget(policy, await orch.rt.store.list_runs(business_id, limit=500), orch.rt.clock()),
             # Everything the Agent can do: the plan it needs, what it costs, and whether it can start by itself.
@@ -1239,8 +1367,14 @@ async def update_policy(business_id: str, body: PolicyIn, user=Depends(get_curre
             data.setdefault("workspace_profile", {})
             if not isinstance(data["workspace_profile"], dict):
                 data["workspace_profile"] = {}
+            if source == "browser" and data["workspace_profile"].get("timezone_source") == "owner":
+                return      # the owner's own choice is never replaced by a browser's guess
             data["workspace_profile"]["timezone"] = zone
+            data["workspace_profile"]["timezone_source"] = source      # C5: who set it, so a later fix can tell
+        source = body.timezone_source if body.timezone_source in ("owner", "browser") else "owner"
         await orch.rt.business.mutate(business_id, _set_zone)
+        await orch.rt.store.audit({"id": new_id(), "business_id": business_id, "run_id": None, "actor_id": user["id"], "event_type": "timezone_changed",
+                                   "detail": {"timezone": zone, "source": source}, "created_at": orch.rt.clock().isoformat()})
         if not patch:      # nothing about the policy itself changed: its version stays as it is
             return {"policy": policy, "timezone": zone}
     updated = await orch.rt.store.set_policy(business_id, patch, user["id"])

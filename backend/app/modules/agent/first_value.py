@@ -506,6 +506,7 @@ def premium_gate(result: dict, *, entitled: bool, credits: int | None = None) ->
                 "primary": {"label": "Upgrade to continue", "to": "/pricing", "upgrade": True},
                 "secondary": [{"label": "Continue with free tools", "actions": [x for x in result["free_next_actions"] if not x.get("save")]}, {"label": "Save for later", "save": True}]}
     if credits is not None and credits <= 0:
-        return {"allowed": False, "reason": "credits", "message": "Your plan includes this. You are out of AI Credits, so it can't start yet. Your assessment is saved.",
+        from app.modules.agent.config import short_of
+        return {"allowed": False, "reason": "credits", "message": f"Your plan includes this. {short_of(None, credits)} Your assessment is saved.",
                 "primary": {"label": "Top up", "to": "/pricing", "upgrade": True}, "secondary": [{"label": "Save for later", "save": True}]}
     return {"allowed": True, "reason": None, "message": action["explains"]}

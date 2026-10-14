@@ -227,7 +227,7 @@ export function featureAccess(slug) {
         ? (d.byHand ? "The Agent can prepare it for you on the free plan too." : "Included on the free plan.")
         : `Included from ${PLAN_LABEL[from]}.` });
       for (const plan of more) rows.push({ plan: PLAN_LABEL[plan], text: `More is included from ${PLAN_LABEL[plan]}.` });
-      notes.push("Work the Agent does uses AI Credits. The cost is shown before it starts.");
+      notes.push("Work the Agent does uses AI Credits. The prices are in Agent settings, and each charge is listed on your Credits page.");
     }
   } else if (d.module && minPlanForModule(d.module)) {
     const from = minPlanForModule(d.module);

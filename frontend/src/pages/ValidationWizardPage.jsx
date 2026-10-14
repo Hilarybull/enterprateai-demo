@@ -203,9 +203,9 @@ function buildInitialBusinessForm() {
     pathway: "",
     context: {
       business_name: defaults.business_name || "",
-      business_type_category: defaults.business_type_category || "Technology",
+      business_type_category: defaults.business_type_category || "",      // C7: never assumed (it was "Technology" for every business)
       business_type_other: defaults.business_type_other || "",
-      primary_industry_category: defaults.primary_industry_category || "IT",
+      primary_industry_category: defaults.primary_industry_category || "",      // C7: never assumed (it was "IT")
       primary_industry_other: defaults.primary_industry_other || "",
       location: defaults.location || "",
       currency: defaults.currency || "GBP",
@@ -220,7 +220,7 @@ function buildInitialBusinessForm() {
       description: "" // NEW: for the large textarea idea
     },
     problem: {
-      customer_segment_category: defaults.customer_segment_category || "SMEs",
+      customer_segment_category: defaults.customer_segment_category || "",
       customer_segment_other: defaults.customer_segment_other || "",
       problem_type: defaults.problem_type || "", // Map to "What problem?"
       proposed_solution: "",
@@ -258,9 +258,9 @@ function mergeStageDefaultsIntoBusinessForm(source) {
   next.validation ||= {};
 
   next.context.business_name ||= defaults.business_name || "";
-  next.context.business_type_category ||= defaults.business_type_category || "Technology";
+  next.context.business_type_category ||= defaults.business_type_category || "";
   next.context.business_type_other ||= defaults.business_type_other || "";
-  next.context.primary_industry_category ||= defaults.primary_industry_category || "IT";
+  next.context.primary_industry_category ||= defaults.primary_industry_category || "";
   next.context.primary_industry_other ||= defaults.primary_industry_other || "";
   next.context.location ||= defaults.location || "";
   next.context.currency ||= defaults.currency || "GBP";
@@ -271,7 +271,7 @@ function mergeStageDefaultsIntoBusinessForm(source) {
   next.context.country ||= defaults.country || "";
   next.context.country_other ||= defaults.country_other || "";
 
-  next.problem.customer_segment_category ||= defaults.customer_segment_category || "SMEs";
+  next.problem.customer_segment_category ||= defaults.customer_segment_category || "";
   next.problem.customer_segment_other ||= defaults.customer_segment_other || "";
   next.problem.problem_type ||= defaults.problem_type || "";
   next.problem.alternatives ||= defaults.alternatives || "";
@@ -1658,13 +1658,13 @@ export default function ValidationWizardPage() {
           if (primary?.service_category) updateService("service_category", primary.service_category);
         }
         const bt = String(next?.context?.business_type ?? "").trim();
-        next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : "Other";
+        next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : bt ? "Other" : "";
         next.context.business_type_other = BUSINESS_TYPE_OPTIONS.includes(bt) ? "" : bt;
         const pi = String(next?.context?.primary_industry ?? "").trim();
-        next.context.primary_industry_category = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? pi : pi ? "Other" : "IT";
+        next.context.primary_industry_category = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? pi : pi ? "Other" : "";
         next.context.primary_industry_other = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? "" : pi;
         const cs = String(next?.problem?.customer_segment ?? "").trim();
-        next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "SMEs";
+        next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "";
         next.problem.customer_segment_other = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? "" : cs;
         const frequencyFields = deriveFrequencyFields(next?.problem?.frequency ?? "");
         next.problem.frequency = frequencyFields.frequency;
@@ -1885,15 +1885,15 @@ export default function ValidationWizardPage() {
     next.validation ||= { spoken_count: "No", demand_proof: [] };
 
     const bt = String(next?.context?.business_type ?? "").trim();
-    next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : bt ? "Other" : "Technology";
+    next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : bt ? "Other" : "";
     next.context.business_type_other = BUSINESS_TYPE_OPTIONS.includes(bt) ? "" : bt;
 
     const pi = String(next?.context?.primary_industry ?? "").trim();
-    next.context.primary_industry_category = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? pi : pi ? "Other" : "IT";
+    next.context.primary_industry_category = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? pi : pi ? "Other" : "";
     next.context.primary_industry_other = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? "" : pi;
 
     const cs = String(next?.problem?.customer_segment ?? "").trim();
-    next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "SMEs";
+    next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "";
     next.problem.customer_segment_other = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? "" : cs;
     const frequencyFields = deriveFrequencyFields(next?.problem?.frequency ?? "");
     next.problem.frequency = frequencyFields.frequency;
@@ -2379,15 +2379,15 @@ export default function ValidationWizardPage() {
 
     const bt = String(payload.context.business_type_category || "").trim();
     const btOther = String(payload.context.business_type_other || "").trim();
-    payload.context.business_type = bt === "Other" ? btOther || "Other" : bt || "Other";
+    payload.context.business_type = bt === "Other" ? btOther || "Other" : bt;
 
     const pi = String(payload.context.primary_industry_category || "").trim();
     const piOther = String(payload.context.primary_industry_other || "").trim();
-    payload.context.primary_industry = pi === "Other" ? piOther || "Other" : pi || "Other";
+    payload.context.primary_industry = pi === "Other" ? piOther || "Other" : pi;
 
     const cs = String(payload.problem.customer_segment_category || "").trim();
     const csOther = String(payload.problem.customer_segment_other || "").trim();
-    payload.problem.customer_segment = cs === "Other" ? csOther || "Other" : cs || "Other";
+    payload.problem.customer_segment = cs === "Other" ? csOther || "Other" : cs;
 
     const duCat = String(payload.offer.deliverable_unit_category || "").trim();
     const duOther = String(payload.offer.deliverable_unit_other || "").trim();
@@ -2636,17 +2636,17 @@ export default function ValidationWizardPage() {
       payload.existing_business = null;
       const bt = String(payload.context.business_type_category || "").trim();
       const btOther = String(payload.context.business_type_other || "").trim();
-      payload.context.business_type = bt === "Other" ? btOther || "Other" : bt || "Other";
+      payload.context.business_type = bt === "Other" ? btOther || "Other" : bt;
       delete payload.context.business_type_category;
       delete payload.context.business_type_other;
       const pi = String(payload.context.primary_industry_category || "").trim();
       const piOther = String(payload.context.primary_industry_other || "").trim();
-      payload.context.primary_industry = pi === "Other" ? piOther || "Other" : pi || "Other";
+      payload.context.primary_industry = pi === "Other" ? piOther || "Other" : pi;
       delete payload.context.primary_industry_category;
       delete payload.context.primary_industry_other;
       const cs = String(payload.problem.customer_segment_category || "").trim();
       const csOther = String(payload.problem.customer_segment_other || "").trim();
-      payload.problem.customer_segment = cs === "Other" ? csOther || "Other" : cs || "Other";
+      payload.problem.customer_segment = cs === "Other" ? csOther || "Other" : cs;
       delete payload.problem.customer_segment_category;
       delete payload.problem.customer_segment_other;
       payload.context.founder_hours_per_week = parseNumber(payload.context.founder_hours_per_week, 40);
@@ -4740,6 +4740,7 @@ export default function ValidationWizardPage() {
                           <div>
                             <FieldLabel info="Who is the primary audience for this?">4. Who experiences this problem?</FieldLabel>
                             <select className="ea-input" value={form.problem.customer_segment_category} onChange={(e) => update("problem.customer_segment_category", e.target.value)}>
+                              <option value="">Choose who it is for</option>
                               {["Individuals", "Students", "Professionals", "SMEs", "Enterprises", "Government", "Other"].map(o => (
                                 <option key={o} value={o}>{o}</option>
                               ))}
@@ -5693,6 +5694,7 @@ export default function ValidationWizardPage() {
                             <div className="md:col-span-2 xl:col-span-3">
                               <FieldLabel info="Who you're selling to.">Customer segment</FieldLabel>
                               <select value={form.problem.customer_segment_category} onChange={(e) => update("problem.customer_segment_category", e.target.value)} className="ea-input">
+                                <option value="">Choose who it is for</option>
                                 {CUSTOMER_SEGMENT_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}
                               </select>
                               {form.problem.customer_segment_category === "Other" ? <div className="mt-2"><Input value={form.problem.customer_segment_other} onChange={(e) => update("problem.customer_segment_other", e.target.value)} placeholder="Type customer segment" /></div> : null}

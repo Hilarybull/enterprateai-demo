@@ -349,7 +349,7 @@ function InsightCard({ card: given, busy, anyBusy, exhausted, onAction, onHide, 
       </div>
       {card.agent_action && exhausted && (
         // Out of credits: shown locked. It explains why here, on the card, and starts nothing.
-        <button type="button" onClick={() => setCreditNote(true)} title={OUT_OF_CREDITS_TIP} aria-label={`${card.agent_action.label} (out of AI Credits)`}
+        <button type="button" onClick={() => setCreditNote(true)} title={OUT_OF_CREDITS_TIP} aria-label={`${card.agent_action.label} (no credits left)`}
           className="mt-2 inline-flex w-full max-w-full items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-left text-[12px] font-semibold text-slate-400 sm:w-fit dark:border-slate-700 dark:bg-slate-800">
           <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
           {card.agent_action.label}
@@ -360,14 +360,14 @@ function InsightCard({ card: given, busy, anyBusy, exhausted, onAction, onHide, 
           onPlans={() => onAction(card, { to: "/pricing", upgrade: true })} />
       )}
       {card.agent_action && !exhausted && (
-        // Separate and labelled: this one starts an Agent task, which may use AI Credits.
+        // Separate and labelled: this one starts an Agent task.
         <button type="button" disabled={anyBusy || paused} onClick={() => onAction(card, { ...card.agent_action, agent: true })}
-          title={paused ? "Updating your dashboard. This will be available in a moment." : "Starts an Agent task. It prepares the work for your approval and may use AI Credits."}
+          title={paused ? "Updating your dashboard. This will be available in a moment." : "Starts an Agent task. It prepares the work for your approval."}
           className="mt-2 flex w-full max-w-full items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-left text-[12px] font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-60 sm:w-fit dark:border-indigo-900/50 dark:bg-indigo-900/20 dark:text-indigo-300">
           <span className="shrink-0"><Icon name="sparkle" className="h-3.5 w-3.5" /></span>
           <span className="min-w-0">
             <span className="block break-words line-clamp-2">{busy ? "Starting…" : card.agent_action.label}</span>
-            <span className="block text-[11px] font-normal leading-tight text-indigo-500">uses AI Credits</span>
+            <span className="block text-[11px] font-normal leading-tight text-indigo-500">Agent task</span>
           </span>
         </button>
       )}
@@ -395,8 +395,8 @@ export default function AdaptiveInsights({ dashboard, loading, failed, busyKey, 
       </div>
       {exhausted && (
         <p role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900">
-          You've used your AI Credits, so Agent actions are paused. Your records and these insights are unaffected.{" "}
-          <button type="button" onClick={() => onAction({ key: "credits" }, { to: "/pricing", upgrade: true })} className="font-semibold underline underline-offset-2">See plans and credits</button>
+          You have no credits left, so Agent actions are paused. Your records and these insights are unaffected.{" "}
+          <button type="button" onClick={() => onAction({ key: "credits" }, { to: "/pricing", upgrade: true })} className="font-semibold underline underline-offset-2">Top up</button>
         </p>
       )}
       {loading ? (

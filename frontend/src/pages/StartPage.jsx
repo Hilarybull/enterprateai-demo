@@ -242,7 +242,7 @@ export default function StartPage({ framed = false }) {
           <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800" role="alert" data-blocked>
             <p className="text-base font-bold text-slate-900 dark:text-slate-100">I couldn't prepare that for you.</p>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{problem}</p>
-            <p className="mt-1 text-[13px] text-slate-500">What you told me is saved. Nothing was created or sent, and no AI Credits were used.</p>
+            <p className="mt-1 text-[13px] text-slate-500">What you told me is saved. Nothing was created or sent.</p>
             <div className="mt-3 flex flex-wrap gap-2">
               {session?.handoff?.upgrade && <button type="button" onClick={() => navigate("/pricing")} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">See plans</button>}
               <button type="button" onClick={() => navigate("/dashboard", { replace: true })} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200">Go to the dashboard</button>

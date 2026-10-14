@@ -87,22 +87,23 @@ def test_each_task_records_what_it_cost_and_the_total_matches_the_wallet():
     env = Env()
     _trading(env)
     res = env.submit(text="Check my concentration risk and then run a what-if on losing Nova Labs")
-    risk, what_if = (agent_router._public_run(r["run"]) for r in res["results"])
-    assert (risk["credits_used"], what_if["credits_used"]) == (2, 2)
-    assert risk["credits"][0]["what"] == "Risk or scenario analysis" and risk["credits"][0]["credits"] == 2
-    assert sum(cost for _, _, cost in env.meter.charges) == 4 == risk["credits_used"] + what_if["credits_used"]
+    risk, what_if = (r["run"] for r in res["results"])
+    assert (agent_router.credits_of(risk), agent_router.credits_of(what_if)) == (2, 2)
+    assert agent_router.charges_of(risk)[0]["what"] == "Risk or scenario analysis" and agent_router.charges_of(risk)[0]["credits"] == 2
+    assert sum(cost for _, _, cost in env.meter.charges) == 4 == agent_router.credits_of(risk) + agent_router.credits_of(what_if)
+    assert "credits_used" not in agent_router._public_run(risk) and "credits" not in agent_router._public_run(risk)      # never shown with the task
     assert env.meter.balances[OWNER] == 96
 
 
 def test_a_quotation_shows_the_draft_and_the_send_separately_and_a_declined_one_only_the_draft():
     env = Env()
     r = env.submit(capability="enquiry_to_quote", params=dict(ENQUIRY))["run"]
-    assert agent_router._public_run(r)["credits"] == [{"what": "Preparing the quotation", "credits": 2, "at": env.now.isoformat()}]
-    sent = agent_router._public_run(env.approve(r))
-    assert sent["credits_used"] == 4 and [c["what"] for c in sent["credits"]] == ["Preparing the quotation", "Sending the document"]
+    assert agent_router.charges_of(r) == [{"what": "Preparing the quotation", "credits": 2, "at": env.now.isoformat()}]
+    sent = env.approve(r)
+    assert agent_router.credits_of(sent) == 4 and [c["what"] for c in agent_router.charges_of(sent)] == ["Preparing the quotation", "Sending the document"]
     other = Env()
     declined = other.approve(other.submit(capability="enquiry_to_quote", params=dict(ENQUIRY))["run"], ok=False)
-    assert agent_router._public_run(declined)["credits_used"] == 2 and other.meter.balances[OWNER] == 98
+    assert agent_router.credits_of(declined) == 2 and other.meter.balances[OWNER] == 98
 
 
 def test_the_recorded_cost_follows_the_price_list_and_free_work_records_nothing():
@@ -110,11 +111,11 @@ def test_the_recorded_cost_follows_the_price_list_and_free_work_records_nothing(
     _trading(env)
     env.meter.costs["agent_analyse"] = 2                                  # an admin has set the price to 2
     r = env.submit(capability="risk_concentration", channel="ui_action")["run"]
-    assert agent_router._public_run(r)["credits_used"] == 2 and env.meter.balances[OWNER] == 98
+    assert agent_router.credits_of(r) == 2 and env.meter.balances[OWNER] == 98
     answer = env.submit(text="What is my biggest risk?")                  # answered from records: no task, no charge
     assert answer["kind"] == "answer" and env.meter.balances[OWNER] == 98
     env.fin["rfq_requests"] = [{"id": "r1", "status": "pending", "customer_name": "BrightTech Ltd", "customer_email": "buyer@brighttech.test",
                                 "items": [{"name": "Strategy Workshop", "quantity": 1}]}]
     rfq = env.submit(capability="enquiry_to_quote", params={"rfq_id": "r1"}, channel="ui_action")["run"]
-    assert agent_router._public_run(rfq)["credits_used"] == 0             # a marketplace reply costs nothing until it is sent
-    assert agent_router._public_run(env.approve(rfq))["credits"][0]["what"] == "Replying to the marketplace request"
+    assert agent_router.credits_of(rfq) == 0             # a marketplace reply costs nothing until it is sent
+    assert agent_router.charges_of(env.approve(rfq))[0]["what"] == "Replying to the marketplace request"

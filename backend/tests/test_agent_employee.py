@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.modules.agent import autostart, intent
+from app.modules.agent.config import SUGGEST_ONLY
 from app.modules.agent import router as agent_router
 from app.modules.agent.workflows import WORKFLOWS
 from app.modules.business_assistant import service as assistant
@@ -117,7 +118,7 @@ def test_no_credits_is_said_exactly_and_a_missing_price_is_never_called_out_of_c
     chat.balance = 0
     out = chat.say("please write me a short note about my business")
     assert out["kind"] == "blocked" and out["reason_codes"] == ["credits_exhausted"] and out["upgrade"] is True
-    assert "out of AI Credits" in out["message"] and "needs 2 and you have 0" in out["message"] and chat.prompts == []
+    assert out["message"] == "This needs 2 credits; you have 0. Top up." and chat.prompts == []
 
     @asynccontextmanager
     async def unpriced(user_id, feature):
@@ -181,7 +182,9 @@ def test_turning_off_one_automatic_item_stops_that_item_and_only_that_item():
     by = {e["key"]: e for e in autostart.events(run(env.store.get_policy("A")), run(env.orch.entitlement("A"))) if e["key"]}
     assert (by["invoice_overdue"]["on"], by["invoice_overdue"]["starts"]) == (False, "suggested")
     assert (by["payment_recorded"]["on"], by["payment_recorded"]["starts"]) == (True, "automatic")
-    assert all(e["minimum_plan_label"] in ("Explorer", "Starter") and e["switchable"] for e in by.values()) and set(by) == set(autostart.ITEMS)
+    assert all(e["minimum_plan_label"] in ("Explorer", "Starter") and (e["switchable"] or e["capability"] in SUGGEST_ONLY) for e in by.values())
+    assert set(by) == set(autostart.ITEMS)
+    assert all(not by[k]["switchable"] and by[k]["starts"] == "suggested" for k in by if by[k]["capability"] in SUGGEST_ONLY)      # §4: suggested only
     # Switched back on, it is prepared.
     run(env.store.set_policy("A", {"automation": {"auto_start": True, "items": {}}}, OWNER))
     assert {r["workflow_key"] for r in run(autostart.sweep(env.orch, "A"))} == {"payment_followup"}
@@ -196,7 +199,8 @@ def test_the_switches_are_saved_through_agent_settings(chat):
     assert more["automation"]["items"] == {"payment_recorded": False, "invoice_overdue": False}      # earlier switches are kept
     assert chat.client.put("/businesses/A/agent/policy", json={"automation_items": {"launch_rockets": True}}).status_code == 400
     listed = {e["key"]: e["on"] for e in chat.client.get("/businesses/A/agent/policy").json()["events"] if e["key"]}
-    assert {k: v for k, v in listed.items() if not v} == {"rfq_arrives": False, "payment_recorded": False, "invoice_overdue": False}
+    switchable = {e["key"] for e in chat.client.get("/businesses/A/agent/policy").json()["events"] if e["key"] and e["switchable"]}
+    assert {k: v for k, v in listed.items() if not v and k in switchable} == {"rfq_arrives": False, "payment_recorded": False, "invoice_overdue": False}
     assert set(listed) == set(autostart.ITEMS) and listed["quote_accepted"] is True and listed["concentration_alert"] is True
     _busy(env)
     assert {r["workflow_key"] for r in run(autostart.sweep(env.orch, "A"))} == {"risk_concentration"}
