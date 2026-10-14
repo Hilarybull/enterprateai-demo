@@ -60,6 +60,30 @@ def _today_string() -> str:
     return f"{now.day} {now.strftime('%B')} {now.year}"
 
 
+# What the workspace profile and records say about the business. Left out for an idea that isn't this business's own.
+_PROFILE_INPUTS = ("known_figures", "registration_status", "registration_number", "legal_structure", "secondary_industries", "about_company",
+                   "tagline", "mission", "vision", "core_values", "services", "selected_services_focus", "target_customer_type",
+                   "primary_revenue_model", "key_offering_focus", "operating_stage", "delivery_model", "employee_count", "financial_snapshot",
+                   "company_profile")
+OWNER_SAID_KEY = "what_the_owner_said_in_the_chat_use_first_it_overrides_the_profile_where_they_differ"
+
+
+def _owner_first(raw_inputs: dict, payload) -> dict:
+    """The owner's own words from the Agent chat first, ahead of everything the profile says, and where it operates as
+    they said it. For a separate idea, nothing that describes the workspace's own business is given to the model."""
+    out = dict(raw_inputs)
+    if getattr(payload, "separate_idea", False):
+        for key in _PROFILE_INPUTS:
+            if key in out:
+                out[key] = ""
+        if not _safe_text(getattr(payload, "location", None)):
+            out["location"] = ""
+    if _safe_text(getattr(payload, "location", None)):
+        out["location"] = _safe_text(payload.location)
+    said = _safe_text(getattr(payload, "owner_said", None))
+    return {OWNER_SAID_KEY: said, **out} if said else out
+
+
 def _expand_note(*, field: str, text: str, company: str, industry: str, target_market: str, pricing_model: str) -> str:
     """
     Deterministically expand very short user inputs into usable narrative notes.
@@ -2009,6 +2033,7 @@ async def generate_blueprint(
             "financial_snapshot": snapshot_text,
         }
 
+        raw_inputs = _owner_first(raw_inputs, payload)
         # Handle financial snapshot logic
         if payload.include_validation_snapshot and not snapshot_text:
             raw_inputs["financial_snapshot"] = "Financial data has not been provided for this section."
@@ -2444,6 +2469,7 @@ async def generate_blueprint(
             "website":              _safe_text(getattr(payload, "sender_website", None)) or "",
             "followup_sequence":    followup_sequence,
         }
+        raw_inputs = _owner_first(raw_inputs, payload)
 
         doc, provider, model = await _enrich_and_generate(
             "Sales Letter",

@@ -1141,6 +1141,25 @@ PRICE_TEST = WorkflowDefinition(workflow_key="price_test", version=1, capability
 
 # ── Idea stage: validation, market size, business plan draft ───────────────────
 
+def carried_answers(data: dict, described: str) -> dict[str, str]:
+    """{"customer", "where", "sell"}: what the owner answered on the dashboard's checks, kept for the offering it was about,
+    when that is this business's offering (or, with no description on record, the offering they told the check)."""
+    from app.modules.agent import answer_memory
+    shared = (data or {}).get("shared_answers") or {}
+    sell = shared.get("sell") if isinstance(shared.get("sell"), dict) else {}
+    offering = described or str(sell.get("value") or "")
+    out: dict[str, str] = {}
+    if not offering:
+        return out
+    for field in ("customer", "where", "sell"):
+        got = shared.get(field)
+        if not isinstance(got, dict) or not str(got.get("value") or "").strip() or got.get("state", "accepted") != "accepted":
+            continue
+        if answer_memory.same_offering(got.get("offering") or (got.get("value") if field == "sell" else ""), offering):
+            out[field] = str(got["value"]).strip()
+    return out
+
+
 def idea_of(data: dict, answers: dict | None = None) -> dict:
     """What the business has said about itself, from its profile and anything it has answered here."""
     a, p = answers or {}, data.get("workspace_profile") or {}
@@ -1181,6 +1200,11 @@ def idea_of(data: dict, answers: dict | None = None) -> dict:
     town, country = first(p.get("city"), p.get("location")), first(p.get("country"))
     stated = first(a.get("customer"), p.get("target_customer"), p.get("target_market"), p.get("ideal_customer"), p.get("customers"),
                    iv.get("target_customer"), iv.get("who_affected"))
+    # What the owner already answered on the dashboard's check (who it is for, where, what it sells), about this same
+    # offering: never asked a second time. An answer about another offering is never carried (answer_memory).
+    carried = carried_answers(data, first(a.get("description"), worth(p.get("about_company")), worth(p.get("description")),
+                                          worth(p.get("business_description")), worth(p.get("what_we_do"))))
+    stated = first(stated, carried.get("customer"))
     # Every place the business has described itself (what was typed here, the profile, the Marketplace):
     # who it is for may be said in any of them.
     about = ". ".join(str(v).strip() for v in (a.get("description"), p.get("about_company"), p.get("description"), p.get("business_description"),
@@ -1203,17 +1227,17 @@ def idea_of(data: dict, answers: dict | None = None) -> dict:
         "name": first(p.get("company_name"), p.get("name"), iv.get("business_name")),
         "description": first(a.get("description"), worth(p.get("about_company")), worth(p.get("description")), worth(p.get("business_description")), worth(p.get("what_we_do")),
                              worth(listing.get("description")), worth(listing.get("about")), worth(listing.get("summary")), worth(listing.get("bio")), worth(listing.get("tagline")),
-                             worth(iv.get("idea_description")), worth(iv.get("description")), offered_as(service_text), offered_as(f"Offers {', '.join(offered[:6])}" if offered else "")),
+                             worth(iv.get("idea_description")), worth(iv.get("description")), carried.get("sell"), offered_as(service_text), offered_as(f"Offers {', '.join(offered[:6])}" if offered else "")),
         # Where the description came from: only a guess put together from the services list is checked with the owner.
         "description_guessed": not first(a.get("description"), worth(p.get("about_company")), worth(p.get("description")), worth(p.get("business_description")), worth(p.get("what_we_do")),
                                          worth(listing.get("description")), worth(listing.get("about")), worth(listing.get("summary")), worth(listing.get("bio")), worth(listing.get("tagline")),
-                                         worth(iv.get("idea_description")), worth(iv.get("description"))) and bool(offered_as(service_text) or offered_as(f"Offers {', '.join(offered[:6])}" if offered else "")),
+                                         worth(iv.get("idea_description")), worth(iv.get("description")), carried.get("sell")) and bool(offered_as(service_text) or offered_as(f"Offers {', '.join(offered[:6])}" if offered else "")),
         "customer": first(stated, guess, kinds.get(customer_type.lower(), customer_type.replace("_", " "))),
         "problem": first(a.get("problem"), p.get("problem"), p.get("problem_solved"), iv.get("problem_description"), iv.get("problem"), launch.get("problem")),
         "industry": first(a.get("industry"), p.get("primary_industry_other"), p.get("custom_industry"),
                           "" if str(p.get("primary_industry") or "").lower() == "other" else p.get("primary_industry"), p.get("industry"),
                           listing.get("category")).replace("_", " "),
-        "location": first(a.get("location"), ", ".join(x for x in (town, country) if x), listing.get("location"), launch.get("location")),
+        "location": first(a.get("location"), ", ".join(x for x in (town, country) if x), carried.get("where"), listing.get("location"), launch.get("location")),
         "services": offered[:12],
         "currency": bz.currency_of(data),
     }
@@ -1493,12 +1517,27 @@ async def _idea_for(ctx, data: dict) -> tuple[dict, bool]:
     other than the business's own is that idea's: only what was said about it, named for it (never the business's
     name), and kept on its own record."""
     separate = await separate_idea(ctx, data)
+    said = owner_said(ctx)
     if not separate:
-        return idea_of(data, ctx.answers), False
+        return {**idea_of(data, ctx.answers), "said": said}, False
     own = idea_of(data, {})
     idea = {k: str(ctx.answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
-    idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP"})
+    idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP", "said": said, "separate": True})
     return idea, True
+
+
+def owner_said(ctx) -> str:
+    """Everything the owner said for this task in the chat, in their own words: the messages before the request, the
+    request, and their answers to its questions. The document is written from these first; the profile fills the rest."""
+    state = ctx.run.get("state") or {}
+    lines = [f"Earlier in the chat: {t}" for t in state.get("said_before") or [] if str(t).strip()]
+    if str(ctx.run.get("goal") or "").strip():
+        lines.append(f"The request: {str(ctx.run['goal']).strip()}")
+    labels = {k: v[1] for k, v in _IDEA_QUESTIONS.items()}
+    for key, value in (ctx.answers or {}).items():
+        if key in labels and str(value or "").strip():
+            lines.append(f"{labels[key]}: {str(value).strip()}")
+    return "\n".join(lines)[:3000]
 
 
 async def business_plan_step(ctx):
@@ -1508,6 +1547,11 @@ async def business_plan_step(ctx):
     if ask:
         return ask
     key = _idea_key(idea.get("description")) if separate else None
+    import hashlib
+    import json as _json
+    # What this draft is written from: the idea's fields and the owner's own words (the same request asked twice is the same).
+    inputs = hashlib.sha256(_json.dumps({k: idea.get(k) for k in ("description", "customer", "problem", "industry", "location")}, sort_keys=True,
+                                        default=str).encode()).hexdigest()[:16]
 
     def reusable(found: dict | None) -> dict | None:
         """F1: tasks asked twice (or started by the Agent again) share one document. Only an owner's own request for a
@@ -1517,6 +1561,8 @@ async def business_plan_step(ctx):
         from app.modules.agent import autostart
         if ctx.run.get("source_channel") == autostart.CHANNEL:
             return found
+        if found.get("inputs") and found["inputs"] != inputs:
+            return None      # new details from the owner: a new draft from them, never the last one again
         made = bz._moment(found.get("at"))
         return found if made and (ctx.now() - made).total_seconds() < REUSE_ASKED_PLAN_SECONDS else None
 
@@ -1526,6 +1572,7 @@ async def business_plan_step(ctx):
         reused = bool(r)
         if not r:
             r = await _studio(ctx, "business_plan_full", ctx.rt.studio.draft_plan(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea))
+            r = {**r, "inputs": inputs}
             if separate:
                 await _keep_separate_idea(ctx, idea, {"kind": "plan", **r}, plan=r)
             else:

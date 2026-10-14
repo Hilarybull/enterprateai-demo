@@ -461,6 +461,12 @@ class MemoryStudio(Studio):
 _FULL: set = set()      # full validations running in the background
 
 
+def owner_words(idea: dict) -> dict:
+    """What the generators are told from the chat: the owner's words, where it operates, and whether it is a separate idea."""
+    return {"owner_said": str(idea.get("said") or "")[:3000] or None, "location": str(idea.get("location") or "")[:200] or None,
+            "separate_idea": bool(idea.get("separate"))}
+
+
 def risk_sentence(flag) -> str:
     """B5: a risk as a sentence ("Demand is unproven…"), never the engine's dict ({'dimension': ..., 'note': ...})."""
     if isinstance(flag, str):
@@ -579,7 +585,7 @@ class ModuleStudio(Studio):
         res = await generate_blueprint(BlueprintGenerateRequest(
             type="sales_letter", company_name=(idea.get("name") or "My business")[:64], workspace_id=business_id,
             industry=(idea.get("industry") or None), problem=idea.get("problem") or None, solution=idea.get("description") or None,
-            target_market=idea.get("customer") or None), user_id=user_id)
+            target_market=idea.get("customer") or None, **owner_words(idea)), user_id=user_id)
         return {"document_id": getattr(res, "document_id", None) or getattr(res, "id", None), "title": getattr(res, "title", None) or "Sales letter",
                 "sections": len(getattr(res, "sections", None) or []) or None}
 
@@ -589,6 +595,6 @@ class ModuleStudio(Studio):
         res = await generate_blueprint(BlueprintGenerateRequest(
             type="business_plan", company_name=(idea.get("name") or "My business")[:64], workspace_id=business_id, include_validation_snapshot=True,
             industry=(idea.get("industry") or None), problem=idea.get("problem") or None, solution=idea.get("description") or None,
-            target_market=idea.get("customer") or None), user_id=user_id)
+            target_market=idea.get("customer") or None, **owner_words(idea)), user_id=user_id)
         return {"document_id": getattr(res, "document_id", None) or getattr(res, "id", None), "title": getattr(res, "title", None) or "Business plan",
                 "sections": len(getattr(res, "sections", None) or []) or None}

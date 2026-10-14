@@ -1296,6 +1296,10 @@ class Orchestrator:
             if named:      # "Validate my idea: a mobile car wash in Abuja": that is the idea, whatever the profile says
                 state["answers"]["description"] = named
                 state["idea_from_message"] = True
+        if wf.workflow_key in ("idea_validation", "market_size", "business_plan_draft", "sales_letter_draft") and req.history:
+            # What the owner said in the chat just before asking (the idea described, then "draft me a plan"): kept in
+            # their words, so the document is written from them and not from the profile alone.
+            state["said_before"] = [str(t.get("content") or "")[:1000] for t in req.history[-6:] if t.get("role") == "user" and str(t.get("content") or "").strip()][-3:]
         if req.raw_input and req.source_channel in ("text", "voice"):
             await self._read_fields(state, wf.workflow_key, req)
             # F1: an idea the model read from the message is the message's idea, as one the rules read is: it is compared
