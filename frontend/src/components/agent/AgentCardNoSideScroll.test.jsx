@@ -24,8 +24,11 @@ describe("the Agent card", () => {
     const focus = vi.spyOn(HTMLElement.prototype, "focus");
     render(<MemoryRouter initialEntries={["/dashboard"]}><Routes><Route path="/dashboard" element={<AgentPanel businessId="ws1" summary={summary} onChanged={() => {}} />} /><Route path="*" element={<Where />} /></Routes></MemoryRouter>);
     const card = screen.getByRole("region", { name: "EnterprateAI Agent" });
-    expect(card.className.split(" ")).toContain("overflow-clip");
-    expect(card.className.split(" ")).not.toContain("overflow-hidden");      // overflow-hidden is a scroll container: it moved sideways
+    // Only the moving border is clipped (overflow-clip: no scroll container); the content is not, so nothing opened from the
+    // card is cut off. Nothing in the card is a scroll container that could move sideways.
+    expect(card.querySelector("[data-agent-border-clip]").className.split(" ")).toContain("overflow-clip");
+    expect(card.className.split(" ")).not.toContain("overflow-hidden");
+    expect(card.querySelector("[data-agent-border-clip]").className.split(" ")).not.toContain("overflow-hidden");
     expect(card.scrollLeft).toBe(0);
     await act(async () => { fireEvent.click(screen.getByText("Score my idea")); });
     expect(scrolled).not.toHaveBeenCalled();

@@ -7,6 +7,8 @@ import {
 } from "../../lib/readiness";
 import { todayLocal } from "../../lib/format";
 import { Btn, Notice, Panel, Pill, inputClass } from "./Fields";
+import DocumentShareModal from "../DocumentShareModal";
+import { apiRequest } from "../../api/client";
 
 // ── Results ───────────────────────────────────────────────────────────────────
 
@@ -77,6 +79,7 @@ export function ResultView({ assessment, feature, currency, onOpenSection, histo
             <Pill tone={cls.tone} mark={cls.mark} className="!text-sm">{cls.label}</Pill>
             <p className="mt-2 text-base font-bold text-slate-900 dark:text-slate-100">{result.headline}</p>
             <p className="mt-1 text-[13px] text-slate-500">{result.disclaimer}</p>
+            {result.route_note && <p className="mt-1 text-[13px] font-medium text-slate-700 dark:text-slate-300" data-route-note>{result.route_note}</p>}
           </div>
           <div className="text-right">
             <p className="text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-100">{result.score_display ?? "—"}<span className="text-base font-semibold text-slate-400">{result.score_display !== null && result.score_display !== undefined ? " / 100" : ""}</span></p>
@@ -351,6 +354,7 @@ export function RequiredDocuments({ businessId, subject, onChanged }) {
 export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
   const [state, setState] = useState({ loading: true, kinds: [], items: [] });
   const [openDoc, setOpenDoc] = useState(null);
+  const [sharing, setSharing] = useState(null);      // the document being shared by link or email
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState("");
   const [problem, setProblem] = useState(null);
@@ -393,14 +397,33 @@ export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
               <p className="text-[12px] text-slate-500">From the check of {dateLabel(m.as_of)} · {m.status === "superseded" ? "Replaced by a newer version" : m.status === "reviewed" ? `Reviewed by ${m.reviewed_by}` : "Draft"}{m.edited ? " · edited" : ""}</p>
               {m.needs_review && <p className="text-[12px] font-medium text-amber-700 dark:text-amber-300">Needs review: {m.needs_review_reason}</p>}
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Btn onClick={() => open(m.id)}>Open</Btn>
-              <Btn disabled={!can[`${feature}.export`]} onClick={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "pdf"))}>PDF</Btn>
-              <Btn disabled={!can[`${feature}.export`]} onClick={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "txt"))}>Text</Btn>
-            </div>
+            {/* One menu per document, as on an invoice: open it, download it, or share it by link or email. */}
+            <MaterialMenu canExport={Boolean(can[`${feature}.export`])}
+              onOpen={() => open(m.id)}
+              onPdf={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "pdf"))}
+              onText={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "txt"))}
+              onShare={() => setSharing(m)} />
           </li>
         ))}
       </ul>
+      {sharing && (
+        <DocumentShareModal title={`Share ${sharing.title}`} subtitle="Choose who can use this link before generating it."
+          onClose={() => setSharing(null)}
+          onGenerate={async (config) => {
+            const doc = await getMaterial(businessId, feature, subject.id, sharing.id);
+            const out = await apiRequest("/blueprint/financial-documents/share", "POST", {
+              access_mode: config.access_mode || "link", email: config.email || null, expires_in_days: config.expires_in_days || 7,
+              type: `${feature}_material`, title: `${sharing.title} v${sharing.version}`.slice(0, 120), company_name: subject.title?.slice(0, 120) || "My business",
+              workspace_id: businessId, document_markdown: doc.body || sharing.title,
+            }, { timeoutMs: 120000 });
+            return { token: out?.token, url: `${window.location.origin}/share/${out?.token}`, emailSent: Boolean(out?.email_sent), emailError: out?.email_error || "" };
+          }}
+          onSendEmail={async ({ token, email }) => {
+            const res = await apiRequest(`/blueprint/share/${token}/email`, "POST", { email });
+            return { sent: Boolean(res?.sent), error: res?.error || "" };
+          }}
+          getMailtoHref={({ url, email }) => `mailto:${encodeURIComponent(email || "")}?subject=${encodeURIComponent(sharing.title)}&body=${encodeURIComponent(`Here is ${sharing.title}: ${url}`)}`} />
+      )}
       {openDoc && (
         <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -490,6 +513,36 @@ export function ScenarioPanel({ businessId, feature, subject, currency }) {
 
 // ── History ───────────────────────────────────────────────────────────────────
 
+/** "···": Open, Download PDF, Download text, Share (by link or email). Closes on a choice, a click outside or Esc. */
+function MaterialMenu({ canExport, onOpen, onPdf, onText, onShare }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (e.type === "keydown" ? e.key === "Escape" : !e.target.closest?.("[data-material-menu]")) setOpen(false); };
+    window.addEventListener("keydown", close);
+    window.addEventListener("mousedown", close);
+    return () => { window.removeEventListener("keydown", close); window.removeEventListener("mousedown", close); };
+  }, [open]);
+  const pick = (fn) => () => { setOpen(false); fn(); };
+  const item = "block w-full px-3 py-2 text-left text-[13px] text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800";
+  return (
+    <div className="relative" data-material-menu>
+      <button type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}
+        className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 z-30 mt-1 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+          <button type="button" role="menuitem" className={item} onClick={pick(onOpen)}>Open</button>
+          <button type="button" role="menuitem" className={item} disabled={!canExport} onClick={pick(onPdf)}>Download PDF</button>
+          <button type="button" role="menuitem" className={item} disabled={!canExport} onClick={pick(onText)}>Download text</button>
+          <button type="button" role="menuitem" className={item} disabled={!canExport} onClick={pick(onShare)}>Share by link or email</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function HistoryPanel({ businessId, feature, subject, currency }) {
   const [items, setItems] = useState(null);
   const [viewing, setViewing] = useState(null);
@@ -517,7 +570,8 @@ export function HistoryPanel({ businessId, feature, subject, currency }) {
                 {h.score !== null && h.score !== undefined ? `Score ${h.score} · ` : h.classification ? "No overall score · " : ""}{h.coverage !== null && h.coverage !== undefined ? `coverage ${h.coverage}% · ` : ""}
                 checklist {String(h.profile || "").split("@")[1] || ""}{h.requested_by ? ` · run by ${h.requested_by}` : ""}
               </p>
-              {h.changed_because?.length > 0 && <p className="mt-1 text-[12px] text-slate-600 dark:text-slate-300">Changed since the check before because of {h.changed_because.join(" and ")}.</p>}
+              {h.what_changed ? <p className="mt-1 text-[12.5px] text-slate-700 dark:text-slate-200" data-what-changed>{h.what_changed}</p>
+                : h.changed_because?.length > 0 && <p className="mt-1 text-[12px] text-slate-600 dark:text-slate-300">Changed since the check before because of {h.changed_because.join(" and ")}.</p>}
               {h.changed_because?.length > 0 && !h.comparable && <p className="text-[12px] text-amber-700 dark:text-amber-300">A different checklist version was used, so the scores are not directly comparable.</p>}
               {h.execution_status === "succeeded" && <Btn kind="link" className="mt-1 text-[12px]" onClick={async () => { try { setViewing(await getAssessment(businessId, feature, subject.id, h.id)); } catch (e) { setProblem(readinessError(e).message); } }}>View this result as it was</Btn>}
             </li>

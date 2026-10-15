@@ -58,11 +58,18 @@ COST_WORDS: dict[str, str] = {
     "new_proposal": "{proposal_full} for the written proposal, {agent_send} when it is sent",
     "new_purchase_order": "{agent_send} when it is sent",
     "credit_note": "{agent_send} when it is sent",
-    "idea_validation": "{idea_validation} (an Idea Validation)",
-    "market_size": "{idea_validation} (an Idea Validation), only when the market is sized",
+    "idea_validation": "{idea_validation} (a Basic Idea Validation, worked out from your answers)",
+    "market_size": "{idea_validation_comprehensive} (a Comprehensive Idea Validation), only when the market is sized",
     "business_plan_draft": "{business_plan_full} (a Complete Business Plan)",
     "sales_letter_draft": "{sales_letter_full} (a Complete Sales Letter)",
 }
+
+
+def default_cost(feature: str) -> int:
+    """A feature's price when the live price list has no row for it: the Agent's own, else the price list file's."""
+    if feature in CREDIT_FEATURES:
+        return int(CREDIT_FEATURES[feature].get("cost", 0))
+    return price_credits(feature)
 
 
 def price_credits(feature: str) -> int:
@@ -103,9 +110,12 @@ def _all_task_costs() -> dict[str, str]:
 
 # Tasks whose work is priced by its own product (an Idea Validation, a Business Plan): the Agent adds no charge of its own to those.
 SELF_PRICED = ("idea_validation", "market_size", "business_plan_draft", "sales_letter_draft")
+# What the owner gets, in their words, on the price confirm (never a capability key).
+ACTION_NAME = {"idea_validation": "Validate your idea", "market_size": "Size the market for your idea", "business_plan_draft": "Write your business plan",
+               "sales_letter_draft": "Write your sales letter", "new_proposal": "Write your proposal"}
 BASE_TASK_FEATURE = "agent_task"
 # The price-list feature each self-priced task is charged as (the rest are charged as an Agent task).
-PRICED_AS = {"idea_validation": "idea_validation", "market_size": "idea_validation", "business_plan_draft": "business_plan_full",
+PRICED_AS = {"idea_validation": "idea_validation", "market_size": "idea_validation_comprehensive", "business_plan_draft": "business_plan_full",
              "sales_letter_draft": "sales_letter_full"}
 # A4: tasks that exist to answer a question ("which of my services sell best?", "what evidence am I missing before I
 # launch?"): asked as a question, they run at their listed price rather than as a written chat answer.

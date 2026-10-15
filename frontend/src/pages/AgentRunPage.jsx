@@ -6,6 +6,10 @@ import { ApprovalReview, Icon, Modal, Pill, QuestionForm } from "../components/a
 import DraftEditor from "../components/agent/DraftEditor";
 import { agentErrorMessage, answerRun, approveAction, cancelRun, editDraft, fixCustomerEmail, getRun, rejectAction, resolveDelivery, retryRun, runStateLabel, runTone } from "../lib/agent";
 
+// Tasks that send something to a customer: only these say "Nothing has been sent to the customer."
+const CUSTOMER_TASKS = new Set(["enquiry_to_quote", "new_invoice", "quote_to_cash", "new_contract", "receipt_send", "payment_followup", "new_proposal",
+  "new_purchase_order", "credit_note", "rfq_response"]);
+
 const fmt = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
 
 const STEP_STYLE = {
@@ -121,7 +125,8 @@ export default function AgentRunPage() {
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <div className="rounded-xl bg-slate-50 p-3.5 dark:bg-slate-800/60">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">What happened</div>
-            <p className="mt-1 text-sm text-slate-800 dark:text-slate-100">{run.summary || "The task has started."}</p>
+            {/* A stop is said once, in the Recovery box below (QA, 15 Oct): never repeated here. */}
+            <p className="mt-1 text-sm text-slate-800 dark:text-slate-100">{run.status === "failed" && run.summary === run.error ? "The task stopped before it finished." : (run.summary || "The task has started.")}</p>
             {/* B9: what the task prepared, opened from here (a funding pack, a business plan, the invoices it made). */}
             {(run.outcome?.links || []).length > 0 && (
               <div data-outcome-links className="mt-2 flex flex-wrap gap-2">
@@ -139,6 +144,8 @@ export default function AgentRunPage() {
             <p className="mt-1 text-sm text-slate-800 dark:text-slate-100">
               {run.status === "succeeded" ? (run.next_action || "Nothing more to do.")
                 : run.status === "cancelled" ? "Nothing. This task was stopped."
+                : run.retrying ? "I'll finish it automatically. Nothing for you to do."
+                : run.status === "failed" && run.next_action === run.error ? "See below."
                 : run.next_action || "The Agent is working on it."}
             </p>
           </div>
@@ -241,9 +248,12 @@ export default function AgentRunPage() {
               : runStateLabel(run)}
           </h2>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{run.error}</p>
-          <p className="mt-2 text-[13px] text-slate-500">
-            {sent > 0 ? `${sent} message${sent === 1 ? " was" : "s were"} already sent before this stopped; retrying will not send ${sent === 1 ? "it" : "them"} again.` : "Nothing has been sent to the customer."}
-          </p>
+          {/* Said only for a task that sends to a customer (never on a business plan or a check). */}
+          {(sent > 0 || CUSTOMER_TASKS.has(run.workflow_key)) && (
+            <p className="mt-2 text-[13px] text-slate-500">
+              {sent > 0 ? `${sent} message${sent === 1 ? " was" : "s were"} already sent before this stopped; retrying will not send ${sent === 1 ? "it" : "them"} again.` : "Nothing has been sent to the customer."}
+            </p>
+          )}
           {can.fix_customer_email && (
             <form className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-end" aria-label="Fix customer email"
               onSubmit={(e) => { e.preventDefault(); if (newEmail.trim()) act("fix_email", () => fixCustomerEmail(run.id, newEmail.trim())); }}>
@@ -291,10 +301,10 @@ export default function AgentRunPage() {
                 The Agent's next attempt is on {new Date(run.next_attempt_at).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}. There is nothing you need to do.
               </p>
             )}
-            {can.retry && !run.next_attempt_at && !can.fix_customer_email && !can.confirm_delivery && (
+            {can.retry && !can.fix_customer_email && !can.confirm_delivery && (
               <button type="button" disabled={!!busy} onClick={() => act("retry", () => retryRun(run.id))}
                 className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
-                {busy === "retry" && <ButtonSpinner />}{busy === "retry" ? "Retrying…" : "Try again"}
+                {busy === "retry" && <ButtonSpinner />}{busy === "retry" ? "Retrying…" : run.next_attempt_at ? "Try again now" : "Try again"}
               </button>
             )}
             {["credits_exhausted", "plan_limit"].includes(run.reason_code) && (

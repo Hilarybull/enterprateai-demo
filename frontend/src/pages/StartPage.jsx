@@ -1,5 +1,5 @@
 import { premiumFlow } from "../components/ResearchReview";
-import FirstValueCard, { fetchFirstValue, rememberFirstValue } from "../components/FirstValueCard";
+import FirstValueCard, { fetchFirstValue, forgetFirstValue, rememberFirstValue } from "../components/FirstValueCard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { apiRequest, apiRequestCached } from "../api/client";
@@ -41,6 +41,12 @@ function Progress({ steps }) {
   );
 }
 
+// What the page says it is doing: the task itself, never "workspace" or "saving".
+const WORKING_ON = { price_offer: "Working on your price", need_funding: "Working on your funding readiness", launch: "Working on your launch",
+  test_idea: "Working on your idea", more_customers: "Working on getting more customers", create_invoice: "Working on your invoice",
+  create_quotation: "Working on your quotation", prepare_proposal: "Working on your proposal", create_business_plan: "Working on your business plan",
+  business_risks: "Working on your business risks", cash_flow: "Working on your cash flow", grow: "Working on your growth" };
+
 export default function StartPage({ framed = false }) {
   const { sessionId } = useParams();
   const navigate = useNavigate();
@@ -55,10 +61,29 @@ export default function StartPage({ framed = false }) {
   const [result, setResult] = useState(null);      // the free first result, for a covered goal
   const began = useRef(false);
 
-  const prepare = useCallback(async () => {
+  const prepare = useCallback(async (known = null, confirmed = false) => {
     setStage("preparing");
+    // The first result is worked out by fixed rules from the answers (no model): asked for alongside the task, and shown
+    // the moment it is ready. The task carries on behind it; nothing waits for it.
+    let shown = false;
+    if (known?.first_value) {
+      fetchFirstValue(sessionId).then((fv) => {
+        if (!fv?.result) return;
+        shown = true;
+        rememberFirstValue(sessionId);
+        setResult(fv.result);
+        setStage("result");
+      }).catch(() => { /* the task's own hand-off still opens the work */ });
+    }
     try {
-      const done = await apiRequest(`/task-sessions/${sessionId}/prepare`, "POST", {});
+      const done = await apiRequest(`/task-sessions/${sessionId}/prepare`, "POST", { confirmed });
+      if (done.confirm && !confirmed) {
+        // P0.5c: a paid task's price first ("Write your business plan. 40 credits. You have 90."), Start or Not now.
+        setSession(done);
+        setStage("confirm");
+        return;
+      }
+      if (shown) { setSession(done); if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id); return; }
       setSession(done);
       if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id);
       if (notStarted(done.handoff)) {
@@ -87,6 +112,7 @@ export default function StartPage({ framed = false }) {
           // Said once on the page it lands on: what was set up, and where things stand.
           if (done.handoff.message) sessionStorage.setItem("ea_goal_handoff", JSON.stringify({ to: String(done.handoff.to).split("?")[0], message: done.handoff.message }));
           if (done.handoff.ready_message && done.handoff.run_id) sessionStorage.setItem("ea_goal_ready", JSON.stringify({ run_id: done.handoff.run_id, message: done.handoff.ready_message }));
+          if (done.handoff.run_id && !done.first_value) forgetFirstValue();      // the dashboard opens on this task, not an older result
         } catch { /* fine without it */ }
         trackGoal("dashboard_handoff_completed", { session_id: sessionId });
         navigate(done.handoff.to, { replace: true });
@@ -114,7 +140,7 @@ export default function StartPage({ framed = false }) {
         return;
       }
       if (resumed.missing?.length) setStage("details");
-      else await prepare();
+      else await prepare(resumed);
     } catch (e) {
       setProblem(e?.status === 403 ? "This task was started from another account." : "Your task couldn't be picked up just now. Nothing was lost.");
       setStage(e?.status === 404 ? "gone" : "problem");
@@ -172,10 +198,9 @@ export default function StartPage({ framed = false }) {
         )}
         {stage !== "gone" && stage !== "result" && (
           <>
-            <p className="text-[11px] font-bold uppercase tracking-widest text-brand-600">Setting up your workspace</p>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-brand-600" data-working-on>{WORKING_ON[session?.goal_key] || "Working on your task"}</p>
             {goal && <p className="mt-0.5 text-lg font-bold text-slate-900 dark:text-slate-100" data-goal-kept>{goal}</p>}
             <div className="mt-4" role="status" aria-live="polite"><Progress steps={steps} /></div>
-            {stage === "preparing" && <p className="mt-3 text-sm text-slate-500">Your dashboard opens as soon as there is something to show you.</p>}
           </>
         )}
 
@@ -202,7 +227,7 @@ export default function StartPage({ framed = false }) {
               try {
                 const next = await apiRequest(`/task-sessions/${sessionId}/inputs`, "POST", { answers });
                 setSession(next);
-                if (!next.missing?.length) await prepare();
+                if (!next.missing?.length) await prepare(next);
               } catch {
                 setProblem("That couldn't be saved just now. Please try again.");
                 setStage("problem");
@@ -234,6 +259,17 @@ export default function StartPage({ framed = false }) {
                   {o.label}
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+
+        {stage === "confirm" && session?.confirm && (
+          <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800" data-price-confirm>
+            <p className="text-base font-bold text-slate-900 dark:text-slate-100" data-price-line>{session.confirm.message}</p>
+            <p className="mt-1 text-[13px] text-slate-500">Charged only when it is done. Nothing is sent to anyone.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" onClick={() => prepare(null, true)} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Start</button>
+              <button type="button" onClick={() => navigate("/dashboard", { replace: true })} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200">Not now</button>
             </div>
           </div>
         )}

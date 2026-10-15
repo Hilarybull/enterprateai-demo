@@ -229,7 +229,7 @@ class MemoryMeter(Meter):
 
     async def cost(self, feature):
         from app.modules.agent import config
-        return int(self.costs.get(feature, config.CREDIT_FEATURES.get(feature, {}).get("cost", 0)))
+        return int(self.costs.get(feature, config.default_cost(feature)))
 
     async def balance(self, user_id):
         return self.balances.get(user_id, 0)
@@ -241,7 +241,7 @@ class MemoryMeter(Meter):
         if key and key in done:      # the same action again: charged once (as the wallet's idempotency key does)
             yield
             return
-        cost = self.costs.get(feature, config.CREDIT_FEATURES.get(feature, {}).get("cost", 0))
+        cost = self.costs.get(feature, config.default_cost(feature))
         available = self.balances.get(user_id, 0)
         if available < cost:
             raise InsufficientCredits(available, cost)
@@ -285,7 +285,7 @@ class CreditMeter(Meter):
         hit = cache.get(feature)
         if hit and time.monotonic() - hit[0] < 300:
             return hit[1]
-        price = int(config.CREDIT_FEATURES.get(feature, {}).get("cost", 0))
+        price = config.default_cost(feature)
         try:
             from app.modules.credits.service import get_feature_config
             row = await get_feature_config(feature)
@@ -431,7 +431,7 @@ class MemoryStudio(Studio):
         self._note("validate_idea", idea)
         return {"score": 68, "risks": ["Demand is unproven", "Pricing is untested", "One founder carries delivery"],
                 "next_steps": ["Interview five target customers", "Test the price with a paid pilot", "Write down the first three months of costs",
-                               "Check who else offers this locally"], "result_id": "val-1"}
+                               "Check who else offers this locally"], "result_id": "val-1", "payload": validation_payload(idea, business_id)}
 
     async def size_market(self, *, user_id, business_id, idea):
         self._note("size_market", idea)
@@ -461,10 +461,32 @@ class MemoryStudio(Studio):
 _FULL: set = set()      # full validations running in the background
 
 
+async def update_history_entry(user_id: str, business_id: str, history_id: str, full: dict) -> None:
+    """The draft the Agent put in Idea Validation History, given the full report once it is ready. Still pending: the owner
+    accepts or rejects it there."""
+    from app.modules.idea_validation.service import get_workspace, update_workspace
+    ws = await get_workspace(user_id=user_id, workspace_id=business_id)
+    history = list((ws.data or {}).get("validation_history") or [])
+    result = {k: v for k, v in full.items() if k != "research_data"}
+    for n, entry in enumerate(history):
+        if isinstance(entry, dict) and entry.get("id") == history_id:
+            scores = result.get("scores") or {}
+            history[n] = {**entry, "result": result, "score": scores.get("potential_score", entry.get("score")),
+                          "confidence": scores.get("evidence_confidence_score", entry.get("confidence")),
+                          "verdict": (result.get("verdict") or {}).get("category", entry.get("verdict")), "full_report": "ready"}
+            await update_workspace(user_id=user_id, workspace_id=business_id, data_patch={"validation_history": history})
+            return
+
+
 def owner_words(idea: dict) -> dict:
     """What the generators are told from the chat: the owner's words, where it operates, and whether it is a separate idea."""
     return {"owner_said": str(idea.get("said") or "")[:3000] or None, "location": str(idea.get("location") or "")[:200] or None,
             "separate_idea": bool(idea.get("separate"))}
+
+
+def _first_sentence(text) -> str:
+    said = str(text or "").strip()
+    return (re.split(r"(?<=[.!?])\s+", said)[0] if said else "")[:140]
 
 
 def risk_sentence(flag) -> str:
@@ -488,6 +510,27 @@ def experiment_sentence(x) -> str:
     return str(x)
 
 
+# The wizard's own idea types and stages (ValidationWizardPage V4_IDEA_TYPES, V4_BUSINESS_STAGES): an idea told to the Agent
+# is placed in one of them, for the owner to check, so the form it fills is complete.
+_IDEA_TYPES = [(r"\bmobile app|\bapp\b|\bios\b|\bandroid\b", "Mobile application"), (r"\bsaas\b|subscription software|software as a service", "SaaS"),
+               (r"\bmarketplace\b", "Marketplace"), (r"\bplatform\b", "Platform business"), (r"\bsoftware\b|\btool\b|\bwebsite builder\b", "Software product"),
+               (r"\bonline (?:shop|store)\b|\be-?commerce\b|\bsell(?:ing)? online\b", "E-commerce"),
+               (r"\bcourses?\b|\btraining\b|\btutor\w*|\bcoaching\b|\bclass(?:es)?\b|\bschool\b|\bworkshops?\b", "Training or education"),
+               (r"\bevents?\b|\bconference\b|\bfestival\b", "Event or conference"), (r"\bsubscription\b|\bboxes? delivered\b", "Subscription business"),
+               (r"\bfranchise\b", "Franchise"), (r"\bcharity\b|\bnon-?profit\b", "Nonprofit"), (r"\bsocial enterprise\b", "Social enterprise"),
+               (r"\bconsult\w*|\bbookkeep\w*|\baccount\w*|\blegal\b|\bdesign\b|\bmarketing\b|\badvis\w*|\brecruit\w*|\bHR\b", "Professional service"),
+               (r"\bclean\w*|\bwash\w*|\bgroom\w*|\brepair\w*|\bplumb\w*|\bdeliver\w*|\bsalon\b|\bbarber\w*|\bcater\w*|\bmobile\b|\bdog\b|\bgarden\w*|\bvalet\w*",
+                "Local service"),
+               (r"\bproduct\b|\bmake\b|\bmanufactur\w*|\bbak\w*|\bcakes?\b|\bcupcakes?\b|\bfood\b|\bclothing\b|\bjewel\w*|\bcandles?\b|\bsoap\b", "Physical product")]
+_STAGES = {"idea": "Idea only", "pre_revenue": "Pre-revenue", "prototype": "Prototype", "testing": "Pilot", "ready": "MVP", "trading": "Early revenue",
+           "growing": "Scaling"}
+
+
+def idea_type_of(*texts: str) -> str:
+    said = " ".join(str(t or "") for t in texts)
+    return next((label for pattern, label in _IDEA_TYPES if re.search(pattern, said, re.I)), "Other")
+
+
 def validation_payload(idea: dict, business_id: str | None) -> dict:
     """The Idea Validation wizard's own steps, filled from what the workspace holds (the same fields the wizard asks
     for), so the Agent's score comes from the same information as one made by hand. A step with nothing in it is left out."""
@@ -495,9 +538,14 @@ def validation_payload(idea: dict, business_id: str | None) -> dict:
     # As the wizard sends them: text ("300", not 300). The engine reads every field as text.
     num = lambda v: (f"{v:g}" if isinstance(v, float) else str(v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else None      # noqa: E731
     steps = {
-        "step1": {"idea_name": idea.get("name") or "", "idea_description": idea.get("description") or "", "idea_sector": idea.get("industry") or "",
-                  "operating_country": idea.get("location") or "", "launch_geography": idea.get("location") or "", "business_stage": k.get("stage") or ""},
-        "step2": {"problem_description": idea.get("problem") or "", "who_affected": idea.get("customer") or ""},
+        # Every field the wizard needs to run (its idea type, one-sentence description, stage, the proposed solution), so the
+        # form the Agent fills is complete and the validation runs on it as it would from the page.
+        "step1": {"idea_name": idea.get("name") or (idea.get("description") or "")[:60], "idea_tagline": _first_sentence(idea.get("description")),
+                  "idea_description": idea.get("description") or "", "idea_type": idea_type_of(idea.get("description"), idea.get("industry")),
+                  "idea_sector": idea.get("industry") or "", "operating_country": idea.get("location") or "", "launch_geography": idea.get("location") or "",
+                  "business_stage": _STAGES.get(str(k.get("stage") or ""), k.get("stage") or "Idea only")},
+        "step2": {"problem_description": idea.get("problem") or "", "who_affected": idea.get("customer") or "",
+                  "proposed_solution": idea.get("description") or ""},
         "step3": {"primary_segment": idea.get("customer") or "", "channels": k.get("channels") or ""},
         "step4": {"direct_competitors": k.get("competitors") or ""},
         "step5": {"solution_description": idea.get("description") or ""},
@@ -527,23 +575,33 @@ class ModuleStudio(Studio):
         saves it. The task never waits minutes for the research."""
         from app.modules.idea_validation.engine_v4 import evaluate_v4, v4_payload_to_input
         payload = validation_payload(idea, business_id)
+        payload["validation_mode"] = idea.get("depth") or payload.get("validation_mode") or "basic"
         quick = evaluate_v4(v4_payload_to_input(payload))
-        self._full_later(user_id, payload)
+        comprehensive = idea.get("depth") == "comprehensive"
+        if comprehensive:      # Basic is the engine alone: no research and no report written by a model
+            self._full_later(user_id, payload, business_id=business_id, history_id=idea.get("history_id"))
         scores = quick.get("scores") or {}
         return {"score": round(float(scores.get("potential_score") or 0)), "confidence": round(float(scores.get("evidence_confidence_score") or 0)),
                 "verdict": (quick.get("verdict") or {}).get("category"), "risks": [risk_sentence(f) for f in quick.get("risk_flags") or []][:6],
-                "next_steps": [experiment_sentence(x) for x in quick.get("experiments") or []][:6], "result_id": None, "full_report": "pending"}
+                "next_steps": [experiment_sentence(x) for x in quick.get("experiments") or []][:6], "result_id": None, "full_report": "pending" if comprehensive else None,
+                "payload": payload, "quick": {k: quick.get(k) for k in ("scores", "verdict", "risk_flags", "experiments") if k in quick}}
 
     @staticmethod
-    def _full_later(user_id: str, payload: dict) -> None:
+    def _full_later(user_id: str, payload: dict, business_id: str | None = None, history_id: str | None = None) -> None:
         import asyncio
         from app.modules.idea_validation.service import evaluate_v4_idea
 
         async def go() -> None:
             try:
-                await evaluate_v4_idea(user_id=user_id, payload=payload)
+                full = await evaluate_v4_idea(user_id=user_id, payload=payload)
             except Exception:      # noqa: BLE001 - the quick score stands; the full report is only an addition
                 logger.warning("full idea validation did not finish", exc_info=True)
+                return
+            if business_id and history_id and isinstance(full, dict):
+                try:
+                    await update_history_entry(user_id, business_id, history_id, full)
+                except Exception:      # noqa: BLE001 - the draft keeps its first score
+                    logger.warning("the Agent's idea validation draft was not updated with the full report", exc_info=True)
         try:
             task = asyncio.get_running_loop().create_task(go())
         except RuntimeError:

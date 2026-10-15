@@ -1,4 +1,6 @@
 import UkDateInput from "../components/UkDateInput";
+import ResearchReview from "../components/ResearchReview";
+import { apiRequest } from "../api/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
@@ -11,7 +13,7 @@ import { ActionsPanel, DecisionPanel, HistoryPanel, MaterialsPanel, RequiredDocu
 import { confirmDialog } from "../lib/dialog";
 import {
   CLASSIFICATION, FEATURES, LIFECYCLE, createSubject, dateLabel, getPath, getSubject, listSubjects, moneyLabel, newKey, readinessError, runAssessment,
-  setPath, setSubjectStatus, updateSubject,
+  keepPrevious, setPath, setSubjectStatus, updateSubject,
   staleReason,
 } from "../lib/readiness";
 import { useWorkspaceStore } from "../store/workspace";
@@ -121,6 +123,85 @@ function NewSubject({ businessId, feature, profiles, onCreated, onCancel }) {
   );
 }
 
+/** The funding case's saved research (the owner's QA, 15 Oct): the run date, the findings and the review state; opening one
+ *  is free, and the same research is never bought twice. */
+function SavedResearch({ businessId, goal = "need_funding" }) {
+  const [runs, setRuns] = useState(null);
+  const [open, setOpen] = useState(null);
+  const [params] = useSearchParams();
+  const asked = params.get("run");
+  useEffect(() => {
+    apiRequest(`/businesses/${businessId}/research-runs?goal=${goal}`, "GET").then((r) => setRuns(r?.runs || [])).catch(() => setRuns([]));
+  }, [businessId, goal]);
+  // Arriving from "Review findings": that run (else the newest waiting one) opens at once, in place.
+  useEffect(() => {
+    if (!runs?.length || open) return;
+    const pick = runs.find((r) => r.id === asked) || (asked ? null : runs.find((r) => r.status === "review"));
+    if (pick) show(pick.id);
+  }, [runs]);      // eslint-disable-line react-hooks/exhaustive-deps
+  if (runs === null) return <p role="status" className="text-[13px] text-slate-500">Loading your research…</p>;
+  if (!runs.length) return <p className="text-[13px] text-slate-500">No research yet. "Help me become funding-ready" on your result runs it.</p>;
+  const show = async (id) => {
+    const out = await apiRequest(`/businesses/${businessId}/research/${id}`, "GET").catch(() => null);
+    if (out?.research) setOpen(out.research);
+  };
+  return (
+    <div className="space-y-3" data-saved-research>
+      <ul className="space-y-2">
+        {runs.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 dark:border-slate-700" data-research-run={r.id}>
+            <span className="text-[13px] text-slate-800 dark:text-slate-100">{dateLabel(r.created_at)} · {r.findings} finding{r.findings === 1 ? "" : "s"} · {r.status === "adopted" ? "Reviewed and adopted" : "Waiting for your review"}</span>
+            <Btn onClick={() => show(r.id)}>{r.status === "adopted" ? "Open" : "Review findings"}</Btn>
+          </li>
+        ))}
+      </ul>
+      {open && <div id="review" data-review-on-page><ResearchReview businessId={businessId} run={open} onAdopted={() => {
+        window.dispatchEvent(new CustomEvent("ea:toast", { detail: { kind: "success", title: "All findings reviewed", message: "Your case was checked again. Open the Materials tab to view your funding pack." } }));
+      }} /></div>}
+    </div>
+  );
+}
+
+function OpenCase({ to }) {
+  const navigate = useNavigate();
+  useEffect(() => { navigate(to, { replace: true }); }, [to, navigate]);
+  return <ReadinessListSkeleton label="your funding case" />;
+}
+
+/** QA P0.2: what the funding need this case replaced brought with it. Set aside, not counted, until kept: Keep or Remove each. */
+function PreviousNeed({ businessId, subject, onChanged }) {
+  const prev = (subject.data?.previous_needs || [])[0];
+  const [busy, setBusy] = useState("");
+  if (!prev) return null;
+  const review = prev.review || {};
+  const words = { market: "Market details", traction: "Traction", use_of_funds: "Use of funds", milestones: "Milestones" };
+  const items = [
+    ...(prev.evidence || []).map((e) => ({ id: `evidence:${e.id}`, label: e.title, note: e.date ? `dated ${String(e.date).slice(0, 10)}` : "" })),
+    ...Object.keys(prev.documents || {}).map((k) => ({ id: `document:${k}`, label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), note: "" })),
+    ...Object.keys(prev.set_aside || {}).filter((k) => words[k]).map((k) => ({ id: k, label: words[k], note: "" })),
+  ].filter((i) => !review[i.id]);
+  if (!items.length) return null;
+  const decide = async (item, keep) => {
+    setBusy(item);
+    try { onChanged(await keepPrevious(businessId, subject.id, item, keep)); } finally { setBusy(""); }
+  };
+  return (
+    <Panel title="From your previous funding need. Still relevant?" description={`Replaced on ${dateLabel(prev.replaced_at)}${prev.summary ? `: ${prev.summary}` : ""}. These don't count in your score until you keep them.`}>
+      <ul className="space-y-2" data-previous-need>
+        {items.map((i) => (
+          <li key={i.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 dark:border-slate-800">
+            <span className="text-[13px] text-slate-800 dark:text-slate-200">{i.label}{i.note && <span className="text-slate-500"> · {i.note}</span>}</span>
+            <span className="flex gap-2">
+              <Btn disabled={busy === i.id} onClick={() => decide(i.id, true)}>Keep</Btn>
+              <Btn disabled={busy === i.id} onClick={() => decide(i.id, false)}>Remove</Btn>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
 function SubjectList({ businessId, feature }) {
   const meta = FEATURES[feature];
   const navigate = useNavigate();
@@ -136,9 +217,14 @@ function SubjectList({ businessId, feature }) {
   if (state.loading) return <ReadinessListSkeleton label={`your ${planWords(feature)[1]}`} />;
   if (state.problem) return <LoadError what={`your ${planWords(feature)[1]}`} detail={state.problem.message} onRetry={() => { setState({ loading: true }); load(); }} />;
   if (state.enabled === false) return <Notice>{meta.title} isn't switched on for this account yet.</Notice>;
+  if (feature === "funding" && (state.items || []).some((i) => i.status !== "archived")) {
+    // A business has one funding case: the page is that case.
+    const only = state.items.find((i) => i.status !== "archived");
+    return <OpenCase to={`${meta.base}/${only.id}`} />;
+  }
   const items = state.items || [];
   const active = items.filter((i) => i.status !== "archived");
-  const archived = items.filter((i) => i.status === "archived");
+  const archived = feature === "funding" ? [] : items.filter((i) => i.status === "archived");      // one funding case: no archive list
   const canEdit = state.can?.[`${feature}.edit`];
 
   const row = (item) => (
@@ -173,7 +259,13 @@ function SubjectList({ businessId, feature }) {
       )}
       {creating && <NewSubject businessId={businessId} feature={feature} profiles={state.profiles} onCancel={() => setCreating(false)} onCreated={(s) => navigate(`${meta.base}/${s.id}`)} />}
       {active.length > 0 && <ul className="space-y-3">{active.map(row)}</ul>}
-      {items.length > 0 && !creating && canEdit && <Btn onClick={() => setCreating(true)}>{meta.newLabel}</Btn>}
+      {/* A business has one funding case, kept up to date; several launches are fine. */}
+      {items.length > 0 && !creating && canEdit && feature !== "funding" && <Btn onClick={() => setCreating(true)}>{meta.newLabel}</Btn>}
+      {items.length > 0 && feature === "funding" && (
+        <p className="text-[12.5px] text-slate-500" data-one-funding-case>
+          Your business has one funding case. Update it as things change{archived.length && !active.length ? ", or reactivate it" : ""}: every check and review adds to it.
+        </p>
+      )}
       {archived.length > 0 && (
         <details>
           <summary className="cursor-pointer text-[13px] font-semibold text-slate-600 dark:text-slate-300">Archived ({archived.length})</summary>
@@ -336,6 +428,15 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   const setTab = (next) => { const p = new URLSearchParams(params); p.set("tab", next); p.delete("section"); setParams(p, { replace: true }); };
   const openSectionAt = (key) => { setOpenSectionState(key); const p = new URLSearchParams(params); p.set("tab", "setup"); setParams(p, { replace: true }); };
 
+  // "Run the check again" from a pinned dashboard card: run once the case is loaded, then drop the request from the address.
+  const askedAgain = useRef(false);
+  useEffect(() => {
+    if (params.get("check") !== "again" || !subject || askedAgain.current) return;
+    askedAgain.current = true;
+    const p = new URLSearchParams(params); p.delete("check"); setParams(p, { replace: true });
+    check();
+  }, [subject]);      // eslint-disable-line react-hooks/exhaustive-deps
+
   async function check(opts) {
     setChecking(true);
     setCheckProblem(null);
@@ -373,7 +474,8 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   const currency = data.currency || subject.forecast?.data?.currency || "GBP";
   const a = subject.assessment;
   const tabs = [["setup", "Guided setup"], ["evidence", "Evidence"], ["results", "Results"], ["actions", `Actions${subject.summary?.open_actions ? ` (${subject.summary.open_actions})` : ""}`],
-    ["documents", meta.documentsTitle], ["scenarios", "Scenarios"], ["history", "History"], ...(feature === "launch" ? [["decision", "Decision"]] : [])];
+    ["documents", meta.documentsTitle], ["research", "Research"], ["scenarios", "Scenarios"], ["history", "History"],
+    ...(feature === "launch" ? [["decision", "Decision"]] : [])];
   const saveText = { saved: "All changes saved", pending: "Saving shortly…", saving: "Saving…", error: save.message, conflict: save.message }[save.state];
 
   return (
@@ -383,7 +485,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
         description={`${meta.title} · ${LIFECYCLE[subject.status]}${feature === "launch" && data.target_date ? ` · target ${dateLabel(data.target_date)}` : ""}`}
         actions={(
           <>
-            <Btn onClick={() => navigate(meta.base)}>All {meta.nounPlural}</Btn>
+            {feature !== "funding" && <Btn onClick={() => navigate(meta.base)}>All {meta.nounPlural}</Btn>}
             {editable && <Btn onClick={() => onField("pinned", !data.pinned)}>{data.pinned ? "Unpin from dashboard" : "Pin to dashboard"}</Btn>}
             {can[`${feature}.edit`] && !archived && subject.status !== "launched" && (
               <Btn onClick={() => changeStatus("archive", { title: `Archive this ${meta.noun}?`, text: "It stays readable and exportable, with all its checks. You'll need to reactivate it before editing or checking again.", confirm: "Archive" })}>Archive</Btn>
@@ -450,6 +552,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
       </div>
 
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+        {feature === "funding" && <PreviousNeed businessId={businessId} subject={subject} onChanged={(d) => accept(d)} />}
         {tab === "setup" && (
           <Setup businessId={businessId} feature={feature} subject={subject} data={data} errors={errors} onField={onField} onChanged={onChanged}
             openSection={openSection || subject.profile_definition.sections[0].key} setOpenSection={setOpenSectionState} disabled={!editable} />
@@ -498,7 +601,17 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             <ScenarioPanel businessId={businessId} feature={feature} subject={subject} currency={currency} />
           </Panel>
         )}
-        {tab === "history" && <Panel title="History" description="Every check, kept as it was."><HistoryPanel businessId={businessId} feature={feature} subject={subject} currency={currency} /></Panel>}
+        {tab === "research" && (
+          <Panel title="Research" description="Each research run, kept with its sources, drafts and what you reviewed. Open it any time at no cost.">
+            <SavedResearch businessId={businessId} goal={feature === "funding" ? "need_funding" : "launch"} />
+          </Panel>
+        )}
+        {tab === "history" && <Panel title="History" description="Every check, kept as it was.">
+          {(subject.data?.previous_needs || []).map((p) => (
+            <p key={p.replaced_at + (p.title || "")} className="mb-2 rounded-xl bg-slate-50 px-3 py-2 text-[13px] text-slate-700 dark:bg-slate-800/60 dark:text-slate-200" data-replaced-need>
+              Replaced on {dateLabel(p.replaced_at)}: {p.title}{p.summary ? ` (${p.summary})` : ""}</p>
+          ))}
+          <HistoryPanel businessId={businessId} feature={feature} subject={subject} currency={currency} /></Panel>}
         {tab === "decision" && feature === "launch" && <DecisionPanel businessId={businessId} subject={subject} onChanged={onChanged} />}
       </div>
     </div>

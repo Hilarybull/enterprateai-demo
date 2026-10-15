@@ -1,0 +1,140 @@
+{
+ "business_id": "A",
+ "entitlement": {
+  "plan": "starter_insight",
+  "is_paid": true,
+  "max_autonomy": "A3",
+  "agent_tasks": true,
+  "capabilities": [
+   "add_catalogue_item",
+   "add_customer",
+   "add_vendor",
+   "business_plan_draft",
+   "capacity_check",
+   "credit_note",
+   "enquiry_to_quote",
+   "expansion_scenario",
+   "funding_pack_draft",
+   "idea_validation",
+   "launch_evidence_gaps",
+   "market_size",
+   "marketplace_offering",
+   "marketplace_profile",
+   "new_contract",
+   "new_invoice",
+   "new_proposal",
+   "new_purchase_order",
+   "offer_review",
+   "payment_followup",
+   "price_test",
+   "quote_to_cash",
+   "readiness_refresh",
+   "receipt_send",
+   "record_expense",
+   "record_payment",
+   "registration_checklist",
+   "risk_concentration",
+   "sales_letter_draft",
+   "scenario_help",
+   "supplier_bill",
+   "update_record"
+  ],
+  "locked": {},
+  "quotas": {
+   "scenario_help": {
+    "limit": 4,
+    "used": 0
+   }
+  },
+  "allowance_counts": true,
+  "agent_tasks_from": "Explorer",
+  "monthly_runs": 50,
+  "monthly_runs_used": 0,
+  "credits": 100,
+  "can_prepare": true,
+  "can_approve": true,
+  "can_manage_policy": true
+ },
+ "suggestions": [],
+ "needs_approval": [],
+ "needs_approval_count": 0,
+ "needs_attention_count": 0,
+ "active_runs": [],
+ "risks": [],
+ "insights": [
+  {
+   "key": "next_step",
+   "title": "Recommended Next Step",
+   "tone": "brand",
+   "text": "Record your first invoice or quotation so EnterprateAI can start tracking performance.",
+   "cta": {
+    "label": "Open Essentials",
+    "to": "/operations"
+   },
+   "more": {
+    "to": "/operations"
+   },
+   "detail": null
+  },
+  {
+   "key": "risk",
+   "title": "Fragility / Risk Alert",
+   "tone": "rose",
+   "text": "No revenue recorded yet, so there is nothing to measure customer concentration against.",
+   "cta": {
+    "label": "View risk details",
+    "capability": "risk_concentration"
+   },
+   "more": {
+    "capability": "risk_concentration"
+   }
+  },
+  {
+   "key": "scenario",
+   "title": "Suggested Scenario",
+   "tone": "indigo",
+   "text": "A 10% cost rise is the standard stress test for your margins.",
+   "cta": {
+    "label": "See the scenario",
+    "capability": "scenario_help",
+    "params": {
+     "scenario": "cost_increase",
+     "params": {
+      "pct": 10
+     }
+    }
+   },
+   "more": {
+    "to": "/simulation"
+   }
+  },
+  {
+   "key": "cash",
+   "title": "Cash Position",
+   "tone": "emerald",
+   "text": "Your cash position is £0.00. Record expenses to see your runway.",
+   "cta": {
+    "label": "View cash forecast",
+    "to": "/operations?tab=Reports"
+   },
+   "more": {
+    "to": "/operations?tab=Reports"
+   }
+  }
+ ],
+ "currency": "GBP",
+ "briefing": {
+  "last_seen_at": null,
+  "first_visit": true,
+  "done_since_last_visit": {},
+  "needs_approval_count": 0,
+  "needs_input_count": 0,
+  "first_input_run_id": null,
+  "working_on": null,
+  "generated_at": "2026-10-01T09:00:00+00:00",
+  "first_name": null,
+  "timezone": null
+ },
+ "done_since_last_visit": {},
+ "needs_input_count": 0
+}

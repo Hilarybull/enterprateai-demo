@@ -21,6 +21,7 @@ import { generateValidationInsightPdf } from "../lib/reports/index";
 import ValidationLoadingOverlay from "../components/ValidationLoadingOverlay";
 import { useDemoTour } from "../context/DemoTourContext";
 import CreditConfirmModal from "../components/CreditConfirmModal";
+import { alreadyApplied, fillEmpty, markApplied } from "../lib/agentValidationForm";
 
 function humanizeValidationError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
@@ -1093,6 +1094,29 @@ export default function ValidationWizardPage() {
   const historyTotalPages = Math.max(1, Math.ceil(filteredValidationHistory.length / HISTORY_PAGE_SIZE));
   const pagedHistory = filteredValidationHistory.slice((historyPage - 1) * HISTORY_PAGE_SIZE, historyPage * HISTORY_PAGE_SIZE);
   const activeWorkspaceId = editingWorkspaceId || storedWorkspaceId;
+
+  // Idea validation asked for in the Agent chat fills this form: the fields still empty, once per task, and said so.
+  const [agentFilled, setAgentFilled] = useState(null);
+  const v4FormRef = useRef(v4Form);
+  v4FormRef.current = v4Form;
+  useEffect(() => {
+    if (!activeWorkspaceId || requestedHistoryId) return undefined;
+    let gone = false;
+    (async () => {
+      try {
+        const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+        const drafted = ws?.data?.agent_validation_form;
+        if (gone || !drafted?.form || !drafted.run_id || alreadyApplied(drafted.run_id)) return;
+        const { form: next, filled } = fillEmpty(v4FormRef.current, drafted.form);
+        if (filled) setV4Form(next);
+        markApplied(drafted.run_id);
+        setAgentFilled({ filled, idea: drafted.idea || "" });
+      } catch {
+        /* the form opens as it was */
+      }
+    })();
+    return () => { gone = true; };
+  }, [activeWorkspaceId, requestedHistoryId]);
 
   const isProductPath = form.pathway === "product_service_idea";
   const marketResearch = isProductPath ? serviceMarketResearch : businessMarketResearch;
@@ -3687,6 +3711,11 @@ export default function ValidationWizardPage() {
 
               {v4Error && <div ref={v4ErrorRef} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{v4Error}</div>}
               {savedNotice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{savedNotice}</div>}
+              {agentFilled && agentFilled.filled > 0 && (
+                <div data-agent-filled className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                  Filled from your Agent chat{agentFilled.idea ? ` about ${agentFilled.idea}` : ""}. Check each answer and change anything that isn't right before you run the validation.
+                </div>
+              )}
 
               {/* V4 wizard body */}
               {v4Step === 0 ? (
@@ -4519,7 +4548,7 @@ export default function ValidationWizardPage() {
                           <button
                             type="button"
                             disabled={v4Saving}
-                            onClick={() => { if (triggerDemoGate?.("validation")) return; setCreditModal({ featureName: "Idea Validation", creditCost: v4Journey === "comprehensive" ? 10 : 5, featureCode: v4Journey === "comprehensive" ? "idea_validation_comprehensive" : "idea_validation", onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } }); }}
+                            onClick={() => { if (triggerDemoGate?.("validation")) return; setCreditModal({ featureName: "Idea Validation", creditCost: v4Journey === "comprehensive" ? 25 : 0, featureCode: v4Journey === "comprehensive" ? "idea_validation_comprehensive" : "idea_validation", onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } }); }}
                             className="flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-brand-700 disabled:opacity-50"
                           >
                             {v4Saving ? "Running validation..." : "Run Validation"}
@@ -6006,7 +6035,7 @@ export default function ValidationWizardPage() {
                               disabled={isLoading || isPrefilling || !canRun}
                               onClick={() => {
                                 if (!isCreateWorkspace) {
-                                  setCreditModal({ featureName: "Idea Validation", creditCost: 5, featureCode: "idea_validation", onConfirm: () => { setCreditModal(null); saveWorkspace(true); } });
+                                  setCreditModal({ featureName: "Idea Validation", creditCost: 0, featureCode: "idea_validation", onConfirm: () => { setCreditModal(null); saveWorkspace(true); } });
                                 } else {
                                   saveWorkspace(false);
                                 }

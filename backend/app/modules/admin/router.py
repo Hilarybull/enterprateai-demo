@@ -1296,3 +1296,16 @@ async def renew_user_trial(user_id: str, user=Depends(require_admin)) -> dict:
         on_conflict="user_id",
     )
     return {"renewed": True, "trial_end": trial_end.isoformat()}
+
+
+@router.get("/research-runs/{business_id}")
+async def research_diagnostics(business_id: str, limit: int = 10, user=Depends(require_admin)) -> dict:
+    """Research diagnostics: a business's latest research runs, topic by topic (the queries sent, results, pages loaded,
+    sources kept and dropped with why, the model's calls) and why a topic ended with no sources."""
+    from app.modules.agent import research
+    from app.modules.agent.router import get_orchestrator
+    data = await get_orchestrator().rt.business.load(business_id) or {}
+    runs = sorted((data.get("research_runs") or {}).values(), key=lambda r: r.get("created_at") or "", reverse=True)[:max(1, min(limit, 50))]
+    return {"business_id": business_id, "health": research.health(),
+            "runs": [{k: r.get(k) for k in ("id", "goal", "status", "created_at", "seconds", "error", "unavailable", "charged", "counts", "context", "diagnostics")}
+                     for r in runs]}

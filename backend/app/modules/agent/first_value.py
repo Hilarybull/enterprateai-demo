@@ -41,7 +41,9 @@ PREMIUM = {
 FREE_NEXT = {
     "idea_viability_initial": [("Write a business plan", "/business-plan"), ("Add it to your catalogue", "/catalogue")],
     "launch_readiness_initial": [("Add it to your catalogue", "/catalogue"), ("Set up your Marketplace profile", "/marketplace/profile")],
-    "funding_readiness_initial": [("Write a business plan", "/business-plan"), ("Record your invoices and customers", "/operations")],
+    # Funding-only actions (the brief, 15 Oct): the pack and the case. Customers and invoices on record count as traction in
+    # the check by themselves (PRD 9.5) and a missing one is a gap in the pack, never a button here.
+    "funding_readiness_initial": [("Prepare my funding pack", "/funding?tab=documents"), ("Open funding case", "/funding?tab=results")],
     "pricing_health_initial": [("Save the price in your catalogue", "/catalogue"), ("Create a quotation", "/operations")],
     "customer_growth_foundation": [("Set up your Marketplace profile", "/marketplace/profile"), ("Create a quotation", "/operations")],
 }
@@ -208,8 +210,10 @@ def funding(a: dict, data: dict | None = None, now: datetime | None = None, sign
          "strength": "A forecast is on record", "gap": "No monthly forecast yet"},
         {"key": "demand", "label": "Demand evidence", "weight": 15,
          "state": MET if evidence and _known(traction) and not no_traction else PARTIAL if evidence or (_known(traction) and not no_traction) else UNMET if no_traction else UNKNOWN,
-         "strength": f"{demand_level(traction)[1]}: {_quoted(traction)}" if demand_level(traction) and not no_traction else "Some customer evidence exists",
-         "gap": "No traction yet" if no_traction else "Traction evidence incomplete"},
+         # What the records show and what the owner said are named as such, so one never contradicts the other.
+         "strength": f"{demand_level(traction)[1]}: {_quoted(traction)}" if demand_level(traction) and not no_traction
+         else "Customers and invoices on record" if evidence else None,
+         "gap": ("Traction not described yet, though your records show customers" if evidence else "No traction yet") if no_traction else "Traction evidence incomplete"},
         {"key": "economics", "label": "Business economics", "weight": 10, "state": MET if co["priced"] and co["costed"] else PARTIAL if co["priced"] else UNKNOWN,
          "strength": "Prices are on record", "gap": "Prices and costs not on record" if not co["priced"] else "Costs not on record"},
         {"key": "market", "label": "Market and growth plan", "weight": 10, "state": PARTIAL if co["target"] or co["about"] else UNKNOWN,
@@ -382,7 +386,92 @@ def assess(goal_key: str, answers: dict, data: dict | None = None, *, now: datet
     if offering_on_record(answers, data):
         out["free_next_actions"] = [x for x in out["free_next_actions"] if x.get("label") != "Add it to your catalogue"]
     out["free_next_actions"] = [_doable(x, answers or {}) for x in out["free_next_actions"]]
+    out.update(at_a_glance(out))
     return out
+
+
+# ── The result at a glance (PRD 12.2), worked out here once so every surface shows the same: the band, three key numbers
+#    and the gaps, failed apart from not known. The dashboard's Agent card shows these; the detail drawer shows the rest. ──
+_BAND_WORDS = {"very strong": "Strong", "strong": "Strong", "good": "Strong", "ready": "Strong", "fair": "Fair", "moderate": "Fair",
+               "promising": "Fair", "developing": "Fair", "weak": "Weak", "not ready": "Weak", "poor": "Weak", "insufficient evidence": "Insufficient evidence"}
+
+
+def band_of(result: dict) -> str:
+    """Strong, Fair, Weak or Insufficient evidence. Kept apart from evidence coverage (PRD 5.2)."""
+    for said in (result.get("classification"), result.get("score_label"), result.get("score") if isinstance(result.get("score"), str) else None):
+        word = str(said or "").strip().lower()
+        for key, band in _BAND_WORDS.items():
+            if key in word:
+                return band
+    if isinstance(result.get("score"), (int, float)) and not isinstance(result.get("score"), bool):
+        n = float(result["score"])
+        return "Strong" if n >= 70 else "Fair" if n >= 50 else "Weak"
+    m = re.match(r"\s*(\d+)\s+out of\s+100", str(result.get("score") or ""))
+    if m:
+        n = int(m.group(1))
+        return "Strong" if n >= 70 else "Fair" if n >= 50 else "Weak"
+    m = re.match(r"\s*(\d+)\s+of\s+(\d+)", str(result.get("score") or ""))
+    if m and int(m.group(2)):
+        share = int(m.group(1)) / int(m.group(2))
+        return "Strong" if share >= 0.75 else "Fair" if share >= 0.5 else "Weak"
+    return "Insufficient evidence"
+
+
+def _metric(result: dict, *labels: str) -> str | None:
+    for m in result.get("metrics") or []:
+        if any(str(m.get("label") or "").lower().startswith(label.lower()) for label in labels):
+            return str(m.get("value") or "")
+    return None
+
+
+def key_numbers(result: dict) -> list[str]:
+    """Three short figures for one line: "₦30,000 price · 60% margin · ₦720,000 a month before fixed costs"."""
+    kind = result.get("assessment_type") or ""
+    out: list[str] = []
+    if kind.startswith("pricing"):
+        price, margin = _metric(result, "Proposed price"), _metric(result, "Margin")
+        monthly = next((m for m in result.get("metrics") or [] if str(m.get("label") or "").startswith("At ")), None)
+        out = [f"{price} price" if price else "", f"{margin} margin" if margin else "",
+               re.sub(r"\s*contribution before fixed costs$", " a month before fixed costs", str(monthly["value"])) if monthly else ""]
+    elif kind.startswith("idea"):
+        revenue, margin, even = _metric(result, "Monthly revenue"), _metric(result, "Margin"), _metric(result, "Break-even")
+        out = [f"{revenue} a month" if revenue else "", f"{margin} margin" if margin else "", f"break-even at {even}" if even else ""]
+    out = [x for x in out if x]
+    if len(out) < 3:
+        criteria = result.get("criteria") or []
+        met = sum(1 for c in criteria if c.get("state") == "met")
+        score = result.get("score")
+        shown = f"{score:g} out of 100" if isinstance(score, (int, float)) and not isinstance(score, bool) else str(score or "")
+        extra = [shown if shown and " of " not in shown.replace(" out of ", " ") else "",
+                 f"{met} of {len(criteria)} in place" if criteria else "", f"{len(result.get('blockers') or [])} to close" if result.get("blockers") else ""]
+        out += [x for x in extra if x and x not in out]
+    return out[:3]
+
+
+_FAILED = ("unmet", "failed")
+
+
+def gaps_of(result: dict) -> dict[str, list[str]]:
+    """The gaps by name (PRD 12.2), in the states the drawer shows them: failed, early evidence (partly met) and not known
+    yet, named as the criteria are ("comparable prices")."""
+    names = {c["key"]: c["label"] for c in result.get("criteria") or [] if c.get("key")}
+    out: dict[str, list[str]] = {"failed": [], "early": [], "unknown": []}
+    for b in result.get("blockers") or []:
+        name = names.get(b.get("key")) or b.get("label") or ""
+        name = name[:1].lower() + name[1:] if name and not name[:2].isupper() else name
+        state = b.get("state")
+        (out["failed"] if state in _FAILED else out["early"] if state == "partially_met" else out["unknown"]).append(name)
+    return out
+
+
+def at_a_glance(result: dict) -> dict:
+    kind = str(result.get("assessment_type") or "")
+    band = band_of(result)
+    if kind.startswith("customer_growth"):
+        band = None      # PRD 11.3, SIF-15: a foundation count ("5 of 9 in place"), never a grade
+    elif band == "Weak" and kind.startswith(("funding", "launch")):
+        band = "Not ready yet"      # the PRD's own wording for readiness
+    return {"band": band, "key_numbers": key_numbers(result), "gaps": gaps_of(result)}
 
 
 def _amount(value: Any) -> float | None:
@@ -408,6 +497,10 @@ def _doable(action: dict, answers: dict) -> dict:
         return {**action, "catalogue": item}
     if label == "Create a quotation":
         return {**action, "to": "/operations?tab=Sales&sub=Quotations&new=quote"}
+    if label == "Write a business plan":
+        # Started when pressed (R4: asked for), from what this check was told; the plans page is where it lands.
+        said = {k: v for k, v in {"description": name, "customer": str(answers.get("customer") or "").strip()[:200]}.items() if v}
+        return {**action, "capability": "business_plan_draft", "params": {"answers": said} if said else {}, "to": "/blueprint?tab=business-plans"}
     return action
 
 
@@ -496,17 +589,38 @@ def known_answers(goal_key: str, data: dict | None) -> dict[str, Any]:
     return out
 
 
-def premium_gate(result: dict, *, entitled: bool, credits: int | None = None) -> dict:
+# After research is adopted, what the result recommends next: the document the check leads to, started from a button
+# (R4: asked for by the owner, never started by itself).
+AFTER_REVIEW = {"need_funding": {"label": "Draft my funding pack", "capability": "funding_pack_draft"},
+                "launch": {"label": "Draft my business plan", "capability": "business_plan_draft"}}
+
+
+def after_review(goal: str, result: dict, version: dict | None = None) -> dict:
+    """The result as the adopted research left it, with its next step first."""
+    out = dict(result)
+    step = AFTER_REVIEW.get(goal)
+    actions = [x for x in out.get("free_next_actions") or [] if not (step and x.get("capability") == step["capability"])]
+    out["free_next_actions"] = ([step] if step else []) + actions
+    out["premium_next_action"] = None      # adopted: the research isn't offered again (it reruns only when a figure changes)
+    if version:
+        out["adopted"] = {"version": version.get("version"), "at": version.get("created_at")}
+    return out
+
+
+def premium_gate(result: dict, *, entitled: bool, credits: int | None = None, feature: str | None = None, plan: str | None = None,
+                 cost: int | None = None) -> dict:
     """What happens when the premium next action is chosen. The plan is checked first; credits only
-    for someone whose plan includes it (PRD 4.1). Declining leaves Save for later and the free tools (SIF-07)."""
+    for someone whose plan includes it (PRD 4.1). Declining leaves Save for later and the free tools (SIF-07).
+    The words are the credit templates: "{Feature} is on the {plan} plan." and "This needs {cost} credits and you have {balance}." """
     action = result["premium_next_action"]
     if not entitled:
         return {"allowed": False, "reason": "plan",
-                "message": f"You already have an initial assessment. {action['explains']} This is available on an eligible plan.",
-                "primary": {"label": "Upgrade to continue", "to": "/pricing", "upgrade": True},
+                "message": f"{feature or action['label']} is on the {plan or 'Starter'} plan.",
+                "primary": {"label": "See plans", "to": "/pricing", "upgrade": True},
                 "secondary": [{"label": "Continue with free tools", "actions": [x for x in result["free_next_actions"] if not x.get("save")]}, {"label": "Save for later", "save": True}]}
-    if credits is not None and credits <= 0:
-        from app.modules.agent.config import short_of
-        return {"allowed": False, "reason": "credits", "message": f"Your plan includes this. {short_of(None, credits)} Your assessment is saved.",
+    if credits is not None and (credits <= 0 or (cost and credits < cost)):
+        have = max(0, int(credits or 0))
+        return {"allowed": False, "reason": "credits",
+                "message": f"This needs {cost} credits and you have {have}." if cost else f"You have {have} credits, which isn't enough for this.",
                 "primary": {"label": "Top up", "to": "/pricing", "upgrade": True}, "secondary": [{"label": "Save for later", "save": True}]}
     return {"allowed": True, "reason": None, "message": action["explains"]}

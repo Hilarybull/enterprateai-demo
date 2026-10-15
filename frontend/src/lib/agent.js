@@ -69,7 +69,7 @@ export function replyText(res) {
   return res.message || "";
 }
 
-export function submitAgentRequest({ businessId, text, capability, params, sourceChannel = "text", sourceReference, recommendationId, background = false }) {
+export function submitAgentRequest({ businessId, text, capability, params, sourceChannel = "text", sourceReference, recommendationId, background = false, confirmed = false }) {
   const typed = typeof text === "string" && text.trim() ? text.trim() : null;
   const history = typed ? getConversation(businessId).slice(-18) : [];
   const sent = apiRequest("/agent/requests", "POST", {
@@ -81,6 +81,7 @@ export function submitAgentRequest({ businessId, text, capability, params, sourc
     source_channel: sourceChannel,
     source_reference: sourceReference || null,
     recommendation_id: recommendationId || null,
+    confirmed: Boolean(confirmed),      // a priced task's price was shown and Start pressed
     // The task is started and carried on by the server; the screen watches it and shows its step.
     background: Boolean(background),
   }, { timeoutMs: 120000 });
@@ -239,7 +240,8 @@ const REASON_LABEL = {
 
 export function runStateLabel(run) {
   if (!run) return "";
-  if (run.retrying) return "Trying again";      // the Agent is handling it: nothing for the owner to do
+  if (run.retrying) return "Waiting to finish";
+  if (run.display_status === "waiting_for_review") return "Waiting for your review";      // its draft is pending (QA, 15 Oct)      // the Agent is handling it: nothing for the owner to do (QA, 15 Oct)
   if (run.status === "failed") return REASON_LABEL[run.reason_code] || SUBSTATUS_LABEL[run.substatus] || "Needs attention";
   if (run.status === "running" && run.substatus) return SUBSTATUS_LABEL[run.substatus] || "In progress";
   if (run.display_status === "nothing_to_do" || (run.status === "succeeded" && run.outcome?.skipped)) return "Nothing to do";      // C2: not "Completed"

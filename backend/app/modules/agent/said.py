@@ -37,7 +37,7 @@ _METHODS = (("Bank transfer", r"bank\s*transfer|bacs|faster\s+payments?|wire|tra
             ("Cheque", r"che(?:que|ck)"), ("Direct debit", r"direct\s+debit"), ("PayPal", r"paypal"))
 # Words that begin a request and are never part of a name or a piece of work.
 _LEAD = re.compile(r"^\s*(?:please\s+|can you\s+|could you\s+|i\s+(?:want|need|would like|'d like)\s+(?:to\s+)?|let'?s\s+|help me\s+(?:to\s+)?)*"
-                   r"(?:create|make|prepare|draft|write|send|issue|raise|record|log|add|generate|get|do|give me|new)?\s*(?:me\s+)?(?:an?|the|my)?\s*", re.I)
+                   r"(?:(?:create|make|prepare|draft|write|send|issue|raise|record|log|add|generate|get|do|give me|new)\b)?\s*(?:me\s+)?(?:(?:an?|the|my)\b)?\s*", re.I)
 _DOC = (r"invoices?|quotations?|quotes?|estimates?|proposals?|contracts?|service agreements?|agreements?|purchase orders?|pos?|credit notes?|refunds?|receipts?"
         r"|reminders?|payment reminders?|bills?|expenses?|remind|chase|nudge")
 # Words that describe a document ("a business proposal") and are never part of a name.
@@ -285,6 +285,11 @@ def read(text: str, today: date) -> dict[str, Any]:
                 work = name      # "invoice for consulting": the work, with nobody named
     if party and _STOP_NAME.fullmatch(re.sub(r"\s+", " ", party).strip(" .,:;-")):
         party = None      # only filler words ("enquiry from", "request for"): nobody is named, so the name is asked with nothing filled in
+    if party and out.get("items") is not None or party:
+        # "Quote ABC Ltd 20 chairs at £45 each": the name stops where the quantity starts.
+        cut = re.match(r"^(?P<name>.+?)\s+\d+\s+[A-Za-z][\w\s-]*$", party or "")
+        if cut and re.search(r"\b\d+\s+[A-Za-z][\w-]*\s+(?:at|@)\s", text, re.I):
+            party = cut.group("name")
     if party and not _REF.search(party):
         out["party"] = re.sub(r"\s+", " ", party).strip(" .,:;-")
     extra = [c for c in clauses[1:] if c and not re.fullmatch(r"(?:and|plus|also)?", c, re.I)]

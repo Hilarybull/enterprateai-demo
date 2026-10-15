@@ -17,7 +17,7 @@ export function AgentAvatar({ size = 32, working = false, className = "" }) {
 }
 
 /** Who it is: the avatar, the name, "Online" in words beside its green dot, and one line on what it does. `as`: the heading's tag. */
-export function AgentIdentity({ subtitle, working = false, as: Title = "p" }) {
+export function AgentIdentity({ subtitle, working = false, as: Title = "p", link = null }) {
   return (
     <div className="flex min-w-0 items-start gap-3" data-agent-identity>
       <AgentAvatar size={32} working={working} />
@@ -28,6 +28,10 @@ export function AgentIdentity({ subtitle, working = false, as: Title = "p" }) {
         </Title>
         {subtitle && <p className="mt-0.5 text-[13px] text-white/70" data-agent-subtitle>{subtitle}</p>}
       </div>
+      {link && (
+        <a href={link.to} onClick={(e) => { e.preventDefault(); link.onGo(link.to); }} className="ml-auto shrink-0 self-center text-[12.5px] font-semibold text-indigo-100 underline-offset-2 hover:underline" data-agent-centre-link>
+          Open Agent Centre →</a>
+      )}
     </div>
   );
 }
@@ -43,8 +47,10 @@ export default function AgentShell({ as: Tag = "div", className = "", bodyClassN
   const visible = usePageVisible();
   return (
     <Tag ref={box} data-agent-shell data-m-idle={!seen || !visible} {...rest}
-      className={`m-agent-card relative overflow-clip rounded-2xl p-[2px] text-left shadow-[0_20px_60px_rgba(108,92,231,0.25)] ${className}`}>
-      <span aria-hidden="true" className="m-agent-border" />
+      className={`m-agent-card relative rounded-2xl p-[2px] text-left shadow-[0_20px_60px_rgba(108,92,231,0.25)] ${className}`}>
+      {/* Only the moving border is clipped (its conic layer is far larger than the card); the content is not, so nothing
+          opened from inside the card (a menu, a tooltip) is ever cut off at its edge. */}
+      <span aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-clip rounded-2xl" data-agent-border-clip><span aria-hidden="true" className="m-agent-border" /></span>
       <div data-agent-panel className={`relative h-full rounded-[14px] bg-gradient-to-br from-[#1e1b4b] via-[#312e81] to-[#4c1d95] ${bodyClassName}`}>
         {children}
       </div>

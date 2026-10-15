@@ -601,9 +601,10 @@ export default function BlueprintPage() {
   const [creditModal, setCreditModal] = useState(null);
   function getBlueprintCreditCost(docType, sections) {
     const isSection = Array.isArray(sections) && sections.length === 1;
-    if (docType === "business_plan") return isSection ? 3 : 40;
-    if (docType === "client_proposal") return isSection ? 2 : 25;
-    if (docType === "sales_letter") return isSection ? 1 : 10;
+    // Credit allocation v2 (shown only if the server's price can't be checked): plan 40, section rewrite 5, proposal 10, letter 4.
+    if (docType === "business_plan") return isSection ? 5 : 40;
+    if (docType === "client_proposal") return isSection ? 2 : 10;
+    if (docType === "sales_letter") return isSection ? 1 : 4;
     return 40;
   }
   // QA PF1/PF2: the price list's code for what is generated (the server's _blueprint_feature_code): the confirmation
@@ -718,6 +719,26 @@ export default function BlueprintPage() {
     mq.addListener(update);
     return () => mq.removeListener(update);
   }, []);
+
+  // The Agent's draft, opened from its link (?document_id=…&review=…): that document itself, with Accept, Edit and Reject.
+  const reviewId = bpSearchParams.get("review");
+  const openedDraft = useRef("");
+  useEffect(() => {
+    const id = bpSearchParams.get("document_id");
+    if (!id || openedDraft.current === id || !savedDocs.length) return;
+    const doc = savedDocs.find((d) => String(d.id) === String(id));
+    if (doc) { openedDraft.current = id; openSavedDocument(doc); }
+  }, [bpSearchParams, savedDocs]);      // eslint-disable-line react-hooks/exhaustive-deps
+  async function decideDraft(decision) {
+    if (!reviewId || !workspaceIdStored) return;
+    try {
+      await apiRequest(`/businesses/${workspaceIdStored}/agent-drafts/${reviewId}/decide`, "POST", { decision });
+      showToast?.("success", decision === "accept" ? "Accepted. This is now your business plan." : "Rejected. Nothing else was changed.");
+    } catch { /* the bar stays, to try again */ return; }
+    const next = new URLSearchParams(bpSearchParams);
+    next.delete("review");
+    setBpSearchParams(next, { replace: true });
+  }
 
   async function refreshSavedDocs() {
     try {
@@ -2808,6 +2829,15 @@ export default function BlueprintPage() {
 
   return (
     <div>
+      {reviewId && (
+        <div className="fixed inset-x-0 top-0 z-[80] flex flex-wrap items-center justify-center gap-2 border-b border-indigo-200 bg-indigo-50 px-4 py-2 text-[13px] text-indigo-900 shadow-sm" data-draft-review>
+          <span className="font-semibold">Draft from the Agent · Needs your review</span>
+          <button type="button" onClick={() => decideDraft("accept")} className="rounded-lg bg-brand-600 px-3 py-1 text-[12.5px] font-semibold text-white hover:bg-brand-700">Accept</button>
+          <button type="button" onClick={() => { const n = new URLSearchParams(bpSearchParams); n.delete("review"); setBpSearchParams(n, { replace: true }); }}
+            className="rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12.5px] font-semibold text-indigo-800 hover:bg-indigo-100">Edit</button>
+          <button type="button" onClick={() => decideDraft("reject")} className="rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12.5px] font-semibold text-indigo-800 hover:bg-indigo-100">Reject</button>
+        </div>
+      )}
       <PageHeader
         title="Business Blueprints"
         description="Create strategic business documents with AI-assisted intelligence."

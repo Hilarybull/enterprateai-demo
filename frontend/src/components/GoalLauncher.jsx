@@ -35,7 +35,7 @@ const FALLBACK = {
   ],
   tasks: [
     { key: "create_invoice", label: "Create Invoice" }, { key: "create_quotation", label: "Create Quotation" },
-    { key: "create_business_plan", label: "Create Business Plan" }, { key: "prepare_proposal", label: "Prepare Proposal" },
+    { key: "create_business_plan", label: "Create Business Plan" },
   ],
   retention_days: 7,
 };
@@ -104,6 +104,19 @@ const ArrowRightIcon = () => (
   </svg>
 );
 
+// The task in hand, in the address too ("?task=<id>"): a re-mount, a sign-in check or a reload resumes the same thread.
+const TASK_PARAM = "task";
+function taskInAddress() {
+  try { return new URLSearchParams(window.location.search).get(TASK_PARAM) || ""; } catch { return ""; }
+}
+function putTaskInAddress(id) {
+  try {
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set(TASK_PARAM, id); else url.searchParams.delete(TASK_PARAM);
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);      // never a navigation, never a scroll
+  } catch { /* fine without it */ }
+}
+
 /** The goal flow: what is offered, the task in hand, and what can be done with it. Shared by the launcher and the task card. */
 export function useGoalFlow() {
   const navigate = useNavigate();
@@ -111,34 +124,48 @@ export function useGoalFlow() {
   const [session, setSession] = useState(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
+  const [failed, setFailed] = useState(null);      // P1.8: a message that didn't go through, kept in the thread with Try again
+  const [pending, setPending] = useState("");
+  const [resuming, setResuming] = useState(false);      // a saved task is being fetched: the card's shell shows, never an older thread      // what is being started: the card shell shows it at once, with the Agent typing
   const authToken = useAuthStore((st) => st.token);
   const authEmail = useAuthStore((st) => st.email) || localStorage.getItem("ea_email");
   const [closed, setClosed] = useState(false);      // phone: the sheet was closed with × or Back; the task is kept and can be reopened
   const here = Boolean(authToken) && authEmail !== "demo";
   const sessionKey = here && authEmail ? `${SESSION_KEY}:${authEmail.toLowerCase()}` : `${SESSION_KEY}:anon`;
+  const live = useRef(null);      // the task on screen now: never dropped because the sign-in state was checked again
+  live.current = session;
   useEffect(() => {
-    // Signed in by a code, with the new account's password still to set: the same task stays on screen.
-    if (passwordHold.current) { try { localStorage.setItem(sessionKey, session?.id || ""); } catch { /* fine without it */ } return undefined; }
     let alive = true;
     apiRequest("/goal-suggestions", "GET").then((res) => { if (alive && res?.goals) setOffer(res); }).catch(() => {});
     try {
       if (!sessionStorage.getItem("ea_goal_viewed")) { sessionStorage.setItem("ea_goal_viewed", "1"); trackGoal("homepage_goal_prompt_viewed"); }
     } catch { trackGoal("homepage_goal_prompt_viewed"); }
-    // A task begun earlier in this browser is picked up where it was left.
-    setSession(null);
-    let saved = null;
-    try { saved = localStorage.getItem(sessionKey); } catch { /* fine without it */ }
+    return () => { alive = false; };
+  }, []);
+  useEffect(() => {
+    // Signed in by a code, with the new account's password still to set: the same task stays on screen.
+    if (passwordHold.current) { try { localStorage.setItem(sessionKey, session?.id || ""); } catch { /* fine without it */ } return undefined; }
+    // A task already on screen stays on screen when the sign-in changes or is checked again (it was wiped here before, mid-flow):
+    // it is only kept under the new key.
+    if (live.current?.id) { try { localStorage.setItem(sessionKey, live.current.id); } catch { /* fine without it */ } return undefined; }
+    let alive = true;
+    // A task begun earlier is picked up where it was left: the one in the address first, then this browser's.
+    let saved = taskInAddress();
+    if (!saved) { try { saved = localStorage.getItem(sessionKey); } catch { /* fine without it */ } }
     if (saved) {
+      setResuming(true);
       apiRequest(`/task-sessions/${saved}`, "GET")
         .then((res) => {
           // Picked up only while there is something left to do here: questions to answer, a choice to make, or (signed
           // out) the email to save it with. A task already carried on after sign-in (its result shown, or handed to the
           // dashboard) is not shown again as an empty card: it is forgotten here, and kept where it went.
           const open = ["questions", "clarify"].includes(res?.next) || (res?.next === "identity" && !res?.authenticated);
+          if (live.current?.id) return;      // a task was started meanwhile: it is the one on screen
           if (alive && res?.id && res.resolution && open && !["handed_off", "awaiting_review", "abandoned", "blocked"].includes(res.state)) setSession({ ...res, questions: res.questions || [] });
-          else if (alive) { try { localStorage.removeItem(sessionKey); } catch { /* ignore */ } }
+          else if (alive) { try { localStorage.removeItem(sessionKey); } catch { /* ignore */ } putTaskInAddress(""); }
         })
-        .catch(() => { try { localStorage.removeItem(sessionKey); } catch { /* ignore */ } });
+        .catch(() => { if (!live.current?.id) { try { localStorage.removeItem(sessionKey); } catch { /* ignore */ } } })
+        .finally(() => { if (alive) setResuming(false); });
     }
     return () => { alive = false; };
   }, [sessionKey]);
@@ -147,6 +174,7 @@ export function useGoalFlow() {
     setSession({ ...next, questions: next.questions || [] });
     setClosed(false);
     try { localStorage.setItem(sessionKey, next.id); } catch { /* fine without it */ }
+    putTaskInAddress(next.id);
   }, [sessionKey]);
   const retryOnce = useCallback(async (action) => {
     try {
@@ -160,25 +188,38 @@ export function useGoalFlow() {
     if (busy) return false;
     setBusy(true);
     setProblem("");
+    setPending(body.text || [...(offer.goals || []), ...(offer.tasks || [])].find((g) => g.key === body.key)?.label || "Your task");
     trackGoal("entry_mode_selected", { entry_mode: body.entry_mode, ...(body.key ? { key: body.key } : {}) });
+    const began = typeof performance !== "undefined" ? performance.now() : Date.now();
     try {
       keep(await retryOnce(() => apiRequest("/task-sessions", "POST", body)));
+      // Time to the first question, measured and logged (the target is under 1.5 seconds).
+      const ms = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - began);
+      trackGoal("first_question_shown", { ms });
       return true;
     } catch (e) {
       setProblem(e?.status === 429 ? "That's a lot of tasks started from here. Please try again in a little while." : "Couldn't continue. Try again.");
       return false;
     } finally {
       setBusy(false);
+      setPending("");
     }
-  }, [busy, keep, retryOnce]);
-  const answer = useCallback(async (answers, confirm = false) => {
-    if (!session) return;
+  }, [busy, keep, retryOnce, offer]);
+  const answer = useCallback(async (answers, confirm = false, said = null, messageId = null) => {
+    if (!session) return false;
     setBusy(true);
     setProblem("");
+    // One id for this message, the same on every retry: the server answers it once (never two bubbles, never two turns).
+    const mid = messageId || `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     try {
-      keep(await retryOnce(() => apiRequest(`/task-sessions/${session.id}/inputs`, "POST", confirm ? { answers, confirm: true } : { answers })));
+      // `said`: the reply as typed and the question it answers, read in full by the Agent (every slot it gives a value for).
+      keep(await retryOnce(() => apiRequest(`/task-sessions/${session.id}/inputs`, "POST", { answers, ...(confirm ? { confirm: true } : {}), ...(said || {}), client_message_id: mid })));
+      setFailed(null);
+      return true;
     } catch {
-      setProblem("Couldn't continue. Try again.");
+      // Kept in the thread, the question not moved on: "That didn't go through. [Try again]".
+      setFailed({ text: said?.message || said?.picked || "", retry: () => answer(answers, confirm, said, mid) });
+      return false;
     } finally {
       setBusy(false);
     }
@@ -187,6 +228,7 @@ export function useGoalFlow() {
     setSession(null);
     setProblem("");
     try { localStorage.removeItem(sessionKey); } catch { /* ignore */ }
+    putTaskInAddress("");
   }, [sessionKey]);
   /** Straight on, for someone signed in; or to the sign-in page for someone who says they have an account.
    *  The address is never put in a link: only where to come back to. */
@@ -265,14 +307,14 @@ export function useGoalFlow() {
     await useAuthStore.getState().googleLogin(credential);
     if (useAuthStore.getState().token) navigate(startPath(session.id));
   }, [navigate, session]);
-  return { offer, session, busy, problem, begin, answer, startOver, carryOn, here, closed, setClosed, sendCode, verifyCode, withGoogle,
+  return { offer, session, busy, pending, resuming, problem, failed, begin, answer, startOver, carryOn, here, closed, setClosed, sendCode, verifyCode, withGoogle,
     newPassword, passwordHold, setPassword, skipPassword };
 }
 
 /** The launcher on its own: it runs its own flow and shows the task card beneath it. */
 export default function GoalLauncher({ className = "" }) {
   const flow = useGoalFlow();
-  return <GoalLauncherView className={className} flow={flow}>{flow.session && <GoalTaskCard flow={flow} placement="inline" />}</GoalLauncherView>;
+  return <GoalLauncherView className={className} flow={flow}>{flow.session && <GoalTaskCard key={flow.session.id} flow={flow} placement="inline" />}</GoalLauncherView>;
 }
 
 // What the placeholder types out, one after another, while the field is empty and untouched.
@@ -309,6 +351,22 @@ export function focusLauncher() {
  * The Agent's steps, ticking in turn. `done` is how many are finished (from the real task when there is
  * one); the next one is shown as under way. Used over the product preview while a request is read.
  */
+/** The task card while its first question is on its way: the same frame, in the same place, with the Agent typing. */
+export function TaskCardShell({ title = "", className = "" }) {
+  return (
+    <section aria-label="Your task" aria-busy="true" data-task-shell
+      className={`flex flex-col overflow-hidden rounded-2xl border-2 border-brand-500 bg-white text-left shadow-2xl shadow-brand-900/10 ring-4 ring-brand-500/10 motion-safe:animate-[ea-fade-in_.2s_ease-out] ${className}`}>
+      <header className="shrink-0 border-b border-slate-100 px-4 py-3"><p className="truncate text-base font-bold text-slate-900">{title}</p></header>
+      <div className="min-h-0 flex-1 px-4 py-3">
+        <div role="status" className="inline-flex w-fit items-center gap-1 rounded-2xl rounded-tl-sm bg-white px-3 py-2.5 shadow-sm ring-1 ring-slate-100" data-typing>
+          <span className="sr-only">The Agent is typing</span>
+          {[0, 1, 2].map((n) => <span key={n} aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-slate-400 motion-safe:animate-bounce" style={{ animationDelay: `${n * 120}ms` }} />)}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function AgentSteps({ done = 0, title = "EnterprateAI", className = "" }) {
   return (
     <div role="status" aria-live="polite" data-agent-steps className={`rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-2xl shadow-brand-900/15 ${className}`}>
@@ -348,7 +406,7 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
   const reduced = useReducedMotion();
   // "Try it yourself" in the demo: its request arrives here, in the field, with the cursor after it.
   useEffect(() => {
-    const prefill = (e) => { const words = String(e.detail?.text || ""); if (!words) return; setText(words); field.current?.focus(); };
+    const prefill = (e) => { const words = String(e.detail?.text || ""); if (!words) return; setText(words); field.current?.focus({ preventScroll: true }); };
     window.addEventListener(LAUNCHER_PREFILL, prefill);
     return () => window.removeEventListener(LAUNCHER_PREFILL, prefill);
   }, []);
@@ -374,31 +432,30 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
     e.preventDefault();
     if (busy) return;
     if (!text.trim()) {      // nothing typed yet: the button still answers, by pointing at the field
-      field.current?.focus();
+      field.current?.focus({ preventScroll: true });
       setShake(true);
       setTimeout(() => setShake(false), 450);
       return;
     }
     setStarting(true);
-    try { if (await begin({ text: text.trim(), entry_mode: "free_text" })) setText(""); } finally { setStarting(false); }
+    // Exactly as typed: the placeholder's typewriter never reaches the value, and its caret is never sent.
+    const goal = text.replace(/\|$/, "").trim();
+    try { if (await begin({ text: goal, entry_mode: "free_text" })) setText(""); } finally { setStarting(false); }
   }
 
-  /** A chip: its words run into the field, then it starts. With reduced motion it starts at once. */
-  function pick(item, entry_mode) {
+  /** A chip starts its goal at once: the chip pulses while it starts. Nothing is typed into the field (only the placeholder
+   *  ever animates), so what the owner typed is never mixed with a chip's words. */
+  const pressed = useRef(null);      // the chip under the pointer at pointerdown: the one a click starts, whatever has rotated since
+  async function pick(item, entry_mode) {
+    const chip = pressed.current?.item || item;
+    const mode = pressed.current?.entry_mode || entry_mode;
+    pressed.current = null;
     if (busy || picking) return;
     setStopped(true);
-    const start = () => begin({ key: item.key, entry_mode });
-    if (reduced) { start(); return; }
-    setPicking(item.key);
-    const words = item.label;
-    let n = 0;
-    const each = Math.max(8, Math.floor(DURATION.base / Math.max(1, words.length)));
-    const timer = setInterval(() => {
-      n += 1;
-      setText(words.slice(0, n));
-      if (n >= words.length) { clearInterval(timer); setTimeout(async () => { await start(); setText(""); setPicking(null); }, DURATION.fast); }
-    }, each);
+    setPicking(chip.key);
+    try { await begin({ key: chip.key, entry_mode: mode }); } finally { setPicking(null); }
   }
+  const press = (item, entry_mode) => { pressed.current = { item, entry_mode }; setHeld(true); };
 
   return (
     <AgentShell className={className} data-goal-launcher
@@ -438,7 +495,7 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
               <div key={n} aria-hidden={n === shown ? undefined : "true"} data-chip-row data-goal-set={n}
                 className={`col-start-1 row-start-1 flex flex-wrap content-start gap-2 motion-safe:transition motion-safe:duration-500 ${n === shown ? "opacity-100" : "pointer-events-none invisible translate-y-1 opacity-0"}`}>
                 {set.map((g) => (
-                  <button key={g.key} type="button" disabled={busy || n !== shown} tabIndex={n === shown ? undefined : -1} data-goal={g.key} onClick={() => pick(g, "business_goal")}
+                  <button key={g.key} type="button" disabled={busy || n !== shown} tabIndex={n === shown ? undefined : -1} data-goal={g.key} onPointerDown={() => press(g, "business_goal")} onClick={() => pick(g, "business_goal")}
                     aria-pressed={flow.session?.goal_key === g.key}
                     className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold transition motion-safe:hover:-translate-y-0.5 lg:max-xl:px-2.5 lg:max-xl:text-[13px] ${picking === g.key ? "m-chip-pulse" : ""} ${n === shown ? "disabled:opacity-70" : ""} ${flow.session?.goal_key === g.key
                       ? "border-white bg-white text-brand-700" : "border-white/40 bg-white/15 text-white hover:border-white/70 hover:bg-white/25"}`}>
@@ -453,7 +510,7 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
           <p className="text-[11px] font-medium text-indigo-100">Or start a task</p>
           <div className="mt-1 flex flex-wrap gap-1.5" data-chip-row>
             {offer.tasks.map((t) => (
-              <button key={t.key} type="button" disabled={busy} data-task={t.key} onClick={() => pick(t, "quick_task")}
+              <button key={t.key} type="button" disabled={busy} data-task={t.key} onPointerDown={() => press(t, "quick_task")} onClick={() => pick(t, "quick_task")}
                 aria-pressed={flow.session?.goal_key === t.key}
                 className={`shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-[12px] font-medium transition disabled:opacity-70 ${picking === t.key ? "m-chip-pulse" : ""} ${flow.session?.goal_key === t.key
                   ? "border-white bg-white text-slate-900" : "border-white/40 bg-transparent text-white hover:border-white/70 hover:bg-white/10"}`}>
@@ -543,13 +600,16 @@ function Field({ f, value, onChange, at = "card" }) {
  */
 export function GoalTaskCard({ flow, placement = "column" }) {
   const { session, busy, answer, startOver, carryOn, here, closed, setClosed } = flow;
+  // Never "Working…" for more than 10 seconds without saying so.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!busy) { setSlow(false); return undefined; }
+    const timer = setTimeout(() => setSlow(true), 10000);
+    return () => clearTimeout(timer);
+  }, [busy]);
   const card = useRef(null);
   const sessionId = session?.id;
-  // Tablet: the card opens under the launcher and the page moves to it (smoothly, unless reduced motion is asked for).
-  useEffect(() => {
-    if (placement !== "below" || !sessionId || !card.current?.offsetParent) return;
-    scrollPageTo(card.current);
-  }, [placement, sessionId]);
+  // The page never scrolls during the intake: the card opens where it is, and its thread scrolls inside it.
   // Phone: Back closes the sheet (the task stays saved), as × does.
   useEffect(() => {
     if (placement !== "column" || !sessionId || closed || typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 767px)").matches) return undefined;
@@ -612,7 +672,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   const given = (q) => Object.prototype.hasOwnProperty.call(session?.inputs || {}, q.key) || Object.prototype.hasOwnProperty.call(session?.proposed || {}, q.key) || answeredHere.has(q.key);
   // An empty answer is still open, unless it was the question's own "I'll add it later": that was answered, and is not asked again.
   const laterSaid = (q) => Boolean(q.unsure) && Object.prototype.hasOwnProperty.call(session?.inputs || {}, q.key) && (session.inputs[q.key] === "" || session.inputs[q.key] === "unknown");
-  const open_ = (q) => !given(q) || ((values[q.key] === "" || values[q.key] == null) && !laterSaid(q));
+  const open_ = (q) => !q.hidden && (!given(q) || ((values[q.key] === "" || values[q.key] == null) && !laterSaid(q)));
   const currentQuestion = useMemo(() => {
     if (session?.next !== "questions") return null;
     const editedKey = [...editing].find((value) => questions.some((question) => question.key === value));
@@ -672,6 +732,14 @@ export function GoalTaskCard({ flow, placement = "column" }) {
     setDraftValue(values[currentQuestion.key] ?? currentQuestion.default ?? "");
   }, [currentQuestion?.key, currentQuestion?.default, values]);
   const step = session?.next;
+  const turn = session?.agent_turn || null;
+  const ackLine = turn ? turn.ack : thread.length === 0 ? session?.acknowledged : "";
+  // The thread as it happened (the server's turns): each message as typed, then the Agent's one reply. The newest reply is
+  // the bubble with the next question; nothing is made up for a slot the Agent never asked about.
+  const said_turns = Array.isArray(session?.turns) ? session.turns : null;
+  const lastAgent = said_turns && said_turns.length && said_turns[said_turns.length - 1].role === "assistant" ? said_turns[said_turns.length - 1] : null;
+  const past = said_turns ? (lastAgent ? said_turns.slice(0, -1) : said_turns) : null;
+  const agentLine = lastAgent && currentQuestion && lastAgent.next === currentQuestion.key ? lastAgent.content : null;
   const said = (session?.summary || []).filter((r) => (step === "identity" ? true : r.proposed || r.from_message));
   const chosen = session?.goal_label && step !== "none" && step !== "clarify" ? session.goal_label : res?.original_goal;
   const open = (k) => setEditing((s) => new Set(s).add(k));
@@ -683,10 +751,11 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   if (!session) return null;
   if (here && step === "identity" && !newPassword) return null;      // signed in: on to the task, unless a new account is setting its password
 
-  function submitQuestion(nextValue = draftValue) {
+  function submitQuestion(nextValue = draftValue, typed = nextValue === draftValue) {
     const activeQuestion = currentQuestion;
     if (!activeQuestion) return;
     let answerValue = nextValue ?? "";
+    const asTyped = typed && typeof answerValue === "string" ? answerValue.trim() : "";
     if (activeQuestion.required && (answerValue === "" || answerValue == null)) {
       setError(`${activeQuestion.label} is required.`);
       return;
@@ -708,7 +777,12 @@ export function GoalTaskCard({ flow, placement = "column" }) {
       && (question.key === activeQuestion.key || given(question))).map((question) => [question.key, nextValues[question.key]]));
     if (currency && currency !== session.currency) answers.currency = currency;
     if (writtenIn && writtenIn !== (currency || session.currency || "GBP")) answers.currency_said = writtenIn;
-    answer(answers, questions.some((question) => question.proposed));
+    const chipWords = !asTyped ? [...(activeQuestion.options || []), ...(activeQuestion.chips || [])].find((o) => String(o.value) === String(nextValue))?.label
+      || (nextValue === "unknown" ? activeQuestion.unsure || "Not sure" : "") : "";
+    Promise.resolve(answer(answers, questions.some((question) => question.proposed),
+      asTyped ? { message: asTyped, asked: activeQuestion.key } : chipWords ? { picked: chipWords, asked: activeQuestion.key } : null)).then((ok) => {
+      if (ok === false) setAnsweredHere((had) => { const next = new Set(had); next.delete(activeQuestion.key); return next; });      // never advanced on a failure
+    });
   }
 
   function submit(e) {
@@ -741,7 +815,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
     : placement === "below" ? `relative mt-4 hidden max-h-[80vh] scroll-mt-20 flex-col md:flex lg:hidden ${boxed}`
     // Under 768px: a full-screen sheet. From 1024px: the right-hand column, where the product preview was, never taller than the hero.
     : `${closed ? "max-md:hidden" : "max-md:flex"} flex-col bg-white max-md:fixed max-md:inset-0 max-md:z-[70] max-md:motion-safe:animate-[ea-sheet-up_.22s_ease-out] md:hidden `
-      + "lg:absolute lg:left-6 lg:right-0 lg:top-10 lg:z-10 lg:flex lg:max-h-[calc(100%-2.5rem)] lg:rounded-2xl lg:border-2 lg:border-brand-500 lg:shadow-2xl lg:shadow-brand-900/10 lg:ring-4 lg:ring-brand-500/10 lg:motion-safe:animate-[ea-slide-in_.3s_ease-out]";
+      + "lg:absolute lg:inset-y-0 lg:left-6 lg:right-0 lg:z-10 lg:flex lg:rounded-2xl lg:border-2 lg:border-brand-500 lg:shadow-2xl lg:shadow-brand-900/10 lg:ring-4 lg:ring-brand-500/10 lg:motion-safe:animate-[ea-fade-in_.2s_ease-out]";
   const primary = step === "questions" ? "Send" : step === "identity" ? (newPassword ? "Save and continue" : "Send") : null;
 
   const sheet = (
@@ -807,11 +881,6 @@ export function GoalTaskCard({ flow, placement = "column" }) {
             </div>
           )}
 
-          {step === "questions" && session.acknowledged && (
-            <p className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-slate-600" data-conversation>
-              {session.acknowledged && <span data-acknowledged>{session.acknowledged}</span>}
-            </p>
-          )}
           {step === "questions" && said.length > 0 && (
             // What was read from their own sentence: one compact line, shown once (QA P5-1). "Edit" lists each, to pick the one to change.
             <SaidLine items={said.map((r) => ({ key: r.key, text: r.key === "currency" ? shownCurrency : r.value }))} editing={changingSaid}
@@ -828,7 +897,6 @@ export function GoalTaskCard({ flow, placement = "column" }) {
               </div>
             </SaidLine>
           )}
-          {session.currency_note && step === "questions" && said.length > 0 && !editing.has("currency") && <p className="-mt-2 text-[11px] text-slate-500" data-currency-note>In {shownCurrency}.</p>}
           {step === "identity" && said.length > 0 && (
             // At the checkpoint: everything given, a chip each.
             <div data-said>
@@ -850,7 +918,18 @@ export function GoalTaskCard({ flow, placement = "column" }) {
             </div>
           )}
 
-          {step === "questions" && thread.length > 0 && (
+          {step === "questions" && past && past.length > 0 && (
+            <ol className="space-y-2" aria-label="The conversation so far" data-thread>
+              {past.map((t, n) => (
+                <li key={n} data-turn={t.role}>
+                  {t.role === "user"
+                    ? <p className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-brand-600 px-3 py-1.5 text-left text-[13px] font-medium text-white" data-user-says>{t.content}</p>
+                    : <p className="w-fit max-w-[90%] rounded-2xl rounded-tl-sm bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-800 shadow-sm ring-1 ring-slate-100">{t.content}</p>}
+                </li>
+              ))}
+            </ol>
+          )}
+          {step === "questions" && !past && thread.length > 0 && (
             <ol className="space-y-2" aria-label="The conversation so far" data-thread>
               {thread.map((q) => (
                 <li key={q.key} className="space-y-1">
@@ -898,14 +977,19 @@ export function GoalTaskCard({ flow, placement = "column" }) {
 
           {step === "questions" && currentQuestion && !typing && (
             <div className="space-y-2" data-question-turn aria-live="polite">
+              {/* One acknowledgement per answer, in the Agent's own bubble: what it captured (the last turn's, or what it read
+                  from the first message), an answer to anything the owner asked, then the question, or a check to confirm. */}
               <div className="w-fit max-w-[90%] rounded-2xl rounded-tl-sm bg-white px-3 py-2 text-[13px] leading-5 text-slate-800 shadow-sm ring-1 ring-slate-100" data-agent-says>
-                {session.acknowledged && thread.length === 0 ? <span className="block text-slate-500">{session.acknowledged}</span> : null}
-                {currentQuestion.label}
+                {agentLine ? <span data-agent-line>{agentLine}</span> : <>
+                  {turn?.answer ? <span className="block text-slate-700" data-agent-answer>{turn.answer}</span> : null}
+                  {ackLine ? <span className="block text-slate-500" data-acknowledged>{ackLine}</span> : null}
+                  {turn?.confirm?.[0]?.slot === currentQuestion.key ? turn.confirm[0].question : currentQuestion.label}
+                </>}
               </div>
               {currentQuestion.type === "choice" ? (
                 <div className="flex flex-wrap gap-2" role="group" aria-label={currentQuestion.label} data-question-choice>
                   {[...currentQuestion.options, ...(currentQuestion.unsure && !currentQuestion.options.some((o) => o.value === "unknown") ? [{ value: "unknown", label: currentQuestion.unsure }] : [])].map((o) => (
-                    <button key={o.value} type="button" disabled={busy} onClick={() => submitQuestion(o.value)} data-quick-reply
+                    <button key={o.value} type="button" disabled={busy} onClick={() => submitQuestion(o.value, false)} data-quick-reply
                       className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition disabled:opacity-60 ${String(draftValue) === String(o.value) ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-white text-slate-700 hover:border-brand-300"}`}>
                       {o.label}
                     </button>
@@ -921,7 +1005,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
                   {(currentQuestion.chips?.length > 0 || currentQuestion.unsure) && (
                     <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label={currentQuestion.label}>
                       {[...(currentQuestion.chips || []), ...(currentQuestion.unsure ? [{ value: "unknown", label: currentQuestion.unsure }] : [])].map((chip) => (
-                        <button key={chip.value} type="button" disabled={busy} onClick={() => submitQuestion(chip.value)} data-quick-reply
+                        <button key={chip.value} type="button" disabled={busy} onClick={() => submitQuestion(chip.value, false)} data-quick-reply
                           className={`rounded-full border px-2.5 py-1 text-[12px] font-semibold transition ${String(draftValue) === String(chip.value) ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-slate-50 text-slate-700 hover:border-brand-300"}`}>
                           {chip.label}
                         </button>
@@ -933,6 +1017,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
             </div>
           )}
 
+          {step === "questions" && session.progress?.total > 0 && (
+            <p className="text-[11px] text-slate-400" data-progress aria-live="polite">{session.progress.answered} of {session.progress.total}</p>
+          )}
           {step === "identity" && (
             <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3" data-checkpoint>
               <div className="space-y-2" data-identity-turn>
@@ -1006,6 +1093,13 @@ export function GoalTaskCard({ flow, placement = "column" }) {
           )}
         </div>
 
+        {flow.failed && (
+          <div className="mx-4 space-y-1.5" data-turn-failed>
+            {flow.failed.text && <p className="ml-auto w-fit max-w-[85%] rounded-2xl bg-[#1F5BFF]/10 px-3 py-2 text-[14px] text-slate-800" data-unsent>{flow.failed.text}</p>}
+            <p role="alert" className="flex flex-wrap items-center justify-end gap-2 text-[13px] text-rose-700">That didn't go through.
+              <button type="button" disabled={busy} onClick={() => flow.failed.retry()} className="rounded-lg border border-rose-200 bg-white px-2.5 py-1 font-semibold text-rose-700 hover:bg-rose-50">Try again</button></p>
+          </div>
+        )}
         {error && <p role="alert" className="mx-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700">{error}</p>}
 
         {/* Always in reach, however long the card: the one next step, and the way out. */}
@@ -1016,7 +1110,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
           </div>
           {primary && (
             <button type="submit" disabled={busy} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1F5BFF] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[#1747CC] disabled:opacity-60">
-              <span>{busy ? "Working…" : primary}</span>
+              <span>{busy ? (slow ? "Still working…" : "Working…") : primary}</span>
               {!busy && <ArrowRightIcon />}
             </button>
           )}

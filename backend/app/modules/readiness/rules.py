@@ -22,7 +22,7 @@ EXECUTION_STATES = ("queued", "running", "succeeded", "failed", "cancelled")
 ACTION_STATES = ("open", "in_progress", "awaiting_evidence", "completed", "dismissed")
 UNRESOLVED_ACTION_STATES = ("open", "in_progress", "awaiting_evidence")
 DATA_BASES = ("actual", "forecast", "estimate")
-SUPPORTED_CURRENCIES = ("GBP", "USD", "EUR")
+SUPPORTED_CURRENCIES = ("GBP", "USD", "EUR", "NGN", "GHS", "KES", "ZAR", "CAD", "AUD", "INR")
 
 FUNDING_STATUSES = ("draft", "active", "archived")
 LAUNCH_STATUSES = ("draft", "preparing", "launched", "cancelled", "archived")
@@ -126,6 +126,8 @@ FUNDING_EQUITY_V1 = {
             _f("receipt_date", "When do you expect to receive it?", "date"),
             _f("timing_confirmed", "I confirm this amount and date", "boolean"),
             _f("purpose", "What is the funding for?", "textarea"),
+            _f("route_preference", "Route you're considering", "select", options=["equity", "loan", "grant", "unsure"],
+               labels={"equity": "Equity", "loan": "Loan", "grant": "Grant", "unsure": "Not sure yet"}),
             _f("milestones", "Milestones", "list", item="milestone", fields=[
                 _f("outcome", "Outcome"), _f("measure", "How it is measured"), _f("baseline", "Where it is now"),
                 _f("target", "Target"), _f("due_date", "Due", "date"), _f("owner", "Owner")]),
@@ -135,6 +137,7 @@ FUNDING_EQUITY_V1 = {
             _f("business_model", "Business model", "select", options=["service", "software"]),
             _f("stage", "Trading so far", "select", options=["pre_revenue", "trading"], labels={"pre_revenue": "Not trading yet", "trading": "Trading"}),
             _f("market.target_segment", "Who is your target customer?", "textarea"),
+            _f("market.location", "Where the business trades"),
             _f("market.differentiation", "What sets you apart?", "textarea"),
             _f("market.acquisition_approach", "How will you win customers?", "textarea"),
             _f("market.acquisition_owner", "Who owns customer acquisition?"),
@@ -144,6 +147,8 @@ FUNDING_EQUITY_V1 = {
         {"key": "traction", "title": "Traction", "fields": [
             _f("traction.summary", "What demand have you seen so far?", "textarea",
                help="Research, enquiries, pilots or sales. If you have no sales yet, say so: nothing is filled in for you."),
+            _f("traction.customers", "Paying customers now", "number"),
+            _f("traction.monthly_revenue", "Revenue each month", "money"),
             _f("traction.results_through", "Trading results are recorded up to", "date", when={"stage": "trading"}),
         ], "evidence": ["C4.A"], "attest": ["C4.B"]},
         {"key": "finances", "title": "Finances and use of funds", "fields": [

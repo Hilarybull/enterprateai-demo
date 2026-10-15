@@ -1,4 +1,5 @@
 import UkDateInput from "../components/UkDateInput";
+import ResearchDiagnostics from "../components/admin/ResearchDiagnostics";
 import { createPortal } from "react-dom";
 import { alertDialog } from "../lib/dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -4086,6 +4087,8 @@ export default function AdminPage() {
             )}
           </div>
         )}
+
+        {tab === "research-diagnostics" && isAdmin && <ResearchDiagnostics />}
 
         {/* ── Research & Development ── */}
         {tab === "research" && isAdmin && (

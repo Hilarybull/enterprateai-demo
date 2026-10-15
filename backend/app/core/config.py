@@ -94,6 +94,9 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
+    # The Agent's intake turn: a fast model, read only for the values (the reply is written by code). Measured live on
+    # 14 Oct 2026: gpt-4.1-mini about 2.5s; Claude Sonnet 6 to 7.5s; Haiku 3.1 to 3.5s; nano fast but put values in the wrong slot.
+    intake_model: str = "gpt-4.1-mini"
 
     # Optional AI integration keys (not required for MVP routes)
     claude_api_key: str | None = Field(default=None, validation_alias=AliasChoices("CLAUDE_API_KEY", "ANTHROPIC_API_KEY"))

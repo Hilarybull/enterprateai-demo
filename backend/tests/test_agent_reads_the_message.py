@@ -112,7 +112,7 @@ def test_invoice_for_someone_new_in_dollars_asks_only_for_their_email_and_what_i
     assert (f["customer_id"]["default"], f["customer_name"]["default"]) == ("new", "Mark")      # nobody called Mark on record: "+ New", name filled in
     assert f["items"]["suggested"] == [{"product_id": None, "name": "", "quantity": 1, "unit_price": 300}]      # one line at 300
     assert _said(f) == {"customer_id": "Mark (new)"}
-    assert _still_to_ask(f) == ["customer_email", "items"]                  # Mark's email, and the item's description
+    assert _still_to_ask(f) == ["items"] and "customer_email" in f      # the item; Mark's email offered, optional (it can come later)                  # Mark's email, and the item's description
     # The currency that was written is kept and said, with the way to switch: never dropped, never converted.
     cur = f["currency"]
     assert (cur["default"], cur["hint"], cur["toggle"]) == ("USD", "In USD (your default is GBP).", True)
@@ -142,7 +142,7 @@ def test_invoice_with_work_terms_and_a_named_stranger():
     env = _world()
     r, f = _ask(env, "invoice Mark $300 for consulting, due in 14 days")
     assert _said(f) == {"customer_id": "Mark (new)", "items": "1 × consulting at $300.00", "due_date": (env.now + timedelta(days=14)).strftime("%d %b %Y").lstrip("0")}
-    assert _still_to_ask(f) == ["customer_email"]
+    assert _still_to_ask(f) == [] and "customer_email" in f      # the email offered, optional (it can come later)
     assert f["due_date"]["default"] == (env.now + timedelta(days=14)).date().isoformat()
 
 
@@ -205,7 +205,7 @@ def test_proposal_reads_who_what_price_and_timeline():
     assert r["workflow_key"] == "new_proposal"
     assert (f["customer_name"]["default"], f["solution"]["default"], f["total"]["default"], f["timeline"]["default"]) == ("Inject Test Ltd", "A website redesign", 1500, "4 weeks")
     assert _said(f) == {"customer_id": "Inject Test Ltd (new)", "solution": "a website redesign", "total": "£1,500.00", "timeline": "4 weeks"}
-    assert _still_to_ask(f) == ["customer_email"]
+    assert _still_to_ask(f) == [] and "customer_email" in f      # the email offered, optional (it can come later)
     done = _answer(env, r, _defaults(f, customer_email="hello@inject.test"))
     assert done["status"] == "awaiting_approval", done.get("pending_question")
     p = env.pending(done)[0]["payload"]

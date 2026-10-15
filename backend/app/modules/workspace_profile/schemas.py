@@ -85,6 +85,9 @@ class WorkspaceProfile(BaseModel):
 class WorkspaceProfileUpsertRequest(BaseModel):
     workspace_id: str | None = None
     profile: WorkspaceProfile
+    # The profile as the form loaded it. A field the owner left untouched is not written back, so a form opened before
+    # the Agent filled a field can't put the old value back over it.
+    seen: dict | None = None
 
 
 class WorkspaceProfilePatchRequest(BaseModel):

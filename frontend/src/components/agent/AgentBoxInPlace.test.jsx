@@ -113,8 +113,9 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     mount();
     const card = screen.getByRole("region", { name: "EnterprateAI Agent" });
     expect(card.hasAttribute("data-agent-shell")).toBe(true);
-    for (const cls of ["m-agent-card", "rounded-2xl", "p-[2px]", "overflow-clip", "shadow-[0_20px_60px_rgba(108,92,231,0.25)]"]) expect(card.className.split(" ")).toContain(cls);
-    expect(card.querySelector(":scope > .m-agent-border").getAttribute("aria-hidden")).toBe("true");
+    for (const cls of ["m-agent-card", "rounded-2xl", "p-[2px]", "shadow-[0_20px_60px_rgba(108,92,231,0.25)]"]) expect(card.className.split(" ")).toContain(cls);
+    expect(card.querySelector("[data-agent-border-clip]").className).toContain("overflow-clip");      // only the moving border is clipped
+    expect(card.querySelector(":scope > [data-agent-border-clip] > .m-agent-border").getAttribute("aria-hidden")).toBe("true");
     const panel = card.querySelector(":scope > [data-agent-panel]");
     for (const cls of ["rounded-[14px]", "bg-gradient-to-br", "from-[#1e1b4b]", "via-[#312e81]", "to-[#4c1d95]"]) expect(panel.className.split(" ")).toContain(cls);
     // Who it is, as on the homepage: the avatar, the name in white, "Online" in words, and the subtitle at 70% white.

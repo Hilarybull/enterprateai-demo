@@ -24,7 +24,10 @@ const ACCOUNTING = /credit(?:[ _]?notes?|ed\b|_amount)|amount to credit|the cred
 // The one sentence about credits: there aren't enough.
 const SHORT_OF = /^(?:This needs \d+ credits?; you have \d+\. Top up\.|You have no credits left\..*|No credits left(?: · Top up)?|.*\(no credits left\))$/;
 // Agent settings: its price list and its monthly budget for automatic work.
-const SETTINGS = new Set(["AI Credits", "Monthly budget for automatic work (AI Credits)", " Cost: ${e.credits}.",
+// The owner's QA (15 Oct): background work that spent credits is said in Recently Completed and the briefing, with its cost.
+const SETTINGS = new Set(["AI Credits", "Monthly budget for automatic work (AI Credits)", "Monthly budget for automatic work (credits)", " Cost: ${e.credits}.",
+  "Let the Agent run checks on its own (uses credits). It never goes past the monthly budget below.",
+  " · ${r.credits_used} credit${r.credits_used === 1 ? \"\" : \"s\"}",
   " Paused: automatic work that costs credits waits until you raise this or the month ends.",
   " When it is used up, automatic work that costs credits pauses; free work carries on."]);
 

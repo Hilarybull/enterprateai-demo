@@ -34,7 +34,8 @@ def test_overdue_invoices_show_what_the_agent_has_done_about_them():
     assert step["text"] == "2 overdue (£199.00). I'm preparing the reminders for your approval." and step["cta"] is None
     run(autostart.sweep(env.orch, "A"))                                   # the Agent does it
     step = card(build(env), "next_step")
-    assert step["text"] == "2 overdue (£199.00). I've prepared 1 reminder for your approval; 1 is waiting for an email address for Frank."
+    # Both reach Needs Approval (QA, 15 Oct): the one with no address is flagged as needing it, never stuck.
+    assert step["text"] == "2 overdue (£199.00). I've prepared 2 reminders for your approval; 1 needs an email address for Frank."
     assert step["cta"] == {"label": "Review in Needs Approval", "to": "/agent?tab=needs_approval"} and step["agent_action"] is None
     # Switched off by the owner: it says so, and still hands them nothing to start.
     off = Env()
@@ -79,7 +80,7 @@ def test_a_passing_fault_is_tried_again_up_to_three_times_with_longer_waits_and_
     env.now += timedelta(minutes=1)
     run(env.orch.tick())
     assert tries() == 2
-    env.now += timedelta(minutes=15)
+    env.now += timedelta(minutes=30)      # the third wait is 30 minutes (QA, 15 Oct)
     run(env.orch.tick())
     final = run(env.store.get_run(failed["id"]))
     assert final["state"]["auto_retries"] == 3 and final["status"] == "failed" and bucket_of(final) == "needs_attention"

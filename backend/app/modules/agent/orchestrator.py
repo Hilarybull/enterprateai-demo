@@ -953,6 +953,25 @@ class Orchestrator:
             return {"kind": "blocked", "capability": capability, "upgrade": not ent["is_paid"] or "plan" in decision.reason_codes[0],
                     **decision.as_dict(), "plan": ent["plan"], **await self._why_blocked(decision, wf, ent, actor)}
 
+        # P0.5c: no charge without a shown price. A task priced by its own product (a business plan, a sales letter, sizing a
+        # market) starts only once its price has been shown and accepted: "Write your business plan. 40 credits. You have 299."
+        from app.modules.agent import config as agent_config
+        if capability == "idea_validation":
+            # Basic (deterministic, free) on Explorer or when a quick check is asked for; Comprehensive (its price first) on
+            # a paid plan or a full-access grant. Never Comprehensive on Explorer (the owner's QA, 15 Oct).
+            depth = (req.params or {}).get("depth") or await self._idea_depth(req)
+            req.params = {**(req.params or {}), "depth": depth}
+        if capability in agent_config.SELF_PRICED and not req.confirmed and req.source_channel in ("text", "voice", "ui_action"):
+            feature = agent_config.feature_of(capability)
+            if capability == "idea_validation" and req.params.get("depth") == "comprehensive":
+                feature = "idea_validation_comprehensive"
+            price = int(await self.rt.meter.cost(feature)) if feature else 0
+            if price > 0:
+                balance = await self.rt.meter.balance(req.requesting_actor_id)
+                return {"kind": "needs_confirmation", "reason_codes": ["price_confirmation_required"], "capability": capability,
+                        "params": req.params or {}, "price": price, "balance": balance,
+                        "message": f"{agent_config.ACTION_NAME.get(capability, wf.title)}. {price} credits." + (f" You have {balance}." if balance is not None else "")}
+
         targets = await self._targets(req, wf, actor)
         if targets.get("switch"):
             # Nothing on record to start from: the same request, started from scratch instead.
@@ -967,13 +986,20 @@ class Orchestrator:
                 # QA U8: one Idea Validation (Market Size, Plan Draft) per business at a time. Asked again while one
                 # waits on its first answer, that one is shown, never a second asking the same thing.
                 twin = next(iter(twins(await self.rt.store.list_runs(req.business_id, limit=200), wf.workflow_key)), None)
-                if twin and not params:
+                if twin and not {k: v for k, v in (params or {}).items() if k != "depth"}:      # the depth chosen is not a request of its own
                     repeats.append(twin)
                     continue
             if wf.workflow_key == "payment_followup":
                 earlier, same = await self._existing_followup(req.business_id, params.get("invoice_id"), policy)
                 if earlier and same:      # already open or already checked, same answer: shown once, no new task, no quota used
                     repeats.append(earlier)
+                    continue
+                if earlier and earlier["status"] == RUN_AWAITING_APPROVAL:
+                    # A draft flagged "Email needed" whose address is now on record: prepared again with it, for approval.
+                    earlier["state"].pop("email_needed", None)
+                    await self.rt.store.update_run(earlier["id"], {"state": earlier["state"], "status": RUN_RUNNING})
+                    await self._supersede(earlier, await self.rt.store.list_approvals(run_id=earlier["id"], status=APPROVAL_PENDING), actor.user_id, "email_added")
+                    runs.append(await self.advance(earlier["id"], actor=actor))
                     continue
                 if earlier:               # it was blocked and the cause has gone: carry that task on
                     runs.append(await self.retry(earlier["id"], actor.user_id, email))
@@ -1062,7 +1088,8 @@ class Orchestrator:
 
         active = next((r for r in mine if r["status"] not in RUN_TERMINAL), None)
         if active:
-            return active, True
+            flagged_but_fixed = active["status"] == RUN_AWAITING_APPROVAL and (active.get("state") or {}).get("email_needed") and reason is None
+            return active, not flagged_but_fixed
         blocked = [r for r in mine if r["status"] == RUN_FAILED]
         if blocked:
             same = next((r for r in blocked if r.get("reason_code") == reason), None)
@@ -1088,8 +1115,10 @@ class Orchestrator:
         closed = 0
         for r in await self.rt.store.list_runs(kept["business_id"], limit=500):
             other = r.get("state") or {}
-            if (r["id"] == kept["id"] or r["status"] != RUN_FAILED or r["workflow_key"] != kept["workflow_key"]
-                    or r.get("reason_code") != kept.get("reason_code") or (other.get("invoice_id") or other.get("quote_id")) != target):
+            same_stop = r["status"] == RUN_FAILED and r.get("reason_code") == kept.get("reason_code")
+            flagged = r["status"] == RUN_AWAITING_APPROVAL and other.get("email_needed")      # another draft waiting for the same address
+            if (r["id"] == kept["id"] or not (same_stop or flagged) or r["workflow_key"] != kept["workflow_key"]
+                    or (other.get("invoice_id") or other.get("quote_id")) != target):
                 continue
             r["state"] = {**other, "duplicate_of": kept["id"]}
             for a in await self.rt.store.list_approvals(run_id=r["id"], status=APPROVAL_PENDING):
@@ -1300,7 +1329,9 @@ class Orchestrator:
             # What the owner said in the chat just before asking (the idea described, then "draft me a plan"): kept in
             # their words, so the document is written from them and not from the profile alone.
             state["said_before"] = [str(t.get("content") or "")[:1000] for t in req.history[-6:] if t.get("role") == "user" and str(t.get("content") or "").strip()][-3:]
-        if req.raw_input and req.source_channel in ("text", "voice"):
+        # The intake already read and checked every answer (goals: the homepage task): the request is not read a second
+        # time by the model, so the task starts at once (the first result never waits on it).
+        if req.raw_input and req.source_channel in ("text", "voice") and not (req.source_reference or "").startswith("goal:"):
             await self._read_fields(state, wf.workflow_key, req)
             # F1: an idea the model read from the message is the message's idea, as one the rules read is: it is compared
             # with the business's own offer (A2) before anything is made under the business's name.
@@ -1642,7 +1673,8 @@ class Orchestrator:
             approval = await self.rt.store.create_approval({
                 "id": new_id(), "run_id": run["id"], "business_id": run["business_id"], "step_key": ctx.step_key,
                 "tool_id": na.tool_id, "tool_version": REGISTRY[na.tool_id].version, "title": na.title,
-                "payload": na.payload, "payload_hash": h, "payload_version": version, "status": APPROVAL_PENDING,
+                "payload": {**na.payload, **({"email_needed": run["state"]["email_needed"]} if (run.get("state") or {}).get("email_needed") and not na.payload.get("to_email") else {})},
+                "payload_hash": h, "payload_version": version, "status": APPROVAL_PENDING,
                 "requester_id": run["requester_id"], "approver_id": None, "decided_at": None, "decided_note": None,
                 "expires_at": (now + timedelta(hours=int(ctx.policy.get("approval_expiry_hours") or 72))).isoformat(),
                 "workflow_key": run["workflow_key"], "capability": run["capability"], "created_at": now.isoformat(),
@@ -1704,6 +1736,27 @@ class Orchestrator:
                 raise Conflict("invalid_answer", f"{f.get('label') or f['key']}: please enter a number, for example 10.")
             clean[f["key"]] = {**v, "value": read}
         run["state"].setdefault("answers", {}).update(clean)
+        needed = (run["state"] or {}).get("email_needed")
+        if needed and clean.get("customer_email"):
+            # The missing email, answered: saved on that customer's record too (the same record, never a duplicate).
+            from app.modules.agent.tools import valid_email
+            address = str(clean["customer_email"]).strip()
+            if not valid_email(address):
+                raise Conflict("invalid_email", "That doesn't look like an email address. Please check it.")
+            name = str(needed.get("customer") or "").strip().lower()
+
+            def _keep_email(data: dict) -> None:
+                for c in (data.get("catalogue") or {}).get("customers") or []:
+                    if (needed.get("customer_id") and str(c.get("id")) == str(needed["customer_id"])) or (name and str(c.get("name") or "").strip().lower() == name):
+                        c["email"] = address
+                        c["updated_at"] = self.rt.clock().isoformat()
+                        break
+                for key in ("invoices", bz.quotes_key(data)):
+                    for rec in bz.records(data, key):
+                        if str(rec.get("customer_name") or "").strip().lower() == name and not rec.get("customer_email") and bz.status_of(rec) == "draft":
+                            rec["customer_email"] = address
+            await self.rt.business.mutate(run["business_id"], _keep_email)
+            run["state"].pop("email_needed", None)
         if clean.get("save_vat_default") and clean.get("vat_rate") not in (None, "") and actor.is_owner:
             # "Save as my default": written to Agent settings, so the VAT rate is never asked for again.
             try:
@@ -1871,6 +1924,82 @@ class Orchestrator:
         await self._after_retry(again, run.get("summary") or run.get("error"))
         return again
 
+    async def _idea_depth(self, req: AgentRequest) -> str:
+        """"basic" or "comprehensive" for an idea validation: Explorer, or "just a quick check", is Basic."""
+        import re as _re
+        plan = await self.rt.meter.plan(req.requesting_actor_id)
+        quick = bool(_re.search(r"\b(quick|basic|just a check|free check|rough)\b", str(req.raw_input or ""), _re.I))
+        granted = False
+        try:
+            from app.modules.credits.service import _has_platform_grant
+            granted = bool(await _has_platform_grant(req.requesting_actor_id, "full_access"))
+        except Exception:      # noqa: BLE001 - no grant read: the plan decides
+            granted = False
+        return "basic" if quick or (plan == "explorer" and not granted) else "comprehensive"
+
+    async def approve_with_email(self, run_id: str, approval_id: str, user_id: str, new_email: str, email: str | None = None) -> dict:
+        """[Approve and send] with the address typed in the approval drawer (the owner's QA, 15 Oct): the email is saved on the
+        document and on the customer record (the same record, never a duplicate), the draft is prepared again with it (its
+        approval was for a version without an address), and that version is approved and sent."""
+        from app.modules.agent.tools import valid_email
+        run, actor = await self._owned_run(run_id, user_id, email)
+        if not actor.can_send or actor.is_system:
+            raise AccessDenied("Your role can't approve this.")
+        address = str(new_email or "").strip()
+        if not valid_email(address):
+            raise Conflict("invalid_email", "That doesn't look like an email address. Please check it.")
+        approval = await self.rt.store.get_approval(approval_id)
+        if not approval or approval["run_id"] != run_id or approval["status"] != APPROVAL_PENDING:
+            raise Conflict("approval_not_pending", "This approval is no longer waiting, so nothing was sent.")
+        await self._keep_address(run, address)
+        run["state"].setdefault("answers", {})["customer_email"] = address
+        run["state"].pop("email_needed", None)
+        await self.rt.store.update_run(run_id, {"state": run["state"], "status": RUN_RUNNING})
+        await self._supersede(run, [approval], user_id, "email_added")
+        again = await self.advance(run_id, actor=actor)
+        fresh = next((a for a in await self.rt.store.list_approvals(run_id=run_id, status=APPROVAL_PENDING)), None)
+        if again.get("status") != RUN_AWAITING_APPROVAL or not fresh:
+            return {"run": again, "approval": None, "changed": True, "message": "The email is saved. Review the draft before it is sent."}
+        return await self.decide_approval(run_id, fresh["id"], user_id, True, email=email)
+
+    async def approve_without_sending(self, run_id: str, approval_id: str, user_id: str, email: str | None = None) -> dict:
+        """[Approve without sending]: the draft is approved and kept; nothing is sent (the owner sends it later)."""
+        run, actor = await self._owned_run(run_id, user_id, email)
+        if not actor.can_send or actor.is_system:
+            raise AccessDenied("Your role can't approve this.")
+        approval = await self.rt.store.get_approval(approval_id)
+        if not approval or approval["run_id"] != run_id or approval["status"] != APPROVAL_PENDING:
+            raise Conflict("approval_not_pending", "This approval is no longer waiting.")
+        now = self.rt.clock().isoformat()
+        await self.rt.store.transition_approval(approval_id, APPROVAL_PENDING, {"status": APPROVAL_APPROVED, "approver_id": user_id, "decided_at": now,
+                                                                               "decided_note": "Approved without sending"})
+        who = ((run.get("state") or {}).get("email_needed") or {}).get("customer")
+        summary = "Approved. Not sent" + (f": add {who}'s email to send it." if who else ".")
+        done = await self.rt.store.update_run(run_id, {"status": RUN_SUCCEEDED, "substatus": None, "summary": summary, "next_action": None,
+                                                       "completed_at": now, "pending_question": None})
+        await self._audit(run, "approved_without_sending", user_id, {"approval_id": approval_id})
+        return {"run": done or {**run, "status": RUN_SUCCEEDED, "summary": summary}, "approval": approval, "changed": False, "message": summary}
+
+    async def _keep_address(self, run: dict, address: str) -> None:
+        """The address on this task's document and on its customer record (matched by id, then name)."""
+        state = run.get("state") or {}
+        needed = state.get("email_needed") or {}
+        invoice_id, quote_id = state.get("invoice_id"), state.get("quote_id")
+
+        def _apply(data: dict) -> None:
+            rec = bz.find(bz.records(data, "invoices"), invoice_id) if invoice_id else None
+            rec = rec or (bz.find(bz.records(data, bz.quotes_key(data)), quote_id) if quote_id else None)
+            if rec is not None:
+                rec["customer_email"] = address
+            name = str((rec or {}).get("customer_name") or needed.get("customer") or "").strip().lower()
+            cid = (rec or {}).get("customer_id") or needed.get("customer_id")
+            for c in (data.get("catalogue") or {}).get("customers") or []:
+                if (cid and str(c.get("id")) == str(cid)) or (name and str(c.get("name") or "").strip().lower() == name):
+                    c["email"] = address
+                    c["updated_at"] = self.rt.clock().isoformat()
+                    break
+        await self.rt.business.mutate(run["business_id"], _apply)
+
     async def fix_customer_email(self, run_id: str, user_id: str, new_email: str, email: str | None = None) -> dict:
         """A task stopped because the customer has no usable email address. Save the address
         on the customer record, use it for this task, and carry on."""
@@ -1878,6 +2007,21 @@ class Orchestrator:
         run, actor = await self._owned_run(run_id, user_id, email)
         if not actor.can_prepare:
             raise AccessDenied("Your role can't change this customer's details.")
+        if run["status"] == RUN_RUNNING and any(f.get("key") == "customer_email" for f in (run.get("pending_question") or {}).get("fields") or []):
+            return await self.provide_input(run_id, user_id, {"customer_email": new_email}, email)      # asked as a question now
+        if run["status"] == RUN_AWAITING_APPROVAL and (run.get("state") or {}).get("email_needed"):
+            # A draft in Needs Approval flagged "Email needed": the address saved, the draft prepared again with it, for approval.
+            address = str(new_email or "").strip()
+            if not valid_email(address):
+                raise Conflict("invalid_email", "That doesn't look like an email address. Please check it.")
+            await self._keep_address(run, address)
+            run["state"].setdefault("answers", {})["customer_email"] = address
+            run["state"].pop("email_needed", None)
+            await self.rt.store.update_run(run_id, {"state": run["state"], "status": RUN_RUNNING})
+            await self._supersede(run, await self.rt.store.list_approvals(run_id=run_id, status=APPROVAL_PENDING), user_id, "email_added")
+            await self._audit(run, "customer_email_updated", user_id, {"to": address})
+            await self._close_duplicates(run, user_id)
+            return await self.advance(run_id, actor=actor)
         if run["status"] != RUN_FAILED or run.get("reason_code") != "invalid_customer_destination":
             raise Conflict("no_email_problem", "This task isn't waiting for a customer email address.")
         new_email = str(new_email or "").strip()
@@ -2367,8 +2511,8 @@ class Orchestrator:
 
     # Faults that pass by themselves: the Agent tries again without being asked, three times,
     # waiting longer each time. Only if it still fails does the owner see it, with the reason.
-    AUTO_RETRY_REASONS = ("stalled", "action_failed", "unexpected_error", "delivery_status_uncertain")
-    AUTO_RETRY_AFTER = (timedelta(minutes=0), timedelta(minutes=5), timedelta(minutes=15))
+    AUTO_RETRY_REASONS = ("stalled", "action_failed", "unexpected_error", "delivery_status_uncertain", "generation_unavailable")
+    AUTO_RETRY_AFTER = (timedelta(minutes=0), timedelta(minutes=5), timedelta(minutes=30))      # 1, 5 and 30 minutes (QA, 15 Oct)
 
     AUTO_RETRY_DAILY = timedelta(hours=24)      # after the three quick attempts: once a day, for as long as the task may run
 

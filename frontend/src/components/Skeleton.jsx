@@ -235,7 +235,7 @@ export function DashboardSkeleton() {
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3" data-part="stage">{[0, 1, 2].map((i) => <SkeletonCard key={i} className="h-[168px] p-5" lines={2} />)}</div>
       <div className="grid grid-cols-1 gap-4 min-[380px]:grid-cols-2 xl:grid-cols-5" data-part="kpis">
-        {[0, 1, 2, 3, 4].map((i) => <SkeletonKpi key={i} className={i === 4 ? "min-[380px]:col-span-2 xl:col-span-1" : ""} />)}
+        {[0, 1, 2, 3, 4].map((i) => <SkeletonKpi key={i} className={i === 4 ? "sm:col-span-2 xl:col-span-1" : ""} />)}
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" data-part="insights">{[0, 1, 2, 3].map((i) => <SkeletonCard key={i} className="h-[188px] p-5" />)}</div>
     </SkeletonRegion>

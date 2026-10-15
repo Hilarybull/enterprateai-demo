@@ -55,6 +55,7 @@ class Env:
         return self.businesses["A"]["data"]["financials"]
 
     def submit(self, text=None, capability=None, params=None, user=OWNER, business="A", channel="text", **kw):
+        kw.setdefault("confirmed", True)      # its price was shown and accepted (the confirm itself: test_price_confirm_first.py)
         return run(self.orch.submit(AgentRequest(requesting_actor_id=user, business_id=business, source_channel=channel,
                                                  raw_input=text, requested_capability=capability, params=params or {}, **kw)))
 
@@ -511,7 +512,7 @@ def test_ac03_ac30_channels_share_one_request_and_voice_needs_confirmation():
     for channel in ("text", "ui_action", "api", "business_event"):
         res = env.submit(capability="enquiry_to_quote", params=dict(ENQUIRY), channel=channel)
         assert res["kind"] == "workflow" and res["run"]["source_channel"] == channel
-    heard = env.submit(text="Prepare a quotation for BrightTech Ltd", channel="voice", transcript_confidence=0.6)
+    heard = env.submit(text="Prepare a quotation for BrightTech Ltd", channel="voice", transcript_confidence=0.6, confirmed=False)
     assert heard["kind"] == "needs_confirmation" and len(run(env.store.list_runs("A"))) == 4
     confirmed = env.submit(text="Prepare a quotation for BrightTech Ltd", channel="voice", transcript_confidence=0.6, confirmed=True)
     assert confirmed["kind"] == "workflow" and confirmed["run"]["source_channel"] == "voice"

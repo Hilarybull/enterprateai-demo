@@ -175,17 +175,44 @@ def _public_run(run: dict) -> dict:
         "retrying": run.get("status") == "failed" and summary_mod.bucket_of(run) == "active",      # the Agent is trying again itself
         "next_attempt_at": (lambda due: due.isoformat() if due else None)(get_orchestrator().next_attempt_at(run)),
         **({"question_title": summary_mod.question_title(run)["title"], "question_detail": summary_mod.question_title(run)["detail"]} if run.get("pending_question") else {}),
-        "email_needed": state.get("email_needed") if run.get("reason_code") == "invalid_customer_destination" else None,
+        "email_needed": state.get("email_needed") if run.get("reason_code") == "invalid_customer_destination" or (
+            run.get("status") == "running" and any(f.get("key") == "customer_email" for f in (run.get("pending_question") or {}).get("fields") or [])) or (
+            run.get("status") == "awaiting_approval" and state.get("email_needed")) else None,
         # The last change made to the draft while it waited: who, which version, and what changed.
         "last_edit": state.get("last_edit") if run.get("status") == "awaiting_approval" else None,
         "outcome": state.get("outcome") or {},
         # C2: a task that ended with nothing to do (refused, or no data to work from) is its own state, never "Completed".
-        "display_status": "nothing_to_do" if run.get("status") == "succeeded" and (state.get("outcome") or {}).get("skipped") else run.get("status"),
+        # P2.18: what an automatic task spent, said in Recently Completed ("… · 2 credits"); a task the owner asked for is priced up front.
+        **({"credits_used": _auto_spent(run)} if _auto_spent(run) else {}),
+        "display_status": "nothing_to_do" if run.get("status") == "succeeded" and (state.get("outcome") or {}).get("skipped")
+        else "waiting_for_review" if run.get("status") == "succeeded" and (state.get("draft") or {}).get("status") == "pending" else run.get("status"),
         "delivery_question": {k: (state.get("delivery_question") or {}).get(k) for k in ("tool", "to", "first_attempt_at")}
         if state.get("delivery_question") else None,
         "refs": {k: state.get(k) for k in ("enquiry_id", "quote_id", "quote_reference", "contract_id", "invoice_id", "invoice_reference") if state.get(k)},
         "steps_planned": [{"key": s.key, "title": s.title} for s in WORKFLOWS[run["workflow_key"]].steps] if run["workflow_key"] in WORKFLOWS else [],
     }
+
+
+OFFER_TOOLS = ("send_invoice", "send_quotation", "send_receipt", "send_proposal")
+
+
+def _catalogue_offer(run: dict, approval: dict | None, record: dict) -> list[dict]:
+    """The draft's items not in the catalogue yet ("Flower · £200"), offered ONCE: answered (Add or Not now), never again."""
+    if not approval or approval.get("tool_id") not in OFFER_TOOLS or (run.get("state") or {}).get("catalogue_offer_done"):
+        return []
+    from app.modules.agent import answer_memory
+    from app.modules.agent import business as bz
+    listed = {answer_memory.norm(p.get("name")) for p in (record.get("catalogue") or {}).get("products") or [] if isinstance(p, dict) and not p.get("archived")}
+    payload = approval.get("payload") or {}
+    out, seen = [], set()
+    for i in payload.get("items") or []:
+        name = " ".join(str(i.get("description") or i.get("product_name") or i.get("name") or "").split())
+        key = answer_memory.norm(name)
+        if not name or key in listed or key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "unit_price": bz.money(i.get("unit_price")), "currency": payload.get("currency") or bz.currency_of(record)})
+    return out
 
 
 def _public_audit(a: dict) -> dict:
@@ -195,6 +222,13 @@ def _public_audit(a: dict) -> dict:
         text = _TOOL_TEXT.get(d.get("tool"), text)
     return {"id": a["id"], "type": a["event_type"], "text": text, "actor": a.get("actor_id"), "at": a.get("created_at"),
             "note": d.get("message") or d.get("summary") or None}
+
+
+def _auto_spent(run: dict) -> int:
+    """What a task the Agent started by itself spent (said in Recently Completed); 0 for one the owner asked for."""
+    if run.get("source_channel") not in ("business_event", "marketplace_rfq"):
+        return 0
+    return sum(int(c.get("credits") or 0) for c in (run.get("state") or {}).get("credits") or [])
 
 
 def _result(res: dict) -> dict:
@@ -253,6 +287,22 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         except Exception:      # noqa: BLE001
             return _result({"kind": "answer", "message": "I couldn't save that just now. Please try again in a moment."})
         return _result({"kind": "answer", "message": f"Got it, I'll call you {called['first_name']}.", "first_name": called["first_name"], "full_name": called["full_name"]})
+    if body.text and not body.capability and body.business_id:
+        # "Change the amount in my funding readiness to £60,000": a change to the one funding case, confirmed first, never a
+        # new intake (the owner's QA, 15 Oct).
+        from app.modules.agent import case_edit
+        change = case_edit.read(body.text)
+        if change:
+            from app.modules.readiness import rules as _rr
+            from app.modules.readiness.service import service_for
+            try:
+                await get_orchestrator().actor_for(user["id"], body.business_id, user.get("email"))
+                cases = [r for r in await service_for(get_orchestrator()).store.list("subjects", body.business_id, kind=_rr.FUNDING, limit=20)
+                         if r.get("status") not in ("archived", "cancelled")]
+            except Exception:      # noqa: BLE001 - no access or no module: read as an ordinary message
+                cases = []
+            if cases:
+                return _result(case_edit.proposal(sorted(cases, key=lambda r: str(r.get("created_at") or ""), reverse=True)[0], change))
     try:
         res = await get_orchestrator().submit(AgentRequest(
             requesting_actor_id=user["id"], business_id=body.business_id, source_channel=body.source_channel,
@@ -427,6 +477,7 @@ async def read_run(run_id: str, user=Depends(get_current_user)):
                          "send_payment_reminder": "reminder", "send_receipt": "receipt", "send_proposal": "proposal",
                          "send_purchase_order": "purchase_order", "send_credit_note": "credit_note"}[waiting_tool],
             "wording": (run.get("state") or {}).get("document_edits") or {},
+            "catalogue_offer": _catalogue_offer(run, next((a for a in approvals if a.get("status") == "pending"), None), record),
         }
     return {
         "run": _public_run(run),
@@ -460,6 +511,79 @@ async def approve_action(run_id: str, approval_id: str, body: ApprovalDecisionIn
     except Conflict as e:
         raise _conflict(e)
     return {"run": _public_run(res["run"]), "changed": res["changed"], "message": res.get("message")}
+
+
+class ApproveWithEmailIn(BaseModel):
+    email: str = Field(..., max_length=320)
+
+
+@router.post("/workflow-runs/{run_id}/approvals/{approval_id}/approve-with-email")
+async def approve_with_email(run_id: str, approval_id: str, body: ApproveWithEmailIn, user=Depends(get_current_user)):
+    """[Approve and send] on a draft flagged "Email needed": the address saved on the customer, then approved and sent."""
+    _known_id(run_id, approval_id)
+    try:
+        res = await get_orchestrator().approve_with_email(run_id, approval_id, user["id"], body.email, user.get("email"))
+    except AccessDenied as e:
+        raise _denied(e)
+    except Conflict as e:
+        raise _conflict(e)
+    return {"run": _public_run(res["run"]), "changed": res.get("changed"), "message": res.get("message")}
+
+
+@router.post("/workflow-runs/{run_id}/approvals/{approval_id}/approve-without-sending")
+async def approve_without_sending(run_id: str, approval_id: str, user=Depends(get_current_user)):
+    """[Approve without sending]: approved and kept, nothing sent."""
+    _known_id(run_id, approval_id)
+    try:
+        res = await get_orchestrator().approve_without_sending(run_id, approval_id, user["id"], user.get("email"))
+    except AccessDenied as e:
+        raise _denied(e)
+    except Conflict as e:
+        raise _conflict(e)
+    return {"run": _public_run(res["run"]), "changed": False, "message": res.get("message")}
+
+
+class CatalogueOfferIn(BaseModel):
+    add: bool = False
+
+
+@router.post("/workflow-runs/{run_id}/catalogue-offer")
+async def answer_catalogue_offer(run_id: str, body: CatalogueOfferIn, user=Depends(get_current_user)):
+    """[Add] puts the draft's new items in Catalogue > Products at the draft's price (an item of the same name is never
+    duplicated); [Not now] only closes the offer. Either way it is not offered again for this draft."""
+    _known_id(run_id)
+    orch = get_orchestrator()
+    run = await orch.rt.store.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Not found.")
+    try:
+        actor, _policy = await orch.actor_for(user["id"], run["business_id"], user.get("email"))
+    except Exception as e:      # noqa: BLE001 - no access reads as not found
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    if not getattr(actor, "can_prepare", False):
+        raise HTTPException(status_code=403, detail="You can't change this workspace's catalogue.")
+    record = await orch.rt.business.load(run["business_id"])
+    approvals = await orch.rt.store.list_approvals(run_id=run_id, status="pending")
+    offer = _catalogue_offer(run, approvals[0] if approvals else None, record)
+    added: list[str] = []
+    if body.add and offer:
+        from datetime import datetime, timezone
+        from app.modules.agent import answer_memory
+        now = datetime.now(timezone.utc)
+
+        def _put(d: dict) -> None:
+            products = d.setdefault("catalogue", {}).setdefault("products", [])
+            for o in offer:
+                if any(isinstance(p, dict) and not p.get("archived") and answer_memory.norm(p.get("name")) == answer_memory.norm(o["name"]) for p in products):
+                    continue
+                products.insert(0, {"id": str(uuid.uuid4()), "name": o["name"], "type": "product", "description": "", "base_price": o["unit_price"],
+                                    "cost_of_sales": None, "discount": 0, "freight_cost": 0, "marketplace_listed": False, "archived": False,
+                                    "created_by_agent": True, "agent_run_id": run_id, "created_at": now.isoformat(),
+                                    "provenance": f"Added from your draft, {now.day} {now.strftime('%b')}"})
+                added.append(o["name"])
+        await orch.rt.business.mutate(run["business_id"], _put)
+    await orch.rt.store.update_run(run_id, {"state": {**(run.get("state") or {}), "catalogue_offer_done": "added" if body.add else "not_now"}})
+    return {"added": added, "message": (f"Added to your catalogue: {', '.join(added)}." if added else "Okay, not now.")}
 
 
 @router.post("/workflow-runs/{run_id}/approvals/{approval_id}/reject")
@@ -1384,6 +1508,23 @@ async def update_policy(business_id: str, body: PolicyIn, user=Depends(get_curre
         "created_at": orch.rt.clock().isoformat(),
     })
     return {"policy": updated}
+
+
+@router.get("/businesses/{business_id}/agent/price/{capability}")
+async def task_price(business_id: str, capability: str, user=Depends(get_current_user)):
+    """PRD 15, SIF-17: what a task costs, from the price list, shown before it starts ("Write a business plan · 40 credits").
+    A free task is 0. Nothing is held or charged by asking."""
+    if capability not in WORKFLOWS:
+        raise HTTPException(status_code=404, detail="Not found.")
+    orch = get_orchestrator()
+    try:
+        await orch.actor_for(user["id"], business_id, user.get("email"))
+    except Exception as e:      # noqa: BLE001 - no access reads as not found
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    feature = agent_config.feature_of(capability)
+    credits = int(await orch.rt.meter.cost(feature)) if feature else 0
+    balance = await orch.rt.meter.balance(user["id"])
+    return {"capability": capability, "title": WORKFLOWS[capability].title, "credits": credits, "balance": balance}
 
 
 @router.get("/agent/capabilities")

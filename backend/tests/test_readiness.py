@@ -61,6 +61,10 @@ def funding_case(env, *, forecast=True, assumptions=True, demand=True, attest=Tr
     for a in data["use_of_funds"]:
         a["period"] = period
     data.update(over)
+    # One funding case per business: a case made earlier in the same test is set aside first.
+    for r in run(svc.store.list("subjects", "A", kind=F)):
+        if r.get("status") != "cancelled":
+            run(svc.store.update("subjects", r["id"], {"status": "cancelled"}))
     case = run(svc.create_subject(OWNER, "A", F, data))
     cid = case["id"]
     if forecast:
@@ -534,8 +538,10 @@ def test_archived_cases_are_readable_but_need_reactivating_and_prefill_keeps_its
         with pytest.raises(Conflict):
             run(call)
     assert run(svc.set_status(OWNER, "A", F, case["id"], "reactivate"))["status"] == "active"
-    second = run(svc.create_subject(OWNER, "A", F, {"title": "Bridge round"}))                      # several named cases per business
-    assert {i["title"] for i in run(svc.list_subjects(OWNER, "A", F))["items"]} == {"Seed", "Bridge round"} and second["status"] == "draft"
+    with pytest.raises(Conflict) as second:                                                        # one funding case per business
+        run(svc.create_subject(OWNER, "A", F, {"title": "Bridge round"}))
+    assert second.value.code == "one_funding_case" and second.value.current["id"] == case["id"]
+    assert [i["title"] for i in run(svc.list_subjects(OWNER, "A", F))["items"]] == ["Seed"]
 
 
 def test_events_carry_scope_and_correlation_and_evidence_files_are_checked_on_download():

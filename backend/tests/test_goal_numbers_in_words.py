@@ -27,7 +27,7 @@ def test_progress_counts_each_question_answered(world):  # noqa: F811
     """QA P2-1: "2 of 6" after four answers is wrong; the count moves with each answer."""
     _env, _store, client, _who = world
     s = client.post("/task-sessions", json={"key": "test_idea", "entry_mode": "business_goal"}).json()
-    total = len(s["questions"])
+    total = len([q for q in s["questions"] if not q.get("hidden")])      # a hidden slot (where an idea runs) is read, never asked or counted
     assert s["progress"] == {"answered": 0, "total": total}
     answers = {}
     for n, (k, v) in enumerate((("description", "Dog grooming van"), ("customer", "Dog owners in Leeds"), ("price", 45), ("monthly_sales", 80)), start=1):

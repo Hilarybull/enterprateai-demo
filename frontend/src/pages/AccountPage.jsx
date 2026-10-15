@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
+import { UndoToast } from "../components/FirstResultPanel";
 import { useProposalStore } from "../store/proposal";
 import { apiRequest } from "../api/client";
 import { SavedBusinessMatch } from "../components/marketplace/MatchPrompt";
@@ -460,7 +461,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
 
     setSaving(true);
     try {
-      const resp = await apiRequest("/workspace/profile", "POST", { workspace_id: workspaceId, profile });
+      const resp = await apiRequest("/workspace/profile", "POST", { workspace_id: workspaceId, profile, seen: p });
       onSaved(resp.profile);
     } catch (err) {
       setMsg({ type: "error", text: err?.message || "Failed to save workspace profile." });
@@ -801,6 +802,53 @@ function ProposalSettingsCard() {
   );
 }
 
+const FILLED_LABEL = { country: "Country", city: "City", state_or_region: "State", currency: "Currency", services: "Service 1", key_offering_focus: "Key offering",
+  tagline: "Tagline", vision: "Vision", mission: "Mission", core_values: "Core values", delivery_model: "Delivery model",
+  target_customer_type: "Target customer", operating_stage: "Operating stage", primary_revenue_model: "Revenue model", primary_industry: "Industry",
+  about_company: "About the company (a suggestion to edit)" };
+
+/** P0.4: the fields the Agent filled, each with where it came from: [Keep] accepts it, [Undo] empties it ("Removed. [Redo]");
+ *  [Keep all] or the X accepts everything. Gone for good once all are kept or undone; back only for new values. */
+function AgentFilled({ workspaceId, profile, onChanged }) {
+  const [prov, setProv] = useState(null);
+  const [removed, setRemoved] = useState(null);      // the field just undone, for Redo
+  const highlight = new Set((new URLSearchParams(window.location.search).get("highlight") || "").split(",").filter(Boolean));
+  const load = useCallback(() => {
+    apiRequest(`/businesses/${workspaceId}/profile/updates`, "GET").then((r) => setProv(r?.provenance || {})).catch(() => setProv({}));
+  }, [workspaceId]);
+  useEffect(() => { if (workspaceId) load(); }, [workspaceId, load]);
+  const show = (v) => (Array.isArray(v) ? (v[0]?.service_name || v.join(", ")) : String(v ?? "").replace(/_/g, " "));
+  // Still to keep: not kept, and not edited since (an edit counts as Keep).
+  const edited = (k, v) => k !== "currency" && profile && JSON.stringify(profile[k] ?? null) !== JSON.stringify(v.value ?? null);
+  const fields = Object.entries(prov || {}).filter(([k, v]) => FILLED_LABEL[k] && !v.kept && !edited(k, v));
+  const post = async (path) => { try { await apiRequest(`/businesses/${workspaceId}/profile/${path}`, "POST", {}); } finally { load(); onChanged?.(); } };
+  if (!fields.length && !removed) return null;
+  return (
+    <section className="relative mb-4 rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-900 dark:bg-indigo-950/30" data-agent-filled>
+      {fields.length > 0 && <>
+        <button type="button" aria-label="Dismiss" onClick={() => post("keep/all")} className="absolute right-3 top-3 h-7 w-7 rounded-full text-slate-500 hover:bg-white">×</button>
+        <div className="flex flex-wrap items-center justify-between gap-2 pr-8">
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Added by the Agent</p>
+          <button type="button" onClick={() => post("keep/all")} className="rounded-lg bg-brand-600 px-3 py-1 text-[12.5px] font-semibold text-white hover:bg-brand-700" data-keep-all>Keep all</button>
+        </div>
+        <p className="text-[12.5px] text-slate-600 dark:text-slate-300">Only empty fields were filled. Keep what's right, undo what isn't, or edit any field below; your edit always wins.</p>
+        <ul className="mt-2 space-y-1.5">
+          {fields.map(([k, v]) => (
+            <li key={k} data-filled-field={k} className={`flex flex-wrap items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[13px] ${highlight.has(k) ? "bg-white ring-2 ring-brand-300 dark:bg-slate-900" : "bg-white/70 dark:bg-slate-900/60"}`}>
+              <span className="min-w-0"><span className="font-semibold">{FILLED_LABEL[k]}:</span> {show(v.value)} <span className="text-[12px] text-slate-500">· {v.source}</span></span>
+              <span className="flex gap-3">
+                <button type="button" onClick={() => post(`keep/${k}`)} className="text-[12.5px] font-semibold text-brand-700 hover:underline" data-keep>Keep</button>
+                <button type="button" onClick={async () => { await post(`undo/${k}`); setRemoved(k); }} className="text-[12.5px] font-semibold text-slate-600 hover:underline" data-undo>Undo</button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </>}
+      <UndoToast open={Boolean(removed)} text="Removed." undoLabel="Redo" onUndo={() => { const k = removed; setRemoved(null); post(`redo/${k}`); }} onDone={() => setRemoved(null)} />
+    </section>
+  );
+}
+
 function WorkspaceTab({ workspaceId }) {
   const setWorkspaceCompanyName = useWorkspaceStore((s) => s.setWorkspaceCompanyName);
   const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
@@ -904,6 +952,7 @@ function WorkspaceTab({ workspaceId }) {
 
   return (
     <>
+    <AgentFilled workspaceId={workspaceId} profile={p} onChanged={() => window.dispatchEvent(new CustomEvent("ea:workspace:refresh"))} />
     {/* A Marketplace profile that may be this business: asked again whenever the company number or website changes. */}
     <SavedBusinessMatch businessId={workspaceId} companyNumber={p.registration_number || ""} website={p.website || ""} />
     <Card className="overflow-hidden">

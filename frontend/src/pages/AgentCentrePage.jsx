@@ -1,5 +1,8 @@
 import UkDateInput from "../components/UkDateInput";
+import AgentRows from "../components/agent/AgentRows";
+import AgentBar from "../components/agent/AgentBar";
 import { DraftDrawer } from "../components/agent/DraftEditor";
+import ResultsList, { useResultsCount } from "../components/agent/ResultsList";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
@@ -18,6 +21,8 @@ const TABS = [
   { key: "completed", label: "Recently Completed", empty: "No completed tasks yet." },
   { key: "history", label: "History", empty: "No tasks match these filters." },
   { key: "documents", label: "Documents", empty: "No documents yet. Ask for a quotation, an invoice or a proposal and it will appear here." },
+  // Each check's first result, kept after it is dismissed or saved for later on the dashboard.
+  { key: "results", label: "Results", empty: "No results yet. A check you run from the homepage or the dashboard leaves its result here." },
 ];
 const DOC_TONE = { awaiting_approval: "amber", draft: "slate", sent: "indigo", viewed: "indigo", pending: "indigo", accepted: "emerald", won: "emerald", paid: "emerald",
   signed: "emerald", overdue: "rose", declined: "rose", lost: "rose", disputed: "rose", credited: "slate", void: "slate", voided: "slate", cancelled: "slate", expired: "slate" };
@@ -257,7 +262,7 @@ function Settings({ businessId, onClose }) {
         quote_validity_days: p.quote_validity_days, default_payment_terms_days: p.default_payment_terms_days,
         member_can_approve: !!p.member_can_approve, reminders_auto_send: !!p.reminders?.auto_send,
         items: Object.fromEntries((res.events || []).filter((e) => e.key).map((e) => [e.key, Boolean(e.on)])),
-        credit_cap: res.automatic_budget?.cap ?? 50,
+        credit_cap: res.automatic_budget?.cap ?? 50, auto_start: p.automation?.auto_start !== false,
         cadence: (p.reminders?.cadence_days_overdue || []).join(", "), max_reminders: p.reminders?.max_reminders ?? 3,
         concentration_alert_pct: p.risk?.concentration_alert_pct ?? 40,
         timezone: res.timezone || browserZone(),
@@ -274,7 +279,7 @@ function Settings({ businessId, onClose }) {
         ...(form.vat === "" ? { clear_vat_rate: true } : { default_vat_rate: Number(form.vat) }),
         quote_validity_days: Number(form.quote_validity_days), default_payment_terms_days: Number(form.default_payment_terms_days),
         member_can_approve: form.member_can_approve, reminders_auto_send: form.reminders_auto_send,
-        automation_items: form.items, automation_credit_cap: Math.max(0, Number(form.credit_cap) || 0),
+        automation_items: form.items, automation_credit_cap: Math.max(0, Number(form.credit_cap) || 0), auto_start: Boolean(form.auto_start),
         reminder_cadence_days: String(form.cadence).split(",").map((s) => Number(s.trim())).filter((n) => n > 0),
         max_reminders: Number(form.max_reminders), concentration_alert_pct: Number(form.concentration_alert_pct),
         ...(form.timezone && form.timezone !== state.timezone ? { timezone: form.timezone, timezone_source: "owner" } : {}),
@@ -349,8 +354,12 @@ function Settings({ businessId, onClose }) {
               </span>
             </label>
           </fieldset>
+          <label className="flex items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300">
+            <input type="checkbox" className="mt-0.5 accent-brand-600" checked={Boolean(form.auto_start)} onChange={set("auto_start")} disabled={!state.can_edit} data-auto-start />
+            <span>Let the Agent run checks on its own (uses credits). It never goes past the monthly budget below.</span>
+          </label>
           <div>
-            <label className={label} htmlFor="agent-credit-cap">Monthly budget for automatic work (AI Credits)</label>
+            <label className={label} htmlFor="agent-credit-cap">Monthly budget for automatic work (credits)</label>
             <input id="agent-credit-cap" className={field} type="number" min="0" max="100000" value={form.credit_cap} onChange={set("credit_cap")} disabled={!state.can_edit} />
             <p className="mt-1 text-[12px] text-slate-500 dark:text-slate-400">
               Used this month: {state.automatic_budget?.used ?? 0} of {state.automatic_budget?.cap ?? form.credit_cap}.
@@ -377,7 +386,9 @@ export default function AgentCentrePage() {
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const [params, setParams] = useSearchParams();
-  const tab = TABS.some((t) => t.key === params.get("tab")) ? params.get("tab") : "active";
+  // Short links from the dashboard and notifications: ?tab=approval, ?tab=needs-you.
+  const asked = { approval: "needs_approval", approvals: "needs_approval", "needs-approval": "needs_approval", "needs-you": "needs_attention", "needs_you": "needs_attention" }[params.get("tab")] || params.get("tab");
+  const tab = TABS.some((t) => t.key === asked) ? asked : "active";
   const [answering, setAnswering] = useState(null);            // the task whose question is being answered
   const [answerProblem, setAnswerProblem] = useState(null);
   const [runs, setRuns] = useState([]);
@@ -404,10 +415,11 @@ export default function AgentCentrePage() {
   const [settings, setSettings] = useState(false);
   const [draft, setDraft] = useState(null);      // the task whose draft is open in the drawer: { runId, edit }
   const [documents, setDocuments] = useState(null);
+  const resultsCount = useResultsCount(workspaceId);
   const setDocKind = (v) => look({ type: v });
 
   // The one page being looked at is asked for, with its filters; the other list is asked only for its total (the number on its tab).
-  const runQuery = tab === "documents" ? queryOf({ limit: 1 })
+  const runQuery = tab === "documents" || tab === "results" ? queryOf({ limit: 1 })
     : queryOf({ bucket: tab, ...(tab === "history" ? { capability: filters.capability, status: filters.status, date_from: filters.from, date_to: filters.to } : {}), limit: at.limit, offset: at.offset });
   const docQuery = tab === "documents" ? { kind: docKind, q: docSearch, order: docOrder === "newest" ? "" : docOrder, limit: at.limit, offset: at.offset } : { limit: 1 };
   const docKey = JSON.stringify(docQuery);
@@ -451,13 +463,13 @@ export default function AgentCentrePage() {
         }
       />
 
-      {workspaceId && <AgentPanel businessId={workspaceId} summary={summary} onChanged={load} />}
+      {workspaceId && <AgentBar businessId={workspaceId} onChanged={load} onOpenRun={(id) => navigate(`/agent/runs/${id}`)} />}
       {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-700">{error}</p>}
 
-      <div className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1 dark:border-slate-800 dark:bg-slate-900" role="tablist">
+      <div className="sticky top-0 z-20 flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900" role="tablist" data-agent-tabs>
         {TABS.map((t) => {
           // Totals, whatever page or filter is showing.
-          const n = t.key === "documents" ? documents?.all_total ?? documents?.total ?? 0 : counts[t.key] || 0;
+          const n = t.key === "documents" ? documents?.all_total ?? documents?.total ?? 0 : t.key === "results" ? resultsCount : counts[t.key] || 0;
           return (
             <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setParams({ tab: t.key })}
               className={`whitespace-nowrap rounded-xl px-3.5 py-2 text-sm font-semibold transition ${tab === t.key ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
@@ -484,59 +496,21 @@ export default function AgentCentrePage() {
       )}
 
       <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        {loading ? (
+        {tab === "results" ? (
+          <ResultsList businessId={workspaceId} empty={TABS.find((t) => t.key === "results").empty} />
+        ) : loading ? (
           <SkeletonRegion label="your Agent tasks"><SkeletonTable rows={5} widths={["minmax(0,1fr)", "7rem", "1rem"]} header={false} className="border-0" /></SkeletonRegion>
         ) : tab === "documents" ? (
           <DocumentList documents={documents} kind={docKind} onKind={setDocKind} search={docSearch} order={docOrder}
             onSearch={(v) => look({ q: v })} onOrder={(v) => look({ sort: v === "newest" ? "" : v })}
             onEdit={(d) => setDraft({ runId: d.run_id, edit: true })}
             onOpen={(d) => (d.to ? navigate(d.to) : d.status === "awaiting_approval" ? setDraft({ runId: d.run_id, edit: false }) : navigate(`/agent/runs/${d.run_id}`))} />
-        ) : visible.length === 0 ? (
-          <p className="px-5 py-10 text-center text-sm text-slate-500">{TABS.find((t) => t.key === tab).empty}</p>
         ) : (
-          <ul key={`${tab}:${at.page}`} data-m="fadeIn" style={{ animationDuration: "150ms" }} className="divide-y divide-slate-100 dark:divide-slate-800">
-            {visible.map((r) => (
-              <li key={r.id} className="flex items-center">
-                <button type="button" onClick={() => navigate(`/agent/runs/${r.id}`)}
-                  className="flex min-w-0 flex-1 items-center gap-4 px-5 py-3.5 text-left transition hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{r.title}</span>
-                      <Pill tone={runTone(r)}>{runStateLabel(r)}</Pill>
-                      {(r.refs?.quote_reference || r.refs?.invoice_reference) && (
-                        <span className="text-[12px] text-slate-400">{r.refs.invoice_reference || r.refs.quote_reference}</span>
-                      )}
-                    </span>
-                    <span className="mt-0.5 block truncate text-[13px] text-slate-500">
-                      {r.question_title ? `${r.question_title}${r.question_detail ? ` (${r.question_detail})` : ""}` : r.status === "succeeded" ? r.summary : r.next_action || r.summary || r.goal}
-                    </span>
-                  </span>
-                  <span className="hidden shrink-0 text-right text-[12px] text-slate-400 sm:block">{fmt(r.updated_at || r.created_at)}</span>
-                  <span className="shrink-0 text-slate-300"><Icon name="chevron" className="h-4 w-4" /></span>
-                </button>
-                {r.status === "running" && r.pending_question && !r.pending_question.optional && (
-                  // What only the owner can supply, asked here: the task carries on as soon as it is answered.
-                  <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-3 dark:border-slate-800 dark:bg-slate-800/40" aria-label={`Answer needed: ${r.title}`}>
-                    <QuestionForm question={r.pending_question.question} fields={r.pending_question.fields} submitting={answering === r.id}
-                      onSubmit={async (answers) => {
-                        setAnswering(r.id);
-                        setAnswerProblem(null);
-                        try { await answerRun(r.id, answers); await load(); }
-                        catch (e) { setAnswerProblem({ id: r.id, text: agentErrorMessage(e, "That answer couldn't be saved. Please try again.") }); }
-                        finally { setAnswering(null); }
-                      }} />
-                    {answerProblem?.id === r.id && <p role="alert" className="mt-2 text-[12px] text-rose-600">{answerProblem.text}</p>}
-                  </div>
-                )}
-                {r.bucket === "needs_approval" && (
-                  <button type="button" onClick={() => setDraft({ runId: r.id, edit: true })} aria-label={`Edit ${r.title}${r.refs?.quote_reference ? ` ${r.refs.quote_reference}` : ""}`}
-                    className="mr-4 shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-600 hover:border-brand-300 hover:text-brand-700 dark:border-slate-700 dark:text-slate-300">Edit</button>
-                )}
-              </li>
-            ))}
-          </ul>
+          // One compact row for every list (QA, 15 Oct): no forms in the list; a row opens its question or approval in the side panel.
+          <AgentRows runs={visible} empty={TABS.find((t) => t.key === tab).empty} onChanged={load}
+            onOpen={(r) => navigate(`/agent/runs/${r.id}`)} onReview={(r) => setDraft({ runId: r.id, edit: false })} />
         )}
-        {!loading && (
+        {!loading && tab !== "results" && (      // Results pages by its own count, inside its list
           <Pagination total={total} page={at.page} more={at.more} noun={tab === "documents" ? "documents" : "tasks"} className="border-t border-slate-100 dark:border-slate-800"
             onPage={(n) => look({ page: n, more: "" }, true)} onMore={(n) => look({ more: n }, true)} />
         )}

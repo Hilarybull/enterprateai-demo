@@ -65,12 +65,12 @@ def test_proposal_from_scratch_asks_once_offers_what_is_known_and_waits_for_appr
     p = a["payload"]
     assert a["tool_id"] == "send_proposal" and (p["customer_name"], p["to_email"], p["total"], p["timeline"]) == ("QA Round Six Ltd", "qa@six.test", 4500, "Live in 3 weeks")
     # The full proposal is written as the Business Blueprints page writes it, at its price; nothing is sent yet.
-    assert env.fin["proposals"][0]["status"] == "draft" and not env.comms.sent and _charges(env) == [("proposal_full", 0)]
+    assert env.fin["proposals"][0]["status"] == "draft" and not env.comms.sent and _charges(env) == [("proposal_full", 10)]
     done = env.approve(r)
     assert done["status"] == "succeeded" and done["summary"] == f"Proposal {p['reference']} was sent to qa@six.test."
     mail = env.comms.sent[-1]
     assert "We take over bookkeeping and month-end." in mail["text"] and "Price: £4,500.00" in mail["text"]
-    assert _charges(env) == [("proposal_full", 0), ("agent_send", 2)] and env.fin["proposals"][0]["status"] == "sent"
+    assert _charges(env) == [("proposal_full", 10), ("agent_send", 2)] and env.fin["proposals"][0]["status"] == "sent"
     run(env.orch.advance(r["id"]))
     assert len(env.fin["proposals"]) == 1 and len(env.comms.sent) == 1      # (e) once
 
@@ -304,7 +304,7 @@ def test_every_capability_is_on_a_plan_states_its_cost_and_is_listed():
     assert all(config.cost_of(c) for c in WORKFLOWS)
     for key in ("new_purchase_order", "credit_note"):
         assert config.cost_of(key) == "2 credits when it is sent" and WORKFLOWS[key].autonomy == "A3"
-    assert config.cost_of("new_proposal") == "25 credits for the written proposal, 2 when it is sent" and WORKFLOWS["new_proposal"].autonomy == "A3"
+    assert config.cost_of("new_proposal") == "10 credits for the written proposal, 2 when it is sent" and WORKFLOWS["new_proposal"].autonomy == "A3"
     for key in ("supplier_bill", "add_vendor", "update_record", "marketplace_profile", "marketplace_offering"):
         assert config.cost_of(key) == "2 credits" and WORKFLOWS[key].autonomy == "A1"
 

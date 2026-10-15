@@ -321,6 +321,10 @@ async def _sb_select(
                 q = q.lte(col, value)
             elif op == "like":
                 q = q.like(col, value)
+            elif op == "ilike":
+                q = q.ilike(col, value)
+            else:      # never a silent no-op: a dropped filter would return every row
+                raise ValueError(f"Unsupported filter operator: {op}")
         if order:
             q = q.order(order, desc=desc)
         if limit:

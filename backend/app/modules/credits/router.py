@@ -106,7 +106,9 @@ async def get_transactions(
         transaction_type=transaction_type,
         status=status,
     )
-    return {"transactions": txns}
+    from app.modules.credits import ledger
+    lines = ledger.actions(txns)
+    return {"transactions": txns, "actions": [{**x, "line": ledger.line(x)} for x in lines]}
 
 
 @router.post("/admin/grant")

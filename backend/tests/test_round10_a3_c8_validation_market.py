@@ -35,7 +35,7 @@ def test_the_idea_score_is_the_wizard_engine_and_comes_back_at_once(monkeypatch)
     idea = {"name": "Apex", "description": "Bookkeeping for cafés", "industry": "Accounting", "location": "Leeds", "customer": "Independent cafés",
             "problem": "Month-end takes a week", "currency": "GBP", "known": {"price": 300, "cost": 120}}
     t = time.perf_counter()
-    r = run(ModuleStudio().validate_idea(user_id="u1", business_id=None, idea=idea))
+    r = run(ModuleStudio().validate_idea(user_id="u1", business_id=None, idea={**idea, "depth": "comprehensive"}))      # Comprehensive: the full report follows
     assert time.perf_counter() - t < 2 and 0 < r["score"] <= 100 and r["full_report"] == "pending"
     assert r["risks"] and all(isinstance(x, str) and "{" not in x and "':" not in x for x in r["risks"])
 

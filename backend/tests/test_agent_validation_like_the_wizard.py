@@ -13,7 +13,7 @@ def test_the_wizard_steps_are_filled_from_the_workspace():
             "customer": "Independent cafés", "problem": "Month-end takes a week", "currency": "GBP", "known": known}
     p = validation_payload(idea, "A")
     assert p["validation_mode"] == "basic" and p["workspace_id"] == "A"
-    assert p["step1"]["business_stage"] == "pre_revenue" and p["step3"] == {"primary_segment": "Independent cafés", "channels": "Referrals"}
+    assert p["step1"]["business_stage"] == "Pre-revenue" and p["step3"] == {"primary_segment": "Independent cafés", "channels": "Referrals"}
     assert p["step4"] == {"direct_competitors": "Local bookkeepers"} and p["step5"]["solution_description"] == "Bookkeeping for cafés"
     assert p["step7"]["proposed_price"] == "300" and p["step8"]["variable_cost_per_unit"] == "120"
     assert p["steps_completed"] == sorted(int(k[4:]) for k in p if k.startswith("step") and k != "steps_completed")

@@ -1,5 +1,5 @@
 import { OPEN_APPROVAL_EVENT } from "../components/agent/AgentPanel";
-import { FirstValueOnDashboard } from "../components/FirstValueCard";
+import { useFirstResult } from "../components/FirstValueCard";
 import { compactFigure, isFigure } from "../lib/figures";
 import { CountText } from "../components/Motion";
 import { enter } from "../lib/motion";
@@ -16,6 +16,8 @@ import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
 import { hasPaidAccess, planRank } from "../lib/plans";
+import FirstResultPanel from "../components/FirstResultPanel";
+import PinnedCards from "../components/dashboard/PinnedCards";
 import AgentPanel, { NeedsApprovalPanel, followInAgentBox, taskIn } from "../components/agent/AgentPanel";
 import { Icon } from "../components/agent/AgentBits";
 import { agentErrorMessage, getAgentSummary, submitAgentRequest } from "../lib/agent";
@@ -110,6 +112,8 @@ export default function DashboardPage() {
   const [livePlanSummary, setLivePlanSummary] = useState(null);
   const [fxRates, setFxRates] = useState({});
   const [agentSummary, setAgentSummary] = useState(() => (ADAPTIVE_DASHBOARD ? recallDashboard(workspaceId)?.agent || null : null));
+  // The first result sits inside the Agent card (never a card of its own above it), until it is dismissed or saved for later.
+  const firstResult = useFirstResult();
   const [rangeKey, setRangeKey] = useState("3m");
   const [rangeOpen, setRangeOpen] = useState(false);
   const [showReports, setShowReports] = useState(false);
@@ -528,14 +532,14 @@ export default function DashboardPage() {
 
   const financialHealthSection = (
     <section>
-      {/* Mobile: two columns, the fifth card spans both. From 640px the cards flex from a 180px
-          base and grow to fill their row, so there is never an empty slot. From 1280px: five equal columns. */}
-      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr))]" data-kpi-grid>
+      {/* Explicit columns, never a lone card: one on a phone; two from 640px (the content is under 760px wide up to 1280px),
+          the last of an odd number spanning both; five from 1280px. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5" data-kpi-grid>
         {loading && [0, 1, 2, 3, 4].map((i) => (
-          <div key={i} role="status" aria-busy="true" aria-label="Loading" className={i === 4 ? "min-[380px]:col-span-2 xl:col-span-1" : ""}><SkeletonKpi /></div>
+          <div key={i} role="status" aria-busy="true" aria-label="Loading" className={i === 4 ? "sm:col-span-2 xl:col-span-1" : ""}><SkeletonKpi /></div>
         ))}
         {!loading && kpiTiles.map((card, index) => {
-          if (card.simple) return <ValueTile key={card.key} kpi={card} wide={index === 4} onOpen={(k) => navigate(k.to)} />;
+          if (card.simple) return <ValueTile key={card.key} kpi={card} wide={index === kpiTiles.length - 1 && kpiTiles.length % 2 === 1} onOpen={(k) => navigate(k.to)} />;
           const pct = card.trend.changePct;
           const up = pct != null && pct > 0.05;
           const down = pct != null && pct < -0.05;
@@ -562,7 +566,7 @@ export default function DashboardPage() {
             <div key={card.label} title={card.hint || (card.kind ? `See what makes up ${card.label}` : undefined)} data-kpi={card.key || card.label} {...enter("fadeUp", index, 120)}
               {...(card.kind ? { role: "button", tabIndex: 0, "aria-haspopup": "dialog", onClick: () => setOpenKpi(card),
                 onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenKpi(card); } } } : {})}
-              className={`flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900 ${card.kind ? "cursor-pointer transition hover:border-brand-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" : ""}`}>
+              className={`flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900 ${index === kpiTiles.length - 1 && kpiTiles.length % 2 ? "sm:col-span-2 xl:col-span-1" : ""} ${card.kind ? "cursor-pointer transition hover:border-brand-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" : ""}`}>
               <div className="text-[15px] font-medium text-slate-500">{card.label}</div>
               {/* Never cut off: a long amount is shown short (£1.25M), with the full amount in the tooltip and the accessible name. */}
               <div className="mt-1 min-w-0">
@@ -646,7 +650,7 @@ export default function DashboardPage() {
   // Three action cards per stage (lib/dashboardLayout). A Funding or Launch Readiness card shows
   // the selected case's or launch's status in place of its description once one exists.
   const actionCards = (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-3" data-stage-cards>
       {actionCardsFor(adaptive ? dashboard : null).map((card, n) => (
         <div key={card.key} {...enter("fadeUp", 1 + n)}
           className="flex min-w-0 flex-col rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
@@ -656,9 +660,13 @@ export default function DashboardPage() {
                 {ACTION_ICON[card.icon] || ACTION_ICON.doc}
               </svg>
             </div>
-            <div title={card.title} className="flex min-h-[2.75rem] min-w-0 flex-1 items-center text-base font-bold leading-snug text-slate-900 dark:text-slate-100"><span className="line-clamp-2 break-words">{card.title}</span></div>
+            <div className="min-w-0 flex-1">
+              <div title={card.title} className="flex min-h-[2.75rem] min-w-0 items-center text-base font-bold leading-snug text-slate-900 dark:text-slate-100"><span className="line-clamp-2 break-words">{card.title}</span></div>
+              {/* One column (under 1280px): the description in the same row as the icon and title. */}
+              {!card.status && <p title={card.description} data-stage-description className="break-normal text-[14px] leading-relaxed text-slate-500 xl:hidden dark:text-slate-400">{card.description}</p>}
+            </div>
             <button type="button" onClick={() => navigate(card.href)} aria-label={card.cta}
-              className="mt-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 md:hidden xl:flex dark:border-slate-700">
+              className="mt-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700">
               <Icon name="chevron" className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -675,7 +683,7 @@ export default function DashboardPage() {
               </p>
             </div>
           ) : (
-            <div className="mt-3 min-h-[3rem] flex-1 text-[15px] leading-relaxed text-slate-500 line-clamp-2 dark:text-slate-400">{card.description}</div>
+            <div title={card.description} data-stage-description className="mt-3 hidden min-h-[3rem] flex-1 break-normal text-[15px] leading-relaxed text-slate-500 xl:block dark:text-slate-400">{card.description}</div>
           )}
           <button type="button" onClick={() => navigate(card.href)}
             className="mt-4 w-full rounded-xl border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">
@@ -749,14 +757,16 @@ export default function DashboardPage() {
 
       {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
 
-      <FirstValueOnDashboard />
-
       {/* Needs Approval always sits beside the Agent card (below it on narrow screens), also when it is empty. */}
       <div {...enter("fadeUp", 0)} className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]">
         {/* A remembered copy is showing while the fresh one loads: approvals and anything that starts a task wait for it. */}
-        <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
+        <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} firstResult={firstResult} />
         <NeedsApprovalPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
       </div>
+
+      {/* The first result: its own card under the Agent row (the Agent card keeps the same height with or without it). */}
+      {firstResult?.result && <div data-first-result-card><FirstResultPanel firstResult={firstResult} /></div>}
+      <PinnedCards businessId={workspaceId} />
 
       {actionCards}
 

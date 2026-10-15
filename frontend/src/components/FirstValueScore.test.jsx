@@ -23,6 +23,8 @@ describe("the first-value card's score", () => {
     expect(shown).toContain("No score yet") && expect(shown).toContain("Insufficient evidence");
     expect(document.querySelector("[data-fv-provisional]")).toBeNull();
     expect(document.querySelector("[data-fv-coverage]").textContent).toContain("80%");
-    expect(document.body.textContent).not.toContain("62");
+    // F-1: the full check leads; the first result is kept, said as earlier, never as the headline score.
+    expect(document.querySelector("[data-fv-earlier]").textContent).toContain("Earlier: 62/100 (first result)");
+    expect(document.querySelector("[data-fv-score]").textContent.startsWith("No score yet")).toBe(true);
   });
 });

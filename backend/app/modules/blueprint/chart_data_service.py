@@ -100,33 +100,18 @@ def _snippets_and_sources(result: dict, max_items: int = 5) -> tuple[list[str], 
 # ── Claude synthesis ──────────────────────────────────────────────────────────
 
 async def _claude_extract(prompt: str) -> dict:
+    """Figures read from the search snippets, through the one AI gateway (with fallback)."""
+    from app.shared.llm.openai_client import AutoLLMClient
     settings = get_settings()
-    if not settings.claude_api_key:
+    if not (settings.claude_api_key or settings.openai_api_key):
         return {}
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.post(
-                CLAUDE_BASE,
-                headers={
-                    "x-api-key": settings.claude_api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 512,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=30.0,
-            )
-            if r.status_code == 200:
-                text = r.json()["content"][0]["text"].strip()
-                # Extract JSON block
-                m = re.search(r"\{[\s\S]+\}", text)
-                if m:
-                    return json.loads(m.group())
-    except Exception as exc:
-        logger.warning("chart_data_service Claude: %s", exc)
+        res = await AutoLLMClient().generate_text(system="Reply with one JSON object only.", prompt=prompt, feature="blueprint.chart_data", max_tokens=512)
+        m = re.search(r"\{[\s\S]+\}", (res.text or "").strip())
+        if m:
+            return json.loads(m.group())
+    except Exception as exc:      # noqa: BLE001
+        logger.warning("chart_data_service synthesis: %s", exc)
     return {}
 
 

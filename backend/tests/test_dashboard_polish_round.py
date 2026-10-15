@@ -164,12 +164,12 @@ def test_a_missing_email_names_the_customer_and_the_invoice_wherever_it_is_shown
     inv = invoice(env, "late1", "Aftred", 149, paid=False, due_in=-8, customer_email="")
     r = env.submit(capability="payment_followup", channel="ui_action", params={"invoice_id": inv["id"]})["run"]
     ref = inv.get("reference") or "INV-late1"
-    assert r["reason_code"] == "invalid_customer_destination"
-    assert r["error"] == f"Aftred has no email on record for {ref}. Add it and I'll prepare the reminder."
+    # In Needs Approval, flagged "Email needed" (QA, 15 Oct), named the same everywhere.
+    assert r["status"] == "awaiting_approval"
     shown = agent_router._public_run(r)
-    assert shown["email_needed"] == {"customer": "Aftred", "reference": ref}      # the page's heading and field use the same names
+    assert shown["email_needed"] == {"customer": "Aftred", "reference": ref}      # the drawer's heading and field use the same names
     step = card(build(env), "next_step")
-    assert "waiting for an email address for Aftred" in step["text"]     # the dashboard says the same thing
+    assert "needs an email address for Aftred" in step["text"]     # the dashboard says the same thing
     fixed = run(env.orch.fix_customer_email(r["id"], OWNER, "accounts@aftred.test"))
     assert fixed["status"] == "awaiting_approval" and agent_router._public_run(fixed)["email_needed"] is None
 

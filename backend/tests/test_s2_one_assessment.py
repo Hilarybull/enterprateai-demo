@@ -36,7 +36,9 @@ def test_every_surface_shows_the_one_assessment_and_moves_with_it(monkeypatch):
     assert s["classification"] and s["evidence_coverage"] is not None
     assert agent["state"]["outcome"]["assessment_id"] == s["assessment_id"]
     assert f"{s['evidence_coverage']}% of evidence" in kpi["hint"]
-    assert quick["assessment"] == s and quick["provisional"] is True          # the quick check's own score is provisional; the summary wins
+    # P0.6b: a launch quick check is about a launch not set up yet: shown as its own provisional result, never with another
+    # initiative's full check.
+    assert quick.get("assessment") is None and quick["provisional"] is True
     assert {k: fed[k] for k in ("classification", "score", "evidence_coverage")} == {k: s[k] for k in ("classification", "score", "evidence_coverage")}
     # Change a fact and reassess: everything moves together.
     item = run(svc.get_subject(OWNER, "A", L, lid))
@@ -44,7 +46,7 @@ def test_every_surface_shows_the_one_assessment_and_moves_with_it(monkeypatch):
     assess(svc, lid, kind=L)
     s2, agent2, kpi2, quick2, fed2 = _everywhere(env, monkeypatch)
     assert s2["assessment_id"] != s["assessment_id"] and s2["classification"] == "not_ready"      # a negative contribution blocks (B5)
-    assert agent2["state"]["outcome"]["assessment_id"] == s2["assessment_id"] and quick2["assessment"] == s2
+    assert agent2["state"]["outcome"]["assessment_id"] == s2["assessment_id"] and quick2.get("assessment") is None
     assert {k: fed2[k] for k in ("classification", "score")} == {k: s2[k] for k in ("classification", "score")}
 
 

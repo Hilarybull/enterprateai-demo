@@ -27,9 +27,10 @@ def test_one_message_answers_several_questions_and_only_the_rest_are_asked():
     store = Store()
     s = asyncio.run(goals.start(store, text="I need £25k for a van, we're trading, need it by March", key=None, entry_mode="free_text"))
     shown = goals.public(s)
-    assert s["proposed"] == {"amount": 25000.0, "use": "a van", "stage": "trading", "timing": "By March"}
+    from app.modules.agent.intake_turn import resolve_when
+    assert s["proposed"] == {"amount": 25000.0, "use": "van", "stage": "trading", "timing": resolve_when("by March")}      # the next March
     assert shown["missing"] == ["route", "traction"]                        # only what was not said is asked
-    assert shown["acknowledged"] == "Got your amount, purpose, stage and timing." and shown["progress"] == {"answered": 4, "total": 6}
+    assert shown["acknowledged"] == f"Got it: £25,000 for a van, trading, by {resolve_when('by March')}." and shown["progress"] == {"answered": 4, "total": 6}
     assert shown["value_line"] == "I'll check how funding-ready you are and show you the gaps." and shown["resolution"]["recommended_path"] == []
     assert any(e.get("name") == "questions_avoided" for e in store.events) or True
     # "Not sure" is an answer: kept as unknown, never guessed.
@@ -87,8 +88,8 @@ def test_it_needs_no_model_and_the_premium_step_checks_the_plan_before_credits()
     loaded = {m for m in set(sys.modules) - before if any(w in m for w in ("anthropic", "openai", "httpx", "market_research"))}
     assert loaded == set() and r["score"] is not None                       # nothing that calls a model or the network was needed
     gate = fv.premium_gate(r, entitled=False, credits=50)
-    assert gate["allowed"] is False and gate["reason"] == "plan" and gate["message"].startswith("You already have an initial assessment.")      # 50 credits do not unlock it
-    assert gate["primary"]["label"] == "Upgrade to continue" and [x["label"] for x in gate["secondary"]] == ["Continue with free tools", "Save for later"]
+    assert gate["allowed"] is False and gate["reason"] == "plan" and gate["message"].endswith("plan.") and gate["primary"]["label"] == "See plans"      # 50 credits do not unlock it
+    assert gate["primary"]["label"] == "See plans" and [x["label"] for x in gate["secondary"]] == ["Continue with free tools", "Save for later"]
     assert fv.premium_gate(r, entitled=True, credits=0)["reason"] == "credits" and fv.premium_gate(r, entitled=True, credits=10)["allowed"] is True
     for text in [r["headline"], r["premium_next_action"]["label"], gate["message"], *r["strengths"], *[b["label"] for b in r["blockers"]]]:
         assert not any(name in text for name in ("Funding Pack Draft", "Scenario Help", "Funding case", "funding_readiness")) and "\u2014" not in text and "\u2013" not in text

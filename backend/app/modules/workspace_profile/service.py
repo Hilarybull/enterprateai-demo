@@ -49,7 +49,7 @@ async def get_profile(*, user_id: str, workspace_id: str | None = None):
     return {"workspace_id": str(ws.id), "profile": profile_out, "updated_at": ws.updated_at}
 
 
-async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: WorkspaceProfile):
+async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: WorkspaceProfile, seen: dict | None = None):
     ws = await _load_workspace(user_id, workspace_id)
     now = datetime.now(timezone.utc).isoformat()
 
@@ -60,6 +60,8 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
         base = dict(existing or {})
         incoming = profile.model_dump()
         for k, v in incoming.items():
+            if seen is not None and k in seen and seen.get(k) == v and base.get(k) != v:
+                continue      # untouched in a form opened earlier: the newer saved value stays
             # Only overwrite with incoming value when it's non-empty; keep existing otherwise
             if isinstance(v, list):
                 if v:

@@ -22,7 +22,7 @@ class LLMTextResult:
 
 
 class LLMClient:
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:  # pragma: no cover
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None, temperature: float | None = None) -> LLMTextResult:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -36,7 +36,7 @@ class OpenAIResponsesClient(LLMClient):
         self._settings = get_settings()
         self._user_id = user_id
 
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None, temperature: float | None = None) -> LLMTextResult:
         if not self._settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY not configured")
 
@@ -103,7 +103,7 @@ class OpenAIResponsesClient(LLMClient):
 
 
 class NoopLLMClient(LLMClient):
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None, temperature: float | None = None) -> LLMTextResult:
         return LLMTextResult(text="", provider="noop", model="none")
 
 
@@ -117,7 +117,7 @@ class AnthropicMessagesClient(LLMClient):
         self._settings = get_settings()
         self._user_id = user_id
 
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None, temperature: float | None = None) -> LLMTextResult:
         if not self._settings.claude_api_key:
             raise RuntimeError("CLAUDE_API_KEY not configured")
 
@@ -129,7 +129,7 @@ class AnthropicMessagesClient(LLMClient):
         payload = {
             "model": self._settings.claude_model,
             "max_tokens": max_tokens or 8000,
-            "temperature": 0.5,
+            "temperature": 0.5 if temperature is None else temperature,
             "system": system,
             "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
         }
@@ -184,7 +184,7 @@ class GeminiGenerateClient(LLMClient):
         self._settings = get_settings()
         self._user_id = user_id
 
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None, temperature: float | None = None) -> LLMTextResult:
         if not self._settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY not configured")
 
@@ -198,7 +198,7 @@ class GeminiGenerateClient(LLMClient):
                     "parts": [{"text": f"{system}\n\n{prompt}"}],
                 }
             ],
-            "generationConfig": {"temperature": 0.5, "maxOutputTokens": max_tokens or 8000},
+            "generationConfig": {"temperature": 0.5 if temperature is None else temperature, "maxOutputTokens": max_tokens or 8000},
         }
 
         async with httpx.AsyncClient(timeout=900) as client:
@@ -244,6 +244,37 @@ class GeminiGenerateClient(LLMClient):
         )
 
 
+# The last failure of each provider in this process (Research diagnostics and /health show it).
+FAILED_PROVIDERS: dict[str, dict] = {}
+
+
+class ChainLLMClient(LLMClient):
+    """The one AI gateway (the owner's QA, 15 Oct): the providers in order, each tried on an error (an empty balance, 429,
+    5xx, a timeout) with the same prompt and output contract. Which one served each call is logged."""
+
+    def __init__(self, clients: list[LLMClient]) -> None:
+        self._clients = [c for c in clients if c is not None] or [NoopLLMClient()]
+
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None, temperature: float | None = None) -> LLMTextResult:
+        import logging as _logging
+        log = _logging.getLogger(__name__)
+        last_err: Exception | None = None
+        for c in self._clients:
+            try:
+                res = await c.generate_text(system=system, prompt=prompt, feature=feature, max_tokens=max_tokens, temperature=temperature)
+                if not (res.text or "").strip() and not isinstance(c, NoopLLMClient):
+                    raise RuntimeError(f"{res.provider} returned empty text")
+                log.info("LLM served by %s for %s", type(c).__name__, feature)
+                return res
+            except Exception as e:      # noqa: BLE001 - the next provider answers
+                last_err = e
+                log.warning("LLM provider %s failed for %s, trying the next one: %s", type(c).__name__, feature, str(e)[:300])
+                FAILED_PROVIDERS[type(c).__name__] = {"error": str(e)[:300], "feature": feature}
+        if last_err:
+            raise last_err
+        return await NoopLLMClient().generate_text(system=system, prompt=prompt, feature=feature)
+
+
 class AutoLLMClient(LLMClient):
     """
     Picks the best available LLM provider based on configured keys.
@@ -268,11 +299,11 @@ class AutoLLMClient(LLMClient):
         if not self._clients:
             self._clients.append(NoopLLMClient())
 
-    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None) -> LLMTextResult:
+    async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None, temperature: float | None = None) -> LLMTextResult:
         last_err: Exception | None = None
         for c in self._clients:
             try:
-                res = await c.generate_text(system=system, prompt=prompt, feature=feature, max_tokens=max_tokens)
+                res = await c.generate_text(system=system, prompt=prompt, feature=feature, max_tokens=max_tokens, temperature=temperature)
                 # Some providers can return an HTTP 200 but our parsing yields empty text.
                 # Treat that as a failure so we can fall back to the next configured provider.
                 if not (res.text or "").strip() and not isinstance(c, NoopLLMClient):
@@ -280,6 +311,11 @@ class AutoLLMClient(LLMClient):
                 return res
             except Exception as e:
                 last_err = e
+                # Said, never silent: a provider that fails (a key, a quota, an empty balance) is logged for the superadmin,
+                # and the next provider answers.
+                import logging as _logging
+                _logging.getLogger(__name__).warning("LLM provider %s failed for %s, trying the next one: %s", type(c).__name__, feature, str(e)[:300])
+                FAILED_PROVIDERS[type(c).__name__] = {"error": str(e)[:300], "feature": feature}
                 continue
         if last_err:
             raise last_err
@@ -301,18 +337,20 @@ async def get_user_plan_info(user_id: str) -> tuple[str, str]:
 
 
 async def pick_llm_for_user(user_id: str) -> LLMClient:
-    """Free/trial → OpenAI. Paid or platform-granted → Claude."""
+    """Free/trial: OpenAI first. Paid or platform-granted: Claude first. Either way the other configured provider answers
+    when the first fails (the one gateway with fallback)."""
+    settings = get_settings()
     plan_key, status = await get_user_plan_info(user_id)
-    is_free = plan_key in _FREE_PLAN_KEYS or status in {"trial", "expired"}
-    if is_free:
+    claude_first = not (plan_key in _FREE_PLAN_KEYS or status in {"trial", "expired"})
+    if not claude_first:
         try:
             from app.modules.credits.service import _has_platform_grant
-            if await _has_platform_grant(user_id, "full_access"):
-                return AnthropicMessagesClient(user_id=user_id)
+            claude_first = bool(await _has_platform_grant(user_id, "full_access"))
         except Exception:
             pass
-        return OpenAIResponsesClient(user_id=user_id)
-    return AnthropicMessagesClient(user_id=user_id)
+    claude = AnthropicMessagesClient(user_id=user_id) if settings.claude_api_key else None
+    openai = OpenAIResponsesClient(user_id=user_id) if settings.openai_api_key else None
+    return ChainLLMClient([claude, openai] if claude_first else [openai, claude])
 
 
 def plan_uses_serp(plan_key: str, status: str) -> bool:

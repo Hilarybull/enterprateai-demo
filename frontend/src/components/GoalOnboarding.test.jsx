@@ -43,6 +43,7 @@ beforeEach(() => {
   answer = () => ({});
   localStorage.clear();
   sessionStorage.clear();
+  window.history.replaceState(null, "", "/");      // the task in hand is kept in the address: each test starts from a clean one
   useWorkspaceStore.setState({ workspaceId: null });
   globalThis.fetch = vi.fn(async (url, init = {}) => {
     const path = String(url).replace(/^https?:\/\/[^/]+/, "");
@@ -64,6 +65,9 @@ const card = () => screen.getByRole("region", { name: "Your task" });
 const heroSend = () => document.querySelector("[data-goal-launcher] form button[type='submit']");
 const click = async (el) => { await act(async () => { fireEvent.click(el); }); };
 
+// Each message carries its own id (P1.8: a retry is answered once); the rest of the body is what is checked.
+const withoutId = ({ client_message_id: _id, ...rest }) => rest;
+
 describe("the homepage launcher", () => {
   it("asks what you want done, shows business goals first and quick tasks second, and keeps free text", async () => {
     const { container } = mountLauncher();
@@ -81,14 +85,15 @@ describe("the homepage launcher", () => {
     expect(sets.every((set) => set.className.includes("col-start-1") && set.className.includes("row-start-1"))).toBe(true);      // one cell: the card never changes height
     expect(goalGroup.querySelectorAll("[data-goal-dots] > span").length).toBe(2);
     const tasks = within(screen.getByRole("group", { name: "Or start a task" })).getAllByRole("button");
-    expect(tasks.map((b) => b.textContent)).toEqual(["Create Invoice", "Create Quotation", "Create Business Plan", "Prepare Proposal"]);
+    expect(tasks.map((b) => b.textContent)).toEqual(["Create Invoice", "Create Quotation", "Create Business Plan"]);
     expect(goals[0].className).toContain("text-sm");                      // goals are the prominent chips
     expect(goals[0].className).toContain("font-semibold");
     expect(tasks[0].className).toContain("text-[12px]");                   // tasks are visibly secondary
     // One white card; on a phone each set of chips is a single row that scrolls sideways, and from 768px they wrap.
     const launcher = container.querySelector("[data-goal-launcher]");
     // The Agent's card: a gradient border around a deep indigo body, so it is the first thing seen.
-    for (const cls of ["m-agent-card", "rounded-2xl", "p-[2px]", "overflow-clip", "text-left", "shadow-[0_20px_60px_rgba(108,92,231,0.25)]"]) expect(launcher.className.split(" ")).toContain(cls);
+    for (const cls of ["m-agent-card", "rounded-2xl", "p-[2px]", "text-left", "shadow-[0_20px_60px_rgba(108,92,231,0.25)]"]) expect(launcher.className.split(" ")).toContain(cls);
+    expect(launcher.querySelector("[data-agent-border-clip]").className).toContain("overflow-clip");      // only the moving border is clipped
     for (const cls of ["mt-6", "md:mt-7", "lg:mt-8"]) expect(document.querySelector("#hero [data-goal-launcher]") ? document.querySelector("#hero [data-goal-launcher]").className.split(" ") : [cls]).toContain(cls);
     expect(launcher.querySelector(".m-agent-border").getAttribute("aria-hidden")).toBe("true");
     expect(launcher.hasAttribute("data-agent-shell")).toBe(true);           // the shared shell, the same one the dashboard's Agent card uses
@@ -225,7 +230,7 @@ describe("the task card", () => {
     await click(within(card().querySelector("[data-task-footer]")).getByRole("button", { name: "Send" }));
     expect(within(card()).getByRole("alert").textContent).toBe("How much funding are you looking for? is required.");
     await click(within(turn).getByRole("button", { name: "£50,000" }));     // a quick reply sends on tap
-    expect(posts(/\/task-sessions\/sess-1\/inputs$/)[0].body).toEqual({ answers: { amount: 50000 } });
+    expect(withoutId(posts(/\/task-sessions\/sess-1\/inputs$/)[0].body)).toEqual({ answers: { amount: 50000 }, picked: "£50,000", asked: "amount" });      // the chip's words are the owner's turn in the thread
     expect(card().querySelector("[data-chosen]").textContent).toBe("I need funding");
     expect(within(card()).getByText("What you told me")).toBeTruthy();
     expect([...card().querySelectorAll("[data-said-chip]")].map((c) => c.textContent)).toEqual(["£50,000", "Trading"]);
@@ -377,7 +382,7 @@ describe("the task card", () => {
     expect(card().querySelector("[data-checkpoint]")).toBeNull();
     expect(within(card().querySelector("[data-task-footer]")).queryByRole("button", { name: "Continue" })).toBeNull();
     await click(chips[1]);
-    expect(posts(/\/inputs$/)[0].body).toEqual({ answers: { goal_key: "need_funding" } });
+    expect(withoutId(posts(/\/inputs$/)[0].body)).toEqual({ answers: { goal_key: "need_funding" } });
     expect(card().querySelector("[data-chosen]").textContent).toBe("I need funding");
     expect(within(card()).getByText("You asked: help me with money")).toBeTruthy();
     await click(within(card()).getByRole("button", { name: "Start again" }));
@@ -433,16 +438,13 @@ describe("the hero", () => {
     expect(within(launcher).getByLabelText(PROMPT).className).toContain("text-base");      // 16px at every width
     expect(within(launcher).getByRole("group", { name: "Popular business goals" })).toBeTruthy();
     expect(within(launcher).getByRole("group", { name: "Or start a task" })).toBeTruthy();
-    // No separate link or button under the launcher: "Watch it work" is in the card's bottom row, beside the trust line.
+    // No separate link or button under the launcher, and no "Watch it work" demo button.
     expect(copy.querySelector("[data-hero-buttons]")).toBeNull();
     expect(within(copy).queryByRole("link", { name: "See How It Works" })).toBeNull();
     expect(within(copy).queryByText(/first business insight/)).toBeNull();
     const foot = launcher.querySelector("[data-launcher-foot]");
     expect(foot.className).toMatch(/\bflex-col\b.*\bsm:flex-row\b/);      // stacked on a phone
-    const watch = within(foot).getByRole("button", { name: "Watch a 30 second demo of the Agent" });
-    expect(watch.textContent).toBe("Watch it work · 30s");
-    for (const cls of ["h-9", "w-full", "sm:w-auto", "text-brand-700"]) expect(watch.className.split(" ")).toContain(cls);      // 36px tall; full width on a phone
-    expect(watch.querySelector(".m-pulse-ring svg")).toBeTruthy();
+    expect(within(foot).queryByRole("button", { name: /demo/ })).toBeNull();
     for (const tick of ["No credit card required", "Start in minutes", "Private & secure"]) expect(within(copy).queryByText(tick)).toBeNull();
     // Right column: the mock with its handwriting; below the copy at 80% on a tablet; not on a phone.
     const preview = grid.querySelector("[data-hero-right] [data-hero-preview]");
@@ -477,9 +479,12 @@ describe("the hero", () => {
     // From 1024px: in the right column, laid over the preview's space, never taller than it, scrolling inside.
     expect(hero().querySelector("[data-hero-right]").contains(column)).toBe(true);
     expect(launcher.contains(column)).toBe(false);
-    for (const cls of ["lg:absolute", "lg:flex", "lg:top-10", "lg:max-h-[calc(100%-2.5rem)]", "lg:rounded-2xl", "lg:shadow-2xl"]) expect(column.className).toContain(cls);
+    // Exactly the preview's box: the same top and the same height, the thread scrolling inside; the two crossfade.
+    for (const cls of ["lg:absolute", "lg:flex", "lg:inset-y-0", "lg:left-6", "lg:right-0", "lg:rounded-2xl", "lg:shadow-2xl", "lg:motion-safe:animate-[ea-fade-in_.2s_ease-out]"]) expect(column.className).toContain(cls);
+    const stage = hero().querySelector("[data-hero-stage]");
+    expect(stage.contains(column) && stage.contains(preview)).toBe(true);
     expect(column.className).not.toMatch(/rotate/);                         // no tilt on the card
-    expect(preview.className).toContain("lg:invisible");                    // the preview keeps its space, so the hero's height does not change
+    expect(preview.className).toContain("lg:opacity-0");                    // the preview keeps its space (faded out), so the hero's height does not change
     expect(hero().querySelector("[data-hero-right]").className).toContain("lg:self-stretch");
     // Under 768px: a full-screen sheet that slides up (unless reduced motion is asked for), with a close button.
     for (const cls of ["max-md:fixed", "max-md:inset-0", "max-md:flex", "max-md:motion-safe:animate-[ea-sheet-up_.22s_ease-out]", "md:hidden"]) expect(column.className).toContain(cls);
@@ -489,7 +494,7 @@ describe("the hero", () => {
     // The left column is as it was: the same launcher, with its suggestions, and the same buttons.
     expect(copy.querySelector("[data-goal-launcher]")).toBe(launcher);
     expect(within(launcher).getByLabelText(PROMPT)).toBeTruthy();
-    expect(within(launcher).getAllByRole("button", { name: /./ }).length).toBe(9);      // Send, three goals, four tasks, Watch it work
+    expect(within(launcher).getAllByRole("button", { name: /./ }).length).toBe(7);      // Send, three goals, three tasks
     expect(within(launcher).getByRole("button", { name: "I need funding" }).getAttribute("aria-pressed")).toBe("true");
     expect(launcher.querySelector("[data-task-card]")).toBeNull();
     expect(copy.querySelector("[data-hero-buttons]")).toBeNull();      // no separate row of buttons under the launcher
@@ -578,7 +583,7 @@ describe("carrying on after sign-in", () => {
     expect(container.querySelector("[data-step='workspace']").textContent).toContain("Business ready");
     expect(container.querySelector("[data-step='prepare']").textContent).toContain("Checking your funding readiness…");
     expect(container.querySelector("[data-step='prepare']").textContent).not.toContain("I need funding");
-    expect(screen.getByText("Your dashboard opens as soon as there is something to show you.")).toBeTruthy();
+    expect(screen.queryByText("Your dashboard opens as soon as there is something to show you.")).toBeNull();      // removed (QA, 15 Oct)
     await act(async () => { letPrepare(); });
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/funding/f1?tab=results"));
   });
@@ -757,67 +762,6 @@ describe("Edit draft for proposals, purchase orders and credit notes", () => {
   });
 });
 
-describe("Watch it work", () => {
-  const openDemo = async () => {
-    render(<MemoryRouter><LandingPage /></MemoryRouter>);
-    await click(screen.getByRole("button", { name: "Watch a 30 second demo of the Agent" }));
-  };
-
-  it("plays only when asked, inside the preview's own box on a wide screen, and reports that it was opened", async () => {
-    window.matchMedia = (q) => ({ matches: /min-width: 1024px/.test(q), media: q, addEventListener() {}, removeEventListener() {} });
-    try {
-      render(<MemoryRouter><LandingPage /></MemoryRouter>);
-      expect(document.querySelector("[data-agent-demo]")).toBeNull();          // never by itself
-      await click(screen.getByRole("button", { name: "Watch a 30 second demo of the Agent" }));
-      const demo = document.querySelector("[data-agent-demo]");
-      expect(demo.closest("[data-hero-mock]")).toBeTruthy();                   // in the mock's frame: nothing around it moves
-      expect(demo.className).toContain("absolute");
-      expect(demo.nextElementSibling.className).toContain("opacity-0");        // the preview fades out underneath
-      expect(document.querySelector("[data-demo-sheet]")).toBeNull();
-      await waitFor(() => expect(events().map((e) => e.name)).toContain("demo_opened"));
-      expect(demo.querySelector("[data-demo-title]").textContent).toBe("Tell it the job");
-      expect(demo.querySelector("[data-demo-dots]").children.length).toBe(3);
-      expect(demo.querySelector("[aria-live=polite]")).toBeTruthy();
-      // Touching the launcher stops it; so does Esc.
-      fireEvent.pointerDown(screen.getByLabelText(PROMPT));
-      expect(document.querySelector("[data-agent-demo]")).toBeNull();
-      await click(screen.getByRole("button", { name: "Watch a 30 second demo of the Agent" }));
-      fireEvent.keyDown(document, { key: "Escape" });
-      expect(document.querySelector("[data-agent-demo]")).toBeNull();
-    } finally { delete window.matchMedia; }
-  });
-
-  it("on a small screen it opens in a sheet; with reduced motion the scenes are still frames with Back and Next; Try it yourself fills the field", async () => {
-    await openDemo();                                                         // no matchMedia here: a small screen, and reduced motion
-    const sheet = document.querySelector("[data-demo-sheet]");
-    expect(sheet.getAttribute("role")).toBe("dialog");
-    expect(sheet.className).toContain("h-[90vh]");
-    const demo = within(sheet);
-    expect(demo.queryByRole("button", { name: "Pause" })).toBeNull();        // nothing plays
-    expect(demo.getByRole("button", { name: "Back" }).disabled).toBe(true);
-    expect(sheet.querySelector("[data-demo-typed]").textContent).toBe("Invoice for Mark, $300");
-    await click(demo.getByRole("button", { name: "Next" }));
-    expect(sheet.querySelector("[data-demo-title]").textContent).toBe("It does the work");
-    expect([...sheet.querySelectorAll("[data-demo-step]")].map((li) => li.textContent)).toEqual(["Reading your request", "Found Mark in your customers", "Drafting invoice INV-1001"]);
-    await click(demo.getByRole("button", { name: "Next" }));
-    expect(sheet.querySelector("[data-demo-card]").textContent).toContain("Invoice INV-1001");
-    expect(sheet.querySelector("[data-demo-card]").textContent).toContain("$300.00");
-    await waitFor(() => expect(events().map((e) => e.name)).toContain("demo_completed"));      // the last scene was reached
-    await click(demo.getByRole("button", { name: "Try it yourself" }));
-    expect(document.querySelector("[data-demo-sheet]")).toBeNull();
-    expect(screen.getByLabelText(PROMPT).value).toBe("Invoice for Mark, $300");      // ready to send; nothing was sent
-    expect(document.activeElement).toBe(screen.getByLabelText(PROMPT));
-    expect(posts(/task-sessions$/).length).toBe(0);
-    await waitFor(() => expect(events().map((e) => e.name)).toContain("demo_try_it_clicked"));
-  });
-
-  it("the How it works section uses the demo's three scene titles", () => {
-    render(<MemoryRouter><LandingPage /></MemoryRouter>);
-    const section = document.getElementById("how-it-works");
-    expect([...section.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["Tell it the job", "It does the work", "You approve"]);
-    expect(section.textContent).not.toMatch(/[\u2013\u2014]/);
-  });
-});
 
 describe("the checkpoint knows a name already given, and asks before sending marketing", () => {
   const ready = (over = {}) => session({ next: "identity", questions: [], missing: [], first_name: null, ...over });
@@ -923,5 +867,32 @@ describe("coming back to the homepage", () => {
     mountLauncher();
     await waitFor(() => expect(localStorage.getItem("ea_task_session:anon")).toBeNull());
     expect(screen.queryByRole("region", { name: "Your task" })).toBeNull();
+  });
+});
+
+describe("P1.8 a reply that doesn't go through", () => {
+  it("keeps the message in the thread, never moves on, and Try again sends the same message id", async () => {
+    let fail = true;
+    answer = (path, method) => (method === "POST" && /task-sessions$/.test(path) ? funding()
+      : /\/inputs$/.test(path) ? (fail ? { __status: 503, __body: { detail: { message: "That didn't go through. Try again." } } }
+        : funding({ state: "awaiting_identity", next: "identity", missing: [], inputs: { amount: 50000 } })) : undefined);
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    const turn = card().querySelector("[data-question-turn]");
+    await click(within(turn).getByRole("button", { name: "£50,000" }));
+    const sent = posts(/\/inputs$/);
+    expect(sent.length).toBe(2);      // retried once by itself
+    expect(sent[0].body.client_message_id).toBeTruthy();
+    expect(sent[1].body.client_message_id).toBe(sent[0].body.client_message_id);
+    const failed = card().querySelector("[data-turn-failed]");
+    expect(failed.querySelector("[data-unsent]").textContent).toBe("£50,000");      // the owner's message stays
+    expect(failed.textContent).toContain("That didn't go through.");
+    expect(card().querySelector("[data-question-turn]")).toBeTruthy();      // the question is still the one on screen
+    fail = false;
+    await click(within(failed).getByRole("button", { name: "Try again" }));
+    const again = posts(/\/inputs$/);
+    expect(again.length).toBe(3);
+    expect(again[2].body.client_message_id).toBe(sent[0].body.client_message_id);      // the same message: answered once
+    expect(card().querySelector("[data-turn-failed]")).toBeNull();
   });
 });

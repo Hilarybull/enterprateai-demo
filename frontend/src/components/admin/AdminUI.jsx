@@ -62,7 +62,8 @@ export const ADMIN_NAV = [
     { key: "research", label: "Research & Development", subtitle: "Research notes", icon: "beaker" },
   ] },
   { group: "Support", items: [{ key: "support", label: "Support messages", subtitle: "Messages from users", icon: "chat" }] },
-  { group: null, items: [{ key: "ai-usage", label: "AI usage", subtitle: "Calls, tokens and cost", icon: "spark" }] },
+  { group: null, items: [{ key: "ai-usage", label: "AI usage", subtitle: "Calls, tokens and cost", icon: "spark" },
+    { key: "research-diagnostics", label: "Research diagnostics", subtitle: "Queries, sources and drops per run", icon: "beaker" }] },
 ];
 
 /** The sidebar list: the app sidebar's item (icon tile, title, subtitle, brand-50 pill when current), in groups. */

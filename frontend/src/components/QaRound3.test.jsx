@@ -55,10 +55,11 @@ describe("PF3 the premium research, walked through in the browser", () => {
     const cta = screen.getByRole("button", { name: "Resolve my 1 launch blocker" });
     await act(async () => { fireEvent.click(cta); fireEvent.click(cta); });      // a double click: one quote, never two
     expect(calls.filter((c) => /\/premium\/quote$/.test(c.path)).length).toBe(1);
-    const confirm = await screen.findByRole("group", { name: "Before I start" });
-    expect(confirm.querySelector("[data-fv-cost]").textContent).toBe("2 AI Credits for each field the AI fills in, up to 2 fields (4 credits at most). You have 20. Worked-out figures and questions are free.");
+    const confirm = await screen.findByRole("dialog", { name: "Before I start" });      // a modal on the page (F-2, F-3)
+    expect(confirm.querySelector("[data-fv-cost]").textContent).toBe("Research your gaps. Up to 4 credits, and you only pay for what I find. You have 20.");
+    expect(confirm.querySelector("[data-fv-plan]")).toBeNull();      // no "I'll answer each gap first" line, and no balance
     expect(calls.some((c) => /\/premium$/.test(c.path))).toBe(false);          // nothing has started yet
-    await click(within(confirm).getByRole("button", { name: "Start the research" }));
+    await click(within(confirm).getByRole("button", { name: "Start" }));
     expect(calls.filter((c) => /\/premium$/.test(c.path)).length).toBe(1);
     const review = screen.getByRole("region", { name: "Review the research" });
     const items = review.querySelectorAll("[data-research-item]");
@@ -103,12 +104,12 @@ describe("PF3 the premium research, walked through in the browser", () => {
       start: () => ({ started: true, research: withQuestions }), review: () => ({ research: adopted, result: RESULT }) });
     await toResult();
     await click(screen.getByRole("button", { name: "Resolve my 1 launch blocker" }));
-    const confirm = await screen.findByRole("group", { name: "Before I start" });
+    const confirm = await screen.findByRole("dialog", { name: "Before I start" });      // a modal on the page (F-2, F-3)
     expect(confirm.querySelector("[data-not-connected]").textContent).toMatch(/^Research isn't connected yet/);
-    expect(confirm.querySelector("[data-fv-cost]").textContent).toBe("No AI Credits. Working out and asking are free.");
-    await click(within(confirm).getByRole("button", { name: "Start the research" }));
+    expect(confirm.querySelector("[data-fv-cost]").textContent).toBe("Research your gaps. Free.");
+    await click(within(confirm).getByRole("button", { name: "Start" }));
     const review = screen.getByRole("region", { name: "Review the research" });
-    expect(review.querySelector("[data-not-connected]")).toBeTruthy();
+    expect(review.querySelector("[data-research-error]").textContent).toContain("Research isn't available right now. Nothing was charged.");
     expect(review.querySelector("[data-research-counts]").textContent).toBe("0 researched · 0 estimated · 0 already on record · 1 calculated · 2 to answer · 0 sources");
     // The draft first, on its own; the inputs open with "Check or review inputs".
     expect(review.querySelector("[data-funding-drafts] [data-route='loan']").textContent).toContain("Start Up Loans · 2026");
@@ -156,5 +157,23 @@ describe("E8 one entitlement", () => {
     const livePlan = TOOLS.find((t) => t.id === "live_plan");
     expect(toolAccess(livePlan, { subscription: sub, platformGrants: [] }).state).toBe("available");      // no "Decision Engine plan · Upgrade"
     expect(toolAccess(livePlan, { subscription: effectiveSubscription({ plan_key: "explorer", status: "active" }), platformGrants: [] }).state).toBe("upgrade");
+  });
+});
+
+describe("F-4 research that finds nothing", () => {
+  it("says so in one line, shows no empty route sections, and nothing is charged", async () => {
+    const empty = { ...RESEARCH, goal: "need_funding", charged: 0, items: [
+      { id: "q1", kind: "question", criterion: "route", field: "route_grant", label: "Grants", question: "I looked, and found nothing I could point to. Do you know? (grants)", type: "text" }],
+      counts: { researched: 0, estimated: 0, calculated: 0, reused: 0, asked: 1, sources: 0 },
+      deliverables: { use_of_funds: null, forecast: null, evidence_gaps: [], executive_summary: "",
+        routes: ["equity", "loan", "grant"].map((r) => ({ route: r, name: r, what_it_is: "", local: null, sources: [], preferred: false })) } };
+    mockApi({ quote: ALLOWED, start: () => ({ started: true, research: empty }) });
+    await toResult();
+    await click(screen.getByRole("button", { name: "Resolve my 1 launch blocker" }));
+    await click(within(await screen.findByRole("dialog", { name: "Before I start" })).getByRole("button", { name: "Start" }));
+    const review = screen.getByRole("region", { name: "Review the research" });
+    expect(review.querySelector("[data-research-empty]").textContent).toBe("I couldn't find anything useful this time, so nothing was charged.");
+    expect(review.querySelector("[data-routes]")).toBeNull();
+    expect(review.textContent).not.toContain("Nothing specific found with a source yet");
   });
 });

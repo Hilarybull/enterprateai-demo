@@ -688,40 +688,18 @@ STRICT CONSTRAINTS:
 
 
 async def _call_claude(prompt: str, *, user_id: str = "", feature: str = "idea_validation.market_research", max_tokens: int = 4096) -> dict:
+    """The synthesis, through the one AI gateway (Claude first, then the other configured provider on an error), never one
+    provider alone. Its usage is recorded by the provider client that served it."""
+    from app.shared.llm.openai_client import AutoLLMClient
     settings = get_settings()
-    if not settings.claude_api_key:
-        logger.warning("Claude API key missing in settings.")
+    if not (settings.claude_api_key or settings.openai_api_key):
+        logger.warning("No AI provider is configured.")
         return {}
-    headers = {
-        "x-api-key": settings.claude_api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    body = {
-        "model": settings.claude_model or "claude-3-5-sonnet-20241022",
-        "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    logger.info("Calling Claude with model: %s", body["model"])
+    depth = 0
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=180.0, write=15.0, pool=10.0)) as client:
-            response = await client.post(CLAUDE_BASE, headers=headers, json=body)
-        if response.status_code != 200:
-            logger.error("Claude API error: status=%s, body=%s", response.status_code, response.text)
-            return {}
-        data = response.json()
-        usage = data.get("usage") if isinstance(data, dict) and isinstance(data.get("usage"), dict) else {}
-        await record_ai_usage(
-            user_id=user_id or None,
-            feature=feature,
-            provider="anthropic",
-            model=body["model"],
-            input_tokens=int(usage.get("input_tokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or 0),
-            total_tokens=int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0),
-            request_id=data.get("id") if isinstance(data, dict) else None,
-        )
-        text = data["content"][0]["text"].strip()
+        res = await AutoLLMClient(user_id=user_id or None).generate_text(system="Reply with one JSON object only.", prompt=prompt, feature=feature,
+                                                                       max_tokens=max_tokens)
+        text = (res.text or "").strip()
         # Strip markdown fences
         if text.startswith("```"):
             lines = text.splitlines()

@@ -87,6 +87,7 @@ export default function CreditsPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
   const [transactions, setTransactions] = useState([]);
+  const [actions, setActions] = useState(null);      // P2.17: one plain line per action, from the server
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -102,6 +103,7 @@ export default function CreditsPage() {
     try {
       const data = await apiRequest("/credits/transactions?limit=200", "GET");
       setTransactions(Array.isArray(data?.transactions) ? data.transactions : []);
+      setActions(Array.isArray(data?.actions) ? data.actions : null);
     } catch (e) {
       setError("Failed to load transaction history.");
     } finally {
@@ -199,6 +201,25 @@ export default function CreditsPage() {
           <div className="py-12 text-center text-sm text-slate-400">No transactions found.</div>
         ) : (
           <>
+            {actions && !filterFeature && !filterType ? (
+              <ul className="divide-y divide-slate-100" data-credit-actions>
+                {actions.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((a) => (
+                  <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-[13px]" data-credit-action>
+                    <span className="min-w-0">
+                      <span className="font-semibold text-slate-800">{a.label}</span>
+                      {a.detail && <span className="text-slate-500"> · {a.detail}</span>}
+                      {a.source && <span className="text-slate-400"> · {a.source}</span>}
+                      <span className="block text-[11px] text-slate-400">{a.at ? new Date(a.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                    </span>
+                    <span className="flex items-center gap-3">
+                      <span className={`font-bold tabular-nums ${a.credits > 0 ? "text-emerald-600" : a.credits < 0 ? "text-rose-600" : "text-slate-500"}`}>
+                        {a.credits > 0 ? `+${a.credits}` : a.credits < 0 ? `${Math.abs(a.credits)} credits` : "0"}</span>
+                      {a.status && a.credits <= 0 && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10.5px] font-semibold text-slate-600">{a.status}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -246,6 +267,7 @@ export default function CreditsPage() {
                 </tbody>
               </table>
             </div>
+            )}
             {totalPages > 1 && (
               <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
                 <span className="text-xs text-slate-400">

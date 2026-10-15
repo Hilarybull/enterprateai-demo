@@ -331,9 +331,10 @@ def test_growth_suggestions_keep_at_most_two_records_items_under_the_attention_l
     d = build(env)
     assert d["context"]["business_stage"] == "growth"
     sug = d["agent"]["suggestions"]
-    assert len(sug) == 4 and sug[0]["key"] == "attention" and sug[0]["text"] == "1 task needs attention."
-    assert sum(1 for x in sug if not x["key"].startswith("stage_") and x["key"] != "attention") == 2
-    assert sug[3]["text"] == "Show me a 5% and a 10% price change"       # a stage item fills the rest: an offer while nothing runs
+    # A reminder with no address goes to Needs Approval flagged "Email needed" (QA, 15 Oct), not to Needs attention.
+    assert len(sug) == 4 and sug[0]["key"] == "approvals" and sug[0]["text"] == "1 approval waiting for you."
+    assert sum(1 for x in sug if not x["key"].startswith("stage_") and x["key"] not in ("attention", "approvals")) <= 2
+    assert sug[3]["key"].startswith("stage_")       # a stage item fills the rest
     assert [x["label"] for x in d["agent"]["shortcuts"]] == ["Pricing Scenario", "Quote to Invoice", "Risk & Concentration", "Opportunities"]
     assert "pricing, capacity, new offers or expansion" in d["agent"]["placeholder"]
 
@@ -489,8 +490,9 @@ def test_the_agent_panel_separates_approvals_from_tasks_needing_attention():
         env.submit(capability="payment_followup", channel="ui_action", params={"invoice_id": inv["id"]})
     agent = build(env)["agent"]
     texts = {s["key"]: s for s in agent["suggestions"]}
-    assert "approvals" not in texts and agent["needs_approval_count"] == 0 and agent["needs_attention_count"] == 2
-    assert texts["attention"]["text"] == "2 tasks need attention." and texts["attention"]["action"] == {"to": "/agent?tab=needs_attention"}
+    # Drafts with no address are approvals flagged "Email needed" (QA, 15 Oct): never tasks stuck in Needs attention.
+    assert agent["needs_approval_count"] == 2 and agent["needs_attention_count"] == 0
+    assert texts["approvals"]["text"] == "2 approvals waiting for you." and "attention" not in texts
 
     env2 = Env()
     operating(env2)

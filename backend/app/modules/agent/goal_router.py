@@ -57,6 +57,18 @@ def _allow(request: Request, bucket: str = "starts", limit: int | None = None) -
         _STARTS.clear()
 
 
+AI_TURNS_PER_IP = 120      # signed-out intake turns read by the model, per address per hour; past it the rules read them
+
+
+def _within(request: Request, bucket: str, limit: int) -> bool:
+    """As _allow, without refusing: True while this address is under the limit (and counts this one)."""
+    try:
+        _allow(request, bucket=bucket, limit=limit)
+        return True
+    except HTTPException:
+        return False
+
+
 class StartIn(BaseModel):
     text: str | None = Field(default=None, max_length=500)
     key: str | None = Field(default=None, max_length=64)                 # a homepage goal or quick task
@@ -66,6 +78,12 @@ class StartIn(BaseModel):
 class InputsIn(BaseModel):
     answers: dict[str, Any] = Field(default_factory=dict)
     confirm: bool = False      # "that's right": accept what was read from the visitor's own sentence
+    # The reply as typed, and the question it answers: read in full by the Agent's intake turn (every slot it gives a value for).
+    message: str | None = Field(default=None, max_length=3000)
+    asked: str | None = Field(default=None, max_length=64)
+    picked: str | None = Field(default=None, max_length=200)      # a chip's words, when the answer was a chip
+    # The page's own id for this message: a retry of the same message is answered once (never two bubbles, never two turns).
+    client_message_id: str | None = Field(default=None, max_length=64)
 
 
 class EmailIn(BaseModel):
@@ -148,6 +166,7 @@ class EventIn(BaseModel):
     entry_mode: str | None = Field(default=None, max_length=20)
     key: str | None = Field(default=None, max_length=64)
     where: str | None = Field(default=None, max_length=20)      # "app" or "homepage": which surface it happened on (QA PF7)
+    ms: int | None = Field(default=None, ge=0, le=120000)      # first_question_shown: how long it took, a number only
 
 
 class ResumeIn(BaseModel):
@@ -193,11 +212,31 @@ async def read_session(session_id: str):
 
 
 @router.post("/task-sessions/{session_id}/inputs")
-async def session_inputs(session_id: str, body: InputsIn):
+async def session_inputs(session_id: str, body: InputsIn, request: Request):
     session = await _session(session_id)
     if session["state"] == goals.ABANDONED:
         raise HTTPException(status_code=410, detail="This task has expired. Start again from the homepage.")
-    return goals.public(await goals.add_inputs(get_store(), session, body.answers, confirm=body.confirm))
+    # Signed out, the model reads a limited number of turns per address; past it the rules read them (the chat carries on).
+    rules_only = bool(body.message) and not session.get("user_id") and not _within(request, "ai_turns", AI_TURNS_PER_IP)
+    mid = body.client_message_id
+    if mid and mid in (session.get("seen_message_ids") or []):
+        return goals.public(session)      # the same message again (a retry): already answered
+    try:
+        out = await goals.add_inputs(get_store(), session, body.answers, confirm=body.confirm, message=body.message, asked=body.asked,
+                                     rules_only=rules_only, picked=body.picked)
+    except Exception as e:      # noqa: BLE001 - P1.8: the cause logged, then the rules read it (never a lost message)
+        logger.warning("intake turn failed for session %s (%s: %s): reading it with the rules instead", session_id[:8], type(e).__name__, e, exc_info=True)
+        session = await _session(session_id)      # as stored: nothing half-applied
+        try:
+            out = await goals.add_inputs(get_store(), session, body.answers, confirm=body.confirm, message=body.message, asked=body.asked,
+                                         rules_only=True, picked=body.picked)
+        except Exception as e2:      # noqa: BLE001
+            logger.error("intake turn failed twice for session %s: %s: %s", session_id[:8], type(e2).__name__, e2, exc_info=True)
+            raise HTTPException(status_code=503, detail={"code": "turn_failed", "message": "That didn't go through. Try again."}) from e2
+    if mid:
+        out["seen_message_ids"] = list(out.get("seen_message_ids") or [])[-19:] + [mid]
+        await get_store().put(out)
+    return goals.public(out)
 
 
 @router.post("/goal-events", status_code=202)
@@ -212,7 +251,7 @@ async def goal_event(body: EventIn, request: Request):
     key = body.key if body.key in goals._BY_KEY else None
     where = body.where if body.where in ("app", "homepage") else None
     await goals.track(get_store(), body.name, session, entry_mode=None if session else mode, goal_key=None if session else key,
-                      **({"where": where} if where else {}))
+                      **({"where": where} if where else {}), **({"ms": body.ms} if body.ms is not None and body.name == "first_question_shown" else {}))
     return {"ok": True}
 
 
@@ -307,12 +346,50 @@ async def session_first_value(session_id: str, user=Depends(get_current_user)):
         pass
     # The premium step: the plan is checked first, and only then credits (PRD 4.1). It is asked for only when chosen.
     result["premium_gate"] = first_value.premium_gate(result, entitled=plan != "explorer")
+    from app.modules.agent import research as _research
+    if session.get("goal_key") in _research.CAPABILITY:
+        result["research"] = _research.research_state(data, session["goal_key"])      # which button the result shows
+    # §2 (R3): the launch or funding readiness the business already has is the one shown beside it, never a second score.
+    from app.modules.agent import assessment_summary
+    linked = (session.get("handoff") or {}).get("subject_id")
+    kind = assessment_summary.KIND_OF_GOAL.get(session.get("goal_key") or "")
+    if session.get("business_id") and kind and (kind == "funding" or linked):      # P0.6b: a launch result shows only its own initiative
+        result["assessment"] = await assessment_summary.current(get_orchestrator(), user["id"], session["business_id"],
+                                                                assessment_summary.KIND_OF_GOAL[session["goal_key"]], user.get("email"),
+                                                                subject_id=(session.get("handoff") or {}).get("subject_id"))
     await goals.track(get_store(), "first_value_shown", session)
-    return {"session_id": session["id"], "goal_key": session.get("goal_key"), "result": result}
+    return {"session_id": session["id"], "goal_key": session.get("goal_key"), "business_id": session.get("business_id"), "result": result}
+
+
+@router.get("/businesses/{business_id}/first-results")
+async def first_results(business_id: str, user=Depends(get_current_user)):
+    """Agent Centre > Results: the latest first result of each check on this business (the dashboard's, a quick check's, or
+    one updated by adopted research), newest first. Kept after it is dismissed or saved for later on the dashboard."""
+    data = await _business_for(user, business_id)
+    found: dict[str, dict] = {}
+    for goal, rec in (data.get("quick_check_answers") or {}).items():
+        if isinstance(rec, dict) and isinstance(rec.get("result"), dict):
+            found[goal] = {"goal_key": goal, "at": rec.get("at"), "result": rec["result"], "adopted": None}
+    for goal, versions in (data.get("assessment_datasets") or {}).items():
+        full = [v for v in versions or [] if isinstance(v, dict) and isinstance(v.get("full_result"), dict)]
+        if full:
+            latest = max(full, key=lambda v: str(v.get("created_at") or ""))
+            if str(latest.get("created_at") or "") >= str((found.get(goal) or {}).get("at") or ""):
+                found[goal] = {"goal_key": goal, "at": latest.get("created_at"), "result": first_value.after_review(goal, latest["full_result"], latest),
+                               "adopted": latest.get("version")}
+    items = []
+    for row in found.values():
+        result = {**row["result"], **first_value.at_a_glance(row["result"])}
+        from app.modules.agent import research as _research
+        if row["goal_key"] in _research.CAPABILITY:
+            result["research"] = _research.research_state(data, row["goal_key"])
+        items.append({**row, "result": result, "headline": result.get("headline"), "band": result.get("band")})
+    return {"items": sorted(items, key=lambda r: str(r.get("at") or ""), reverse=True)}
 
 
 class QuickCheckIn(BaseModel):
     answers: dict[str, Any] = Field(default_factory=dict)
+    progress_key: str | None = Field(default=None, max_length=64)      # the page's key for live progress while it researches
 
 
 async def _business_for(user: dict, business_id: str) -> dict:
@@ -379,9 +456,14 @@ async def quick_check_attach(business_id: str, body: QuickCheckIn, user=Depends(
     svc = service_for(get_orchestrator())
     a = body.answers or {}
     plans = await _launch_plans(user, business_id)
+    # Several launches are allowed (the owner's QA, 15 Oct): the answers go onto the plan for THIS offering, or a new plan
+    # (a draft) is made from them; never onto another launch's plan.
+    said = " ".join(str(a.get("sell") or "").lower().split())
+    norm = lambda t: " ".join(str(t or "").lower().split())      # noqa: E731
+    same = [p for p in plans if said and (norm(p.get("name") or p.get("title")) == said or said in norm(p.get("name") or p.get("title")))]
     try:
-        if plans:
-            plan = plans[0]
+        if same:
+            plan = same[0]
             full = await svc.get_subject(user["id"], business_id, rr.LAUNCH, plan["id"], user.get("email"))
             current = (full.get("data") or full) if isinstance(full, dict) else {}
             changes = {field: str(a[key]).strip() for key, field in _LAUNCH_FIELDS if str(a.get(key) or "").strip() and not current.get(field)}
@@ -469,25 +551,36 @@ async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict 
     link = research.health()
     # QA R7-1: said before it starts: what will be researched, worked out and asked, and whether research is connected.
     base = {"capability": capability, "label": result["premium_next_action"]["label"], "blockers": len(result["blockers"]),
+            "action": research.ACTION_NAME.get(goal_key, result["premium_next_action"]["label"]), "variable": True,
             "topics": [t["label"] for t in topics], "connected": link["connected"],
+            # What the research is looking at, said while it works ("grants for a small transport business in the UK").
+            "looking_at": research.looking_at(topics, research.context_of(data, i)),
             "not_connected": None if link["connected"] or not topics else
-            f"{research.NOT_CONNECTED}. What can be worked out from your figures, and asked, still is; nothing is charged.",
+            "Research isn't available right now. What I can work out from your figures still will be, and nothing is charged.",
             "plan": {"research": sum(1 for t in topics if not t.get("number")) if link["connected"] else 0,
                      "estimate": sum(1 for t in topics if t.get("number")) if link["connected"] else 0,
                      "worked_out": len(waiting), "asked": len(items)}}
+    # The same research within 30 days is opened again, free: no quote, no hold, no charge (the owner's QA, 15 Oct).
+    fp = research.fingerprint_of(answers or {}, {k: v for k, v in i.items() if not k.startswith("_")}, [t["topic"] for t in topics],
+                                 research.context_of(data, i).get("country"))
+    again = research.reusable(data, goal_key, fp)
+    if again:
+        return {**base, "allowed": True, "reuse": again["id"], "cost": 0, "max": 0, "balance": None,
+                "existing": {"at": again["created_at"][:10], "findings": (again.get("counts") or {}).get("researched", 0)}}
     if not agent_config.plan_allows(plan, capability):
         need = agent_config.CAPABILITY_MIN_PLAN.get(capability) or "starter_insight"
-        return {**base, "allowed": False, "gate": first_value.premium_gate(result, entitled=False),
+        return {**base, "allowed": False, "gate": first_value.premium_gate(result, entitled=False, feature=base["action"],
+                                                                         plan=agent_config.PLAN_LABEL.get(need, need)),
                 "refusal": {"minimum_plan": need, "minimum_plan_label": agent_config.PLAN_LABEL.get(need, need)}}
-    # Each field the AI fills (looked up, or estimated from a benchmark) is charged; what is worked out from the owner's
-    # figures, and every question, is free (Credit System v2 §6). Each topic fills one field at most: that is the most it costs.
-    per_field = await orch.rt.meter.cost(research.FEATURE) if (topics and link["connected"]) else 0
-    most = per_field * len(topics)
+    # One price for the run, the check's own on the price list (credit allocation v2); charged only when it finds something
+    # with a checked source. What is worked out from the owner's figures, and every question, is free (Credit System v2 §6).
+    price = await orch.rt.meter.cost(research.feature_of(goal_key)) if (topics and link["connected"]) else 0
     balance = await orch.rt.meter.balance(user["id"])
-    if per_field and balance is not None and balance < per_field:
-        return {**base, "allowed": False, "cost": most, "per_field": per_field, "balance": balance, "gate": first_value.premium_gate(result, entitled=True, credits=0)}
-    return {**base, "allowed": True, "cost": most, "per_field": per_field, "fields_max": len(topics) if per_field else 0, "balance": balance,
-            "after": None if balance is None else balance - most}
+    if price and balance is not None and balance < price:
+        return {**base, "allowed": False, "cost": price, "max": price, "balance": balance,
+                "gate": first_value.premium_gate(result, entitled=True, credits=balance, cost=price)}
+    return {**base, "allowed": True, "cost": price, "max": price, "per_finding": research.per_finding(price, len(topics)), "balance": balance,
+            "after": None if balance is None else balance - price}
 
 
 @router.post("/businesses/{business_id}/quick-check/{goal_key}/premium/quote")
@@ -507,7 +600,9 @@ async def quick_check_premium(business_id: str, goal_key: str, body: QuickCheckI
     quote = await _premium_quote(user, goal_key, result, answers, data)
     if not quote["allowed"]:
         return {"started": False, "gate": quote["gate"], "quote": quote}
-    run = await research.start(get_orchestrator(), user=user, business_id=business_id, goal=goal_key, answers=answers, data=data)
+    run = await research.start(get_orchestrator(), user=user, business_id=business_id, goal=goal_key, answers=answers, data=data,
+                               progress_key=body.progress_key)
+    run = {**run, "balance": await get_orchestrator().rt.meter.balance(user["id"])}
     await goals.track(get_store(), "premium_started", {"id": run["id"], "goal_key": goal_key, "events": []})
     return {"started": True, "research": run, "quote": quote, "run_id": run["id"], "capability": quote["capability"]}
 
@@ -534,18 +629,208 @@ async def session_premium_quote(session_id: str, user=Depends(get_current_user))
 
 
 @router.post("/task-sessions/{session_id}/premium")
-async def session_premium(session_id: str, user=Depends(get_current_user)):
+async def session_premium(session_id: str, body: QuickCheckIn | None = None, user=Depends(get_current_user)):
     from app.modules.agent import research
     session, goal, data, answers, result = await _session_premium_context(session_id, user)
     quote = await _premium_quote(user, goal, result, answers, data)
     if not quote["allowed"]:
         return {"started": False, "gate": quote["gate"], "quote": quote}
-    run = await research.start(get_orchestrator(), user=user, business_id=session["business_id"], goal=goal, answers=answers, data=data)
+    run = await research.start(get_orchestrator(), user=user, business_id=session["business_id"], goal=goal, answers=answers, data=data,
+                               progress_key=body.progress_key if body else None)
+    run = {**run, "balance": await get_orchestrator().rt.meter.balance(user["id"])}
     return {"started": True, "research": run, "quote": quote, "run_id": run["id"], "capability": quote["capability"], "business_id": session["business_id"]}
 
 
 class ResearchReview(BaseModel):
     decisions: dict[str, dict] = Field(default_factory=dict)      # {item id: {"decision": "accept"|"edit"|"reject", "value"?}}
+
+
+class CaseEditIn(BaseModel):
+    changes: dict[str, Any] = Field(default_factory=dict)
+
+
+_FIX = {"G1": ("Confirm the amount and date", "goal"), "G2": ("Fix allocations", "finances"), "G3": ("Complete the forecast", "finances"),
+        "G4": ("Resolve the document figures", "documents")}
+
+
+@router.post("/businesses/{business_id}/funding-cases/{case_id}/agent-edit")
+async def agent_edit_case(business_id: str, case_id: str, body: CaseEditIn, user=Depends(get_current_user)):
+    """[Yes, update] on the Agent's confirm: the change written to the case ("Changed via Agent"), the check run again (free),
+    and the reply: "Updated. Score 55 → 42.5. 1 blocker: Allocations reconcile to the target." [Fix allocations] [Open funding case]."""
+    from app.modules.agent import case_edit
+    from app.modules.readiness import rules as rr
+    from app.modules.readiness.service import service_for
+    allowed = {"target_amount", "receipt_date", "route_preference", "purpose", "currency", "stage"}
+    changes = {k: v for k, v in (body.changes or {}).items() if k in allowed}
+    if not changes:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
+    svc = service_for(get_orchestrator())
+    row = await svc.store.get("subjects", case_id)
+    if not row or row.get("business_id") != business_id or row.get("kind") != rr.FUNDING:
+        raise HTTPException(status_code=404, detail="Not found.")
+    before = (await svc.get_subject(user["id"], business_id, rr.FUNDING, case_id, user.get("email")))["summary"]
+    await svc.update_subject(user["id"], business_id, rr.FUNDING, case_id, row["revision"], changes, user.get("email"),
+                             provenance=case_edit.provenance(changes))
+    fresh = await svc.store.get("subjects", case_id)
+    checked = await svc.request_assessment(user["id"], business_id, rr.FUNDING, case_id, idempotency_key=f"agent-edit:{case_id}:{fresh['revision']}",
+                                           email=user.get("email"))
+    result = checked.get("result") or {}
+    after = result.get("score_display")
+    failed = [g for g in result.get("gates") or [] if g.get("state") == "failed"]
+    score = (f"Score {before.get('score') or 'not scored'} → {after or 'not scored'}." if after is not None or before.get("score")
+             else f"Checked again: {str(result.get('headline') or 'not enough evidence for a score yet').rstrip('.')}.")
+    said = (f" {len(failed)} blocker{'s' if len(failed) != 1 else ''}: {failed[0]['label']}." if failed else " No blockers.")
+    to = f"/funding/{case_id}"
+    actions = [{"label": _FIX[g["code"]][0], "to": f"{to}?tab=setup&section={_FIX[g['code']][1]}"} for g in failed[:1] if g.get("code") in _FIX]
+    return {"kind": "answer", "message": f"Updated. {score}{said}".replace("  ", " ").strip(),
+            "actions": actions + [{"label": "Open funding case", "to": f"{to}?tab=results"}], "assessment_id": checked.get("id")}
+
+
+@router.get("/businesses/{business_id}/pinned")
+async def pinned_cards(business_id: str, user=Depends(get_current_user)):
+    """P1.14: what the owner pinned to the dashboard (a funding case, launch plans), live: title, score, verdict, coverage,
+    the pack count, and where to open it. Stored on the record itself (per workspace), at most three shown."""
+    from app.modules.readiness import rules as rr
+    from app.modules.readiness.service import service_for
+    await _business_for(user, business_id)
+    svc = service_for(get_orchestrator())
+    out = []
+    for kind in (rr.FUNDING, rr.LAUNCH):
+        listed = await svc.list_subjects(user["id"], business_id, kind, user.get("email"), include_archived=False)
+        for item in listed.get("items") or []:
+            if not item.get("pinned"):
+                continue
+            summary = item.get("summary") or {}
+            base = f"/{'funding' if kind == rr.FUNDING else 'launch'}/{item['id']}"
+            cls = summary.get("classification")
+            verdict = None
+            if kind == rr.FUNDING:
+                verdict = "Ready to approach funders" if cls == "ready" else "Not ready to approach funders yet"
+            out.append({"id": item["id"], "kind": "funding" if kind == rr.FUNDING else "launch",
+                        "label": f"{'Funding readiness' if kind == rr.FUNDING else 'Launch readiness'} · {item.get('title')}",
+                        "score": summary.get("score"), "classification": cls, "verdict": verdict, "coverage": summary.get("evidence_coverage") or summary.get("coverage"),
+                        "pack": summary.get("pack"), "blockers": summary.get("blockers") or [], "open": f"{base}?tab=results", "updated_at": item.get("updated_at")})
+    out.sort(key=lambda x: str(x.get("updated_at") or ""), reverse=True)
+    return {"items": out[:3], "more": max(0, len(out) - 3)}
+
+
+@router.post("/businesses/{business_id}/pinned/{subject_id}/{action}")
+async def set_pinned(business_id: str, subject_id: str, action: str, user=Depends(get_current_user)):
+    """Unpin (or pin again, for Undo) from the dashboard card."""
+    from app.modules.readiness import rules as rr
+    from app.modules.readiness.service import service_for
+    if action not in ("pin", "unpin"):
+        raise HTTPException(status_code=404, detail="Not found.")
+    await _business_for(user, business_id)
+    svc = service_for(get_orchestrator())
+    row = await svc.store.get("subjects", subject_id)
+    if not row or row.get("business_id") != business_id:
+        raise HTTPException(status_code=404, detail="Not found.")
+    await svc.update_subject(user["id"], business_id, row["kind"], subject_id, row["revision"], {"pinned": action == "pin"}, user.get("email"))
+    return {"ok": True, "pinned": action == "pin"}
+
+
+class DraftDecisionIn(BaseModel):
+    decision: str = Field(..., pattern="^(accept|reject)$")
+
+
+@router.post("/businesses/{business_id}/agent-drafts/{draft_id}/decide")
+async def decide_draft(business_id: str, draft_id: str, body: DraftDecisionIn, user=Depends(get_current_user)):
+    """[Accept] or [Reject] in the draft's header: the draft leaves Needs Approval, and the task that made it reads Done."""
+    from app.modules.agent import drafts
+    await _business_for(user, business_id)
+    orch = get_orchestrator()
+    d = await orch.rt.business.mutate(business_id, lambda data: drafts.decide(data, draft_id, body.decision))
+    if not d:
+        raise HTTPException(status_code=404, detail="Not found.")
+    if d.get("run_id"):
+        r = await orch.rt.store.get_run(d["run_id"])
+        if r:
+            state = {**(r.get("state") or {}), "draft": {"id": d["id"], "status": d["status"]}}
+            await orch.rt.store.update_run(r["id"], {"state": state})
+    return {"draft": d, "message": "Accepted." if body.decision == "accept" else "Rejected. Nothing else was changed."}
+
+
+class ConflictIn(BaseModel):
+    choice: str = Field(..., pattern="^(update|keep|task|other|set:[A-Za-z .'-]{2,60})$")
+
+
+@router.get("/businesses/{business_id}/profile/updates")
+async def profile_updates(business_id: str, user=Depends(get_current_user)):
+    """What the Agent added to the business profile ("I added your country, city and target customer…") and the
+    conflicts waiting for one answer each."""
+    from app.modules.agent import profile_fill
+    data = await _business_for(user, business_id)
+    filled = data.get("profile_filled") or {}
+    conflicts = [c for c in data.get("profile_conflicts") or [] if not c.get("resolved")]
+    asked = profile_fill.country_question(data)
+    return {"filled": filled.get("fields") or [], "message": profile_fill.told(filled.get("fields") or [], data), "source": filled.get("source"),
+            "provenance": data.get("profile_provenance") or {},
+            "conflicts": [{**c, "question": profile_fill.question(c), "options": profile_fill.options(c)} for c in conflicts] + ([asked] if asked else []),
+            "currency_set": (filled.get("fields") or []) == ["currency"]}
+
+
+@router.post("/businesses/{business_id}/profile/updates/seen")
+async def profile_updates_seen(business_id: str, user=Depends(get_current_user)):
+    await _business_for(user, business_id)
+    await get_orchestrator().rt.business.mutate(business_id, lambda d: d.pop("profile_filled", None))
+    return {"ok": True}
+
+
+@router.post("/businesses/{business_id}/profile/keep/{field}")
+async def profile_keep(business_id: str, field: str, user=Depends(get_current_user)):
+    """[Keep] one field (or "all": Keep all, or the panel's X): the value accepted, its hint gone."""
+    from app.modules.agent import profile_fill
+    await _business_for(user, business_id)
+    done = await get_orchestrator().rt.business.mutate(business_id, lambda d: profile_fill.keep(d, field))
+    return {"kept": bool(done)}
+
+
+@router.post("/businesses/{business_id}/profile/redo/{field}")
+async def profile_redo(business_id: str, field: str, user=Depends(get_current_user)):
+    """[Redo] on "Removed": the value put back."""
+    from app.modules.agent import profile_fill
+    await _business_for(user, business_id)
+    done = await get_orchestrator().rt.business.mutate(business_id, lambda d: profile_fill.redo(d, field))
+    return {"redone": bool(done)}
+
+
+@router.post("/businesses/{business_id}/profile/undo/{field}")
+async def profile_undo(business_id: str, field: str, user=Depends(get_current_user)):
+    from app.modules.agent import profile_fill
+    await _business_for(user, business_id)
+    done = await get_orchestrator().rt.business.mutate(business_id, lambda d: profile_fill.undo(d, field))
+    return {"undone": bool(done)}
+
+
+@router.post("/businesses/{business_id}/profile/conflicts/{field}")
+async def profile_conflict(business_id: str, field: str, body: ConflictIn, user=Depends(get_current_user)):
+    from app.modules.agent import profile_fill
+    await _business_for(user, business_id)
+    done = await get_orchestrator().rt.business.mutate(business_id, lambda d: profile_fill.resolve(d, field, body.choice))
+    return {"resolved": bool(done)}
+
+
+@router.get("/research-progress/{key}")
+async def research_progress(key: str, user=Depends(get_current_user)):
+    """While a run researches: each topic's state and sources so far ("Looking at grants in {country}… 4 sources found").
+    The key is the page's own random one; nothing about a business is said beyond the topic labels."""
+    from app.modules.agent import research
+    p = research.PROGRESS.get(key) or {}
+    return {"stage": p.get("stage"), "topics": [{"label": v.get("label"), "state": v.get("state"), "sources": v.get("sources", 0)}
+                                                for v in (p.get("topics") or {}).values()]}
+
+
+@router.get("/businesses/{business_id}/research-runs")
+async def research_runs(business_id: str, goal: str | None = None, user=Depends(get_current_user)):
+    """The saved research for a check (the funding case's Research tab): each run's date, findings and review state, free
+    to open at any time."""
+    data = await _business_for(user, business_id)
+    runs = [r for r in (data.get("research_runs") or {}).values() if isinstance(r, dict) and (not goal or r.get("goal") == goal)
+            and r.get("status") in ("review", "adopted")]
+    return {"runs": [{"id": r["id"], "goal": r.get("goal"), "created_at": r.get("created_at"), "status": r.get("status"), "counts": r.get("counts"),
+                      "findings": sum(1 for x in r.get("items") or [] if x.get("sources")), "charged": r.get("charged", 0)}
+                     for r in sorted(runs, key=lambda r: r.get("created_at") or "", reverse=True)]}
 
 
 @router.get("/businesses/{business_id}/research/{run_id}")
@@ -589,6 +874,27 @@ async def research_review(business_id: str, run_id: str, body: ResearchReview, u
             (research._runs(d).get(run_id) or {})["assessment"] = summary
         await orch.rt.business.mutate(business_id, _keep)
     return {"research": {k: v for k, v in out.items() if k != "result"}, "result": out["result"], "assessment": out.get("assessment")}
+
+
+class UseFigures(BaseModel):
+    figures: dict[str, float] = Field(default_factory=dict)      # {"price": 65}: the review's figures the owner chose
+
+
+@router.post("/businesses/{business_id}/assessment/{kind}/use-figures")
+async def use_review_figures(business_id: str, kind: str, body: UseFigures, user=Depends(get_current_user)):
+    """R2: where the launch plan or funding case already held a different figure, the owner chose the review's: it is
+    updated and checked again. The readiness module checks that they may edit it."""
+    from app.modules.agent import assessment_summary
+    if kind not in ("launch", "funding"):
+        raise HTTPException(status_code=404, detail="Not found.")
+    try:
+        summary = await assessment_summary.use_figures(get_orchestrator(), user, business_id, kind, body.figures,
+                                                       f"use-figures:{uuid.uuid4().hex[:12]}")
+    except Exception as e:      # noqa: BLE001 - no access or no case: said plainly
+        raise HTTPException(status_code=409, detail="That couldn't be updated just now. Nothing was changed.") from e
+    if summary is None:
+        raise HTTPException(status_code=404, detail="There's no case to update.")
+    return {"assessment": summary}
 
 
 class RecordChoice(BaseModel):
@@ -697,6 +1003,39 @@ def _read_answers(goal_key: str, raw: dict | None) -> dict:
     return out
 
 
+def _read_said(said: str, goal_key: str, read: dict) -> dict:
+    """The owner's whole sentence read by the shared intake reader too (P1.10): every figure ("₦15,000 per wash", "it costs
+    me 6,000", "about 120 a month") and, from its first clause, the idea, who it is for and where ("a mobile car wash in
+    Abuja for office workers"). Only what was plainly said; the rest is asked."""
+    import re as _re
+    from app.modules.agent import intake_turn, said as _said
+    slots = goals.questions_for(goal_key)
+    keys = {q["key"] for q in slots}
+    for k, v in intake_turn.rule_read(said, slots, None).items():
+        value = v.get("normalized") if v.get("normalized") is not None else v.get("value")
+        if k in keys and value not in (None, "") and k not in ("description", "sell"):
+            read[k] = value
+    clause = _re.split(r",|\.\s|;", said.split(":", 1)[-1])[0].strip()
+    who = _re.search(r"\bfor\s+([a-z][\w\s'-]{2,60}?)\s*$", clause, _re.I)
+    where = _re.search(r"\b(?:in|around|based in)\s+([A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)?)", clause)
+    if "customer" in keys and who and not read.get("customer"):
+        read["customer"] = who.group(1).strip()
+    if "where" in keys and where and not read.get("where"):
+        read["where"] = where.group(1)
+    idea = _said.idea_in(said) or clause
+    if "," in idea or len(idea) > len(clause) + 20:
+        idea = clause      # only the idea itself: the figures after it are answers of their own
+    if idea:
+        idea = _re.sub(r"\s+for\s+[a-z][\w\s'-]{2,60}$", "", idea, flags=_re.I)
+        idea = _re.sub(r"\s+(?:in|around|based in)\s+[A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)?", "", idea).strip(" ,.")
+        idea = _re.sub(r"^(?:please\s+)?(?:help me\s+|can you\s+)?(?:i\s+(?:want|need|would like)\s+to\s+)?(?:launch|start|validate|test|check|open|run|price)\s+", "", idea, flags=_re.I)
+        idea = _re.sub(r"^(?:a|an|my|our|the)\s+", "", idea, flags=_re.I)
+        for k in ("description", "sell"):
+            if k in keys and (not read.get(k) or len(str(read[k])) > 80):
+                read[k] = idea[:1].upper() + idea[1:]
+    return read
+
+
 @router.get("/businesses/{business_id}/quick-check/{goal_key}")
 async def quick_check_questions(business_id: str, goal_key: str, said: str | None = Query(default=None, max_length=1000),
                                 user=Depends(get_current_user)):
@@ -707,7 +1046,7 @@ async def quick_check_questions(business_id: str, goal_key: str, said: str | Non
     data = await _business_for(user, business_id)
     kind = first_value.ASSESSMENT_OF[goal_key]
     # The owner's own sentence, when they started here from one: read by the same readers as the homepage (QA P5-1).
-    read = {**(await goals.understood_answers(said, goal_key)), **goals.extract(said, goal_key)} if said and said.strip() else {}
+    read = _read_said(said, goal_key, {**(await goals.understood_answers(said, goal_key)), **goals.extract(said, goal_key)}) if said and said.strip() else {}
     # QA R8-8: the latest result for this check (and offering), shown on return instead of asking the questions again.
     last = (data.get("quick_check_answers") or {}).get(goal_key) or {}
     return {"goal_key": goal_key, "headline": first_value.HEADLINE[kind], "value": goals.value_of(goal_key),
@@ -729,7 +1068,14 @@ async def quick_check_result(business_id: str, goal_key: str, body: QuickCheckIn
     result = first_value.assess(goal_key, answers, data)
     try:
         from app.modules.agent import answer_memory
-        await get_orchestrator().rt.business.mutate(business_id, lambda d: answer_memory.remember(d, goal_key, answers, result=result))
+        from app.modules.agent import business as _bz
+        from app.modules.agent import profile_fill
+
+        def _keep(d):
+            answer_memory.remember(d, goal_key, answers, result=result, currency=_bz.currency_of(d))
+            profile_fill.fill(d, answers, goal_key)      # the profile's empty fields, from what was said (P0.4)
+        await get_orchestrator().rt.business.mutate(business_id, _keep)
+        goals._brand_later(get_orchestrator(), business_id, user["id"])
     except Exception:      # noqa: BLE001 - the result stands; the next check simply asks again
         logger.info("quick check: answers for %s not kept", goal_key)
     plan, credits = "explorer", None
@@ -741,9 +1087,14 @@ async def quick_check_result(business_id: str, goal_key: str, body: QuickCheckIn
     result["premium_gate"] = first_value.premium_gate(result, entitled=plan != "explorer", credits=credits if plan != "explorer" else None)
     # §2/§3: the quick check's own score is provisional; where the full assessment exists, its summary is what is shown.
     result["provisional"] = True
+    from app.modules.agent import research as _research
+    if goal_key in _research.CAPABILITY:
+        result["research"] = _research.research_state(data, goal_key, answers=answers)
     from app.modules.agent import assessment_summary
-    if goal_key in assessment_summary.KIND_OF_GOAL:
-        result["assessment"] = await assessment_summary.current(get_orchestrator(), user["id"], business_id, assessment_summary.KIND_OF_GOAL[goal_key], user.get("email"))
+    if assessment_summary.KIND_OF_GOAL.get(goal_key) == "funding":
+        # P0.6b: the business's one funding case is this need's; a launch quick check is about a launch not set up yet, so it
+        # is never shown with another initiative's full check (several launches are allowed).
+        result["assessment"] = await assessment_summary.current(get_orchestrator(), user["id"], business_id, "funding", user.get("email"))
     return {"goal_key": goal_key, "result": result}
 
 
@@ -807,14 +1158,18 @@ async def resume_session(session_id: str, body: ResumeIn | None = None, user=Dep
     return goals.public(session)
 
 
+class PrepareIn(BaseModel):
+    confirmed: bool = False      # the price was shown and Start pressed
+
+
 @router.post("/task-sessions/{session_id}/prepare")
-async def prepare_session(session_id: str, user=Depends(get_current_user)):
+async def prepare_session(session_id: str, body: PrepareIn | None = None, user=Depends(get_current_user)):
     session = await _session(session_id)
     _mine(session, user)
     if goals.public(session)["missing"]:
         raise HTTPException(status_code=409, detail="A few details are still needed before this can be prepared.")
     try:
-        session = await goals.prepare(get_store(), session, get_orchestrator(), user["id"], user.get("email"))
+        session = await goals.prepare(get_store(), session, get_orchestrator(), user["id"], user.get("email"), confirmed=bool(body and body.confirmed))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
     return goals.public(session)

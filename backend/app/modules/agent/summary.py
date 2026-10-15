@@ -61,14 +61,16 @@ def approval_card(a: dict, now: datetime) -> dict:
         "contract": f"Ready to send to {p.get('customer_name')}",
         "invoice": f"Ready to send to {p.get('customer_name')}",
         "payment": f"For {p.get('customer_name')}",
-        "receipt": f"{p.get('invoice_reference')} – {p.get('customer_name')}",
+        "receipt": f"{p.get('invoice_reference')} · {p.get('customer_name')}",
         "proposal": f"Ready to send to {p.get('customer_name')}", "purchase_order": f"Ready to send to {p.get('customer_name')}",
-        "credit_note": f"{p.get('invoice_reference')} – {p.get('customer_name')}",
+        "credit_note": f"{p.get('invoice_reference')} · {p.get('customer_name')}",
     }.get(kind, "")
     return {"type": "approval", "kind": kind, "approval_id": a["id"], "run_id": a["run_id"], "title": title,
             "subtitle": subtitle, "age": _ago(a.get("created_at"), now), "created_at": a.get("created_at"),
             "tool_id": a["tool_id"], "payload": p, "payload_version": a.get("payload_version"),
-            "expires_at": a.get("expires_at")}
+            "expires_at": a.get("expires_at"),
+            # Ready, but the recipient has no address yet: shown with an "Email needed" chip, the field in the drawer.
+            "email_needed": bool(p.get("email_needed") and not p.get("to_email"))}
 
 
 def live_pending(approvals: list[dict], runs: list[dict], now: datetime) -> list[dict]:
@@ -470,8 +472,10 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
                                            str(p.get("id")) for p in (i.get("payments") or []) if not (p.get("receipt") or {}).get("sent_at"))}})
 
     # Only real approvals, newest first. Risk alerts appear in suggestions and risks instead.
-    needs_approval = sorted((approval_card(a, now) for a in pending), key=lambda c: c.get("created_at") or "", reverse=True) \
-        if actor.can_send or actor.can_prepare else []
+    from app.modules.agent import drafts as _drafts
+    # The Agent's drafts waiting for review (a business plan, an idea's validation, a launch plan) sit with the approvals.
+    needs_approval = sorted([*(approval_card(a, now) for a in pending), *(_drafts.card(d) for d in _drafts.pending(data))],
+                            key=lambda c: c.get("created_at") or "", reverse=True) if actor.can_send or actor.can_prepare else []
 
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
     used = sum(1 for r in runs if (r.get("created_at") or "") >= month_start)
@@ -618,8 +622,14 @@ def briefing_of(runs: list[dict], *, since: str | None, needs_approval: int, now
             theirs_this_visit = r.get("source_channel") in _ASKED_BY_OWNER and (r.get("created_at") or "") > since
             if r.get("status") in _DONE and when > since and not theirs_this_visit and not (r.get("state") or {}).get("duplicate_of"):
                 done[r.get("workflow_key") or "task"] = done.get(r.get("workflow_key") or "task", 0) + 1
+    # P2.18: what the Agent spent by itself while the owner was away ("While you were away I checked … (2 credits)").
+    spent = 0
+    if since:
+        from app.modules.agent.autostart import AUTOMATIC_CHANNELS
+        spent = sum(int(c.get("credits") or 0) for r in runs if r.get("source_channel") in AUTOMATIC_CHANNELS and r.get("status") in _DONE
+                    and (r.get("completed_at") or r.get("updated_at") or "") > since for c in (r.get("state") or {}).get("credits") or [])
     return {
-        "last_seen_at": since, "first_visit": since is None and not runs,
+        "last_seen_at": since, "first_visit": since is None and not runs, "spent_while_away": spent,
         "done_since_last_visit": done, "needs_approval_count": int(needs_approval), "needs_input_count": len(waiting),
         "first_input_run_id": waiting[0]["id"] if waiting else None,
         "working_on": ({"run_id": working["id"], "title": working.get("title") or working.get("goal") or "your task", "doing": _doing(working)} if working else None),

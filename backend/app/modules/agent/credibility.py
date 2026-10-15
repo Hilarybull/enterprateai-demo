@@ -102,13 +102,43 @@ def page_date(raw: str) -> str:
         m = re.search(r'(?is)<time[^>]+datetime=["\']([^"\']+)', raw) or re.search(r'"date(?:Published|Modified)"\s*:\s*"([^"]+)"', raw)
         found = m.group(1) if m else ""
     m = re.search(r"(\d{4}-\d{2}-\d{2})", found)
-    return m.group(1) if m else ""
+    return m.group(1) if m else text_date(_strip(raw))
+
+
+_MONTHS = {m: i for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+                                        "november", "december"), 1)}
+_SAID_DATE = re.compile(r"(?i)\b(?:last\s+updated|updated|published|last\s+modified|reviewed)(?:\s+on)?\s*:?\s*(\d{1,2})\s+"
+                        r"(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})")
+
+
+def text_date(text: str) -> str:
+    """A date the page states in its own words ("Last updated 3 April 2025", as gov.uk and council pages print it); "" if none."""
+    m = _SAID_DATE.search(text or "")
+    if not m:
+        return ""
+    day, month, year = int(m.group(1)), _MONTHS[m.group(2).lower()], int(m.group(3))
+    return f"{year:04d}-{month:02d}-{day:02d}" if 1 <= day <= 31 else ""
+
+
+def header_date(value: str | None) -> str:
+    """The Last-Modified header, as ISO; "" when absent or unreadable."""
+    from email.utils import parsedate_to_datetime
+    try:
+        return parsedate_to_datetime(value).date().isoformat() if value else ""
+    except (TypeError, ValueError, IndexError):
+        return ""
+
+
+# A browser's headers: many official and publisher sites refuse an unknown bot (HTTP 403), so a page is read as a person would.
+FETCH_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 "
+                               "EnterprateAI-research",
+                 "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-GB,en;q=0.9"}
 
 
 async def fetch_page(client, url: str) -> dict:
     """{"ok", "url", "text", "title", "publisher", "published"}. Never raises: a page that can't be read is not a source."""
     try:
-        resp = await client.get(url, follow_redirects=True, timeout=FETCH_SECONDS, headers={"User-Agent": "EnterprateAI research check (+https://enterprate.ai)"})
+        resp = await client.get(url, follow_redirects=True, timeout=FETCH_SECONDS, headers=FETCH_HEADERS)
         if resp.status_code != 200 or "html" not in resp.headers.get("content-type", "text/html") and "text" not in resp.headers.get("content-type", ""):
             return {"ok": False, "url": url, "reason": f"HTTP {resp.status_code}"}
         raw = resp.text[:PAGE_BYTES]
@@ -116,7 +146,8 @@ async def fetch_page(client, url: str) -> dict:
         return {"ok": False, "url": url, "reason": type(e).__name__}
     title = _meta(raw, "og:title") or (re.search(r"(?is)<title[^>]*>(.*?)</title>", raw).group(1).strip() if re.search(r"(?is)<title[^>]*>(.*?)</title>", raw) else "")
     return {"ok": True, "url": str(getattr(resp, "url", url)), "text": _strip(raw), "title": html.unescape(title)[:200],
-            "publisher": _meta(raw, "og:site_name", "application-name", "publisher") or host_of(url), "published": page_date(raw)}
+            "publisher": _meta(raw, "og:site_name", "application-name", "publisher") or host_of(url),
+            "published": page_date(raw) or header_date(resp.headers.get("last-modified"))}
 
 
 async def fetch_all(urls: list[str], fetcher=None) -> dict[str, dict]:
@@ -126,8 +157,14 @@ async def fetch_all(urls: list[str], fetcher=None) -> dict[str, dict]:
         pages = await asyncio.gather(*(fetcher(u) for u in urls))
         return dict(zip(urls, pages))
     import httpx
+
+    async def one(client, u):
+        try:
+            return await asyncio.wait_for(fetch_page(client, u), FETCH_SECONDS + 2)
+        except asyncio.TimeoutError:
+            return {"ok": False, "url": u, "why": "took too long to load"}
     async with httpx.AsyncClient() as client:
-        pages = await asyncio.gather(*(fetch_page(client, u) for u in urls))
+        pages = await asyncio.gather(*(one(client, u) for u in urls))
     return dict(zip(urls, pages))
 
 
@@ -167,6 +204,16 @@ def quote_on_page(quote: str, page_text: str) -> bool:
     return bool(q) and len(q.split()) >= 6 and sentences(quote) <= 2 and q.rstrip(".") in _norm(page_text)
 
 
+def quote_close(quote: str, page_text: str) -> bool:
+    """Most of the quote's three-word runs are on the page: what the page says, lightly reworded by the model."""
+    words = _norm(quote).rstrip(".").split()
+    if len(words) < 6:
+        return False
+    page = _norm(page_text)
+    runs = [" ".join(words[n:n + 3]) for n in range(len(words) - 2)]
+    return sum(1 for r in runs if r in page) / len(runs) >= 0.6
+
+
 # ── region and period ─────────────────────────────────────────────────────────────────────────────────────────────
 COUNTRY_WORDS = {"united kingdom": ("uk", "united kingdom", "britain", "great britain", "england", "scotland", "wales", "northern ireland", "gb"),
                  "ireland": ("ireland", "republic of ireland", "roi"), "nigeria": ("nigeria",), "ghana": ("ghana",), "kenya": ("kenya",),
@@ -174,19 +221,82 @@ COUNTRY_WORDS = {"united kingdom": ("uk", "united kingdom", "britain", "great br
                  "australia": ("australia",), "india": ("india",), "germany": ("germany",), "france": ("france",)}
 
 
+# A city names its country when the country itself isn't said ("a car wash in Abuja"). The main business cities only:
+# a place not listed falls back to the country on record.
+CITY_COUNTRY = {
+    "nigeria": ("abuja", "lagos", "ikeja", "lekki", "port harcourt", "ibadan", "kano", "kaduna", "enugu", "benin city", "jos", "ilorin",
+                "abeokuta", "owerri", "uyo", "calabar", "warri", "onitsha", "akure", "asaba", "fct", "garki", "wuse", "maitama"),
+    "ghana": ("accra", "kumasi", "tema", "takoradi", "tamale", "cape coast"),
+    "kenya": ("nairobi", "mombasa", "kisumu", "nakuru", "eldoret"),
+    "south africa": ("johannesburg", "cape town", "durban", "pretoria", "port elizabeth", "gqeberha", "sandton", "soweto"),
+    "united kingdom": ("london", "manchester", "birmingham", "leeds", "liverpool", "bristol", "sheffield", "newcastle", "nottingham",
+                       "leicester", "glasgow", "edinburgh", "cardiff", "belfast", "brighton", "oxford", "cambridge", "york", "reading",
+                       "southampton", "coventry", "bradford", "milton keynes", "aberdeen", "swansea"),
+    "ireland": ("dublin", "cork", "galway", "limerick"),
+    "united states": ("new york", "los angeles", "chicago", "houston", "san francisco", "miami", "atlanta", "boston", "seattle", "dallas"),
+    "canada": ("toronto", "vancouver", "montreal", "calgary", "ottawa"),
+    "india": ("mumbai", "delhi", "bangalore", "bengaluru", "hyderabad", "chennai", "kolkata", "pune"),
+}
+# Google's country (gl) and language for each country's searches.
+SEARCH_LOCALE = {"united kingdom": "uk", "ireland": "ie", "nigeria": "ng", "ghana": "gh", "kenya": "ke", "south africa": "za",
+                 "united states": "us", "canada": "ca", "australia": "au", "india": "in", "germany": "de", "france": "fr"}
+COUNTRY_CURRENCY = {"united kingdom": "GBP", "nigeria": "NGN", "ghana": "GHS", "kenya": "KES", "south africa": "ZAR", "united states": "USD",
+                    "canada": "CAD", "australia": "AUD", "india": "INR", "ireland": "EUR", "germany": "EUR", "france": "EUR"}
+
+
+def search_locale(country: str | None) -> str | None:
+    return SEARCH_LOCALE.get(country_of(country) or "")
+
+
+def currency_of_country(country: str | None) -> str | None:
+    return COUNTRY_CURRENCY.get(country_of(country) or "")
+
+
+# A currency that belongs to one country names it, when nothing else on record does (EUR is shared, so it doesn't).
+CURRENCY_COUNTRY = {"GBP": "united kingdom", "NGN": "nigeria", "GHS": "ghana", "KES": "kenya", "ZAR": "south africa", "USD": "united states",
+                    "CAD": "canada", "AUD": "australia", "INR": "india"}
+
+
+def country_of_currency(code: str | None) -> str:
+    return CURRENCY_COUNTRY.get(str(code or "").upper(), "").title()
+
+
 def country_of(words: str | None) -> str | None:
+    """The country a place names: a country ("Nigeria", "UK") or one of its main cities ("Abuja", "Leeds")."""
     w = " ".join(str(words or "").lower().replace(".", "").split())
+    if not w:
+        return None
     for country, names in COUNTRY_WORDS.items():
         if w in names or any(re.search(rf"\b{re.escape(n)}\b", w) for n in names if len(n) > 2):
+            return country
+    for country, cities in CITY_COUNTRY.items():
+        if any(re.search(rf"\b{re.escape(c)}\b", w) for c in cities):
             return country
     return None
 
 
-def region_note(source_region: str | None, business_country: str | None, business_city: str | None) -> tuple[bool, str]:
-    """(usable, what to say). A figure for another country is never this business's; a national one for a city is said."""
-    theirs, ours = country_of(source_region), country_of(business_country)
-    if not ours or not source_region:
-        return bool(source_region), ("" if source_region else "The region the source covers isn't stated.")
+# Where a source is published, from its address: a US federal site is about the US, a .co.uk one about the UK.
+HOST_COUNTRY = ((".gov.uk", "united kingdom"), (".uk", "united kingdom"), (".gov.ng", "nigeria"), (".ng", "nigeria"), (".gh", "ghana"),
+                (".ke", "kenya"), (".za", "south africa"), (".ie", "ireland"), (".ca", "canada"), (".au", "australia"), (".in", "india"),
+                (".de", "germany"), (".fr", "france"), (".gov", "united states"), (".mil", "united states"), (".us", "united states"))
+
+
+def host_country(url: str | None) -> str | None:
+    host = host_of(url or "")
+    return next((country for end, country in HOST_COUNTRY if host.endswith(end)), None)
+
+
+def region_note(source_region: str | None, business_country: str | None, business_city: str | None, url: str | None = None) -> tuple[bool, str]:
+    """(usable, what to say). A figure for another country is never this business's; a national one for a city is said.
+    With no country on record for the business, no source can be matched to it, so none is used."""
+    theirs, ours = country_of(source_region) or host_country(url), country_of(business_country)
+    if not ours:
+        return False, "The business's country isn't on record, so no source can be matched to where it trades."
+    published = host_country(url)
+    if published and published != ours and not (country_of(source_region) == ours):
+        return False, f"This source is published for {published.title()}, not {business_country}: not used as {business_country} evidence."
+    if not source_region:
+        return (True, "") if published == ours else (False, "The region the source covers isn't stated.")
     if theirs and theirs != ours:
         return False, f"This source covers {source_region}, not {business_country}: not used as {business_country} evidence."
     if business_city and business_city.lower() not in str(source_region).lower():
@@ -205,24 +315,33 @@ def judge(item: dict, cited: list[dict], pages: dict[str, dict], ctx: dict, now:
         page = pages.get(url) or {}
         tier = tier_of(url)
         why = None
+        exact = close = False
         if tier is None:
             why = "not an allowed source (forum, social or AI-written page)"
         elif not page.get("ok"):
-            why = f"the page couldn't be loaded ({page.get('reason') or 'no response'})"
-        elif not quote_on_page(c.get("quote") or "", page.get("text") or ""):
-            why = "the quoted text isn't on the page"
+            why = f"the page couldn't be loaded ({page.get('reason') or page.get('why') or 'no response'})"
+        else:
+            exact = quote_on_page(c.get("quote") or "", page.get("text") or "")
+            close = exact or quote_close(c.get("quote") or "", page.get("text") or "")
+            if not close:      # not on the page even reworded: the model's own words, never a source
+                why = "the quoted text isn't on the page"
+            elif _norm(c.get("quote") or "").rstrip(".") in _norm(page.get("title") or ""):
+                why = "the quote is only the page's title, not what the page says"
         dated = page.get("published") or _iso(c.get("search_date"))
-        if not why and not dated:
-            why = "the page is undated"
-        usable, note = region_note(c.get("region"), ctx.get("country"), ctx.get("city"))
-        if not why and not usable:
-            why = note
+        if not why and dated and dated[:4].isdigit() and int(dated[:4]) < now.year - 3:
+            why = f"the page is from {dated[:4]}, more than 3 years old"
+        usable, note = region_note(c.get("region"), ctx.get("country"), ctx.get("city"), url)
+        if not why and not usable and not note.startswith("The region the source"):
+            why = note      # about another country (or no country on record to match it to): not this business's evidence
+        if not usable and note.startswith("The region the source"):
+            note = "The region this source covers isn't stated."
         if why:
             dropped.append({"url": url, "why": why})
             continue
         checked.append({"url": page.get("url") or url, "title": page.get("title") or c.get("title") or "", "publisher": publisher_of(url, page),
                         "site": host_of(page.get("url") or url),
-                        "date": dated, "accessed": accessed, "quote": " ".join(str(c.get("quote") or "").split())[:400], "tier": tier,
+                        "date": dated or "undated", "undated": not dated, "quote_checked": "exact" if exact else ("close" if close else "unchecked"),
+                        "accessed": accessed, "quote": " ".join(str(c.get("quote") or "").split())[:400], "tier": tier,
                         "tier_label": TIER_WORD[tier], "region": c.get("region") or "", "period": c.get("period") or "", "region_note": note,
                         "figure": _num(c.get("figure"))})
     checked.sort(key=lambda s: s["tier"])
@@ -247,8 +366,12 @@ def judge(item: dict, cited: list[dict], pages: dict[str, dict], ctx: dict, now:
         if len(values) > 1 and not agree:
             return {**out, "kind": "estimated", "state": "estimated", "number": item.get("number") or round(median(values), 2), "range": [lo, hi],
                     "basis": "benchmark", "standard": f"sources disagree ({lo:g} to {hi:g}): the range and both sources are shown", "method": item.get("method") or ""}
-    return {**out, "kind": "estimated", "state": "estimated", "basis": "benchmark",
-            "standard": "not corroborated: needs two agreeing sources or one Tier 1 source", "method": item.get("method") or "a benchmark the model gave, not checked"}
+        # One checked source for this country, its figure on the page: Estimated, with that source and its figure (never
+        # the model's own number).
+        return {**out, "kind": "estimated", "state": "estimated", "basis": "benchmark", "number": figures[0]["figure"],
+                "standard": "not corroborated: needs two agreeing sources or one Tier 1 source", "method": item.get("method") or "taken from one checked source"}
+    # No checked source for this country gives the figure: it is asked, never a number the model gave.
+    return {**out, "kind": "missing", "state": "missing", "sources": [], "number": None, "standard": "no checked source for this country gives the figure"}
 
 
 def _num(v: Any) -> float | None:

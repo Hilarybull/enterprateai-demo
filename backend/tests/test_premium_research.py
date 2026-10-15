@@ -144,8 +144,13 @@ def test_every_gap_answered_first_for_every_workspace_and_check(ws, goal):
     items = r["items"]
     topics = [t for t in r["topics"] if not t.startswith("bench_")]
     found = {x["topic"]: x for x in items if x.get("kind") == "researched"}
-    # Researchable gaps: sourced findings.
-    assert set(topics) <= set(found), (ws, goal, set(topics) - set(found))
+    # Researchable gaps: sourced findings, for the business's own country. With no country on record (nor a currency that
+    # names one), no source can be matched to where it trades: each is asked instead, never filled from another country.
+    if r["context"].get("country"):
+        assert set(topics) <= set(found), (ws, goal, set(topics) - set(found))
+    else:
+        known_now = {k for k, v in (r["inputs"] or {}).items() if v not in (None, "")}
+        assert not found and {x["field"] for x in items if x["kind"] == "question"} >= set(topics) - known_now, (ws, goal)
     assert all(x["sources"] and all(s["site"] and s["url"] and s["title"] for s in x["sources"]) for x in found.values())
     # At most three blank questions when the workspace has basic data.
     blank = [x for x in items if x["kind"] == "question"]
@@ -154,10 +159,12 @@ def test_every_gap_answered_first_for_every_workspace_and_check(ws, goal):
     # No question for a fact the workspace already has.
     known = {k for k, v in (r["inputs"] or {}).items() if v not in (None, "")}
     assert not {x["field"] for x in blank} & known, (ws, goal, {x["field"] for x in blank} & known)
-    # 2 credits for each field the AI filled (researched or a benchmark estimate), once each; the rest is free.
-    filled = [x for x in items if research.billable(x)]
-    assert r["charged"] == 2 * len(filled) and [c[2] for c in meter.charges] == [2] * len(filled)
-    assert all(x.get("charged") == 2 for x in filled)
+    # Credit allocation v2: the check's one price, charged once for the run when something met the Researched standard.
+    price = {"launch": 50, "need_funding": 60, "price_offer": 40, "more_customers": 40, "test_idea": 25}[goal]
+    if any(x["kind"] == research.RESEARCHED for x in items):
+        assert r["charged"] == price and [c[2] for c in meter.charges] == [price]
+    else:
+        assert r["charged"] == 0 and meter.charges == []
     # Every gap has an answer of some kind.
     covered = {c for x in items for c in [x["criterion"], *(x.get("also") or [])]}
     assert set(research.blockers_of(first_value.assess(goal, answers, data))) <= covered | {c for c in covered}
@@ -287,10 +294,10 @@ def test_explorer_is_refused_by_plan_before_any_cost_and_nothing_starts(world): 
 
 def test_not_connected_says_so_and_charges_nothing(world, monkeypatch):  # noqa: F811
     env, _store, client, who = world
-    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 20, OWNER
+    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 100, OWNER
     monkeypatch.setattr(research, "connected", lambda: {"connected": False, "search": False, "model": True})
     q = client.post("/businesses/A/quick-check/launch/premium/quote", json={"answers": {"sell": "Consulting"}}).json()
-    assert q["connected"] is False and q["cost"] == 0 and q["not_connected"].startswith("Research isn't connected yet")
+    assert q["connected"] is False and q["cost"] == 0 and q["not_connected"].startswith("Research isn't available right now.")
     r = client.post("/businesses/A/quick-check/launch/premium", json={"answers": {"sell": "Consulting"}}).json()["research"]
     assert r["research"] == "not_connected" and env.meter.charges == []
 
@@ -313,7 +320,7 @@ def test_a_second_press_while_it_runs_is_the_same_run_never_a_second_charge():
 
 def test_the_result_card_and_the_run_count_the_same_blockers(world, monkeypatch):  # noqa: F811
     env, _store, client, who = world
-    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 20, OWNER
+    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 100, OWNER
     monkeypatch.setattr(research, "_search", Search())
     from app.modules.agent import credibility
     _pages = Pages()
@@ -324,13 +331,13 @@ def test_the_result_card_and_the_run_count_the_same_blockers(world, monkeypatch)
     out = client.post("/businesses/A/quick-check/launch/premium", json={"answers": answers}).json()
     assert out["quote"]["blockers"] == len(card["blockers"]) == len(out["research"]["blockers"])
     filled = [x for x in out["research"]["items"] if research.billable(x)]
-    assert filled and out["research"]["charged"] == 2 * len(filled) and [c[2] for c in env.meter.charges] == [2] * len(filled)
-    assert out["quote"]["per_field"] == 2 and out["quote"]["cost"] >= out["research"]["charged"]      # never more than the quote said
+    assert filled and out["research"]["charged"] == 50 and [c[2] for c in env.meter.charges] == [50]
+    assert out["quote"]["cost"] == 50 and "per_field" not in out["quote"]      # charged exactly what the quote said
 
 
 def test_find_my_best_price_is_research_never_a_price_test(world, monkeypatch):  # noqa: F811
     env, _store, client, who = world
-    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 20, OWNER
+    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 100, OWNER
     monkeypatch.setattr(research, "_search", Search())
     from app.modules.agent import credibility
     _pages = Pages()
@@ -371,9 +378,46 @@ def test_the_owner_s_own_figures_reach_the_score_estimates_do_not():
     assert not any(x.get("basis") == "benchmark" and x.get("decision") == "accepted" and x.get("field") == "fixed_costs" for x in done["items"])
 
 
-def test_out_of_credits_part_way_the_unpaid_fields_are_asked_not_given(monkeypatch):
+def test_out_of_credits_the_ai_filled_fields_are_asked_not_given(monkeypatch):
+    """Credit allocation v2: one price for the run (50 for a launch). With too few credits nothing is charged and what the
+    AI would have filled is asked instead, never shown for free."""
     r, orch, meter, *_ = _start("uk_home_services_pre_launch", "launch", balance=4)
-    paid = [x for x in r["items"] if research.billable(x)]
-    asked = [x for x in r["items"] if x.get("field") and x["kind"] == "question" and "This needs 2 credits; you have 0. Top up." in (x.get("question") or "")]
-    assert len(paid) == 2 and r["charged"] == 4 and [c[2] for c in meter.charges] == [2, 2]
+    asked = [x for x in r["items"] if x.get("field") and x["kind"] == "question" and "This needs 50 credits; you have 4. Top up." in (x.get("question") or "")]
+    assert not [x for x in r["items"] if research.billable(x)] and r["charged"] == 0 and meter.charges == []
     assert asked, "the fields not paid for are asked instead"
+
+
+def _funding_world(world, monkeypatch):  # noqa: F811
+    env, _store, client, who = world
+    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 200, OWNER
+    monkeypatch.setattr(research, "_search", Search())
+    from app.modules.agent import credibility
+    _pages = Pages()
+    monkeypatch.setattr(credibility, "fetch_page", lambda _client, url: _pages(url))
+    monkeypatch.setattr(research, "_default_llm", lambda _u: Model())
+    return env, client
+
+
+ASK = {"amount": 20000, "use": "equipment and working capital", "stage": "trading", "route": "equity", "timing": "In 3 to 6 months", "traction": "Some enquiries"}
+
+
+def test_the_same_research_twice_is_one_charge_and_the_second_press_opens_it(world, monkeypatch):  # noqa: F811
+    """The owner's QA (15 Oct): the same inputs within 30 days are the same research: no second quote, hold or charge."""
+    env, client = _funding_world(world, monkeypatch)
+    client.post("/businesses/A/quick-check/need_funding", json={"answers": ASK})
+    first = client.post("/businesses/A/quick-check/need_funding/premium", json={"answers": ASK}).json()
+    charges = list(env.meter.charges)
+    assert first["started"] and charges
+    quote = client.post("/businesses/A/quick-check/need_funding/premium/quote", json={"answers": ASK}).json()
+    assert quote["reuse"] == first["research"]["id"] and quote["cost"] == 0
+    again = client.post("/businesses/A/quick-check/need_funding/premium", json={"answers": ASK}).json()
+    assert again["research"]["id"] == first["research"]["id"] and env.meter.charges == charges      # opened, never charged again
+    state = client.post("/businesses/A/quick-check/need_funding", json={"answers": ASK}).json()["result"]["research"]
+    assert state["state"] == "review" and state["findings"] > 0 and state["run_id"] == first["research"]["id"]
+    saved = client.get("/businesses/A/research-runs?goal=need_funding").json()["runs"]
+    assert [r["id"] for r in saved] == [first["research"]["id"]]      # kept on the case's Research tab, free to open
+    # The answers change: the research is stale and offered again at its price.
+    changed = {**ASK, "amount": 35000}
+    state = client.post("/businesses/A/quick-check/need_funding", json={"answers": changed}).json()["result"]["research"]
+    assert state["state"] == "stale" and state["max"] == 60 and state["why"] == "Your answers changed since the last research."
+    assert "reuse" not in client.post("/businesses/A/quick-check/need_funding/premium/quote", json={"answers": changed}).json()

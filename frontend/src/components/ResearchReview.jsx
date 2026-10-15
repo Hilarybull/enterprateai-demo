@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { apiRequest } from "../api/client";
 import { refusalMessage } from "../lib/entitlement";
+import { getCurrencySymbol } from "../lib/currencies";
+import { creditCopy } from "../lib/creditCopy";
 
 // QA PF3/R7/R9 (First-Value PRD 8.4, 9.4, 10.4, 11.5, 13): an answer for every gap, before anything is asked.
 //   Researched:  found, with its sources (title, site, date, link) and what it is used for.
@@ -13,6 +15,20 @@ import { refusalMessage } from "../lib/entitlement";
 const CONFIDENCE = (c) => (c >= 0.7 ? "High" : c >= 0.4 ? "Medium" : "Low");
 const STATE_WORD = { met: "Met", partially_met: "Partly met", unmet: "Not met", unknown: "Not known yet" };
 const money = (v) => Number(v || 0).toLocaleString("en-GB", { maximumFractionDigits: 2 });
+// Every figure with its unit: money with its currency, a count with what it counts ("37,000 sales a month").
+const MONEY_FIELDS = new Set(["price", "cost", "fixed_costs", "amount", "cash_in_bank"]);
+const UNIT = { price: "a sale", cost: "a sale", fixed_costs: "a month", amount: "", cash_in_bank: "", monthly_sales: "sales a month",
+  team_size: "people", hours_per_job: "hours a job", hours_per_person: "hours a month each", capacity: "jobs a month" };
+export function unitsOf(field, currency) {
+  if (!(field in UNIT)) return null;
+  return { before: MONEY_FIELDS.has(field) ? getCurrencySymbol(currency) : "", after: UNIT[field] };
+}
+export function withUnit(field, value, currency) {
+  const u = unitsOf(field, currency);
+  const n = Number(String(value ?? "").replace(/,/g, ""));
+  if (!u || String(value ?? "").trim() === "" || !Number.isFinite(n)) return String(value ?? "");
+  return `${u.before}${money(n)}${u.after ? ` ${u.after}` : ""}`;
+}
 const pill = (on) => `rounded-lg border px-2.5 py-1 text-[12px] font-semibold transition ${on ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-white text-slate-600 hover:border-brand-300"}`;
 
 // §5: market and demand evidence stays current for 180 days; price, cost, forecast and capacity for 30.
@@ -48,11 +64,13 @@ function Sources({ list }) {
 }
 
 /** QA R7-3/R9-4: the funding case's drafts: use of funds, a forecast, the routes compared, the gaps and a summary. */
-function FundingDrafts({ d }) {
+function FundingDrafts({ d, currency }) {
   if (!d) return null;
+  const found = (d.routes || []).filter((r) => r.local && r.sources?.length);
   return (
     <div className="mt-3 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[12.5px]" data-funding-drafts>
       <p className="text-[13px] font-semibold text-slate-900">Drafts for your funding case</p>
+      <p className="text-[11.5px] text-slate-500" data-amounts-in>Amounts in {String(currency || "GBP").toUpperCase()} ({getCurrencySymbol(currency)}).</p>
       {d.use_of_funds && (
         <table className="w-full text-left" data-use-of-funds><caption className="text-left font-semibold text-slate-700">Use of funds (estimate)</caption>
           <tbody>{d.use_of_funds.map((r) => <tr key={r.line}><td className="py-0.5 pr-2">{r.line}</td><td className="py-0.5 text-right tabular-nums">{money(r.amount)}</td><td className="py-0.5 pl-2 text-slate-500">{r.how}</td></tr>)}</tbody>
@@ -66,14 +84,15 @@ function FundingDrafts({ d }) {
           </table>
         </div>
       )}
-      <div data-routes>
+      {/* Only the routes the research found something for, with its source: never a row of empty sections. */}
+      {found.length > 0 && <div data-routes>
         <p className="font-semibold text-slate-700">Funding routes compared</p>
-        <ul className="mt-1 space-y-1.5">{(d.routes || []).map((r) => (
+        <ul className="mt-1 space-y-1.5">{found.map((r) => (
           <li key={r.route} data-route={r.route}><span className="font-semibold">{r.name}{r.preferred ? " (your choice)" : ""}:</span> {r.what_it_is}
-            {r.local ? <span className="block text-slate-700">{r.local}</span> : <span className="block text-slate-500">Nothing specific found with a source yet.</span>}
+            <span className="block text-slate-700">{r.local}</span>
             <Sources list={r.sources} />
           </li>))}</ul>
-      </div>
+      </div>}
       {d.evidence_gaps?.length > 0 && (
         <div data-evidence-gaps><p className="font-semibold text-slate-700">Evidence gaps, and how to close each</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-5">{d.evidence_gaps.map((g) => <li key={g.criterion}><span className="font-medium">{g.gap}.</span> {g.how_to_close}</li>)}</ul></div>
@@ -103,6 +122,43 @@ function Figures({ list }) {
  * record says something else: update the Catalogue, or use it for this case only. Nothing is overwritten without asking.
  */
 const CLASS_WORDS = { ready: "Ready", conditionally_ready: "Conditionally ready", not_ready: "Not ready", insufficient_evidence: "Insufficient evidence" };
+
+/** R2: where the launch plan or funding case already held a different figure, it was kept. Said, with a way to use the
+ * review's figure instead (the owner's choice), or keep the case's. */
+function CaseDifferences({ businessId, assessment, currency, onUpdated }) {
+  const [left, setLeft] = useState(() => assessment?.differences || []);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const kind = assessment?.kind;
+  if (!kind || (!left.length && !note && !assessment?.reactivated)) return null;
+  const shown = (d, v) => withUnit(d.field, v, currency);
+  async function use(d) {
+    setBusy(true);
+    try {
+      const out = await apiRequest(`/businesses/${businessId}/assessment/${kind}/use-figures`, "POST", { figures: { [d.field]: Number(d.review_value) } });
+      setLeft((l) => l.filter((x) => x.field !== d.field));
+      setNote(`Your ${kind === "funding" ? "funding case" : "launch plan"} now uses ${shown(d, d.review_value)} for its ${d.label}, and has been checked again.`);
+      onUpdated?.(out?.assessment);
+    } catch (e) {
+      setNote(refusalMessage(e, "That couldn't be updated just now. Nothing was changed."));
+    } finally { setBusy(false); }
+  }
+  return (
+    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[12.5px] text-amber-950" data-case-differences>
+      {assessment?.reactivated && <p data-case-reactivated>Your funding case "{assessment.reactivated}" was archived, so it was reactivated and updated.</p>}
+      {left.map((d) => (
+        <div key={d.field} className="mt-1.5" data-case-difference={d.field}>
+          <p>Your {kind === "funding" ? "funding case" : "launch plan"} has {shown(d, d.case_value)} as its {d.label}; this review has {shown(d, d.review_value)}. The case kept its own.</p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            <button type="button" disabled={busy} onClick={() => use(d)} className={pill(false)}>Use {shown(d, d.review_value)} in the case</button>
+            <button type="button" disabled={busy} onClick={() => setLeft((l) => l.filter((x) => x.field !== d.field))} className={pill(false)}>Keep {shown(d, d.case_value)}</button>
+          </div>
+        </div>
+      ))}
+      {note && <p className="mt-1.5" role="status">{note}</p>}
+    </div>
+  );
+}
 
 export function RecordSync({ businessId, runId, sync }) {
   const [saved, setSaved] = useState(() => (sync?.saved || []).map((x) => ({ ...x, undone: false })));
@@ -145,7 +201,18 @@ export function RecordSync({ businessId, runId, sync }) {
   );
 }
 
-export default function ResearchReview({ businessId, run, onAdopted = null }) {
+/** The review, with Retry when the research couldn't run: a retry replaces the run shown here. */
+export default function ResearchReview({ retry = null, ...props }) {
+  const [run, setRun] = useState(props.run);
+  const [retrying, setRetrying] = useState(false);
+  const again = retry ? async () => {
+    setRetrying(true);
+    try { const next = await retry(); if (next) setRun(next); } finally { setRetrying(false); }
+  } : null;
+  return <ReviewBody key={run.id} {...props} run={run} onRetry={again} retrying={retrying} />;
+}
+
+function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retrying = false }) {
   const items = (run.items || []).map((i) => ({ ...i, kind: i.kind || i.state }));
   const [decisions, setDecisions] = useState({});
   const [busy, setBusy] = useState(false);
@@ -155,7 +222,9 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
   // opens with "Check or review inputs". With no draft to show, the inputs are shown at once.
   const draftOf = (r) => Boolean(r?.deliverables || r?.figures?.length);
   const [reviewing, setReviewing] = useState(() => !draftOf(run));
-  const Draft = ({ r }) => (r.deliverables ? <FundingDrafts d={r.deliverables} /> : <Figures list={r.figures} />);
+  const currency = run?.context?.currency;
+  const searched = Object.values(run?.diagnostics?.topics || {}).flatMap((t) => (t.queries || []).map((q) => q.q)).filter(Boolean).slice(0, 6);
+  const Draft = ({ r }) => (r.deliverables ? <FundingDrafts d={r.deliverables} currency={currency} /> : <Figures list={r.figures} />);
   const toggle = (label) => (
     <button type="button" onClick={() => setReviewing((v) => !v)} aria-expanded={reviewing} data-review-inputs
       className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-slate-700 hover:border-brand-300 hover:text-brand-700">
@@ -230,6 +299,7 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
           </div>
         )}
         </>}
+        <CaseDifferences businessId={businessId} assessment={done.assessment} currency={currency} onUpdated={(a) => a && setDone((d) => ({ ...d, assessment: { ...a, differences: [] } }))} />
         <RecordSync businessId={businessId} runId={done.id} sync={done.record_sync} />
         <p className="mt-2 text-[12px] text-emerald-900">Researched and estimated figures stay marked as such until you confirm them. Nothing else on your business was changed.</p>
       </div>
@@ -238,12 +308,23 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
 
   return (
     <section aria-label="Review the research" className="mt-3 rounded-xl border border-indigo-200 bg-white p-3.5" data-research-review>
-      {run.research === "not_connected" && (
-        <p role="note" data-not-connected className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[12.5px] text-amber-900">
-          Research isn't connected yet, so nothing was looked up and nothing was charged. What can be worked out from your figures, and asked, is below.</p>
-      )}
-      {run.error && <p role="note" data-research-error className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[12.5px] text-rose-800">
-        The research failed just now, so some things couldn't be looked up. Nothing was charged.</p>}
+      {/* Honest outcomes: research couldn't run (a provider down, not set up, a failure), or ran and found nothing, or found
+          something and what it used. Never "nothing found" when it couldn't look. */}
+      {(run.research === "not_connected" || run.error) ? (
+        <div role="note" data-research-error className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[12.5px] text-amber-900">
+          <span>{run.error === "timeout" ? "The research took too long this time. Nothing was charged." : creditCopy.unavailable()}</span>
+          {onRetry && <button type="button" disabled={retrying} aria-busy={retrying} onClick={onRetry} data-research-retry
+            className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[12px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60">{retrying ? "Trying again…" : "Retry"}</button>}
+        </div>
+      ) : run.counts && !run.counts.sources ? (
+        <div role="note" className="mb-2 text-[13px] text-slate-700" data-research-empty>
+          <p>{creditCopy.nothingFound()}</p>
+          {searched.length > 0 && <p className="mt-0.5 text-[12px] text-slate-500" data-searched>I searched for: {searched.join("; ")}.</p>}
+        </div>
+      ) : run.charged > 0 ? (
+        <p role="status" className="mb-2 text-[13px] text-slate-700" data-research-used>
+          {creditCopy.doneVariable({ used: run.charged, findings: new Set(items.filter((i) => i.sources?.length && ["researched", "estimated"].includes(i.kind) && i.basis !== "calculated").map((i) => i.topic)).size, balance: run.balance })}</p>
+      ) : null}
       {run.counts && <p className="text-[12px] text-slate-500" data-research-counts>
         {run.counts.researched} researched · {run.counts.estimated} estimated · {run.counts.reused} already on record · {run.counts.calculated} calculated · {run.counts.asked} to answer · {run.counts.sources} sources</p>}
       {!reviewing && <>
@@ -276,22 +357,23 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
                 <span className="text-[12px] font-semibold text-slate-500">{i.label}</span>
                 <span data-research-state className={`rounded px-1.5 text-[11px] font-semibold ${tone}`}>{word}</span>
                 {(i.kind === "researched" || i.basis === "benchmark") && <span className="text-[11px] text-slate-500" data-research-confidence>Confidence: {CONFIDENCE(i.confidence)}</span>}
-                {i.charged > 0 && <span className="text-[11px] text-slate-500" data-field-cost>{i.charged} credits</span>}
               </div>
               {i.kind === "question" ? (
                 <div className="mt-1.5" data-question>
                   <label className="block text-[13px] text-slate-800" htmlFor={`q-${i.id}`}>{i.question}</label>
                   {i.why && <p className="text-[11px] text-slate-500">{i.why}</p>}
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <input id={`q-${i.id}`} inputMode={i.type === "number" ? "decimal" : undefined} value={d.decision === "answer" ? d.value || "" : ""}
+                    {unitsOf(i.field, currency)?.before && <span className="text-[13px] font-semibold text-slate-600" data-unit-before>{unitsOf(i.field, currency).before}</span>}
+                    <input id={`q-${i.id}`} inputMode={i.type === "number" || unitsOf(i.field, currency) ? "decimal" : undefined} value={d.decision === "answer" ? d.value || "" : ""}
                       onChange={(e) => set(i.id, { decision: "answer", value: e.target.value })}
                       className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-brand-500" />
+                    {unitsOf(i.field, currency)?.after && <span className="shrink-0 text-[12.5px] text-slate-600" data-unit-after>{unitsOf(i.field, currency).after}</span>}
                     <button type="button" aria-pressed={d.decision === "skip"} onClick={() => set(i.id, { decision: "skip", value: "" })} className={pill(d.decision === "skip")}>Skip</button>
                   </div>
                 </div>
               ) : (
                 <>
-                  <p className="mt-1 text-[13px] text-slate-800" data-research-value>{String(i.value)}{i.basis === "benchmark" && i.number != null ? ` (using ${money(i.number)})` : ""}</p>
+                  <p className="mt-1 text-[13px] text-slate-800" data-research-value>{withUnit(i.field, i.value, currency)}{i.basis === "benchmark" && i.number != null && String(i.number) !== String(i.value) ? ` (using ${withUnit(i.field, i.number, currency)})` : ""}</p>
                   {i.working?.length > 0 && <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[12px] text-slate-600" data-working>{i.working.map((w) => <li key={w}>{w}</li>)}</ul>}
                   <Sources list={i.sources} />
                   {i.standard && <p className="mt-1 text-[11px] text-slate-500" data-research-standard>{i.kind === "researched" ? "Researched: " : "Not researched: "}{i.standard}.</p>}
@@ -304,10 +386,18 @@ export default function ResearchReview({ businessId, run, onAdopted = null }) {
                       <button key={k} type="button" aria-pressed={d.decision === k} onClick={() => set(i.id, { decision: k, value: k === "edit" ? d.value ?? String(i.number ?? i.value) : d.value })} className={pill(d.decision === k)}>{label}</button>
                     ))}
                   </div>
-                  {d.decision === "edit" && (
-                    <input aria-label={`Your version: ${i.label}`} value={d.value ?? ""} onChange={(e) => set(i.id, { value: e.target.value })}
-                      className="mt-2 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-brand-500" />
-                  )}
+                  {d.decision === "edit" && (() => {
+                    const u = unitsOf(i.field, currency);
+                    return (
+                      <div className="mt-2 flex items-center gap-2" data-edit-units>
+                        {u?.before && <span className="text-[13px] font-semibold text-slate-600" data-unit-before>{u.before}</span>}
+                        <input aria-label={`Your version: ${i.label}`} value={d.value ?? ""} onChange={(e) => set(i.id, { value: e.target.value })}
+                          inputMode={u ? "decimal" : undefined}
+                          className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-brand-500" />
+                        {u?.after && <span className="shrink-0 text-[12.5px] text-slate-600" data-unit-after>{u.after}</span>}
+                      </div>
+                    );
+                  })()}
                 </>
               )}
             </li>
@@ -337,12 +427,23 @@ export function premiumFlow({ base, body = {}, businessId = null, onError = () =
     try {
       const quote = await apiRequest(`${base}/quote`, "POST", body);
       if (!quote?.allowed) return { gate: quote?.gate };
-      return { confirm: quote, start: async () => {
+      if (quote.reuse) {
+        // The same research within 30 days: opened again, free (no price, no hold, no charge).
+        const out = await apiRequest(base, "POST", body, { timeoutMs: 60000 });
+        if (out?.started) return { research: out.research, render: <ResearchReview businessId={businessId || out.business_id} run={out.research} onAdopted={onAdopted} /> };
+      }
+      const progressKey = `p${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+      const run = async () => {
+        const out = await apiRequest(base, "POST", { ...body, progress_key: progressKey }, { timeoutMs: 180000 });
+        return out;
+      };
+      return { confirm: { ...quote, progressKey }, start: async () => {
         try {
-          const out = await apiRequest(base, "POST", body, { timeoutMs: 180000 });
+          const out = await run();
           if (!out?.started) return { gate: out?.gate };
-          return { research: out.research, render: <ResearchReview businessId={businessId || out.business_id} run={out.research} onAdopted={onAdopted} /> };
-        } catch (e) { onError(refusalMessage(e, "The research couldn't be started just now. Nothing was charged.")); return null; }
+          const retry = async () => { try { const again = await run(); return again?.started ? again.research : null; } catch { return null; } };
+          return { research: out.research, render: <ResearchReview businessId={businessId || out.business_id} run={out.research} onAdopted={onAdopted} retry={retry} /> };
+        } catch (e) { onError(refusalMessage(e, creditCopy.unavailable())); return null; }
       } };
     } catch (e) { onError(refusalMessage(e, "That couldn't be started just now. Nothing was charged.")); return null; }
   };

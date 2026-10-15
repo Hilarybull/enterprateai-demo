@@ -173,11 +173,12 @@ describe("launch plans and funding cases", () => {
   it("shows five placeholder rows for the list, then the list", async () => {
     const request = held();
     globalThis.fetch = vi.fn(() => request.promise);
-    mount("/funding", "funding");
-    const skeleton = screen.getByRole("status", { name: "Loading your funding cases" });
+    // Launch plans: several are allowed, so the list shows (a business's one funding case opens directly instead).
+    mount("/launch", "launch");
+    const skeleton = screen.getByRole("status", { name: "Loading your launch plans" });
     expect(skeleton.querySelectorAll("[data-skeleton-row]").length).toBe(5);
-    await act(async () => { request.json({ enabled: true, can: {}, items: [{ id: "f1", title: "Seed round", status: "draft", target_amount: 50000, currency: "GBP", summary: {} }] }); });
-    expect(await screen.findByText("Seed round")).toBeTruthy();
-    expect(screen.queryByRole("status", { name: "Loading your funding cases" })).toBeNull();
+    await act(async () => { request.json({ enabled: true, can: {}, items: [{ id: "l1", title: "Mobile car wash", status: "draft", target_date: "2027-03-31", summary: {} }] }); });
+    expect(await screen.findByText("Mobile car wash")).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Loading your launch plans" })).toBeNull();
   });
 });

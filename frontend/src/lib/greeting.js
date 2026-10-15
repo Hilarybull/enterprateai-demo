@@ -75,7 +75,8 @@ export function briefingOf(b) {
     const known = done.filter(([k]) => DID[k]).map(([k, n]) => DID[k](n));
     const others = done.filter(([k]) => !DID[k]).reduce((sum, [, n]) => sum + n, 0);
     if (others) known.push(`finished ${plural(others, known.length ? "other task" : "task")}`);
-    return { kind: "done", text: `While you were away I ${list(known)}.` };
+    const spent = Number(b.spent_while_away || 0);      // P2.18: background work that used credits is said, with its cost
+    return { kind: "done", text: `While you were away I ${list(known)}${spent ? ` (${spent} credit${spent === 1 ? "" : "s"})` : ""}.` };
   }
   if (b.first_visit) return { kind: "first", text: "Tell me the first job and I'll get on it." };
   return { kind: "next", text: "What should I work on next?" };

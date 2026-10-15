@@ -5,6 +5,7 @@ import { useAuthStore } from "../store/auth";
 import { apiRequest, apiRequestCached, getApiBaseUrl, invalidateWorkspaceCache } from "../api/client";
 import logoUrl from "../enterprate-logo.png";
 import { useWorkspaceStore } from "../store/workspace";
+import { getAgentSummary } from "../lib/agent";
 import BusinessAssistant from "./BusinessAssistant";
 import WorkspaceCompletion from "./WorkspaceCompletion";
 import { workspaceCompletion } from "../lib/workspaceCompletion";
@@ -49,6 +50,13 @@ function Icon({ name, className = "h-4 w-4" }) {
     return (
       <svg {...base}>
         <path d="M6 6l12 12M18 6L6 18" />
+      </svg>
+    );
+  if (name === "spark")
+    return (
+      <svg {...base}>
+        <path d="M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6z" />
+        <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" />
       </svg>
     );
   if (name === "grid")
@@ -666,8 +674,17 @@ export default function Layout() {
           const newProposals = inboxItems
             .filter((p) => p.status === "SUBMITTED" && !p.viewed_at)
             .map((p) => ({ ...p, _notifType: "proposal" }));
-          setNotifications(visible([...overdueInvoices, ...pendingRfqs, ...newProposals]));
+          setNotifications((had) => visible([...overdueInvoices, ...pendingRfqs, ...newProposals, ...had.filter((n) => n._notifType?.startsWith("agent"))]));
         });
+        // P1.15: what the Agent needs, in the bell too, each opening its Agent Centre tab.
+        getAgentSummary(ws.id).then((sum) => {
+          if (cancelled || !sum) return;
+          const agent = [
+            ...(sum.needs_approval_count ? [{ id: `a${sum.needs_approval_count}`, _notifType: "agent_approval", count: sum.needs_approval_count }] : []),
+            ...(sum.needs_input_count ? [{ id: `i${sum.needs_input_count}`, _notifType: "agent_input", count: sum.needs_input_count }] : []),
+          ];
+          setNotifications((had) => visible([...had.filter((n) => !n._notifType?.startsWith("agent")), ...agent]));
+        }).catch(() => {});
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
         else setDecisionStatus(null);
@@ -744,7 +761,7 @@ export default function Layout() {
   const filteredNav = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
     const visibleNav = IS_LIVE ? NAV.filter((i) => !i.hideOnLive) : NAV;
-    const base = !q ? visibleNav : visibleNav.filter((i) => `${i.label} ${i.subtitle}`.toLowerCase().includes(q));
+    const base = !q ? visibleNav : visibleNav.filter((i) => `${i.label} ${i.subtitle} ${i.keywords || ""}`.toLowerCase().includes(q));
     return base.map((item) => {
       if (item.public) return { ...item, locked: false, planLocked: false };
       const planLocked = !planHasModuleAccess(
@@ -1356,7 +1373,9 @@ export default function Layout() {
                     <div className="max-h-80 overflow-auto">
                       {notifications.length ? (
                         notifications.map((notif) => {
-                          const destination = notif._notifType === "overdue"
+                          const destination = notif._notifType === "agent_approval" ? "/agent?tab=approval"
+                            : notif._notifType === "agent_input" ? "/agent?tab=needs-you"
+                            : notif._notifType === "overdue"
                             ? `/operations?tab=Sales&sub=Invoices`
                             : notif._notifType === "rfq"
                             ? `/operations?tab=Sales&sub=Quotations`
@@ -1371,7 +1390,10 @@ export default function Layout() {
                                 navigate(destination);
                               }}
                             >
-                              {notif._notifType === "overdue" ? (
+                              {notif._notifType?.startsWith("agent") ? (
+                                <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100" data-agent-notification>
+                                  {notif._notifType === "agent_approval" ? `${notif.count} waiting for your approval` : `${notif.count} task${notif.count === 1 ? "" : "s"} need${notif.count === 1 ? "s" : ""} your answer`}</span>
+                              ) : notif._notifType === "overdue" ? (
                                 <>
                                   <div className="flex w-full items-center justify-between gap-2">
                                     <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{notif.customer_name || "Invoice"}</span>

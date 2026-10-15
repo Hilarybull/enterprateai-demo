@@ -33,6 +33,9 @@ from app.modules.idea_validation.service import get_workspace as get_validation_
 from app.modules.idea_validation.schemas import IdeaValidationPayload
 from app.core.config import get_settings
 from app.shared.llm.openai_client import AutoLLMClient, LLMClient, NoopLLMClient, pick_llm_for_user
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_text(s: str | None) -> str:
@@ -1229,11 +1232,11 @@ async def _generate_section(
         res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt, feature=feature or f"blueprint.{label}")
         text = res.text.strip()
         if not text:
-            warnings.append(f"AI returned empty text for: {label}")
+            warnings.append(f"The {label} section came back empty.")
         return text, res.provider, res.model
-    except Exception as e:
-        detail = str(e).strip() or "Unknown error"
-        warnings.append(f"AI generation failed for {label}: {type(e).__name__}: {detail}")
+    except Exception as e:      # noqa: BLE001 - logged for the superadmin; the owner sees a plain sentence
+        logger.warning("blueprint section %s could not be written: %s: %s", label, type(e).__name__, str(e)[:500])
+        warnings.append(f"The {label} section couldn't be written just now.")
         return "", "noop", "none"
 
 

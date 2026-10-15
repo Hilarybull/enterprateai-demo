@@ -88,6 +88,13 @@ export function DashboardContext({ context, saving, onGoal, onStage, freshness, 
             {onRefresh && <> · <button type="button" onClick={onRefresh} disabled={refreshing} className="font-semibold text-brand-600 underline-offset-2 hover:underline disabled:opacity-60">Refresh</button></>}
           </span>
         )}
+        {/* A stage change (the first payment, say) is one compact line in this row, never a banner of its own. */}
+        {context.transition && (
+          <span role="status" data-stage-transition
+            className="order-last basis-full rounded-lg bg-indigo-50 px-3 py-1.5 text-[12.5px] font-medium leading-snug text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-200">
+            {context.transition.message}
+          </span>
+        )}
         <label className="ml-auto flex items-center gap-2 text-slate-500 dark:text-slate-400">
           Current goal
           <select value={context.current_goal || ""} disabled={saving} onChange={(e) => onGoal(e.target.value || null)}
@@ -97,11 +104,6 @@ export function DashboardContext({ context, saving, onGoal, onStage, freshness, 
           </select>
         </label>
       </div>
-      {context.transition && (
-        <p role="status" className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-[13px] text-indigo-900 dark:border-indigo-900/50 dark:bg-indigo-900/20 dark:text-indigo-200">
-          {context.transition.message}
-        </p>
-      )}
     </div>
   );
 }
@@ -115,7 +117,7 @@ export function ValueTile({ kpi, onOpen, wide }) {
   const tone = { emerald: "text-emerald-700", amber: "text-amber-700", rose: "text-rose-700" }[kpi.tone] || "text-slate-950 dark:text-slate-100";
   const words = String(kpi.value ?? "").length > 10;      // a result in words ("Not enough evidence yet"), not a figure
   return (
-    <div className={`flex min-w-0 flex-col rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 ${wide ? "min-[380px]:col-span-2 xl:col-span-1" : ""}`}>
+    <div className={`flex min-w-0 flex-col rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 ${wide ? "sm:col-span-2 xl:col-span-1" : ""}`}>
       <div className="text-[15px] font-medium text-slate-500">{kpi.label}</div>
       {missing ? (
         <>

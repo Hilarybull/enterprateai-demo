@@ -27,7 +27,7 @@ async def create_or_update_profile(
     payload: WorkspaceProfileUpsertRequest,
     user=Depends(get_current_user),
 ):
-    return await upsert_profile(user_id=user["id"], workspace_id=payload.workspace_id, profile=payload.profile)
+    return await upsert_profile(user_id=user["id"], workspace_id=payload.workspace_id, profile=payload.profile, seen=payload.seen)
 
 
 @router.patch("", response_model=WorkspaceProfileResponse)

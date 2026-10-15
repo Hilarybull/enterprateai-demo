@@ -82,6 +82,12 @@ async def _customer(ctx, text: str) -> dict | None:
     return None
 
 
+def _left_for_later(ctx, customer: dict | None) -> bool:
+    """The form answered with the email left empty (the owner's QA, 15 Oct): the draft is made now, and the task waits for the
+    address, in Needs You, when it is sent. Never a failure."""
+    return bool(customer) and bool(ctx.answers) and ("customer_name" in ctx.answers or "customer_id" in ctx.answers)         and not str(ctx.answers.get("customer_email") or "").strip()
+
+
 def _prefill(ctx) -> dict:
     """What the owner already said when they started this from the homepage (PRD-GO-001): shown filled in."""
     given = ctx.params.get("prefill")
@@ -108,7 +114,8 @@ async def _customer_fields(ctx, customer: dict | None, only_if: dict | None = No
         said = await _said_customer(ctx, customer)
         if valid_email(customer.get("email")):
             return said
-        return said + [{"key": "customer_email", "label": f"Email address for {customer['name']}", "type": "email", "required": True, **({"show_if": cond} if cond else {})}]
+        return said + [{"key": "customer_email", "label": f"Email address for {customer['name']}", "type": "email", "required": False, "hint": "You can add it later.",
+                        **({"show_if": cond} if cond else {})}]
     everyone = (await ctx.call("search_customer", all=True))["all"]
     said = str(_prefill(ctx).get("customer_name") or "")
     fields: list[dict] = []
@@ -118,7 +125,9 @@ async def _customer_fields(ctx, customer: dict | None, only_if: dict | None = No
                        **({"default": "new"} if said else {}), **({"show_if": cond} if cond else {})})
         cond = {**cond, "customer_id": "new"}
     return fields + [{"key": "customer_name", "label": "Customer name", "type": "text", "required": True, "default": said, **({"show_if": cond} if cond else {})},
-                     {"key": "customer_email", "label": "Customer email", "type": "email", "required": True, **({"show_if": cond} if cond else {})}]
+                     # Optional (the owner's QA, 15 Oct): left empty, the draft is still made and the task waits for the address.
+                     {"key": "customer_email", "label": "Customer email", "type": "email", "required": False, "hint": "You can add it later.",
+                      **({"show_if": cond} if cond else {})}]
 
 
 async def _items(ctx, text: str) -> tuple[list[dict], list[dict], list[dict]]:
@@ -204,7 +213,7 @@ async def invoice_details(ctx):
     customer = await _customer(ctx, text)
     priced, _suggested, _products_ = await _items(ctx, text)
     vat = _vat(ctx)
-    later = bool(ctx.answers.get("email_later"))      # "I'll add it later": drafted now, the address is asked for when it is sent
+    later = bool(ctx.answers.get("email_later")) or _left_for_later(ctx, customer)      # "I'll add it later": drafted now, the address is asked for when it is sent
     if not customer or not (valid_email(customer.get("email")) or later) or not priced or vat is None:
         fields = await _invoice_form(ctx, text, quotes if not ctx.answers else [], data)
         return WaitForInput("What should this invoice include?" if any(f["key"] == "items" for f in fields) else "Who is this invoice for?", fields)

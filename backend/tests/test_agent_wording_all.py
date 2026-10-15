@@ -125,10 +125,10 @@ def test_an_idea_is_scored_sized_and_planned_when_the_owner_asks_never_by_itself
     sizing = done["market_size"]["state"]["outcome"]["sizing"]      # §5: each level with its label, formula and inputs
     assert [(s["level"], s["label"]) for s in sizing] == [("TAM", "Estimated"), ("SAM", "Estimated"), ("SOM", "Estimated")]
     assert all(s["formula"] and s["inputs"] for s in sizing)      # C8: each figure named, with its sources
-    assert done["business_plan_draft"]["summary"] == "Business plan draft ready for review: 9 sections. Nothing has been sent to anyone."
+    assert done["business_plan_draft"]["summary"] == "Your business plan is ready to review: 9 sections."
     assert [c[0] for c in env.orch.rt.studio.calls] == ["validate_idea", "size_market", "draft_plan"] or len(env.orch.rt.studio.calls) == 3
     spent = {r["workflow_key"]: agent_router.credits_of(r) for r in run(env.store.list_runs("A"))}
-    assert (spent["idea_validation"], spent["market_size"], spent["business_plan_draft"]) == (5, 5, 8)      # the price list's prices, recorded on each task
+    assert (spent["idea_validation"], spent["market_size"], spent["business_plan_draft"]) == (25, 25, 8)      # Comprehensive on a paid plan (25), market sizing priced the same
     assert env.businesses["A"]["data"]["validation"]["overall_score"] == 68
     assert not [r for r in run(autostart.sweep(env.orch, "A")) if r["workflow_key"] in done]      # once
 

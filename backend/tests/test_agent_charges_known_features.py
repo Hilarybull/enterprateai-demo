@@ -16,7 +16,7 @@ WORKFLOWS = Path(__file__).resolve().parents[1] / "app" / "modules" / "agent" / 
 
 
 def test_every_studio_charge_names_a_feature_on_the_price_list():
-    charged = set(re.findall(r'_studio\(ctx, "([a-z_]+)"', WORKFLOWS.read_text(encoding="utf-8")))
+    charged = set(re.findall(r'_(?:studio|generated)\(ctx, "([a-z_]+)"', WORKFLOWS.read_text(encoding="utf-8")))
     assert "business_plan_full" in charged
     assert {f for f in charged if not default_config(f)} == set()
 

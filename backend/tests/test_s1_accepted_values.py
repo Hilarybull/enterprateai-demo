@@ -18,7 +18,8 @@ def test_a_proposed_value_is_never_reused_and_an_accepted_one_shows_its_basis_so
     data = {"shared_answers": {
         "price": {"value": 45, "state": "proposed", "source": "Researched", "at": AT},                                # AI, not accepted
         "monthly_sales": {"value": 40, "state": "accepted", "basis": "forecast", "source": "From your launch review", "at": AT},
-        "cost": {"value": 12, "state": "accepted", "basis": "estimate", "source": "From your launch review (an estimate you adopted)", "at": AT}}}
+        "cost": {"value": 12, "state": "accepted", "basis": "estimate", "source": "From your launch review (an estimate you adopted)", "at": AT,
+                 "sources": [{"url": "https://www.ons.gov.uk/a", "quote": "A checked quote."}]}}}
     f = planned.figures(data)
     assert "price" not in f
     assert (f["monthly_sales"]["basis"], f["monthly_sales"]["source"], f["monthly_sales"]["at"]) == ("forecast", "From your launch review", "2026-10-13")

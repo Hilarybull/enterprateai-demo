@@ -86,7 +86,10 @@ class ToolContext:
 
     async def deliver(self, **message: Any) -> dict:
         """Send a message once. If reconciliation found that an earlier attempt was delivered,
-        that delivery is the result and nothing is sent again."""
+        that delivery is the result and nothing is sent again. Never to an empty address."""
+        if not str(message.get("to_email") or "").strip():
+            who = ((self.run.get("state") or {}).get("email_needed") or {}).get("customer") or "this customer"
+            raise ToolStop("email_needed", f"Add {who}'s email to send it.")
         if self.reconciled:
             return {"status": "sent", "message_id": self.reconciled.get("message_id"), "error": None, "reconciled": True}
         return await self.rt.comms.send(**message, idempotency_key=self.provider_key())
@@ -96,14 +99,28 @@ def valid_email(value: Any) -> bool:
     return bool(value and _EMAIL_RE.match(str(value).strip()))
 
 
-def no_email(tc: "ToolContext", rec: dict, then: str, data: dict | None = None) -> ToolStop:
-    """Nothing can be sent without an address. Says whose, and for which document, and notes
-    both on the task so the page asking for the address can say the same."""
+def email_needed(tc: "ToolContext", rec: dict, then: str, data: dict | None = None) -> str:
+    """No address on record (the owner's QA, 15 Oct): the draft still goes to Needs Approval, flagged "Email needed", with
+    the field in the approval drawer; Approve and send waits for a valid address. Returns the empty address."""
     who = str(rec.get("customer_name") or rec.get("party_name") or "This customer").strip()
     from app.modules.agent import current
     ref = current.document_number(rec, data or {}, tc.run.get("state") or {})
-    tc.run.setdefault("state", {})["email_needed"] = {"customer": who, "reference": ref or None}
-    return ToolStop("invalid_customer_destination", f"{who} has no email on record" + (f" for {ref}" if ref else "") + f". Add it and I'll {then}.")
+    tc.run.setdefault("state", {})["email_needed"] = {"customer": who, "reference": ref or None,
+                                                      **({"customer_id": rec["customer_id"]} if rec.get("customer_id") else {})}
+    return ""
+
+
+def no_email(tc: "ToolContext", rec: dict, then: str, data: dict | None = None, ask: bool = False) -> NeedsInformation | ToolStop:
+    """Nothing can be sent without an address. The task waits for it (never fails): "What's Ebe's email?", in Needs You with
+    Answer, the draft kept for review. The answer is saved on the customer record too (Orchestrator.provide_input)."""
+    who = str(rec.get("customer_name") or rec.get("party_name") or "This customer").strip()
+    from app.modules.agent import current
+    ref = current.document_number(rec, data or {}, tc.run.get("state") or {})
+    tc.run.setdefault("state", {})["email_needed"] = {"customer": who, "reference": ref or None, **({"customer_id": rec["customer_id"]} if rec.get("customer_id") else {})}
+    if not ask:      # a task the Agent runs by itself (a reminder, a receipt): blocked until the address is on record
+        return ToolStop("invalid_customer_destination", f"{who} has no email on record" + (f" for {ref}" if ref else "") + f". Add it and I'll {then}.")
+    return NeedsInformation(f"What's {who}'s email?" + (f" I'll {then}" + (f" ({ref})" if ref else "") + " once I have it." if then else ""),
+                            [{"key": "customer_email", "label": f"{who}'s email", "type": "email", "required": True}])
 
 
 def _customers(data: dict) -> list[dict]:
@@ -441,6 +458,40 @@ async def run_simulation(tc: ToolContext, a: dict) -> dict:
 
 # ══ Customer ══════════════════════════════════════════════════════════════════
 
+_COMPANY_WORDS = re.compile(r"\b(ltd|limited|plc|llp|inc|llc|co|company|stores?|shop|group|holdings|enterprises?|services|ventures|partners|"
+                            r"agency|studio|solutions|consult\w*|investors?|associates|foundation|trust|school|clinic|hotel|restaurant)\b", re.I)
+
+
+def recipient_record(data: dict, customer: dict, tc: "ToolContext", doc_word: str) -> dict:
+    """The document's recipient as a Catalogue > Customers record (the owner's QA, 15 Oct): matched by name or email
+    (case-insensitive, trimmed), else created ("Ebe": industry Individual for a person's name, the business's payment terms,
+    "Added by the Agent from your invoice, 15 Oct"). Never the business's target customer, never a duplicate."""
+    name = " ".join(str(customer.get("name") or "").split())
+    email = str(customer.get("email") or "").strip()
+    cat = data.setdefault("catalogue", {})
+    customers = cat.setdefault("customers", [])
+    if customer.get("id"):
+        hit = next((c for c in customers if str(c.get("id")) == str(customer["id"])), None)
+        if hit:
+            return hit
+    for c in customers:
+        if c.get("archived"):
+            continue
+        if (name and " ".join(str(c.get("name") or "").split()).lower() == name.lower()) or (email and str(c.get("email") or "").strip().lower() == email.lower()):
+            if email and not c.get("email"):
+                c["email"] = email
+            return c
+    if not name:
+        return {}
+    now = tc.now()
+    person = not _COMPANY_WORDS.search(name) and len(name.split()) <= 3
+    rec = {"id": new_id(), "name": name, "email": email, "phone_number": "", "address": "", "industry": "Individual" if person else "",
+           "payment_terms": int(tc.policy.get("default_payment_terms_days") or 14), "created_by_agent": True, "agent_run_id": tc.run["id"],
+           "created_at": now.isoformat(), "provenance": f"Added by the Agent from your {doc_word}, {now.day} {now.strftime('%b')}"}
+    customers.append(rec)
+    return rec
+
+
 async def create_customer_draft(tc: ToolContext, a: dict) -> dict:
     name = str(a["name"]).strip()
     email = str(a.get("email") or "").strip()
@@ -456,9 +507,13 @@ async def create_customer_draft(tc: ToolContext, a: dict) -> dict:
             if same_name or (not a.get("distinct") and email and str(c.get("email") or "").lower() == email.lower()):
                 return {"customer_id": c["id"], "created": False}
         cid = new_id()
+        when = tc.now()
+        word = {"new_invoice": "invoice", "enquiry_to_quote": "quotation", "new_contract": "contract", "receipt_send": "receipt"}.get(tc.run.get("workflow_key"), "task")
+        person = not _COMPANY_WORDS.search(name) and len(name.split()) <= 3
         customers.append({"id": cid, "name": name, "email": email, "phone_number": a.get("phone_number") or "",
-                          "address": "", "industry": "", "payment_terms": int(tc.policy.get("default_payment_terms_days") or 14),
-                          "created_by_agent": True, "agent_run_id": tc.run["id"], "created_at": now})
+                          "address": "", "industry": "Individual" if person else "", "payment_terms": int(tc.policy.get("default_payment_terms_days") or 14),
+                          "created_by_agent": True, "agent_run_id": tc.run["id"], "created_at": now,
+                          "provenance": f"Added by the Agent from your {word}, {when.day} {when.strftime('%b')}"})
         return {"customer_id": cid, "created": True}
 
     return await tc.mutate(_apply)
@@ -490,6 +545,9 @@ async def create_quotation_draft(tc: ToolContext, a: dict) -> dict:
         total = bz.money(subtotal + subtotal * rate / 100)
         qid = new_id()
         ref = bz.next_reference("QUO", quotes, now)
+        on_file = recipient_record(data, a["customer"], tc, "quotation")
+        if on_file.get("id"):
+            a["customer"]["id"] = on_file["id"]
         quote = {
             "id": qid, "reference": ref, "quotation_id": ref,
             "customer_id": a["customer"].get("id"), "customer_name": a["customer"]["name"],
@@ -579,7 +637,7 @@ async def build_quotation_payload(tc: ToolContext, a: dict) -> tuple[dict, str]:
         raise ToolStop("source_state_changed", f"The quotation is already {bz.status_of(q)}; it cannot be sent again.")
     to = _destination(tc, q, data)
     if not to:
-        raise no_email(tc, q, "send the quotation", data)
+        to = email_needed(tc, q, "send the quotation", data)      # to approval, flagged "Email needed"
     amounts = _amounts(q)
     if amounts["total"] <= 0:
         raise ToolStop("missing_pricing", "The quotation has no priced items.")
@@ -765,7 +823,7 @@ async def build_contract_payload(tc: ToolContext, a: dict) -> tuple[dict, str]:
         raise ToolStop("source_state_changed", f"The contract is already {bz.status_of(c)}.")
     to = _destination(tc, c, data)
     if not to:
-        raise no_email(tc, c, "send the contract", data)
+        to = email_needed(tc, c, "send the contract", data)      # to approval, flagged "Email needed"
     company = _sender(tc, data)
     payload = {
         "contract_id": c["id"], "reference": c.get("reference") or c["id"][:8], "company": company["name"],
@@ -892,7 +950,8 @@ async def create_invoice(tc: ToolContext, a: dict) -> dict:
 
     def _apply(data: dict) -> dict:
         invoices = bz.records(data, "invoices")
-        on_file = next((c for c in _customers(data) if str(c.get("id")) == str(customer.get("id"))), {})
+        on_file = recipient_record(data, customer, tc, "invoice")      # the recipient is a customer record, matched or added
+        customer.update({k: v for k, v in (("id", on_file.get("id")), ("name", customer.get("name") or on_file.get("name"))) if v})
         try:
             terms_days = int(on_file.get("payment_terms") or tc.policy.get("default_payment_terms_days") or 14)
         except (TypeError, ValueError):
@@ -965,7 +1024,7 @@ async def build_invoice_payload(tc: ToolContext, a: dict) -> tuple[dict, str]:
         raise ToolStop("source_state_changed", f"The invoice is already {bz.status_of(inv)}.")
     to = _destination(tc, inv, data)
     if not to:
-        raise no_email(tc, inv, "send the invoice", data)
+        to = email_needed(tc, inv, "send the invoice", data)      # to approval, flagged "Email needed"
     amounts = _amounts(inv)
     if amounts["total"] <= 0:
         raise ToolStop("missing_pricing", "The invoice has no priced items.")
@@ -1033,7 +1092,7 @@ async def build_reminder_payload(tc: ToolContext, a: dict) -> tuple[dict, str]:
                                                          not_before=not_before))
     to = _destination(tc, inv, data)
     if not to:
-        raise no_email(tc, inv, "prepare the reminder", data)
+        to = email_needed(tc, inv, "prepare the reminder", data)      # to approval, flagged "Email needed"
     company = _sender(tc, data)
     due = bz.parse_day(inv["due_date"])
     payload = {
@@ -1200,7 +1259,7 @@ async def build_receipt_payload(tc: ToolContext, a: dict) -> tuple[dict, str]:
         raise ToolStop("receipt_already_sent", "This receipt has already been sent.")
     to = _destination(tc, inv, data)
     if not to:
-        raise no_email(tc, inv, "send the receipt", data)
+        to = email_needed(tc, inv, "send the receipt", data)      # to approval, flagged "Email needed"
     company = _sender(tc, data)
     payload = {
         "invoice_id": inv["id"], "payment_id": payment["id"], "receipt_number": payment["receipt"]["number"],
@@ -1398,7 +1457,7 @@ def _document_builder(name: str):
             raise ToolStop("source_state_changed", f"The {kind['label']} has already been sent.")
         to = _destination(tc, rec, data)
         if not to:
-            raise no_email(tc, rec, f"send the {kind['label']}", data)
+            to = email_needed(tc, rec, f"send the {kind['label']}", data)      # to approval, flagged "Email needed"
         company = _sender(tc, data)
         payload = {kind["id"]: rec["id"], "document": name, "reference": rec["reference"], "company": company["name"], "reply_to": company["email"],
                    "customer_name": rec.get("party_name") or "Customer", "to_email": to, "channel": "email", "currency": _currency(rec, data),

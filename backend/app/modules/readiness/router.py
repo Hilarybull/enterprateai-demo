@@ -337,6 +337,18 @@ async def review_document(business_id: str, subject_id: str, key: str, body: Doc
                                                     attach=bool({"evidence_id", "artifact_id"} & body.model_fields_set)))
 
 
+class PreviousNeedIn(BaseModel):
+    item: str = Field(..., max_length=120)      # "evidence:<id>", "document:<key>" or a field
+    keep: bool
+
+
+@router.post("/businesses/{business_id}/funding-cases/{subject_id}/previous-need")
+async def previous_need(business_id: str, subject_id: str, body: PreviousNeedIn, user=Depends(get_current_user)):
+    """[Keep] or [Remove] for something from the funding need this case replaced."""
+    _type("funding-cases")
+    return await _run(get_service().keep_previous(user["id"], business_id, subject_id, body.item, body.keep, email=user.get("email")))
+
+
 @router.post("/businesses/{business_id}/funding-cases/{subject_id}/contradictions")
 async def contradiction(business_id: str, subject_id: str, body: ContradictionIn, user=Depends(get_current_user)):
     _type("funding-cases")

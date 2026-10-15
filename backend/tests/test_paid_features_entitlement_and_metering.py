@@ -220,14 +220,32 @@ def test_every_feature_the_code_charges_for_has_a_price():
     assert used - set(catalogue.FEATURES) == set()
 
 
-def test_the_catalogue_is_migration_016_as_written():
+def test_the_catalogue_is_migration_016_as_written_with_042_s_prices_on_top():
     import pathlib
     import re
-    sql = (pathlib.Path(__file__).resolve().parents[1] / "migrations" / "016_credit_system_v2.sql").read_text(encoding="utf-8")
-    rows = re.findall(r"\(\s*'([a-z_]+)',\s*'([^']+)',\s*(\d+),\s*(TRUE|FALSE),\s*'([a-z_]+)',\s*(TRUE|FALSE),\s*(TRUE|FALSE)\s*\)", sql)
+    here = pathlib.Path(__file__).resolve().parents[1] / "migrations"
+    row = r"\(\s*'([a-z_]+)',\s*'([^']+)',\s*(\d+),\s*(TRUE|FALSE),\s*'([a-z_]+)',\s*(TRUE|FALSE),\s*(TRUE|FALSE)\s*\)"
+    rows = {r[0]: r for r in re.findall(row, (here / "016_credit_system_v2.sql").read_text(encoding="utf-8"))}
     assert len(rows) >= 30
-    for code, name, cost, enabled, minimum, refundable, controlled in rows:
-        assert catalogue.FEATURES[code] == (name, int(cost), enabled == "TRUE", minimum, refundable == "TRUE", controlled == "TRUE"), code
+    v2 = (here / "042_credit_allocation_v2.sql").read_text(encoding="utf-8")
+    rows.update({r[0]: r for r in re.findall(row, v2)})
+    expected = {code: (name, int(cost), enabled == "TRUE", minimum, refundable == "TRUE", controlled == "TRUE")
+                for code, name, cost, enabled, minimum, refundable, controlled in rows.values()}
+    # 042's UPDATEs: a new price (and, for Basic validation, no longer credit-controlled) on rows 016 or later wrote.
+    for cost, uncontrolled, code in re.findall(r"SET credit_cost = (\d+)(, credit_controlled = FALSE)? WHERE feature_code = '([a-z_]+)'", v2):
+        name, _, enabled, minimum, refundable, controlled = expected.get(code) or catalogue.FEATURES[code]
+        expected[code] = (name, int(cost), enabled, minimum, refundable, False if uncontrolled else controlled)
+    for code, want in expected.items():
+        assert catalogue.FEATURES[code] == want, code
+
+
+def test_the_owner_s_credit_chart_v2():
+    """The owner's chart (Updated Credit allocation v2), capability by capability."""
+    chart = {"agent_task": 2, "business_plan_section": 5, "sales_letter_full": 4, "proposal_full": 10, "business_plan_full": 40,
+             "idea_validation_comprehensive": 25, "research_best_price": 40, "research_customer_opportunities": 40,
+             "research_launch_blockers": 50, "research_funding_readiness": 60, "scenario_ai_interpretation": 15, "live_plan_full_refresh": 20}
+    assert {k: catalogue.FEATURES[k][1] for k in chart} == chart
+    assert catalogue.FEATURES["idea_validation"][1] == 0 and catalogue.FEATURES["idea_validation"][5] is False      # Basic is free
 
 
 def test_a_research_run_id_is_charged_through_the_wallet_s_uuid_key_once(wallets, monkeypatch):
@@ -248,5 +266,5 @@ def test_a_research_run_id_is_charged_through_the_wallet_s_uuid_key_once(wallets
             pass
     run(go())
     run(go())
-    assert wallets.available[user] == start - 3      # charged, and only once for the same run
+    assert wallets.available[user] == start - 15      # charged, and only once for the same run
     assert credits.generation_uuid("rr_x") == credits.generation_uuid("rr_x") != credits.generation_uuid("rr_y")

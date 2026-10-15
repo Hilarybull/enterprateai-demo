@@ -1,4 +1,4 @@
-import { AgentAvatar, AgentSteps, GoalLauncherView, GoalTaskCard, focusLauncher, prefillLauncher, trackGoal, useGoalFlow } from "../components/GoalLauncher";
+import { AgentAvatar, GoalLauncherView, GoalTaskCard, TaskCardShell, focusLauncher, prefillLauncher, trackGoal, useGoalFlow } from "../components/GoalLauncher";
 import AgentDemo from "../components/AgentDemo";
 import { DEMO_REQUEST, DEMO_SCENES, DEMO_VIDEO_URL } from "../config/agentDemo";
 import { firstNameOf, getGreeting, greetingAt } from "../lib/greeting";
@@ -160,6 +160,27 @@ function RecentActivity({ running }) {
 
 export default function LandingPage() {
   const goalFlow = useGoalFlow();      // the goal started in the hero: the launcher on the left, its task card on the right
+  // From 1024px the preview's box (and so the task card that takes its place) starts level with the Agent card's top.
+  const heroRight = useRef(null);
+  const heroStage = useRef(null);
+  const [stageTop, setStageTop] = useState(0);
+  useEffect(() => {
+    const place = () => {
+      const right = heroRight.current;
+      const launcher = document.querySelector("[data-hero-copy] [data-goal-launcher]");
+      const wide = typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1024px)").matches;
+      if (!right || !launcher || !wide) { setStageTop(0); return; }
+      const top = Math.max(0, Math.round(launcher.getBoundingClientRect().top - right.getBoundingClientRect().top));
+      setStageTop((had) => (Math.abs(had - top) > 1 ? top : had));
+    };
+    place();
+    const settle = setTimeout(place, 900);      // again once the entrance animations have finished moving things
+    const watch = typeof ResizeObserver !== "undefined" ? new ResizeObserver(place) : null;
+    const grid = document.querySelector("[data-hero-grid]");
+    if (watch && grid) watch.observe(grid);
+    window.addEventListener("resize", place);
+    return () => { clearTimeout(settle); watch?.disconnect(); window.removeEventListener("resize", place); };
+  }, []);
   const [annualBilling, setAnnualBilling] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [featuresOpen, setFeaturesOpen] = useState(false);
@@ -376,7 +397,7 @@ export default function LandingPage() {
       <PublicHeader onTryIt={focusLauncher} />
 
       {/* HERO */}
-      <section id="hero" ref={heroRef} data-m-idle={!heroSeen || !pageVisible} className="relative overflow-clip bg-gradient-to-b from-brand-50/70 via-white to-white pb-6 pt-6 sm:pb-8 sm:pt-8">
+      <section id="hero" ref={heroRef} data-m-idle={!heroSeen || !pageVisible} className="relative overflow-clip bg-gradient-to-b from-brand-50/70 via-white to-white pb-6 pt-6 [overflow-anchor:none] sm:pb-8 sm:pt-8">
         <div className="pointer-events-none absolute inset-0">
           <div className="m-drift absolute -right-16 top-0 h-[520px] w-[520px] rounded-full bg-gradient-to-br from-purple-300/60 to-brand-300/50 blur-2xl sm:h-[620px] sm:w-[620px]" />
           <div className="absolute right-10 top-14 hidden h-64 w-64 opacity-80 lg:block" style={{ backgroundImage: "radial-gradient(circle, #A5B4FC 2px, transparent 2px)", backgroundSize: "18px 18px" }} />
@@ -391,21 +412,26 @@ export default function LandingPage() {
               </h1>
               <p {...enter("fadeUp", 2)} className="mt-2 text-base font-bold text-slate-800 sm:text-lg">Plan, operate, sell and grow from one intelligent business workspace.</p>
               {/* The way in: say what you want done, pick a business goal, or start a task (PRD-GO-001). The card is as wide as the text column. */}
-              <div {...enter("fadeUp", 3)}><GoalLauncherView className="mt-6 w-full md:mt-7 lg:mt-8" flow={goalFlow} onWatch={watchDemo} onTouch={demo ? () => closeDemo(false) : null} /></div>
+              <div {...enter("fadeUp", 3)}><GoalLauncherView className="mt-6 w-full md:mt-7 lg:mt-8" flow={goalFlow} onTouch={demo ? () => closeDemo(false) : null} /></div>
               {/* 768 to 1023px: the goal opens right here, under the launcher. (Wider, it is in the right column; narrower, a sheet.) */}
-              {goalFlow.session && <GoalTaskCard flow={goalFlow} placement="below" />}
+              {goalFlow.session && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} placement="below" />}
             </div>
 
             {/* The right column. It always holds the product preview's space, so opening a goal never changes the hero's height:
                 the task card is laid over that space (from 1024px), or opens as a full-screen sheet (below it). */}
-            <div {...enter("slideInRight", 0, 150)} className="relative min-w-0 lg:flex lg:flex-col lg:justify-end lg:self-stretch" data-hero-right>
-            {goalFlow.session && <GoalTaskCard flow={goalFlow} />}
-            {/* While the request is being read: the Agent's steps, over the preview. The task card takes this place as soon as there is a task. */}
-            {goalFlow.busy && !goalFlow.session && (
-              <div className="absolute inset-x-6 top-16 z-10 hidden lg:block" data-m="scaleIn"><AgentSteps done={0} /></div>
+            <div {...enter("slideInRight", 0, 150)} ref={heroRight} className="relative min-w-0 lg:self-stretch" data-hero-right>
+            {/* The preview's own box, level with the Agent card's top (from 1024px). The task card takes exactly this box: the
+                same top and the same height as the preview, so nothing moves when it opens or closes; the two crossfade. */}
+            <div className="relative" ref={heroStage} style={stageTop ? { marginTop: stageTop } : undefined} data-hero-stage>
+            {/* Keyed by the task: a new or resumed task never shows another one's thread. */}
+            {goalFlow.session && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} />}
+            {/* While the first question is on its way (or a saved task is fetched on reload): the card's own shell, with the
+                Agent typing in its first bubble. */}
+            {(goalFlow.busy || goalFlow.resuming) && !goalFlow.session && (
+              <TaskCardShell title={goalFlow.pending || "Picking up where you left off"} className="absolute inset-y-0 left-6 right-0 z-10 hidden lg:flex" />
             )}
             {/* Hidden on a phone; below the copy at 80% width on a tablet; the right column from 1024px. */}
-            <div aria-hidden="true" className={`relative isolate mx-auto hidden w-4/5 items-center gap-3 md:flex lg:w-full lg:pl-6 ${goalFlow.session ? "lg:invisible" : ""}`} data-hero-preview>
+            <div aria-hidden="true" className={`relative isolate mx-auto hidden w-4/5 items-center gap-3 transition-opacity duration-200 md:flex lg:w-full lg:pl-6 ${goalFlow.session || goalFlow.busy || goalFlow.resuming ? "lg:pointer-events-none lg:opacity-0" : ""}`} data-hero-preview>
               {/* Below 1024px the dot grid travels with the image, so it is never behind the headline. */}
               <div className="absolute -right-6 -top-8 -z-10 h-56 w-56 opacity-80 lg:hidden" data-hero-dots style={{ backgroundImage: "radial-gradient(circle, #A5B4FC 2px, transparent 2px)", backgroundSize: "18px 18px" }} />
               <div data-hero-mock className={`relative flex-1 lg:max-xl:scale-95 ${demo === "inline" ? "" : "m-float lg:rotate-1"}`}>
@@ -459,6 +485,7 @@ export default function LandingPage() {
               <Annotation className="w-28 shrink-0 text-left" color="text-brand-500" rotate="-rotate-3" arrow="left" showFrom="lg">
                 Smarter<br />decisions.<br />Brighter<br />tomorrow.
               </Annotation>
+            </div>
             </div>
             </div>
           </div>

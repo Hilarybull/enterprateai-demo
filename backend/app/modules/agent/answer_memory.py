@@ -32,19 +32,23 @@ def same_offering(a: Any, b: Any) -> bool:
     return x == y or (min(len(x), len(y)) >= 4 and (x in y or y in x))
 
 
-def remember(data: dict, goal: str, answers: dict, now: datetime | None = None, result: dict | None = None) -> None:
+MONEY = ("price", "cost", "fixed_costs", "amount", "cash_in_bank")
+
+
+def remember(data: dict, goal: str, answers: dict, now: datetime | None = None, result: dict | None = None, currency: str | None = None) -> None:
     """Keep what this check was told, with the offering it was about, and its latest result (QA R8-8: shown again on
     return, so the check is never redone just to reach its premium step)."""
     now = now or datetime.now(timezone.utc)
     offering = answers.get("sell") or answers.get("description")
     clean = {k: v for k, v in (answers or {}).items() if isinstance(v, (str, int, float)) and str(v).strip() and str(v).strip().lower() != "unknown"}
     data.setdefault("quick_check_answers", {})[goal] = {"answers": clean, "offering": str(offering or "")[:200], "at": now.isoformat(),
-                                                        **({"result": result} if result else {})}
+                                                        **({"currency": currency} if currency else {}), **({"result": result} if result else {})}
     shared = data.setdefault("shared_answers", {})
     for key, value in clean.items():
         field = ALIAS.get(key, key)
         if field in SHARED or field == "sell":
-            shared[field] = {"value": value, "offering": str(offering or "")[:200], "goal": goal, "at": now.isoformat()}
+            shared[field] = {"value": value, "offering": str(offering or "")[:200], "goal": goal, "at": now.isoformat(),
+                             **({"currency": currency} if currency and field in MONEY else {})}      # PRD 6.1: a figure keeps its own currency
 
 
 def current_offering(goal: str, data: dict | None, known: dict | None = None) -> str:

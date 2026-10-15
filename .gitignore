@@ -31,3 +31,8 @@ Thumbs.db
 .idea/
 *.swp
 *.bak
+
+# Playwright: screenshots and run output
+frontend/e2e/out/
+frontend/test-results/
+frontend/playwright-report/

@@ -35,9 +35,11 @@ def test_only_a_loaded_page_with_the_quote_on_it_from_an_allowed_dated_source_co
     pages = {ons: page(ons), news: page(news), forum: page(forum), gone: page(gone, ok=False), undated: page(undated, published=""),
              wrong: page(wrong, text="Something else entirely about prices and nothing about households at all.")}
     out = judge([cite(u) for u in (ons, news, forum, gone, undated, wrong)], pages)
-    assert [s["url"] for s in out["sources"]] == [ons, news] and out["kind"] == "researched"
+    # An undated page is kept for review, said as undated (the owner decides); the others are dropped, each with why.
+    assert [s["url"] for s in out["sources"]] == [ons, news, undated] and out["kind"] == "researched"
+    assert out["sources"][2]["date"] == "undated" and out["sources"][2]["undated"] is True
     why = {d["url"]: d["why"] for d in out["dropped_sources"]}
-    assert "not an allowed source" in why[forum] and "couldn't be loaded" in why[gone] and "undated" in why[undated] and "isn't on the page" in why[wrong]
+    assert "not an allowed source" in why[forum] and "couldn't be loaded" in why[gone] and "isn't on the page" in why[wrong] and undated not in why
     src = out["sources"][0]
     assert (src["tier"], src["publisher"], src["date"], src["accessed"], src["quote"]) == (1, "ons.gov.uk", "2026-03-01", "2026-10-14", QUOTE)
 

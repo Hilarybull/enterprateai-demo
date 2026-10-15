@@ -1,12 +1,14 @@
 import { useWorkspaceStore } from "../../store/workspace";
 import { useAuthStore } from "../../store/auth";
 import { briefingOf, firstNameOf, getGreeting, workspaceNameOf } from "../../lib/greeting";
+import FirstResultPanel, { UndoToast } from "../FirstResultPanel";
 import AgentShell, { AgentIdentity } from "./AgentShell";
 import { Collapse, WorkingSteps } from "../Motion";
 import { useListChanges } from "../../lib/motion";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../../api/client";
+import ProfileUpdates from "./ProfileUpdates";
 import { agentErrorMessage, cancelRun, clearConversation, getConversation, getRun, replyText, submitAgentRequest } from "../../lib/agent";
 import { Icon, OUT_OF_CREDITS_TIP, OutOfCreditsNote } from "./AgentBits";
 import { WORKING_TEXT, useTaskFlow } from "./TaskFlow";
@@ -77,7 +79,7 @@ export function blockedReply(res) {
   return { tone: "amber", text: res.message, upgrade: res.upgrade };
 }
 
-export default function AgentPanel({ businessId, summary, onChanged, paused = false }) {
+export default function AgentPanel({ businessId, summary, onChanged, paused = false, firstResult = null }) {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -138,6 +140,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     return () => { live = false; clearInterval(timer); };
   }, [workingRun, businessId]);
   const told = briefingOf(briefing);
+  const showResult = Boolean(firstResult?.result);
   // "By the way, what should I call you?": asked once, only when no name is known, and only after a first result has been
   // shown, so it never stands between someone and their task. Skipping it, or answering it, means it is not asked again.
   const accountName = useAuthStore((st) => st.name);
@@ -225,6 +228,9 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
         flow.follow(run);      // a question, an approval, still working or a problem: all handled on this page
       }
       setPrompt("");
+    } else if (res.kind === "needs_confirmation" && res.price) {
+      // P0.5c: a paid task's price first ("Write your business plan. 40 credits. You have 90."), Start or Not now.
+      setReply({ tone: "slate", text: res.message, offers: [{ label: "Start", start: { capability: res.capability, params: res.params } }, { label: "Not now", dismiss: true }] });
     } else if (res.kind === "needs_input") {
       const base = req || {};
       flow.ask({ title: CHIPS.find((c) => c.key === res.capability)?.label, message: res.message, fields: res.fields,
@@ -255,6 +261,18 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     } else {
       setReply({ tone: "slate", text: res.message || "I can't run that yet." });
     }
+  }
+
+  /** A confirmed change the reply offered ("Yes, update" on a funding case edit): sent, and its own reply shown. */
+  async function postOffer(post) {
+    setBusy(true);
+    try {
+      const res = await apiRequest(post.url, "POST", post.body || {}, { timeoutMs: 60000 });
+      setReply({ tone: "slate", text: res.message, actions: res.actions });
+      onChanged?.();
+    } catch (e) {
+      setReply({ tone: "rose", text: agentErrorMessage(e, "That didn't go through. Try again.") });
+    } finally { setBusy(false); }
   }
 
   /** Cancel a task that is held for its plan: it is closed, nothing was charged, and the tile goes. */
@@ -298,7 +316,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     <AgentShell as="section" data-agent-card aria-label="EnterprateAI Agent" bodyClassName="p-5" className="h-full">
       {/* The title row is the mark and the name. While a task runs the mark gets a soft ring. What the plan allows sits on its own line below. */}
       <div data-agent-title>
-        <AgentIdentity as="h2" working={Boolean(busy || reply?.working || briefing?.working_on)} />
+        <AgentIdentity as="h2" working={Boolean(busy || reply?.working || briefing?.working_on)} link={{ to: "/agent", onGo: navigate }} />
       </div>
       {/* The greeting addresses the active workspace, by the time of day: one line, cut short with the full name in its tooltip.
           Under it, one line on what the Agent did or is doing. Both follow the workspace the moment it is switched. */}
@@ -307,7 +325,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
         <span className="min-w-0 truncate">{getGreeting({ subject: workspace, tz: briefing?.timezone })}</span>
       </p>
       <p data-m="fadeUp" style={{ "--m-delay": "60ms" }} data-agent-briefing data-briefing-kind={told.kind} title={told.text}
-        className="mt-0.5 line-clamp-2 min-h-[1.25rem] text-sm text-white/75 lg:line-clamp-1">{told.text}</p>
+        className="mt-0.5 line-clamp-2 min-h-[1.25rem] text-sm text-white/75 lg:line-clamp-1">{showResult ? "Your first result is below." : told.text}</p>
       {ent && (
         <div className="mt-2 flex min-w-0 flex-wrap gap-2 empty:hidden" data-agent-notices>
           {counted && ent.is_paid && ent.agent_tasks !== false && (
@@ -337,6 +355,11 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
         </div>
       )}
 
+      {/* The first result sits above the Agent's four action cards, which always stay. Dismissed, it is kept in Agent
+          Centre > Results, with Undo for 5 seconds. */}
+      <ProfileUpdates businessId={businessId} />
+      <UndoToast open={Boolean(firstResult?.dismissed)} text="Result dismissed. It stays in Agent Centre, under Results."
+        onUndo={() => firstResult.undo()} onDone={() => firstResult.forgetDismissed()} />
       {/* Below 1280px: auto-fit with a 260px minimum (never more than two per row), so the tiles drop
           to one column when two won't fit. From 1280px the desktop layout keeps its two columns. */}
       <div className="mt-4 grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,max(260px,calc(50%_-_0.375rem))),1fr))] xl:grid-cols-2">
@@ -442,7 +465,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
             <div className="mt-2 flex flex-wrap gap-2">
               {[...(reply.actions || []), ...(reply.offers || [])].map((o) => (
                 <button key={o.label} type="button" disabled={busy}
-                  onClick={() => (o.cancel ? cancelHeld(o.cancel) : o.kind === "explain" ? explain(o.prompt) : o.to ? navigate(o.to) : act({ capability: o.capability, params: o.params }))}
+                  onClick={() => (o.dismiss ? setReply(null) : o.start ? send({ ...o.start, sourceChannel: "ui_action", confirmed: true }) : o.post ? postOffer(o.post) : o.cancel ? cancelHeld(o.cancel) : o.kind === "explain" ? explain(o.prompt) : o.to ? navigate(o.to) : act({ capability: o.capability, params: o.params }))}
                   className={o.upgrade ? "rounded-lg bg-brand-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
                     : "rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] font-semibold hover:bg-slate-50 disabled:opacity-60 dark:bg-slate-900"}>
                   {o.label}
@@ -546,7 +569,7 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
           </div>
         ) : rows.map(({ key, item, entering, leaving }) => (
           <Collapse key={key} leaving={leaving}>
-          <button type="button" data-approval-row disabled={paused || leaving} title={paused ? PAUSED_TIP : undefined} onClick={() => setEditing(item.run_id)}
+          <button type="button" data-approval-row disabled={paused || leaving} title={paused ? PAUSED_TIP : undefined} onClick={() => (item.type === "draft" && item.to ? navigate(item.to) : setEditing(item.run_id))}
             {...(entering ? { "data-m": "slideDown" } : {})}
             className={`flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-2.5 text-left transition hover:border-brand-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900 ${entering ? "m-flash" : ""}`}>
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-slate-800">
@@ -555,8 +578,10 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
             <span className="min-w-0 flex-1">
               <span className="line-clamp-2 text-[13px] font-semibold leading-tight text-slate-900 dark:text-slate-100" title={item.title}>{item.title}</span>
               <span className="mt-0.5 block truncate text-[11px] leading-tight text-slate-500" title={item.subtitle}>
-                {item.subtitle}{amountOf(item.payload) ? ` · ${amountOf(item.payload)}` : ""}
+                {item.email_needed ? (item.payload?.customer_name || "") : item.subtitle}{amountOf(item.payload) ? ` · ${amountOf(item.payload)}` : ""}
               </span>
+              {item.email_needed && <span className="mt-1 inline-flex rounded-full bg-amber-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-800 ring-1 ring-amber-200" data-email-needed-chip>Email needed</span>}
+              {item.type === "draft" && <span className="mt-1 inline-flex rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-indigo-700 ring-1 ring-indigo-200" data-draft-chip>Draft</span>}
             </span>
             <span className="shrink-0 whitespace-nowrap text-[10px] text-slate-400">{item.age}</span>
             <span className="shrink-0 text-slate-400"><Icon name="chevron" className="h-3 w-3" /></span>

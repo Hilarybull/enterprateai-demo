@@ -17,9 +17,10 @@ def test_a_document_with_its_email_left_for_later_is_drafted(world, key, doc, pr
     client.post(f"/task-sessions/{s['id']}/attach-user")
     client.post(f"/task-sessions/{s['id']}/resume")
     p = client.post(f"/task-sessions/{s['id']}/prepare").json()
-    assert p["handoff"]["ready"] is False and "Add their email" in p["handoff"]["ready_message"]
+    assert p["handoff"]["ready"] is True and p["handoff"]["ready_message"].endswith("is ready to review. Add their email to send it.")
     shown = client.get(f"/workflow-runs/{p['handoff']['run_id']}").json()["run"]
-    assert shown.get("pending_question") is None and shown["email_needed"]["customer"] == "Investors"      # the address form, nothing else asked
+    # In Needs Approval, flagged "Email needed" (QA, 15 Oct): never failed, and nothing else asked.
+    assert shown["status"] == "awaiting_approval" and shown.get("pending_question") is None and shown["email_needed"]["customer"] == "Investors"
     records = env.businesses["A"]["data"]["financials"][doc]
     drafted = [r for r in records if (r.get("customer_name") or "") == "Investors"]
     assert len(drafted) == 1 and str(drafted[0].get("reference") or drafted[0].get("invoice_number") or prefix).startswith(prefix)

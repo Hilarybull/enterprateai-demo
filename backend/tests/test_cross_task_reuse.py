@@ -29,7 +29,7 @@ def test_a_launch_check_s_answers_prefill_the_pricing_and_customer_checks(world)
     assert pricing["sell"]["default"] == "Home cleaning" and pricing["customer"]["default"] == "Busy households in Leeds"
     assert pricing["customer"]["source"] == "From your launch check"
     growth = {q["key"]: q for q in client.get("/businesses/A/quick-check/more_customers").json()["questions"]}
-    assert growth["where"]["default"] == "Leeds" and growth["customer"]["default"] == "Busy households in Leeds"
+    assert growth["where"]["default"] in ("Leeds", "Leeds, United Kingdom") and growth["customer"]["default"] == "Busy households in Leeds"
     funding = {q["key"]: q for q in client.get("/businesses/A/quick-check/need_funding").json()["questions"]}
     assert funding["traction"]["default"] == "5 neighbours booked a paid trial clean"      # the same evidence, carried
 

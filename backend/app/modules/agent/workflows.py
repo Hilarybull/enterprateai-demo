@@ -1305,6 +1305,48 @@ async def _studio(ctx, feature: str, call):
 
 _STUDIO_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 
+# What each generated document is called to the owner, when it can't be written just now.
+_WRITES = {"business_plan_full": ("business plan", "business_plan", "Business plan"), "sales_letter_full": ("sales letter", "sales_letter", "Sales letter"),
+           "proposal_full": ("proposal", "client_proposal", "Proposal")}
+
+
+async def _generated(ctx, feature: str, call, inputs: dict | None = None):
+    """A generator run through the one AI gateway (with fallback). If every provider fails (the owner's QA, 15 Oct): the
+    draft is kept in Business Blueprints with its inputs and its sections "Waiting to write", nothing is charged, and the
+    task waits to finish by itself (tried again in 1, 5 and 30 minutes), said once in plain words. Never a raw error."""
+    from app.modules.agent.services import InsufficientCredits
+    from app.modules.agent.tools import NeedsInformation, ToolStop
+    from app.modules.agent.models import SUB_RETRY_AVAILABLE
+    word, doc_type, title = _WRITES.get(feature, ("document", "business_plan", "Document"))
+    try:
+        result = await _studio(ctx, feature, call)
+    except (ToolStop, InsufficientCredits, NeedsInformation):
+        raise
+    except Exception as e:      # noqa: BLE001 - logged in full for the superadmin; the owner reads one plain sentence
+        logger.warning("generator %s for run %s could not run: %s: %s", feature, ctx.run["id"], type(e).__name__, str(e)[:500])
+        state = ctx.run.setdefault("state", {})
+        if not state.get("pending_doc"):
+            lines = [f"# {title} (waiting to write)", "", "I've saved your inputs and will write the sections automatically.", "", "## Inputs"]
+            lines += [f"- {k.replace('_', ' ').capitalize()}: {v}" for k, v in (inputs or {}).items() if v not in (None, "", [], {})][:20]
+            lines += ["", "## Sections", "", "Waiting to write."]
+            try:
+                state["pending_doc"] = await ctx.rt.studio.file_document(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], type=doc_type,
+                                                                         title=f"{title} (waiting to write)", company=(inputs or {}).get("name") or "",
+                                                                         markdown="\n".join(lines))
+            except Exception:      # noqa: BLE001 - the task still waits to finish
+                logger.warning("the waiting draft for run %s could not be filed", ctx.run["id"], exc_info=True)
+            await ctx.rt.store.update_run(ctx.run["id"], {"state": state})
+        return Stop("generation_unavailable", f"I couldn't write your {word} just now. I've saved your inputs and will finish it automatically. Nothing was charged.",
+                    SUB_RETRY_AVAILABLE)
+    pending = (ctx.run.get("state") or {}).pop("pending_doc", None)
+    if pending:      # the real draft is written: the waiting one goes
+        try:
+            from app.modules.blueprint.repository import delete_document
+            await delete_document(user_id=ctx.actor.user_id, document_id=str(pending))
+        except Exception:      # noqa: BLE001
+            logger.info("the waiting draft %s was not removed", pending)
+    return result
+
 
 async def _keep(ctx, key: str, value: dict) -> None:
     def _apply(data: dict) -> None:
@@ -1420,21 +1462,96 @@ async def idea_validation_step(ctx):
     ask = _ask_idea(idea, ("description", "customer", "problem"))
     if ask:
         return ask
-    idea = {**idea, "known": {} if separate else known_for_validation(data, ctx.answers)}
-    r = await _studio(ctx, "idea_validation", ctx.rt.studio.validate_idea(user_id=ctx.actor.user_id,
-                                                                           business_id=None if separate else ctx.run["business_id"], idea=idea))
+    depth = ctx.params.get("depth") or "basic"
+    idea = {**idea, "known": {} if separate else known_for_validation(data, ctx.answers), "depth": depth}
+    if not separate:
+        # The draft in Idea Validation History, for the owner to accept or reject: one per idea, so a Comprehensive run after
+        # an upgrade updates the same draft (with the same answers), never a second one.
+        import hashlib
+        idea["history_id"] = "agent-" + hashlib.sha1(str(idea.get("description") or ctx.run["id"]).strip().lower().encode()).hexdigest()[:12]
+    await fill_validation_form(ctx, idea)
+    feature = "idea_validation_comprehensive" if depth == "comprehensive" else "idea_validation"
+    r = await _studio(ctx, feature, ctx.rt.studio.validate_idea(user_id=ctx.actor.user_id,
+                                                                 business_id=None if separate else ctx.run["business_id"], idea=idea))
     if separate:
         await _keep_separate_idea(ctx, idea, r)
     else:
-        await _keep(ctx, "validation", r)
+        await _keep(ctx, "validation", {k: v for k, v in r.items() if k not in ("payload", "quick")})
+        await _draft_in_history(ctx, idea, r)
     from app.modules.agent.services import risk_sentence
     risks, steps = [risk_sentence(x) for x in r.get("risks") or []], [str(x) for x in r.get("next_steps") or []]
     summary = (f"Idea scored {r['score']}/100: {len(risks)} risk{'s' if len(risks) != 1 else ''}, {len(steps)} next step{'s' if len(steps) != 1 else ''}."
                + (f" Biggest risk: {risks[0].rstrip('.')}." if risks else "") + (f" First step: {steps[0].rstrip('.')}." if steps else "")
                + (" The full report, with its research, will be on Idea Validation in a few minutes." if r.get("full_report") == "pending" else ""))
+    links = [{"label": "draft in Idea Validation", "to": f"/validation?history_id={idea['history_id']}&history_type=v4_validation"}
+             if idea.get("history_id") else {"label": "the Idea Validation form", "to": "/validation"}]
+    if depth == "basic":
+        plan = await ctx.rt.meter.plan(ctx.actor.user_id)
+        if plan == "explorer":
+            summary += (" This is the Basic check, worked out from your numbers (free). Comprehensive validation checks your market, competitors,"
+                        " pricing and unit economics. Available on Starter.")
+            links += [{"label": "Upgrade to validate fully", "to": "/pricing", "upgrade": True}]
+        else:
+            summary += " As you asked, I ran the quick Basic check (free). Ask me to validate it fully when you want the market research."
     return Done(plain(summary),
                 next_action="I'll score it again when what you've told me about the business changes.",
-                outcome={"score": r["score"], "risks": risks, "next_steps": steps, "links": [{"label": "Idea Validation", "to": "/validation"}]})
+                outcome={"score": r["score"], "risks": risks, "next_steps": steps, "form_filled": True, "depth": depth, "links": links})
+
+
+async def _as_draft(ctx, kind: str, title: str, tab: str, document_id: str | None) -> str:
+    """The output as a draft in its module, pending the owner's review, with the link that opens it: counted in Needs
+    Approval until it is accepted or rejected (the owner's QA, 15 Oct)."""
+    from app.modules.agent import drafts
+    to = f"/blueprint?tab={tab}" + (f"&document_id={document_id}" if document_id else "")
+
+    def _apply(data: dict) -> dict:
+        return drafts.add(data, kind=kind, title=title, to=to, run_id=ctx.run["id"], ref=str(document_id or ctx.run["id"]), now=ctx.now())
+    d = await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
+    ctx.run.setdefault("state", {})["draft"] = {"id": d["id"], "status": d["status"]}
+    return to + f"&review={d['id']}"
+
+
+async def _draft_in_history(ctx, idea: dict, r: dict) -> None:
+    """The Agent's validation as a draft in Idea Validation History: the filled form and its score, pending until the owner
+    accepts or rejects it there (as one run from the page is). The full report updates it when it is ready."""
+    payload, quick = r.get("payload"), r.get("quick") or {}
+    if not payload or not idea.get("history_id"):
+        return
+    entry = {"id": idea["history_id"], "type": "v4_validation", "title": (payload.get("step1") or {}).get("idea_name") or "Idea Validation",
+             "created_at": ctx.now().isoformat(), "status": "pending", "score": r.get("score"), "confidence": r.get("confidence"), "verdict": r.get("verdict"),
+             "journey": idea.get("depth") or payload.get("validation_mode") or "basic", "payload": payload, "result": quick, "source": "agent", "run_id": ctx.run["id"],
+             "full_report": r.get("full_report") or "pending"}
+
+    def _apply(data: dict) -> None:
+        history = [e for e in data.get("validation_history") or [] if isinstance(e, dict) and e.get("id") != entry["id"]]
+        data["validation_history"] = [entry, *history]
+    try:
+        await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
+        from app.modules.agent import drafts
+        to = f"/validation?history_id={entry['id']}&history_type=v4_validation"
+        d = await ctx.rt.business.mutate(ctx.run["business_id"], lambda data: drafts.add(data, kind="idea_validation", title=entry["title"], to=to,
+                                                                                        run_id=ctx.run["id"], ref=entry["id"], now=ctx.now()))
+        ctx.run.setdefault("state", {})["draft"] = {"id": d["id"], "status": d["status"]}
+    except Exception:      # noqa: BLE001 - the score stands on the task either way
+        logger.warning("idea validation draft not saved to History for %s", ctx.run["business_id"], exc_info=True)
+
+
+async def fill_validation_form(ctx, idea: dict) -> None:
+    """The Idea Validation form, filled from what the owner said in the chat (and the records, for their own business):
+    the wizard's own steps, the same ones the score is worked out from. The page fills only the fields still empty, once
+    per task, and says so; nothing the owner typed there is replaced. Never a reason for the validation not to run."""
+    from app.modules.agent.services import validation_payload
+    form = {k: v for k, v in validation_payload(idea, None).items() if k.startswith("step") and k != "steps_completed" and isinstance(v, dict)}
+    if not form:
+        return
+
+    def _apply(data: dict) -> None:
+        data["agent_validation_form"] = {"form": form, "run_id": ctx.run["id"], "at": ctx.now().isoformat(),
+                                         "idea": str(idea.get("description") or "")[:200]}
+    try:
+        await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
+    except Exception:      # noqa: BLE001
+        logger.warning("idea validation form not filled for %s", ctx.run["business_id"], exc_info=True)
 
 
 async def market_size_step(ctx):
@@ -1447,7 +1564,8 @@ async def market_size_step(ctx):
     # back with words and no figures ("an active category") is released, not charged. A3: never more than a few minutes.
     r: dict = {}
     try:
-        async with ctx.orch.charge_once(ctx.run, ctx.actor.user_id, "idea_validation", f"market_size:{ctx.run['id']}", "market_size"):
+        # Charged as the price shown (credit allocation v2: market research is part of the Comprehensive validation).
+        async with ctx.orch.charge_once(ctx.run, ctx.actor.user_id, "idea_validation_comprehensive", f"market_size:{ctx.run['id']}", "market_size"):
             r = await asyncio.wait_for(ctx.rt.studio.size_market(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea),
                                        timeout=MARKET_SIZE_SECONDS)
             if not any(_is_figure(r.get(k)) for k in ("tam", "sam", "som")):
@@ -1571,19 +1689,22 @@ async def business_plan_step(ctx):
         r = reusable(_plan_on_record(await ctx.rt.business.load(ctx.run["business_id"]) or data, key))
         reused = bool(r)
         if not r:
-            r = await _studio(ctx, "business_plan_full", ctx.rt.studio.draft_plan(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea))
+            r = await _generated(ctx, "business_plan_full", ctx.rt.studio.draft_plan(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea), idea)
+            if isinstance(r, Stop):
+                return r
             r = {**r, "inputs": inputs}
             if separate:
                 await _keep_separate_idea(ctx, idea, {"kind": "plan", **r}, plan=r)
             else:
                 await _keep(ctx, "plan", r)
+            r["to"] = await _as_draft(ctx, "business_plan", r.get("title") or "Business plan", "business-plans", r.get("document_id"))
     if reused:
         return Done("You already have this business plan draft" + (f" ({r['title']})" if r.get("title") else "") + ", so I haven't made another. Nothing was charged.",
                     next_action="Ask me to redraft it when you want a new version.",
                     outcome={"plan": r, "reused": True, "links": [{"label": "Business plan", "to": "/blueprint?tab=business-plans"}]}, skipped=True)
-    return Done("Business plan draft ready for review" + (f": {r['sections']} sections" if r.get("sections") else "") + ". Nothing has been sent to anyone.",
-                next_action="I'll redraft it when you ask, or when your figures change.",
-                outcome={"plan": r, "links": [{"label": "Business plan", "to": "/blueprint?tab=business-plans"}]})
+    return Done("Your business plan is ready to review" + (f": {r['sections']} sections" if r.get("sections") else "") + ".",
+                next_action="Review it: accept it, edit it or reject it.",
+                outcome={"plan": r, "links": [{"label": "draft business plan", "to": r.get("to") or "/blueprint?tab=business-plans"}]})
 
 
 async def sales_letter_step(ctx):
@@ -1592,7 +1713,9 @@ async def sales_letter_step(ctx):
     ask = _ask_idea(idea, ("description", "customer"))
     if ask:
         return ask
-    r = await _studio(ctx, "sales_letter_full", ctx.rt.studio.draft_sales_letter(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea))
+    r = await _generated(ctx, "sales_letter_full", ctx.rt.studio.draft_sales_letter(user_id=ctx.actor.user_id, business_id=ctx.run["business_id"], idea=idea), idea)
+    if isinstance(r, Stop):
+        return r
     if separate:
         await _keep_separate_idea(ctx, idea, {"kind": "sales_letter", **r})
     else:

@@ -31,7 +31,7 @@ FILE_TYPES = {"application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg",
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx"}
 
 CORE_FIELDS = {
-    rules.FUNDING: ("title", "route", "jurisdiction", "business_model", "stage", "target_amount", "currency", "receipt_date", "timing_confirmed",
+    rules.FUNDING: ("title", "route", "route_preference", "jurisdiction", "business_model", "stage", "target_amount", "currency", "receipt_date", "timing_confirmed",
                     "purpose", "purpose_milestone_id", "milestones", "use_of_funds", "market", "traction", "economics", "team", "risks",
                     "no_known_risks", "pinned", "owner"),
     rules.LAUNCH: ("name", "launch_type", "scope", "business_model", "offerings", "audience", "geography", "target_date", "planned_volume",
@@ -121,6 +121,67 @@ def _clean(value: Any, depth: int = 0) -> Any:
     if isinstance(value, dict) and depth < 4:
         return {str(k)[:60]: _clean(v, depth + 1) for k, v in list(value.items())[:80]}
     return None
+
+
+def _pack_of(row: dict, result: dict | None) -> dict:
+    """The funding pack, counted (P1.13): how many of its required items are ready ("2 of 6 ready"). Investor-only items are
+    not asked of a loan or a grant."""
+    data = row.get("data") or {}
+    try:
+        profile = rules.get_profile(data.get("profile") or rules.CURRENT[rules.FUNDING])
+    except rules.UnsupportedProfile:
+        profile = rules.FUNDING_EQUITY_V1
+    route = str(data.get("route_preference") or "").lower()
+    docs = [d for d in profile["required_documents"] if not (route in ("loan", "grant") and d["key"] in engine.EQUITY_ONLY_DOCUMENTS)]
+    forecast_known = any(g.get("code") == "G3" and g.get("state") == "passed" for g in (result or {}).get("gates") or [])
+
+    def ready(d: dict) -> bool:
+        if d.get("record") == "use_of_funds":
+            return bool(data.get("use_of_funds"))
+        if d.get("record") == "forecast":
+            return forecast_known
+        entry = (data.get("documents") or {}).get(d["key"]) or {}
+        return bool(entry.get("reviewed") or entry.get("evidence_id") or entry.get("artifact_id"))
+    items = [{"key": d["key"], "label": d["label"], "ready": ready(d)} for d in docs]
+    return {"ready": sum(1 for i in items if i["ready"]), "total": len(items), "items": items}
+
+
+def _what_changed(run: dict, older: dict | None) -> str:
+    """One line per check (P2.19): the fields that changed, the gates that failed or cleared, the score's move and who made
+    the change: "Target £100,000 → £60,000 (changed via Agent) · Allocations reconcile to the target failed · Score 55 → 42.5"."""
+    from app.modules.agent import goals as _goals
+    data = run.get("data") or {}
+    if not older:
+        return "First check"
+    before_s, after_s = ((older.get("data") or {}).get("snapshot") or {}).get("subject") or {}, (data.get("snapshot") or {}).get("subject") or {}
+    parts = []
+    for d in _goals.case_diff(before_s, after_s):
+        label = {"Amount": "Target"}.get(d["label"], d["label"])
+        who = ((after_s.get("provenance") or {}).get(d["path"]) or {}).get("source") or ""
+        said = f"{label} {_goals._said(d['path'], d['before'], before_s.get('currency'))} → {_goals._said(d['path'], d['after'], after_s.get('currency'))}"
+        parts.append(said + (f" ({who[:1].lower() + who[1:].split(',')[0]})" if who else ""))
+    g_old = {g.get("code"): g.get("state") for g in ((older.get("data") or {}).get("result") or {}).get("gates") or []}
+    for g in (data.get("result") or {}).get("gates") or []:
+        was = g_old.get(g.get("code"))
+        if g.get("state") == "failed" and was != "failed":
+            parts.append(f"{g.get('label')} failed")
+        elif was == "failed" and g.get("state") == "passed":
+            parts.append(f"{g.get('label')} cleared")
+    a_score, b_score = (data.get("result") or {}).get("score"), ((older.get("data") or {}).get("result") or {}).get("score")
+    if a_score != b_score and (a_score is not None or b_score is not None):
+        show = lambda v: "no score" if v is None else str(engine.display_score(v))      # noqa: E731
+        parts.append(f"Score {show(b_score)} → {show(a_score)}")
+    return " · ".join(parts) if parts else "No changes since the last check"
+
+
+def _said_where(provenance: dict | None, data: dict) -> dict:
+    """{path: source}, as stored provenance ({path: {"value", "source"}}), for the paths that hold a value now."""
+    out = {}
+    for path, source in (provenance or {}).items():
+        value = engine.get(data, path)
+        if value not in (None, ""):
+            out[path] = {"value": value, "source": source}
+    return out
 
 
 def _known_fields(subject_type: str, payload: dict | None) -> None:
@@ -393,7 +454,8 @@ class ReadinessService:
                 "title": data.get("title") or data.get("name"), "profile": data.get("profile"), "data": data,
                 "created_at": row.get("created_at"), "updated_at": row.get("updated_at"), "can": self.can(ctx["actor"], row["kind"])}
 
-    async def create_subject(self, user_id: str, business_id: str, subject_type: str, payload: dict, email: str | None = None) -> dict:
+    async def create_subject(self, user_id: str, business_id: str, subject_type: str, payload: dict, email: str | None = None,
+                             provenance: dict | None = None) -> dict:
         ctx = await self._ctx(user_id, business_id, email)
         self._need(ctx, subject_type, "edit")
         _known_fields(subject_type, payload)
@@ -414,10 +476,18 @@ class ReadinessService:
             data.setdefault("scope", "commercial")
             data.setdefault("business_model", "service")
         data = self._validate(subject_type, data)
+        if subject_type == rules.FUNDING:
+            # A business has one funding case, kept up to date (several launches are fine). An archived one is reactivated.
+            existing = [r for r in await self.store.list("subjects", business_id, kind=subject_type) if r.get("status") != "cancelled"]
+            if existing:
+                first = sorted(existing, key=lambda r: (r.get("status") == "archived", str(r.get("created_at") or "")))[0]
+                raise Conflict("one_funding_case", "This business already has a funding case. Update it"
+                               + (", or reactivate it first." if first.get("status") == "archived" else "."),
+                               current={"id": first["id"], "status": first.get("status"), "title": (first.get("data") or {}).get("title")})
         self._stamp(subject_type, data, {}, ctx)
         await self._check_references(business_id, data)
         data["profile"] = rules.profile_key(rules.select_profile(subject_type, data))
-        data["provenance"] = prov
+        data["provenance"] = {**prov, **_said_where(provenance, data)}
         data["editors"] = [user_id]
         data.setdefault("owner", ctx["actor"].email or user_id)
         row = await self.store.insert("subjects", {"id": new_id(), "business_id": business_id, "kind": subject_type, "subject_id": None, "status": "draft",
@@ -438,6 +508,7 @@ class ReadinessService:
             items.append({**{k: v for k, v in self._public(row, ctx).items() if k not in ("data", "can")},
                           "target_date": (row["data"] or {}).get("target_date"), "target_amount": (row["data"] or {}).get("target_amount"),
                           "currency": (row["data"] or {}).get("currency"), "launch_type": (row["data"] or {}).get("launch_type"),
+                          "pinned": bool((row["data"] or {}).get("pinned")), "updated_at": row.get("updated_at"),
                           "summary": await self._summary_of(row, latest, ctx)})
         return {"items": items, "can": self.can(ctx["actor"], subject_type), "profiles": self.profiles(subject_type)}
 
@@ -498,7 +569,7 @@ class ReadinessService:
         return out
 
     async def update_subject(self, user_id: str, business_id: str, subject_type: str, subject_id: str, revision: int | None, changes: dict,
-                             email: str | None = None, confirm: list[str] | None = None) -> dict:
+                             email: str | None = None, confirm: list[str] | None = None, provenance: dict | None = None) -> dict:
         ctx = await self._ctx(user_id, business_id, email)
         self._need(ctx, subject_type, "edit")
         row = await self._row("subjects", business_id, subject_id, subject_type)
@@ -519,6 +590,7 @@ class ReadinessService:
         for path in list(prov):
             if engine.get(data, path) != prov[path].get("value"):
                 prov.pop(path)                       # edited: now the case's own assumption
+        prov.update(_said_where(provenance, data))      # what this change came from ("From your funding chat, 15 Oct")
         data["provenance"] = prov
         data["editors"] = sorted(set(before.get("editors") or []) | {user_id})
         extra: dict = {}
@@ -597,6 +669,80 @@ class ReadinessService:
                 return saved
             row = await self._row("subjects", row["business_id"], row["id"])
         raise Conflict("busy", "This changed repeatedly while saving. Please try again.")
+
+    # What belonged to the funding need being replaced: kept, but not counted, until the owner says it still applies.
+    PREVIOUS_NEED_FIELDS = ("market", "traction", "use_of_funds", "milestones", "purpose_milestone_id", "timing_confirmed")
+
+    async def replace_need(self, user_id: str, business_id: str, subject_id: str, changes: dict, email: str | None = None,
+                           provenance: dict | None = None, summary: str = "") -> dict:
+        """One funding case per business, always the current need (the owner's QA, 15 Oct). The old need is snapshotted in
+        History ("Replaced on 15 Oct: £100,000 equity, UK SMEs"); its documents, market, traction and allocations are set
+        aside as "From your previous funding need. Still relevant?" and its evidence no longer counts until kept; the new
+        need's answers are written to their fields."""
+        ctx = await self._ctx(user_id, business_id, email)
+        self._need(ctx, rules.FUNDING, "edit")
+        row = await self._row("subjects", business_id, subject_id, rules.FUNDING)
+        given = {k: _clean(v) for k, v in (changes or {}).items() if k in CORE_FIELDS[rules.FUNDING]}
+        before = copy.deepcopy(row["data"] or {})
+        held_evidence = []
+        for e in await self.store.list("evidence", business_id, limit=500):
+            d = e.get("data") or {}
+            mine = [l for l in d.get("links") or [] if l.get("subject_id") == subject_id]
+            if not mine:
+                continue
+            others = [l for l in d.get("links") or [] if l.get("subject_id") != subject_id]
+            held = (d.get("held_links") or []) + [{**l, "previous_need": True} for l in mine]
+            await self.store.update("evidence", e["id"], {"data": {**d, "links": others, "held_links": held}, "updated_at": ctx["now"]}, bump=False)
+            held_evidence.append({"id": e["id"], "title": d.get("title") or d.get("name") or "Evidence", "date": d.get("evidence_date") or e.get("created_at")})
+        previous = {"replaced_at": ctx["today"].isoformat(), "title": before.get("title"), "summary": summary,
+                    "values": {k: before.get(k) for k in ("target_amount", "currency", "purpose", "route", "route_preference", "receipt_date", "stage") if before.get(k) is not None},
+                    "set_aside": {k: before[k] for k in self.PREVIOUS_NEED_FIELDS if before.get(k) not in (None, "", [], {})},
+                    "documents": {k: v for k, v in (before.get("documents") or {}).items() if isinstance(v, dict)},
+                    "evidence": held_evidence, "review": {}}
+
+        def apply(data: dict) -> None:
+            for k in self.PREVIOUS_NEED_FIELDS:
+                data.pop(k, None)
+            data.pop("documents", None)
+            merged = _deep_merge(data, given)
+            data.clear()
+            data.update(merged)
+            data["previous_needs"] = [previous] + list(before.get("previous_needs") or [])[:9]
+            prov = {p: v for p, v in (before.get("provenance") or {}).items() if p.split(".")[0] not in given and p.split(".")[0] not in self.PREVIOUS_NEED_FIELDS}
+            prov.update(_said_where(provenance, data))
+            data["provenance"] = prov
+            data["editors"] = sorted(set(before.get("editors") or []) | {user_id})
+        saved = await self._patch_data(row, ctx, apply, "Replaced with a new funding need.")
+        return await self._detail(saved, ctx)
+
+    async def keep_previous(self, user_id: str, business_id: str, subject_id: str, item: str, keep: bool, email: str | None = None) -> dict:
+        """[Keep] or [Remove] for one thing from the previous funding need: "evidence:<id>", "document:<key>" or a field
+        ("market", "traction", "use_of_funds"…). Kept, it counts again; removed, it is gone from the case (evidence itself
+        stays in the business's evidence library)."""
+        ctx = await self._ctx(user_id, business_id, email)
+        self._need(ctx, rules.FUNDING, "edit")
+        row = await self._row("subjects", business_id, subject_id, rules.FUNDING)
+        prev = ((row.get("data") or {}).get("previous_needs") or [None])[0]
+        if not prev:
+            raise NotFound()
+        kind, _, key = item.partition(":")
+        if kind == "evidence":
+            e = await self._row("evidence", business_id, key)
+            d = e.get("data") or {}
+            mine = [l for l in d.get("held_links") or [] if l.get("subject_id") == subject_id]
+            rest = [l for l in d.get("held_links") or [] if l.get("subject_id") != subject_id]
+            links = (d.get("links") or []) + ([{k: v for k, v in l.items() if k != "previous_need"} for l in mine] if keep else [])
+            await self.store.update("evidence", e["id"], {"data": {**d, "links": links, "held_links": rest}, "updated_at": ctx["now"]}, bump=False)
+
+        def apply(data: dict) -> None:
+            p = data["previous_needs"][0]
+            p.setdefault("review", {})[item] = "kept" if keep else "removed"
+            if keep and kind == "document" and key in (p.get("documents") or {}):
+                data.setdefault("documents", {})[key] = p["documents"][key]
+            elif keep and kind not in ("evidence", "document") and item in (p.get("set_aside") or {}) and data.get(item) in (None, "", [], {}):
+                data[item] = p["set_aside"][item]
+        saved = await self._patch_data(row, ctx, apply, "Something from the previous funding need was kept." if keep else "Something from the previous funding need was removed.")
+        return await self._detail(saved, ctx)
 
     async def attest(self, user_id: str, business_id: str, subject_type: str, subject_id: str, code: str, passed: bool, rationale: str,
                      independent: bool = False, email: str | None = None) -> dict:
@@ -1187,7 +1333,8 @@ class ReadinessService:
                     changed.append("new or changed evidence")
                 if a.get("subject") != b.get("subject") or a.get("forecast") != b.get("forecast"):
                     changed.append("changed assumptions")
-            out.append({"id": run["id"], "execution_status": run.get("status"), "created_at": run.get("created_at"), "as_of": data.get("as_of"),
+            what = _what_changed(run, older) if run.get("status") == "succeeded" else None
+            out.append({"id": run["id"], "execution_status": run.get("status"), "created_at": run.get("created_at"), "as_of": data.get("as_of"), "what_changed": what,
                         "profile": data.get("profile"), "classification": result.get("classification"), "score": engine.display_score(result.get("score")),
                         "coverage": result.get("coverage"), "blocker_count": result.get("blocker_count"), "confidence": (result.get("confidence") or {}).get("level"),
                         "requested_by": data.get("requested_by"),
@@ -1611,7 +1758,7 @@ class ReadinessService:
                "execution_status": latest.get("status") if latest else None}
         if row["kind"] == rules.FUNDING:
             out.update({"case_id": row["id"], "coverage": (result or {}).get("coverage") if result else None, "route": data.get("route"),
-                        "lifecycle_status": row.get("status")})
+                        "lifecycle_status": row.get("status"), "pack": _pack_of(row, result)})
         else:
             out.update({"initiative_id": row["id"], "launch_type": data.get("launch_type"), "scope": data.get("scope"), "target_date": data.get("target_date"),
                         "lifecycle_status": row.get("status"), "evidence_coverage": (result or {}).get("coverage") if result else None,

@@ -374,6 +374,16 @@ def document_facts(subject: dict, forecast: dict | None) -> dict:
             "forecast_start": (forecast or {}).get("start_month") or None}
 
 
+EQUITY_ONLY_DOCUMENTS = ("executive_summary", "team_summary")
+
+
+def route_note(subject: dict) -> str | None:
+    """Said on a loan or grant case: what the check is measured against for now."""
+    route = str(subject.get("route_preference") or "").lower()
+    return (f"You're considering a {route}. This check uses our equity preparation checklist for now, without the investor-only materials."
+            if route in ("loan", "grant") else None)
+
+
 def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
     s = snapshot["subject"]
     forecast = snapshot.get("forecast")
@@ -538,7 +548,12 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
     # C8 / G4: documents and risks
     facts = document_facts(s, forecast)
     docs, missing_docs, unreviewed, conflicts = [], [], [], []
+    # A loan or a grant (the owner's decision, 15 Oct): equity-only materials (pitch content, an ownership summary) are not
+    # asked for, so they are never a blocker; the rest of the equity checklist stands until loan and grant profiles exist.
+    route = str(s.get("route_preference") or "").lower()
     for d in profile["required_documents"]:
+        if route in ("loan", "grant") and d["key"] in EQUITY_ONLY_DOCUMENTS:
+            continue
         entry = (s.get("documents") or {}).get(d["key"]) or {}
         source, doc_facts = None, None
         if d.get("record") == "use_of_funds" and allocations:
@@ -613,6 +628,7 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
 
     uncorroborated = [e["id"] for e in fresh if e.get("verification") not in ("independently_reviewed", "corroborated")]
     return _assemble(profile, rules.FUNDING, r, g, {
+        "route_note": route_note(s),
         "metrics": {
             "forecast": fc.public(computed),
             "baseline_min_cash": computed["min_cash"], "first_negative_month": first_neg,

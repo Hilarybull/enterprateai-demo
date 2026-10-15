@@ -27,7 +27,9 @@ def _old_email_task(env):
     inv = invoice(env, "late1", "Aftred", 149, paid=False, due_in=-8, customer_email="")
     r = env.submit(capability="payment_followup", channel="ui_action", params={"invoice_id": inv["id"]})["run"]
     stored = env.store.runs[r["id"]]
-    stored.update({"error": OLD_EMAIL, "summary": OLD_EMAIL, "next_action": OLD_EMAIL})
+    # Stored as such tasks were then (blocked, not yet sent to approval flagged "Email needed").
+    stored.update({"error": OLD_EMAIL, "summary": OLD_EMAIL, "next_action": OLD_EMAIL, "status": "failed", "substatus": "blocked",
+                   "reason_code": "invalid_customer_destination"})
     stored["state"].pop("email_needed", None)
     return r["id"], inv
 
@@ -124,10 +126,8 @@ def test_the_plan_step_and_an_invoice_with_no_typed_number_both_read_as_agreed(m
     from app.modules.agent.dashboard import invoice_label, invoice_labels
     known_as = invoice_label(target, invoice_labels(env.businesses["A"]["data"]))
     assert known_as.startswith("INV-")                                    # the number Business Operations and the dashboard show for it
-    for step in env.store.steps.values():
-        if step["run_id"] == run_id and step.get("error"):
-            step["error"] = OLD_EMAIL
-            step["note"] = OLD_EMAIL
+    mine = sorted((st for st in env.store.steps.values() if st["run_id"] == run_id), key=lambda st: st.get("created_at") or "")
+    mine[-1].update({"error": OLD_EMAIL, "note": OLD_EMAIL})      # as such a step was stored then
     want = f"Aftred has no email on record for {known_as}. Add it and I'll prepare the reminder."
     try:
         with _client(monkeypatch, env) as client:
@@ -146,7 +146,8 @@ def test_the_plan_step_and_an_invoice_with_no_typed_number_both_read_as_agreed(m
         next(i for i in fresh.fin["invoices"] if i["id"] == bare["id"]).pop(key, None)
     r = fresh.submit(capability="payment_followup", channel="ui_action", params={"invoice_id": bare["id"]})["run"]
     label = invoice_label(next(i for i in fresh.fin["invoices"] if i["id"] == bare["id"]), invoice_labels(fresh.businesses["A"]["data"]))
-    assert r["error"] == f"Aftred has no email on record for {label}. Add it and I'll prepare the reminder."
+    # From now on it reaches Needs Approval flagged "Email needed" (QA, 15 Oct), with the same number.
+    assert r["status"] == "awaiting_approval" and fresh.pending(r)[0]["payload"]["email_needed"] == {"customer": "Aftred", "reference": label}
 
 
 def test_the_customer_question_reads_the_launch_plan_too(monkeypatch):

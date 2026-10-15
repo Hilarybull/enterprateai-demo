@@ -1149,11 +1149,14 @@ def followup_status(overdue: list[dict], runs: list[dict], policy: dict, plan: s
     ready = [r for r in mine if r.get("status") == "awaiting_approval"]
     stuck = [r for r in mine if r.get("reason_code") == "invalid_customer_destination"
              or (r.get("status") == "running" and any(f.get("key") == "customer_email" for f in (r.get("pending_question") or {}).get("fields") or []))]
+    # Drafts in Needs Approval with no address yet (the owner's QA, 15 Oct): approvals, said as needing an email.
+    flagged = [r for r in ready if (r.get("state") or {}).get("email_needed")]
     total = fmt_money(bz.money(sum(bz.invoice_outstanding(i) for i in overdue)), cur)
     head = f"{len(overdue)} overdue ({total})."
     said, cta = [], None
     if ready:
-        said.append(f"I've prepared {len(ready)} reminder{'s' if len(ready) != 1 else ''} for your approval")
+        said.append(f"I've prepared {len(ready)} reminder{'s' if len(ready) != 1 else ''} for your approval"
+                    + (f"; {len(flagged)} need{'s' if len(flagged) == 1 else ''} an email address for {(flagged[0]['state']['email_needed'].get('customer') or 'the customer')}" if flagged else ""))
         cta = {"label": "Review in Needs Approval", "to": "/agent?tab=needs_approval"}
     if stuck:
         by_id = {str(i.get("id")): i for i in overdue}

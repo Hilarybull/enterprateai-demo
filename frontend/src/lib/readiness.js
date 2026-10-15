@@ -49,6 +49,7 @@ export const createSubject = (businessId, feature, data) => apiRequest(root(busi
 export const getSubject = (businessId, feature, id) => apiRequest(`${root(businessId, feature)}/${id}`, "GET");
 export const updateSubject = (businessId, feature, id, revision, changes, confirm = []) =>
   apiRequest(`${root(businessId, feature)}/${id}`, "PATCH", { revision, changes, confirm });
+export const keepPrevious = (businessId, id, item, keep) => apiRequest(`/businesses/${businessId}/funding-cases/${id}/previous-need`, "POST", { item, keep });
 export const setSubjectStatus = (businessId, feature, id, action, reason) => apiRequest(`${root(businessId, feature)}/${id}/status`, "POST", { action, reason: reason || null });
 export const saveForecast = (businessId, feature, id, forecast, revision) => apiRequest(`${root(businessId, feature)}/${id}/forecast`, "PUT", { forecast, revision: revision ?? null });
 export const linkForecast = (businessId, feature, id, forecastId) => apiRequest(`${root(businessId, feature)}/${id}/forecast/link`, "POST", { forecast_id: forecastId });

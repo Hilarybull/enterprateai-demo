@@ -3,6 +3,7 @@ import { useExit } from "../../lib/motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { agentErrorMessage, approveAction, editDraft, getRun, rejectAction } from "../../lib/agent";
+import { apiRequest } from "../../api/client";
 import { formatCurrency } from "../../lib/format";
 import { ButtonSpinner, LoadError, SkeletonRegion, SkeletonTable, SkeletonText } from "../Skeleton";
 import { ApprovalReview, Icon } from "./AgentBits";
@@ -476,12 +477,43 @@ function ItemsEditor({ approval, options, kind, saving = false, problem = "", on
 /** Which approvals can be edited from a list: every document the Agent prepares to send. */
 export const editableApproval = (item) => Boolean(KIND[item?.tool_id]);
 
+const offerMoney = (n, currency) => {
+  try { return new Intl.NumberFormat(undefined, { style: "currency", currency: currency || "GBP", maximumFractionDigits: Number(n) % 1 ? 2 : 0 }).format(Number(n) || 0); }
+  catch { return String(n); }
+};
+
+/** Offered once on a draft: its items not in the catalogue yet ("Add 'Flower · £200' to your catalogue?"). Either answer
+ *  closes it for good; Add saves them in Catalogue > Products at the draft's price. */
+export function CatalogueOffer({ runId, items }) {
+  const [state, setState] = useState("");      // "" | "busy" | "closed" | the message after Add
+  if (!items?.length || state === "closed") return null;
+  const what = items.map((i) => `'${i.name} · ${offerMoney(i.unit_price, i.currency)}'`).join(", ");
+  const answer = async (add) => {
+    setState("busy");
+    try {
+      const res = await apiRequest(`/workflow-runs/${runId}/catalogue-offer`, "POST", { add });
+      setState(add ? (res?.message || "Added to your catalogue.") : "closed");
+    } catch { setState(add ? "" : "closed"); }
+  };
+  if (state && state !== "busy") return <p role="status" data-catalogue-offer className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-800">{state}</p>;
+  return (
+    <div data-catalogue-offer className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+      <span>Add {what} to your catalogue?</span>
+      <span className="flex gap-2">
+        <button type="button" disabled={state === "busy"} onClick={() => answer(false)} className="rounded-lg px-2.5 py-1 font-semibold text-slate-500 hover:text-slate-800 disabled:opacity-60">Not now</button>
+        <button type="button" disabled={state === "busy"} onClick={() => answer(true)} className="rounded-lg bg-brand-600 px-3 py-1 font-semibold text-white hover:bg-brand-700 disabled:opacity-60">Add</button>
+      </span>
+    </div>
+  );
+}
+
 /** A document waiting for approval, in a drawer on the right: its preview with Approve, Decline
  *  and Edit draft, and the editor in the same place. Nothing here leaves the page. */
 export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing = true }) {
   const [data, setData] = useState(null);
   const [failed, setFailed] = useState("");
   const [busy, setBusy] = useState("");
+  const [address, setAddress] = useState("");      // the recipient's email, when the draft has none yet
   const [problem, setProblem] = useState("");
   const [editing, setEditing] = useState(startEditing);
   const [done, setDone] = useState("");      // what happened, once it is no longer waiting
@@ -495,6 +527,9 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
   }, [runId, attempt]);
 
   const pending = (data?.approvals || []).find((a) => a.status === "pending");
+  // A draft flagged "Email needed": its address entered here before it can be sent (the owner's QA, 15 Oct).
+  const needEmail = pending?.payload?.email_needed && !pending?.payload?.to_email ? pending.payload.email_needed : null;
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address.trim());
   async function act(name, fn, after) {
     setBusy(name);
     setProblem("");
@@ -543,6 +578,15 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
               onCancel={() => (startEditing ? onClose() : (setEditing(false), setProblem("")))} onSave={save} />
           ) : (
             <div className="space-y-3">
+              {needEmail && (
+                // The draft is ready but its recipient has no email yet: entered here, saved on the customer record.
+                <label className="block rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[13px] text-amber-900" data-email-needed>
+                  <span className="font-semibold">{needEmail.customer}'s email</span>
+                  <input type="email" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="name@example.com" autoComplete="email"
+                    className="mt-1 block w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900" />
+                </label>
+              )}
+              <CatalogueOffer runId={runId} items={data.draft_options?.catalogue_offer} />
               <ApprovalReview approval={pending} lastEdit={data.run?.last_edit} editedByYou={data.draft_options?.edited_by_you} />
               {problem && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700">{problem}</p>}
               <div data-drawer-actions className="sticky bottom-0 -mx-4 -mb-4 flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:-mx-5 sm:-mb-5 sm:px-5 dark:border-slate-800 dark:bg-slate-950">
@@ -553,7 +597,15 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
                     <button type="button" disabled={!!busy} onClick={() => act("reject", () => rejectAction(runId, pending.id), (res, fresh) => said(res, fresh, "Declined. Nothing was sent."))} className={button}>
                       {busy === "reject" && <ButtonSpinner />}{busy === "reject" ? "Declining…" : "Decline"}
                     </button>
-                    <button type="button" disabled={!!busy} onClick={() => act("approve", () => approveAction(runId, pending.id), (res, fresh) => said(res, fresh, "Approved and sent."))}
+                    {needEmail && (
+                      <button type="button" disabled={!!busy} data-approve-without-sending
+                        onClick={() => act("keep", () => apiRequest(`/workflow-runs/${runId}/approvals/${pending.id}/approve-without-sending`, "POST", {}), (res, fresh) => said(res, fresh, "Approved. Not sent yet."))}
+                        className={button}>Approve without sending</button>
+                    )}
+                    <button type="button" disabled={!!busy || (needEmail && !emailOk)} data-approve-and-send
+                      onClick={() => act("approve", () => (needEmail
+                        ? apiRequest(`/workflow-runs/${runId}/approvals/${pending.id}/approve-with-email`, "POST", { email: address.trim() }, { timeoutMs: 120000 })
+                        : approveAction(runId, pending.id)), (res, fresh) => said(res, fresh, "Approved and sent."))}
                       className="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
                       {busy === "approve" && <ButtonSpinner />}{busy === "approve" ? "Sending…" : "Approve and send"}
                     </button>

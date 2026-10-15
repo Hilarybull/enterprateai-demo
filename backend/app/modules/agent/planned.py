@@ -38,12 +38,14 @@ def figures(data: dict, today=None) -> dict[str, dict]:
     shared = [(f, v) for f, v in (data.get("shared_answers") or {}).items() if isinstance(v, dict) and v.get("state", "accepted") == "accepted"]
     for field, got in sorted(shared, key=lambda kv: str(kv[1].get("at") or ""), reverse=True):
         source = got.get("source") or f"From your {GOAL_WORDS.get(got.get('goal'), 'earlier check')}"
+        if (got.get("basis") == "estimate" or "estimate" in source) and not got.get("sources"):
+            continue      # §5: an estimate with no checked source is never a planned figure
         take(field, got.get("value"), source, got.get("at"), got.get("basis") or ("estimate" if "estimate" in source else "forecast"))
     versions = [(goal, v) for goal, vs in (data.get("assessment_datasets") or {}).items() for v in vs or [] if isinstance(v, dict)]
     for goal, v in sorted(versions, key=lambda gv: str(gv[1].get("created_at") or ""), reverse=True):
         words = GOAL_WORDS.get(goal, "check").replace("check", "review")
         for field, value in (v.get("inputs") or {}).items():
-            if (v.get("inputs_from") or {}).get(field) == "estimate":
+            if "estimate" in str((v.get("inputs_from") or {}).get(field) or ""):
                 continue      # an estimate is never a planned figure of the owner's
             take(field, value, f"From your {words}", v.get("created_at"), "forecast")
     co = first_value._company(data)
