@@ -2,6 +2,7 @@ import UkDateInput from "../components/UkDateInput";
 import ResearchReview from "../components/ResearchReview";
 import { apiRequest } from "../api/client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import QuickCheck from "../components/QuickCheck";
@@ -169,36 +170,141 @@ function OpenCase({ to }) {
 }
 
 /** QA P0.2: what the funding need this case replaced brought with it. Set aside, not counted, until kept: Keep or Remove each. */
-function PreviousNeed({ businessId, subject, onChanged }) {
+/** The row's actions in one ··· menu (the owner's QA, 15 Oct): View details, Keep, Remove. */
+function RowMenu({ label, disabled, viewing, onView, onKeep, onRemove }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (e.type === "keydown" ? e.key === "Escape" : !e.target.closest?.("[data-row-menu]")) setOpen(false); };
+    window.addEventListener("keydown", close);
+    window.addEventListener("mousedown", close);
+    return () => { window.removeEventListener("keydown", close); window.removeEventListener("mousedown", close); };
+  }, [open]);
+  const pick = (fn) => () => { setOpen(false); fn(); };
+  const item = "block w-full px-3 py-2 text-left text-[13px] text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800";
+  return (
+    <div className="relative" data-row-menu>
+      <button type="button" aria-label={`Actions for ${label}`} aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={() => setOpen((o) => !o)}
+        className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300">
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 z-30 mt-1 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+          <button type="button" role="menuitem" className={item} onClick={pick(onView)}>{viewing ? "Hide details" : "View details"}</button>
+          <button type="button" role="menuitem" className={item} onClick={pick(onKeep)}>Keep</button>
+          <button type="button" role="menuitem" className={`${item} text-rose-700 dark:text-rose-300`} onClick={pick(onRemove)}>Remove</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PREVIEW_LABEL = { title: "Title", says: "What it says", kind: "Type", dated: "Dated", checked: "Checked", figures: "Figures", reviewed_on: "Reviewed on",
+  notes: "Notes", prepared: "Prepared" };
+const SKIP_KEYS = new Set(["id", "status", "version", "created_at", "updated_at", "generated_at", "source", "provenance", "reviewed", "reviewed_by",
+  "reviewed_at", "evidence_id", "facts_fingerprint", "fingerprint", "run_id", "agent_run_id", "links", "held_links", "key", "preview"]);
+const wordsOf = (k) => PREVIEW_LABEL[k] || k.replace(/_id$/, "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+
+/** What a set-aside item says, in plain words: its text, its figures as "Label: value", a list as bullets. */
+export function PreviousDetail({ value }) {
+  if (value == null || value === "" || (typeof value === "object" && !Object.keys(value).length)) return <p className="text-slate-500">Only its title was saved with this, no other details.</p>;
+  if (typeof value !== "object") return <p className="whitespace-pre-line">{String(value)}</p>;
+  if (Array.isArray(value)) {
+    return <ul className="list-disc space-y-0.5 pl-5">{value.map((v, n) => <li key={n}>{typeof v === "object" && v ? Object.entries(v).filter(([k, x]) => !SKIP_KEYS.has(k) && x !== "" && x != null).map(([k, x]) => `${wordsOf(k)}: ${typeof x === "object" ? JSON.stringify(x) : x}`).join(" · ") : String(v)}</li>)}</ul>;
+  }
+  const TEXT = ["text", "content", "body", "markdown"];
+  const text = TEXT.map((k) => value[k]).find((t) => typeof t === "string" && t.trim());
+  const rows = Object.entries(value).filter(([k, x]) => !SKIP_KEYS.has(k) && !TEXT.includes(k) && x !== "" && x != null && !(typeof x === "object" && !Object.keys(x).length));
+  if (!rows.length && !text) return <p className="text-slate-500">Only its title was saved with this, no other details.</p>;
+  return (
+    <div className="space-y-2">
+      {rows.length > 0 && (
+        <dl className="space-y-1">
+          {rows.map(([k, x]) => (
+            <div key={k}><dt className="inline font-semibold">{wordsOf(k)}: </dt><dd className="inline">{typeof x === "object" ? <PreviousDetail value={x} /> : String(x)}</dd></div>
+          ))}
+        </dl>
+      )}
+      {text && <p className="max-h-80 overflow-y-auto whitespace-pre-line rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60" data-saved-text>{text}</p>}
+    </div>
+  );
+}
+
+export function PreviousNeed({ businessId, subject, onChanged }) {
   const prev = (subject.data?.previous_needs || [])[0];
   const [busy, setBusy] = useState("");
+  const [listing, setListing] = useState(false);      // the popup with everything to keep or remove
+  const [viewing, setViewing] = useState(null);       // one item's details, in the same popup
+  useEffect(() => {
+    if (!listing) return undefined;
+    const key = (e) => { if (e.key === "Escape") (viewing ? setViewing(null) : setListing(false)); };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [listing, viewing]);
   if (!prev) return null;
   const review = prev.review || {};
   const words = { market: "Market details", traction: "Traction", use_of_funds: "Use of funds", milestones: "Milestones" };
   const items = [
-    ...(prev.evidence || []).map((e) => ({ id: `evidence:${e.id}`, label: e.title, note: e.date ? `dated ${String(e.date).slice(0, 10)}` : "" })),
-    ...Object.keys(prev.documents || {}).map((k) => ({ id: `document:${k}`, label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), note: "" })),
-    ...Object.keys(prev.set_aside || {}).filter((k) => words[k]).map((k) => ({ id: k, label: words[k], note: "" })),
+    ...(prev.evidence || []).map((e) => ({ id: `evidence:${e.id}`, label: e.title, note: e.date ? `dated ${String(e.date).slice(0, 10)}` : "", detail: e.preview || e.detail || "", evidence: e.id })),
+    ...Object.keys(prev.documents || {}).map((k) => ({ id: `document:${k}`, label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), note: "", detail: prev.documents[k]?.preview || {} })),
+    ...Object.keys(prev.set_aside || {}).filter((k) => words[k]).map((k) => ({ id: k, label: words[k], note: "", detail: prev.set_aside[k] })),
   ].filter((i) => !review[i.id]);
   if (!items.length) return null;
   const decide = async (item, keep) => {
     setBusy(item);
-    try { onChanged(await keepPrevious(businessId, subject.id, item, keep)); } finally { setBusy(""); }
+    try { onChanged(await keepPrevious(businessId, subject.id, item, keep)); setViewing(null); } finally { setBusy(""); }
   };
+  const close = () => { setViewing(null); setListing(false); };
+  const shown = viewing && items.find((i) => i.id === viewing.id);
   return (
-    <Panel title="From your previous funding need. Still relevant?" description={`Replaced on ${dateLabel(prev.replaced_at)}${prev.summary ? `: ${prev.summary}` : ""}. These don't count in your score until you keep them.`}>
-      <ul className="space-y-2" data-previous-need>
-        {items.map((i) => (
-          <li key={i.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 dark:border-slate-800">
-            <span className="text-[13px] text-slate-800 dark:text-slate-200">{i.label}{i.note && <span className="text-slate-500"> · {i.note}</span>}</span>
-            <span className="flex gap-2">
-              <Btn disabled={busy === i.id} onClick={() => decide(i.id, true)}>Keep</Btn>
-              <Btn disabled={busy === i.id} onClick={() => decide(i.id, false)}>Remove</Btn>
-            </span>
-          </li>
-        ))}
-      </ul>
-    </Panel>
+    <>
+      {/* One line on every tab; the list itself opens as a popup (the owner's QA, 15 Oct). */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-[13px] text-amber-900" data-previous-need-line>
+        <span>{items.length} thing{items.length === 1 ? "" : "s"} from your previous funding need to keep or remove. They don't count in your score until you keep them.</span>
+        <Btn onClick={() => setListing(true)}>Review</Btn>
+      </div>
+      {listing && createPortal(
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+          <div role="dialog" aria-modal="true" aria-label={shown ? shown.label : "From your previous funding need"} data-previous-need
+            className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+              <div className="min-w-0">
+                {shown && <button type="button" onClick={() => setViewing(null)} className="mb-1 text-[12.5px] font-semibold text-brand-700 hover:underline">Back to the list</button>}
+                <p className="text-base font-bold text-slate-900 dark:text-slate-100">{shown ? shown.label : "From your previous funding need. Still relevant?"}</p>
+                {!shown && <p className="mt-0.5 text-[13px] text-slate-500">Replaced on {dateLabel(prev.replaced_at)}{prev.summary ? `: ${prev.summary}` : ""}.</p>}
+                {shown?.note && <p className="mt-0.5 text-[13px] text-slate-500">{shown.note}</p>}
+              </div>
+              <button type="button" onClick={close} aria-label="Close" className="text-[13px] font-semibold text-slate-500 hover:text-slate-800">Close</button>
+            </div>
+            <div className="overflow-y-auto px-5 py-4">
+              {shown ? (
+                <div className="text-[13.5px] text-slate-700 dark:text-slate-300" data-previous-detail>
+                  <PreviousDetail value={shown.detail} />
+                  {shown.evidence && <a href="?tab=evidence" className="mt-2 inline-block text-[12.5px] font-semibold text-brand-700 hover:underline">See it in the Evidence tab</a>}
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {items.map((i) => (
+                    <li key={i.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 dark:border-slate-800" data-previous-item={i.id}>
+                      <button type="button" onClick={() => setViewing(i)} className="min-w-0 text-left text-[13px] text-slate-800 hover:text-brand-700 dark:text-slate-200">
+                        {i.label}{i.note && <span className="text-slate-500"> · {i.note}</span>}
+                      </button>
+                      <RowMenu label={i.label} disabled={busy === i.id} viewing={false}
+                        onView={() => setViewing(i)} onKeep={() => decide(i.id, true)} onRemove={() => decide(i.id, false)} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {shown && (
+              <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
+                <Btn disabled={busy === shown.id} onClick={() => decide(shown.id, false)}>Remove</Btn>
+                <Btn kind="primary" disabled={busy === shown.id} onClick={() => decide(shown.id, true)}>Keep</Btn>
+              </div>
+            )}
+          </div>
+        </div>, document.body)}
+    </>
   );
 }
 

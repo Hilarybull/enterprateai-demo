@@ -172,6 +172,8 @@ def fill(data: dict, answers: dict, goal: str, *, currency: str | None = None, n
         have = settings.get("currency") if field == "currency" else p.get(field)
         if field == "currency" and not have:
             have = p.get("currency")
+        if (prov.get(field) or {}).get("by") == "owner" or field in (data.get("profile_undone") or {}):
+            continue      # set (or cleared, or undone) by the owner by hand: theirs, never filled again
         if _blank(have):
             if field == "currency":
                 settings["currency"] = value
@@ -347,7 +349,7 @@ def apply_brand(data: dict, drafted: dict, now: datetime | None = None) -> list[
     filled = []
     for f in BRAND_FIELDS:
         v = drafted.get(f)
-        if v in (None, "", []) or not _blank(p.get(f)):
+        if v in (None, "", []) or not _blank(p.get(f)) or (prov.get(f) or {}).get("by") == "owner" or f in (data.get("profile_undone") or {}):
             continue
         if f == "core_values":
             items = v if isinstance(v, list) else re.split(r",\s*", str(v))

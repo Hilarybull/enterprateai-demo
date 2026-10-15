@@ -60,6 +60,7 @@ export default function StartPage({ framed = false }) {
   const [workspace, setWorkspace] = useState(false);
   const [result, setResult] = useState(null);      // the free first result, for a covered goal
   const began = useRef(false);
+  const asking = useRef(false);      // the Replace or Update question is up: a late quick result never covers it
 
   const prepare = useCallback(async (known = null, confirmed = false) => {
     setStage("preparing");
@@ -68,7 +69,7 @@ export default function StartPage({ framed = false }) {
     let shown = false;
     if (known?.first_value) {
       fetchFirstValue(sessionId).then((fv) => {
-        if (!fv?.result) return;
+        if (!fv?.result || asking.current) return;
         shown = true;
         rememberFirstValue(sessionId);
         setResult(fv.result);
@@ -83,6 +84,10 @@ export default function StartPage({ framed = false }) {
         setStage("confirm");
         return;
       }
+      // The case already holds another need: Replace or Update is asked first, even when the quick result is on screen
+      // (it was skipped there, so the case kept the old need and showed the old research).
+      asking.current = Boolean(done.next === "choose" && done.choose);
+      if (done.next === "choose" && done.choose) { setSession(done); if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id); setStage("choose"); return; }
       if (shown) { setSession(done); if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id); return; }
       setSession(done);
       if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id);
@@ -118,7 +123,6 @@ export default function StartPage({ framed = false }) {
         navigate(done.handoff.to, { replace: true });
         return;
       }
-      if (done.next === "choose" && done.choose) { setStage("choose"); return; }      // update the case that is there, or start another
       setProblem(done.problem || "That couldn't be prepared just now. Nothing was lost.");
       setStage("problem");
     } catch (e) {

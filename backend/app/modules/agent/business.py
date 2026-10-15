@@ -199,7 +199,12 @@ class SupabaseBusiness(Business):
                     raise BusinessAccessDenied("Business not found.")
                 current = rows[0]
                 data = copy.deepcopy(current.get("data") or {})
+                before = copy.deepcopy(data.get("workspace_profile"))
                 result = fn(data)
+                if data.get("workspace_profile") != before:
+                    # The profile is master data: a change here gets a new revision, so a page holding an older copy can
+                    # never save that copy back over it (sb_update keeps the newer revision).
+                    data["workspace_profile_updated_at"] = datetime.now(timezone.utc).isoformat()
                 q = client.table("workspaces").update({"data": data, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", business_id)
                 if current.get("updated_at"):
                     q = q.eq("updated_at", current["updated_at"])

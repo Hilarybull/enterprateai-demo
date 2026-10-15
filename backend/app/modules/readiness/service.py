@@ -174,6 +174,18 @@ def _what_changed(run: dict, older: dict | None) -> str:
     return " · ".join(parts) if parts else "No changes since the last check"
 
 
+def evidence_words(ev: dict, reviewed_at: Any = None) -> dict:
+    """What a piece of evidence says, in plain words, for the owner to read (its title, what it claims, its date, whether it
+    was checked, its figures and notes), never the record's ids."""
+    facts = ev.get("facts") if isinstance(ev.get("facts"), dict) else {}
+    text = ev.get("summary") or ev.get("description") or ev.get("notes") or ev.get("text") or ""
+    return {k: v for k, v in {"title": ev.get("title") or ev.get("name"), "says": ev.get("claim") if ev.get("claim") != ev.get("title") else None,
+                              "kind": ev.get("type"), "dated": str(ev.get("effective_date") or ev.get("evidence_date") or "")[:10] or None,
+                              "checked": {"verified": "Checked", "unverified": "Not checked yet"}.get(ev.get("verification"), ev.get("verification")),
+                              "figures": facts or None, "notes": str(text)[:4000] or None,
+                              "reviewed_on": str(reviewed_at or "")[:10] or None}.items() if v}
+
+
 def _said_where(provenance: dict | None, data: dict) -> dict:
     """{path: source}, as stored provenance ({path: {"value", "source"}}), for the paths that hold a value now."""
     out = {}
@@ -539,6 +551,28 @@ class ReadinessService:
             self._need(ctx, subject_type, "read")
             return await self._detail(await self._row("subjects", business_id, subject_id, subject_type), ctx)
 
+    async def _preview_previous(self, out: dict, business_id: str) -> None:
+        """What each thing set aside from the previous funding need says (the owner's QA, 15 Oct), so Keep or Remove is
+        decided on its content: a document's linked evidence (its title, what it claims, its date and whether it was
+        checked), in plain words, never the record's ids."""
+        import copy
+        needs = (out.get("data") or {}).get("previous_needs") or []
+        if not needs:
+            return
+        prev = copy.deepcopy(needs[0])      # a copy: the stored case is never changed by reading it
+        out["data"] = {**out["data"], "previous_needs": [prev, *needs[1:]]}
+        try:
+            by_id = {e["id"]: e.get("data") or {} for e in await self.store.list("evidence", business_id, limit=500)}
+        except Exception:      # noqa: BLE001 - the list still shows, without previews
+            return
+
+        for k, doc in (prev.get("documents") or {}).items():
+            ev = by_id.get(str(doc.get("evidence_id") or ""))
+            doc["preview"] = doc.get("saved") or (evidence_words(ev, doc.get("reviewed_at")) if ev else
+                                                  {k2: v for k2, v in {"reviewed_on": str(doc.get("reviewed_at") or "")[:10] or None}.items() if v})
+        for e in prev.get("evidence") or []:
+            e["preview"] = e.get("saved") or (evidence_words(by_id[e["id"]]) if by_id.get(e.get("id")) else None)
+
     async def _detail(self, row: dict, ctx: dict, extra: dict | None = None) -> dict:
         data = row["data"] or {}
         profile = rules.get_profile(data["profile"])
@@ -554,6 +588,7 @@ class ReadinessService:
         evidence = await self._evidence_for(row, forecast)
         assessment, summary = await asyncio.gather(self._public_assessment(latest, row, ctx) if latest else nothing(), self._summary_of(row, latest, ctx))
         out = self._public(row, ctx)
+        await self._preview_previous(out, row["business_id"])
         out.update({
             "profile_definition": rules.public_profile(profile),
             "sections": engine.section_progress(profile, data, (forecast or {}).get("data")),
@@ -693,11 +728,34 @@ class ReadinessService:
             others = [l for l in d.get("links") or [] if l.get("subject_id") != subject_id]
             held = (d.get("held_links") or []) + [{**l, "previous_need": True} for l in mine]
             await self.store.update("evidence", e["id"], {"data": {**d, "links": others, "held_links": held}, "updated_at": ctx["now"]}, bump=False)
-            held_evidence.append({"id": e["id"], "title": d.get("title") or d.get("name") or "Evidence", "date": d.get("evidence_date") or e.get("created_at")})
+            held_evidence.append({"id": e["id"], "title": d.get("title") or d.get("name") or "Evidence", "date": d.get("evidence_date") or e.get("created_at"),
+                                  "detail": str(d.get("summary") or d.get("description") or d.get("notes") or d.get("text") or "")[:600]})
+        # Saved in full now (the owner's QA, 15 Oct), so "View details" shows what each thing said even after the evidence
+        # or the prepared document changes: the linked evidence in words, and the latest prepared text of each document.
+        by_id = {e["id"]: e.get("data") or {} for e in await self.store.list("evidence", business_id, limit=500)}
+        latest: dict[str, dict] = {}
+        for a in await self.store.list("artifacts", business_id, subject_id=subject_id):
+            d = a.get("data") or {}
+            if d.get("body") and (a["kind"] not in latest or int(d.get("version") or 0) > int((latest[a["kind"]].get("data") or {}).get("version") or 0)):
+                latest[a["kind"]] = a
+        documents = {}
+        for k, v in (before.get("documents") or {}).items():
+            if not isinstance(v, dict):
+                continue
+            saved = evidence_words(by_id[str(v["evidence_id"])], v.get("reviewed_at")) if by_id.get(str(v.get("evidence_id") or "")) else                 {x: y for x, y in {"reviewed_on": str(v.get("reviewed_at") or "")[:10] or None}.items() if y}
+            art = latest.get(k)
+            if art:
+                saved["text"] = str(art["data"]["body"])[:20000]
+                saved["prepared"] = f"Version {art['data'].get('version') or 1}" + (f", as of {str(art['data'].get('as_of'))[:10]}" if art["data"].get("as_of") else "")
+            documents[k] = {**v, "saved": saved}
+        for e in held_evidence:
+            if by_id.get(e["id"]):
+                e["saved"] = evidence_words(by_id[e["id"]])
         previous = {"replaced_at": ctx["today"].isoformat(), "title": before.get("title"), "summary": summary,
                     "values": {k: before.get(k) for k in ("target_amount", "currency", "purpose", "route", "route_preference", "receipt_date", "stage") if before.get(k) is not None},
                     "set_aside": {k: before[k] for k in self.PREVIOUS_NEED_FIELDS if before.get(k) not in (None, "", [], {})},
-                    "documents": {k: v for k, v in (before.get("documents") or {}).items() if isinstance(v, dict)},
+                    "documents": documents,
+                    "materials": {k: {"title": (a.get("data") or {}).get("title"), "text": str(a["data"]["body"])[:20000]} for k, a in latest.items() if k not in documents},
                     "evidence": held_evidence, "review": {}}
 
         def apply(data: dict) -> None:

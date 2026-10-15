@@ -27,3 +27,9 @@ def test_the_summary_says_the_amount_in_its_currency_and_the_stated_purpose():
     assert "We are looking for £25,000 for a second van and a driver." in d["executive_summary"]
     d = research.funding_deliverables({**i, "amount": 5000000}, [], {"criteria": []}, "NGN")
     assert "₦5,000,000" in d["executive_summary"] and "£" not in d["executive_summary"]
+
+
+def test_the_summary_never_says_the_place_twice():
+    i = {"sell": "monthly car wash subscription", "customer": "Office workers in Abuja", "where": "Abuja", "amount": 250000, "use": "pay for new office"}
+    d = research.funding_deliverables(i, [], {"criteria": []}, "GBP")
+    assert d["executive_summary"].startswith("Monthly car wash subscription, for office workers in Abuja.")

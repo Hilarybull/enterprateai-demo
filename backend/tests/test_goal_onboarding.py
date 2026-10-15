@@ -882,3 +882,28 @@ def test_history_says_what_changed_and_its_effect(world):
     items = run(svc.history(OWNER, "A", rules.FUNDING, case_id, OWNER))
     assert items[0]["what_changed"].startswith("Target £50,000 → £60,000 (changed via Agent)")
     assert items[-1]["what_changed"] == "First check"
+
+
+def test_replacing_a_need_saves_what_each_document_said_for_view_details(world):
+    """Saved in full at Replace (QA, 15 Oct): each document's linked evidence in words and its latest prepared text, so
+    "View details" shows them next time, never only a title or the record's ids."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    svc = service_for(env.orch)
+    _first, made = _funding(client)
+    case_id = made["handoff"]["subject_id"]
+    ev = run(svc.store.insert("evidence", {"id": "ev-1", "business_id": "A", "kind": "document", "subject_id": None, "revision": 1, "key": "k1",
+                                           "data": {"title": "Executive summary v1", "type": "document", "effective_date": "2026-10-01",
+                                                    "verification": "unverified", "notes": "Raising for two vans.", "links": []},
+                                           "created_by": OWNER, "created_at": "2026-10-01T00:00:00+00:00", "updated_at": "2026-10-01T00:00:00+00:00"}))
+    run(svc.store.insert("artifacts", {"id": "art-1", "business_id": "A", "kind": "executive_summary", "subject_id": case_id, "status": "draft", "revision": 1,
+                                       "key": None, "data": {"title": "Executive summary draft", "body": "We wash cars for office workers.", "version": 2},
+                                       "created_by": OWNER, "created_at": "2026-10-04T00:00:00+00:00", "updated_at": "2026-10-04T00:00:00+00:00"}))
+    row = run(svc.store.get("subjects", case_id))
+    run(svc.store.update("subjects", case_id, {"data": {**row["data"], "documents": {"executive_summary": {"reviewed": True, "evidence_id": ev["id"] if isinstance(ev, dict) else "ev-1",
+                                                                                                          "reviewed_at": "2026-10-04"}}}}))
+    out = run(svc.replace_need(OWNER, "A", case_id, {"target_amount": 250000, "purpose": "a new office"}, OWNER))
+    saved = run(svc.store.get("subjects", case_id))["data"]["previous_needs"][0]["documents"]["executive_summary"]["saved"]
+    assert saved["title"] == "Executive summary v1" and saved["notes"] == "Raising for two vans." and saved["text"] == "We wash cars for office workers."
+    shown = out["data"]["previous_needs"][0]["documents"]["executive_summary"]["preview"]
+    assert shown == saved and "evidence_id" not in shown

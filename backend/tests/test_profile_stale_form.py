@@ -38,3 +38,19 @@ def test_brand_brief_never_uses_one_persons_name_as_the_customer():
     assert brief["customer"] == ""
     brief = pf.brand_brief({"workspace_profile": {"key_offering_focus": "Car washing", "target_customer_type": "Office workers in Abuja"}})
     assert brief["customer"] == "Office workers in Abuja"
+
+
+def test_the_agent_never_fills_a_field_the_owner_set_cleared_or_undid():
+    from app.modules.agent import profile_fill as pf
+    data = {"workspace_profile": {"city": ""}, "profile_provenance": {"city": {"by": "owner", "source": "You"}}}
+    assert "city" not in pf.fill(data, {"where": "Abuja"}, "launch")["filled"] and data["workspace_profile"]["city"] == ""
+    data = {"workspace_profile": {}, "profile_undone": {"city": {"value": "Abuja"}}}
+    assert "city" not in pf.fill(data, {"where": "Abuja"}, "launch")["filled"]
+    data = {"workspace_profile": {"key_offering_focus": "Car washing"}, "profile_provenance": {"mission": {"by": "owner"}}}
+    assert "mission" not in pf.apply_brand(data, {"mission": "To wash cars well.", "tagline": "Clean cars"})
+
+
+def test_a_hand_edit_marks_only_the_changed_fields_as_the_owners():
+    marks = service.owner_marks({"profile_provenance": {"city": {"source": "From your launch chat"}}},
+                                {"city": "Abuja", "tagline": None}, {"city": "Lagos", "tagline": "", "vision": None})
+    assert marks["city"]["by"] == "owner" and "tagline" not in marks and "vision" not in marks

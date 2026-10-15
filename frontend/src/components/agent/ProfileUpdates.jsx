@@ -13,6 +13,11 @@ export default function ProfileUpdates({ businessId }) {
     apiRequest(`/businesses/${businessId}/profile/updates`, "GET").then(setState).catch(() => setState(null));
   }, [businessId]);
   useEffect(() => { load(); }, [load]);
+  // Told once (the owner's QA, 15 Oct): marked seen as soon as it is shown, so the same note never comes back on the next
+  // visit. It stays on screen until they leave the page.
+  useEffect(() => {
+    if (state?.message && businessId) apiRequest(`/businesses/${businessId}/profile/updates/seen`, "POST", {}).catch(() => {});
+  }, [state?.message, businessId]);
   if (!state || (!state.message && !state.conflicts?.length)) return null;
   const conflict = state.conflicts?.[0];
   const answer = async (field, choice) => {
@@ -24,9 +29,7 @@ export default function ProfileUpdates({ businessId }) {
     try { await apiRequest(`/businesses/${businessId}/profile/updates/seen`, "POST", {}); } catch { /* shown again next time */ }
     navigate(`/account?tab=workspace&highlight=${encodeURIComponent(fields)}`);
   };
-  const seen = async () => {
-    try { await apiRequest(`/businesses/${businessId}/profile/updates/seen`, "POST", {}); } finally { load(); }
-  };
+  const seen = () => setState((s) => (s ? { ...s, message: "" } : s));
   return (
     <div className="mt-3 space-y-2" data-profile-updates>
       {state.message && (

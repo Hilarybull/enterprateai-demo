@@ -49,6 +49,18 @@ async def get_profile(*, user_id: str, workspace_id: str | None = None):
     return {"workspace_id": str(ws.id), "profile": profile_out, "updated_at": ws.updated_at}
 
 
+def owner_marks(data: dict | None, before: dict | None, after: dict) -> dict:
+    """The profile's sources after the owner saved it by hand: every field they changed is theirs ("by": "owner"), so the
+    Agent never fills it again, even when they cleared it."""
+    prov = dict((data or {}).get("profile_provenance") or {})
+    now = datetime.now(timezone.utc).isoformat()
+    for k, v in (after or {}).items():
+        was = (before or {}).get(k)
+        if was != v and not (was in (None, "", [], {}) and v in (None, "", [], {})):
+            prov[k] = {"source": "You", "by": "owner", "at": now, "value": v}
+    return prov
+
+
 async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: WorkspaceProfile, seen: dict | None = None):
     ws = await _load_workspace(user_id, workspace_id)
     now = datetime.now(timezone.utc).isoformat()
@@ -78,6 +90,7 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
             data_patch={
                 "workspace_profile": merged_profile.model_dump(),
                 "workspace_profile_updated_at": now,
+                "profile_provenance": owner_marks(ws.data if isinstance(ws.data, dict) else {}, existing, merged_profile.model_dump()),
             },
         )
         ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
@@ -114,6 +127,7 @@ async def patch_profile(*, user_id: str, workspace_id: str | None, profile_patch
         data_patch={
             "workspace_profile": validated.model_dump(),
             "workspace_profile_updated_at": datetime.now(timezone.utc).isoformat(),
+            "profile_provenance": owner_marks(ws.data if isinstance(ws.data, dict) else {}, existing, validated.model_dump()),
         },
     )
     ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))

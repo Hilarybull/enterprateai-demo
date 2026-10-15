@@ -1117,6 +1117,13 @@ async def check_code(store: SessionStore, session: dict, code: str, clock=None) 
     return session["email"]
 
 
+def said_currency(session: dict) -> str | None:
+    """The currency the owner said in the chat ("£250,000", "8 million naira"), or None: never the workspace default."""
+    from app.modules.agent import intake_turn as _it
+    return session.get("said_currency") or _it.currency_of(" ".join(str(t.get("content") or "") for t in session.get("turns") or [] if t.get("role") == "user")
+                                                           + " " + str((session.get("resolution") or {}).get("original_goal") or ""))
+
+
 def _take_currency(session: dict) -> None:
     """The currency read from the sentence is not one of the questions: it is kept on the session."""
     said = (session.get("proposed") or {}).pop("currency", None)
@@ -1194,6 +1201,9 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
         # A chip: what it says is the owner's turn; the Agent's turn follows once the answer is kept (below).
         session.setdefault("turns", []).append({"role": "user", "content": str(picked)[:200], "at": now.isoformat()})
         picked_turn = {asked: answers[asked]}
+        from app.modules.agent import intake_turn as _it
+        if _it.currency_of(picked) in SIGNS and not session.get("currency_confirmed"):
+            answers.setdefault("currency_said", _it.currency_of(picked))      # "£250,000" from a chip or the form keeps its £
     if confirm and session.get("proposed") and session["resolution"]["resolution_class"] != "clarify":
         session["inputs"] = {**session["proposed"], **(session.get("inputs") or {})}
         session["proposed"] = {}
@@ -1723,7 +1733,8 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                 profile = biz.get("workspace_profile") or {}
                 where = a.get("where") or profile.get("city") or ""
                 country = (credibility.country_of(where) or credibility.country_of(profile.get("country")) or "").title() or None
-                money = session.get("currency") or bz.currency_of(biz)
+                # The currency the owner typed ("£250,000") wins over the workspace's own; the workspace's only when none was said.
+                money = session.get("currency") or said_currency(session) or bz.currency_of(biz)
                 wanted = case_fields(a, currency=money if money in rules.SUPPORTED_CURRENCIES else None, where=a.get("where"), country=country, today=now.date())
                 every = sorted((r for r in await svc.store.list("subjects", session["business_id"], kind=kind, limit=50) if r.get("status") != "cancelled"),
                                key=lambda r: str(r.get("created_at") or ""), reverse=True)
@@ -1895,9 +1906,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
         said = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
         if said and session.get("business_id"):
             # The currency only when the owner said one ("£200", "8 million naira"), never the default.
-            from app.modules.agent import intake_turn as _it
-            stated = session.get("said_currency") or _it.currency_of(" ".join(str(t.get("content") or "") for t in session.get("turns") or [] if t.get("role") == "user")
-                                                                            + " " + str((session.get("resolution") or {}).get("original_goal") or ""))
+            stated = said_currency(session)
             await orch.rt.business.mutate(session["business_id"], lambda d: profile_fill.fill(d, said, session.get("goal_key") or "", currency=stated, now=now))
             _brand_later(orch, session["business_id"], user_id)
     except Exception:      # noqa: BLE001 - the task is handed over either way

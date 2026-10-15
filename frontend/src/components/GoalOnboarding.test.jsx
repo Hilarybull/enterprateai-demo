@@ -606,6 +606,19 @@ describe("carrying on after sign-in", () => {
     expect(posts(/\/inputs$/)[0].body).toEqual({ answers: { subject_choice: "f1" } });
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/funding/f1?tab=results"));
   });
+  it("a new funding need with a quick result: Replace or Update is still asked first, never the old case's result (QA, 15 Oct)", async () => {
+    const choose = { key: "subject_choice", label: "This looks like a new funding need. Replace 'Car wash vans' with this one (£250k loan)?", type: "choice", required: true,
+      options: [{ value: "replace:f1", label: "Replace" }, { value: "update:f1", label: "Just update the changed details" }, { value: "cancel:f1", label: "Cancel" }] };
+    answer = (path) => (/attach-user$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /\/resume$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", first_value: true })
+      : /\/first-value$/.test(path) ? { result: { assessment_type: "funding_readiness_initial", score: 40, band: "Weak", title: "Car wash vans" } }
+      : /\/prepare$/.test(path) ? funding({ authenticated: true, state: "collecting_required_data", next: "choose", missing: [], business_id: "biz-1", first_value: true, choose }) : {});
+    mount("/start/sess-1?workspace=biz-1");
+    const group = await screen.findByRole("group", { name: choose.label });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Replace", "Just update the changed details", "Cancel"]);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByRole("group", { name: choose.label })).toBeTruthy();      // a late quick result never covers the question
+  });
 
   it("a task the plan does not include is said plainly, with the way to plans: never a bare dashboard", async () => {
     const refusal = { to: "/dashboard", capability: "new_proposal", blocked: true, upgrade: true, message: "Upgrade to use the Agent for this. New Proposal is included from the Starter plan." };

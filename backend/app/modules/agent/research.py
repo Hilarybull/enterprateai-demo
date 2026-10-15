@@ -934,7 +934,14 @@ def funding_deliverables(i: dict, items: list[dict], result: dict, currency: str
     gaps = [{"criterion": c["key"], "label": c["label"], "gap": c.get("gap") or c["label"], "how_to_close": CLOSE_GAP.get(c["key"], "")}
             for c in result.get("criteria") or [] if c["state"] != first_value.MET]
     sell = i.get("sell") or i.get("description") or "The business"
-    lines = [f"{str(sell)[:1].upper() + str(sell)[1:]}" + (f", for {i['customer']}" if i.get("customer") else "") + (f", in {i['where']}" if i.get("where") else "") + "."]
+    from app.modules.agent.profile_fill import is_segment
+    who = str(i.get("customer") or "")
+    if who and is_segment(who):
+        who = who[:1].lower() + who[1:]      # "for office workers", not "for Office workers" (a name keeps its capital)
+    place = str(i.get("where") or "")
+    if place and place.lower() in who.lower():
+        place = ""      # "office workers in Abuja", never "..., in Abuja" again
+    lines = [f"{str(sell)[:1].upper() + str(sell)[1:]}" + (f", for {who}" if who else "") + (f", in {place}" if place else "") + "."]
     if i.get("amount") is not None:
         from app.modules.agent.intake_turn import _with_article
         from app.modules.agent.intake_turn import purpose_phrase

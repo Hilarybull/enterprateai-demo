@@ -1,5 +1,6 @@
 import UkDateInput from "../UkDateInput";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ACTION_STATE, CHECK_STATE, CLASSIFICATION, FEATURES, contradiction, dateLabel, downloadMaterial, generateMaterial, getAssessment, getHistory, getMaterial,
   listMaterials, moneyLabel, monthLabel, newKey, readinessError, recordDecision, recordLaunch, reviewDocument, runScenario, updateAction, updateMaterial,
@@ -9,6 +10,30 @@ import { todayLocal } from "../../lib/format";
 import { Btn, Notice, Panel, Pill, inputClass } from "./Fields";
 import DocumentShareModal from "../DocumentShareModal";
 import { apiRequest } from "../../api/client";
+
+/** A document or an earlier result, opened in a popup over the page (the owner's QA, 15 Oct), never under the list. */
+export function Popup({ title, subtitle, onClose, footer, children, wide = false }) {
+  useEffect(() => {
+    const key = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div role="dialog" aria-modal="true" aria-label={title} data-popup
+        className={`flex max-h-[90vh] w-full ${wide ? "max-w-4xl" : "max-w-3xl"} flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900`}>
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+          <div className="min-w-0">
+            <p className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</p>
+            {subtitle && <p className="mt-0.5 text-[12.5px] text-slate-500">{subtitle}</p>}
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="text-[13px] font-semibold text-slate-500 hover:text-slate-800">Close</button>
+        </div>
+        <div className="overflow-y-auto px-5 py-4">{children}</div>
+        {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">{footer}</div>}
+      </div>
+    </div>, document.body);
+}
 
 // ── Results ───────────────────────────────────────────────────────────────────
 
@@ -425,20 +450,16 @@ export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
           getMailtoHref={({ url, email }) => `mailto:${encodeURIComponent(email || "")}?subject=${encodeURIComponent(sharing.title)}&body=${encodeURIComponent(`Here is ${sharing.title}: ${url}`)}`} />
       )}
       {openDoc && (
-        <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{openDoc.title} · version {openDoc.version}</p>
-            <Btn kind="link" onClick={() => setOpenDoc(null)}>Close</Btn>
-          </div>
-          <p className="mt-1 text-[12px] text-slate-500">{openDoc.content?.footer} Anything missing is shown as a named gap, never filled in.</p>
-          <textarea aria-label={`${openDoc.title} text`} rows={18} className={`mt-2 font-mono !text-[12px] ${inputClass}`} value={body} readOnly={openDoc.status === "superseded" || !can[`${feature}.edit`]} onChange={(e) => setBody(e.target.value)} />
-          {openDoc.status !== "superseded" && (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {can[`${feature}.edit`] && <Btn kind="primary" disabled={Boolean(busy) || body === (openDoc.body || "")} onClick={() => act("save", async () => { const d = await updateMaterial(businessId, feature, subject.id, openDoc.id, { body, revision: openDoc.revision }); setOpenDoc(d); await load(); })}>Save changes</Btn>}
+        <Popup title={`${openDoc.title} · version ${openDoc.version}`} subtitle={`${openDoc.content?.footer || ""} Anything missing is shown as a named gap, never filled in.`.trim()}
+          onClose={() => setOpenDoc(null)}
+          footer={openDoc.status !== "superseded" && (can[`${feature}.edit`] || can[`${feature}.review`]) ? (
+            <>
               {can[`${feature}.review`] && <Btn disabled={Boolean(busy)} onClick={() => act("review", async () => { const d = await updateMaterial(businessId, feature, subject.id, openDoc.id, { reviewed: openDoc.status !== "reviewed" }); setOpenDoc(d); await load(); })}>{openDoc.status === "reviewed" ? "Back to draft" : "Mark as reviewed"}</Btn>}
-            </div>
-          )}
-        </div>
+              {can[`${feature}.edit`] && <Btn kind="primary" disabled={Boolean(busy) || body === (openDoc.body || "")} onClick={() => act("save", async () => { const d = await updateMaterial(businessId, feature, subject.id, openDoc.id, { body, revision: openDoc.revision }); setOpenDoc(d); await load(); })}>Save changes</Btn>}
+            </>
+          ) : null}>
+          <textarea aria-label={`${openDoc.title} text`} rows={22} className={`font-mono !text-[12px] ${inputClass}`} value={body} readOnly={openDoc.status === "superseded" || !can[`${feature}.edit`]} onChange={(e) => setBody(e.target.value)} />
+        </Popup>
       )}
     </div>
   );
@@ -579,10 +600,9 @@ export function HistoryPanel({ businessId, feature, subject, currency }) {
         })}
       </ul>
       {viewing && (
-        <div className="rounded-2xl border-2 border-dashed border-slate-300 p-3 dark:border-slate-700">
-          <div className="mb-2 flex items-center justify-between"><p className="text-sm font-bold text-slate-900 dark:text-slate-100">Result of {dateLabel(viewing.as_of)}, as it was</p><Btn kind="link" onClick={() => setViewing(null)}>Close</Btn></div>
+        <Popup wide title={`Result of ${dateLabel(viewing.as_of)}, as it was`} onClose={() => setViewing(null)}>
           <ResultView assessment={viewing} feature={feature} currency={currency} historic />
-        </div>
+        </Popup>
       )}
     </div>
   );
