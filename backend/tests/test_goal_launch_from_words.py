@@ -18,6 +18,8 @@ def test_the_session_does_not_ask_them_again_and_asks_when(world):  # noqa: F811
     s = client.post("/task-sessions", json={"text": "I want to launch a home cleaning service in Leeds", "entry_mode": "free_text"}).json()
     assert s["goal_key"] == "launch"
     assert {"sell", "kind", "where"}.isdisjoint(s["missing"])
-    assert "target_date" in s["missing"]
+    # PRD 8.1 Q5 is "where and when": the place was said, so only the date is asked, as its own question.
+    asked = [q["key"] for q in s["questions"] if not q.get("hidden") and not q.get("proposed")]
+    assert "target_date" in asked and "where" not in asked
     when = {q["key"]: q for q in s["questions"]}["target_date"]
     assert when["label"] == "When do you want to launch?" and when["unsure"] == "Not decided yet"

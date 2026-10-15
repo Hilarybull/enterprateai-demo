@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import logoUrl from "../../enterprate-logo.png";
 import { apiRequest } from "../../api/client";
-import { useAuthStore } from "../../store/auth";
+import { useAuthStore, useSignedIn } from "../../store/auth";
 import { FEATURE_GROUPS, visibleNav } from "../../lib/publicSite";
 
 // The public site's header (QA F), the same on the homepage and every public page. Every item is a page;
@@ -145,7 +145,7 @@ function ArticlesPanel({ close, cats, latest }) {
 
 export default function PublicHeader({ onTryIt = null }) {
   const navigate = useNavigate();
-  const authToken = useAuthStore((s) => s.token);
+  const authToken = useSignedIn();
   const [menu, setMenu] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const { cats, latest } = useArticles();

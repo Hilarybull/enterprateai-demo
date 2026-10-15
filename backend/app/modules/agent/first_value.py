@@ -234,6 +234,26 @@ def funding(a: dict, data: dict | None = None, now: datetime | None = None, sign
 
 # ── Launch (PRD 8.2) ─────────────────────────────────────────────────────────
 
+def offer_criterion(sell: Any, a: dict, co: dict, sign: str) -> dict:
+    """Offer and pricing (PRD 8.2): the launch scope with its known price, cost and margin, from the chat ("I'll charge
+    15000 naira a month and it costs me 6000") or the catalogue. A price that does not cover its cost is a blocker; a price
+    without a cost is partly there; nothing said is unknown, never passed."""
+    price, cost = _num(a.get("price")), _num(a.get("cost"))
+    per = f" a {a['price_per']}" if a.get("price_per") else ""
+    c = {"key": "offer", "label": "Offer and pricing", "weight": 15}
+    if price and cost is not None:
+        margin = price - cost
+        if margin <= 0:
+            return {**c, "state": UNMET, "strength": None, "gap": f"The price ({_money(price, sign)}) does not cover the cost ({_money(cost, sign)})"}
+        return {**c, "state": MET if _known(sell) else PARTIAL,
+                "strengths": [f"Price {_money(price, sign)}{per}, cost {_money(cost, sign)}: {_money(margin, sign)} margin ({round(100 * margin / price)}%)"],
+                "gap": "What is being launched is not stated"}
+    if price:
+        return {**c, "state": PARTIAL, "strengths": [f"Price {_money(price, sign)}{per}"], "gap": "Cost per sale not known"}
+    return {**c, "state": MET if _known(sell) and co["priced"] and co["costed"] else PARTIAL if _known(sell) else UNKNOWN,
+            "strength": "Offer is defined", "gap": "Pricing economics incomplete"}
+
+
 def launch(a: dict, data: dict | None = None, now: datetime | None = None, sign: str = "£") -> dict:
     co = _company(data)
     sell, customer, where, when, evidence = a.get("sell"), a.get("customer"), a.get("where"), a.get("target_date"), a.get("evidence")
@@ -247,8 +267,7 @@ def launch(a: dict, data: dict | None = None, now: datetime | None = None, sign:
          "strengths": [x for x in ("Target customer identified" if _known(customer) else None,
                                    f"{level[1]}: {_quoted(evidence)}" if level else f"Demand evidence: {_quoted(evidence)}" if said else None) if x],
          "gap": "Demand not validated" if _known(customer) or not said else "Who it is for is not stated"},
-        {"key": "offer", "label": "Offer and pricing", "weight": 15, "state": MET if _known(sell) and co["priced"] and co["costed"] else PARTIAL if _known(sell) else UNKNOWN,
-         "strength": "Offer is defined", "gap": "Pricing economics incomplete"},
+        offer_criterion(sell, a, co, sign),
         {"key": "cash", "label": "Cash preparation", "weight": 20, "state": MET if co["forecast"] else UNKNOWN, "strength": "A forecast is on record", "gap": "Cash needed for the launch is not worked out"},
         {"key": "delivery", "label": "Delivery capability", "weight": 15, "state": UNKNOWN, "strength": None, "gap": "Delivery capacity unknown"},
         {"key": "process", "label": "Operational process", "weight": 10, "state": PARTIAL if co["quotes"] or co["invoices"] else UNKNOWN,
@@ -383,9 +402,9 @@ def assess(goal_key: str, answers: dict, data: dict | None = None, *, now: datet
     if not run:
         return None
     out = run(dict(answers or {}), data, now, sign)
-    if offering_on_record(answers, data):
+    if offering_on_record(answers, data, priced_only=_amount((answers or {}).get("price")) is not None):
         out["free_next_actions"] = [x for x in out["free_next_actions"] if x.get("label") != "Add it to your catalogue"]
-    out["free_next_actions"] = [_doable(x, answers or {}) for x in out["free_next_actions"]]
+    out["free_next_actions"] = [_doable(x, answers or {}, sign) for x in out["free_next_actions"]]
     out.update(at_a_glance(out))
     return out
 
@@ -482,7 +501,7 @@ def _amount(value: Any) -> float | None:
     return n if n > 0 else None
 
 
-def _doable(action: dict, answers: dict) -> dict:
+def _doable(action: dict, answers: dict, sign: str = "£") -> dict:
     """A free next action that does the thing, not only opens the page: the catalogue ones save what this check was
     told (the offering, its price and cost), and "Create a quotation" opens a new quotation."""
     label = action.get("label")
@@ -494,6 +513,13 @@ def _doable(action: dict, answers: dict) -> dict:
             if price is None:
                 return action      # no price to save: the catalogue page, to add it there
             item.update({"base_price": price, **({"cost_of_sales": cost} if cost is not None else {})})
+        elif _amount(answers.get("price")) is not None:
+            # A price said in the chat goes with it, said on the button (QA, 15 Oct): "Add 'Car wash subscription · ₦15,000 a month'".
+            price, cost = _amount(answers.get("price")), _amount(answers.get("cost"))
+            item.update({"base_price": price, **({"cost_of_sales": cost} if cost is not None else {})})
+            per = f" a {answers['price_per']}" if answers.get("price_per") else ""
+            shown = name[:1].upper() + name[1:]
+            return {**action, "label": f"Add '{shown} · {_money(price, sign)}{per}' to your catalogue", "catalogue": item}
         return {**action, "catalogue": item}
     if label == "Create a quotation":
         return {**action, "to": "/operations?tab=Sales&sub=Quotations&new=quote"}
@@ -508,15 +534,16 @@ def _norm(text: Any) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
 
 
-def offering_on_record(answers: dict | None, data: dict | None) -> bool:
+def offering_on_record(answers: dict | None, data: dict | None, priced_only: bool = False) -> bool:
     """Is what this check is about already in the catalogue (or the profile's services)? Then "Add it to your
     catalogue" isn't offered (QA PF8)."""
     said = _norm((answers or {}).get("sell") or (answers or {}).get("description"))
     if not said:
         return False
     profile = (data or {}).get("workspace_profile") or {}
-    names = [p["name"] for p in _company(data)["products"]] + [
-        (s.get("service_name") or s.get("name")) if isinstance(s, dict) else s for s in profile.get("services") or []]
+    # With a price said, only a catalogue product counts: a service named on the profile has no price to sell from.
+    names = [p["name"] for p in _company(data)["products"]] + ([] if priced_only else [
+        (s.get("service_name") or s.get("name")) if isinstance(s, dict) else s for s in profile.get("services") or []])
     for name in names:
         n = _norm(name)
         if n and (n == said or (len(n) >= 4 and (n in said or said in n))):

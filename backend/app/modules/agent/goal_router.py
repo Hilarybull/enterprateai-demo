@@ -411,7 +411,13 @@ def _quick_questions(goal_key: str, data: dict, said: dict | None = None) -> lis
     known = first_value.known_sources(goal_key, data)
     said = said or {}
     questions = []
-    for q in goals.questions_for(goal_key):
+    fields = goals.questions_for(goal_key)
+    if goal_key == "launch":
+        # A form, not a chat: where and when are two fields side by side; what is only kept from a chat (price, cost) is not asked.
+        fields = [({**f, "label": "Where do you want to launch?"} if f["key"] == "where" else
+                   {**f, "hidden": False, "label": "When do you want to launch?", "unsure": "Not decided yet", "chips": goals.WHEN_CHIPS} if f["key"] == "target_date" else f)
+                  for f in fields if f["key"] not in ("price", "cost")]
+    for q in fields:
         q = dict(q)
         if q["key"] in said:
             # QA P5-1: read from the owner's own words. Shown once under "From what you said", not asked again.
@@ -706,6 +712,8 @@ async def pinned_cards(business_id: str, user=Depends(get_current_user)):
             verdict = None
             if kind == rr.FUNDING:
                 verdict = "Ready to approach funders" if cls == "ready" else "Not ready to approach funders yet"
+            elif cls:
+                verdict = "Ready to launch" if cls == "ready" else "Not enough evidence to judge the launch yet" if cls == "insufficient_evidence" else "Not ready to launch yet"
             out.append({"id": item["id"], "kind": "funding" if kind == rr.FUNDING else "launch",
                         "label": f"{'Funding readiness' if kind == rr.FUNDING else 'Launch readiness'} · {item.get('title')}",
                         "score": summary.get("score"), "classification": cls, "verdict": verdict, "coverage": summary.get("evidence_coverage") or summary.get("coverage"),

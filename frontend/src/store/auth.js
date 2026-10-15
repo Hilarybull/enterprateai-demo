@@ -394,3 +394,14 @@ export function syncAuthAcrossTabs(event) {
   state.hydrate();
 }
 if (typeof window !== "undefined") window.addEventListener("storage", syncAuthAcrossTabs);
+
+/** Signed in, as the page should show it (the owner's QA, 15 Oct): the confirmed token, or, while the first check is still
+ *  on its way, the token this browser kept. The nav no longer shows "Sign in" to someone signed in, and a task begun while
+ *  the check runs is kept under their own account, never as a visitor's. A token the server refuses still signs out. */
+export function useSignedIn() {
+  return useAuthStore((s) => {
+    if (s.token) return true;
+    if (s.hydrated) return false;
+    try { return Boolean(localStorage.getItem("ea_token")); } catch { return false; }
+  });
+}

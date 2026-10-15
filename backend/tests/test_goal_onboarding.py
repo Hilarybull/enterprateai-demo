@@ -907,3 +907,42 @@ def test_replacing_a_need_saves_what_each_document_said_for_view_details(world):
     assert saved["title"] == "Executive summary v1" and saved["notes"] == "Raising for two vans." and saved["text"] == "We wash cars for office workers."
     shown = out["data"]["previous_needs"][0]["documents"]["executive_summary"]["preview"]
     assert shown == saved and "evidence_id" not in shown
+
+
+def _launch(client, sell="Monthly car wash subscription", when="In 1 to 3 months"):
+    s = client.post("/task-sessions", json={"key": "launch", "entry_mode": "business_goal"}).json()
+    client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"kind": "service", "sell": sell, "stage": "testing", "customer": "Office workers in Abuja",
+                                                                       "where": "Abuja", "target_date": when, "evidence": "10 pre-orders"}})
+    client.post(f"/task-sessions/{s['id']}/resume")
+    return s["id"], client.post(f"/task-sessions/{s['id']}/prepare").json()
+
+
+@pytest.mark.parametrize("when, date_kept, name", [("Within a month", "2026-11-30", "Monthly car wash subscription, Abuja, November 2026"),
+                                                   ("In 1 to 3 months", "2027-01-31", "Monthly car wash subscription, Abuja, January 2027"),
+                                                   ("Not decided yet", None, "Monthly car wash subscription, Abuja")])
+def test_a_launch_chat_sets_up_its_plan_with_a_real_date_whichever_chip_was_picked(world, when, date_kept, name):
+    """QA, 15 Oct: a date chip ("In 1 to 3 months") failed the plan's date check, so a launch chat never set its plan up.
+    Now the chip is the end of that month, each answer is in its own field, the plan is pinned, and its result card and
+    pinned card name it."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    from datetime import date
+    from app.modules.agent import goals as goals_mod
+    real = goals_mod.launch_date
+    goals_mod.launch_date = lambda said, today=None: real(said, date(2026, 10, 15))
+    try:
+        sid, made = _launch(client, when=when)
+    finally:
+        goals_mod.launch_date = real
+    assert made["state"] == "handed_off" and made["handoff"]["to"].startswith("/launch/"), made.get("problem")
+    plan = run(service_for(env.orch).store.list("subjects", "A", kind=rules.LAUNCH))[0]["data"]
+    assert (plan["name"], plan["audience"], plan["geography"], plan.get("target_date"), plan["pinned"]) == \
+        (name, "Office workers in Abuja", "Abuja", date_kept, True)
+    result = client.get(f"/task-sessions/{sid}/first-value").json()["result"]
+    assert result["assessment"]["kind"] == "launch" and result["assessment"]["title"] == name
+    pinned = client.get("/businesses/A/pinned").json()["items"]
+    assert pinned[0]["id"] == result["assessment"]["initiative_id"] and pinned[0]["label"] == f"Launch readiness · {name}"
+    assert pinned[0]["verdict"] == "Not enough evidence to judge the launch yet"
+    # A second launch chat asks whether to update the plan or start another, before anything is written.
+    _sid, again = _launch(client, sell="Van washing")
+    assert [o["label"] for o in again["choose"]["options"]] == [f"Update {name}", "Start a new launch plan"]

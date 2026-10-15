@@ -306,7 +306,8 @@ def described(message: str, slots: list[dict], asked: str | None) -> dict[str, d
     each" a quantity, an item and its unit price. Only for slots this task has; each value is its own words."""
     keys = {s["key"]: s for s in slots}
     pieces = [p.strip(" .") for p in re.split(r"[.;\n]+|,\s*", message) if p.strip(" .")]
-    plain = [p for p in pieces if not re.search(r"\d", p) and not re.match(r"^(?:i|we|it)(?:'d|'m|\s)", p, re.I)]
+    # "It's a service at testing stage" describes the kind and stage, never what is sold.
+    plain = [p for p in pieces if not re.search(r"\d", p) and not re.match(r"^(?:i|we|it)(?:'d|'m|\s)|^(?:it'?s|it\s+is|that'?s|this\s+is)\b", p, re.I)]
     out: dict[str, dict] = {}
 
     def put(key: str, value: str, conf: float = 0.82, said: str | None = None) -> None:

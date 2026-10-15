@@ -10,7 +10,7 @@ def test_answers_from_the_first_message_stay_marked_as_said_after_they_are_confi
     s = client.post("/task-sessions", json={"text": DOG, "entry_mode": "free_text"}).json()
     said = {r["key"] for r in s["summary"] if r["from_message"]}
     assert said == {"kind", "sell", "where", "target_date", "evidence"}
-    assert {q["key"] for q in s["questions"] if not q["proposed"]} == {"stage", "customer"}      # only these are asked
+    assert {q["key"] for q in s["questions"] if not q["proposed"] and not q.get("hidden")} == {"stage", "customer"}      # only these are asked
     s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {**s["proposed"], "stage": "idea"}}).json()
     assert s["proposed"] == {}                                                # confirmed: in the inputs now
     rows = {r["key"]: r for r in s["summary"]}

@@ -1,3 +1,4 @@
+import { useSignedIn } from "../store/auth";
 import { premiumFlow } from "../components/ResearchReview";
 import FirstValueCard, { fetchFirstValue, forgetFirstValue, rememberFirstValue } from "../components/FirstValueCard";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -60,6 +61,7 @@ export default function StartPage({ framed = false }) {
   const [workspace, setWorkspace] = useState(false);
   const [result, setResult] = useState(null);      // the free first result, for a covered goal
   const began = useRef(false);
+  const signedIn = useSignedIn();
   const asking = useRef(false);      // the Replace or Update question is up: a late quick result never covers it
 
   const prepare = useCallback(async (known = null, confirmed = false) => {
@@ -157,7 +159,8 @@ export default function StartPage({ framed = false }) {
     setStage("loading");
     setProblem("");
     try {
-      const attached = await apiRequest(`/task-sessions/${sessionId}/attach-user`, "POST", {});
+      // Never a step that waits on forever: 15 seconds, then "Try again".
+      const attached = await apiRequest(`/task-sessions/${sessionId}/attach-user`, "POST", {}, { timeoutMs: 15000 });
       setSession(attached);
       // Already prepared (a second tab, a refresh): straight to it. One that could not be started last time is tried again below.
       if (attached.handoff?.to && !notStarted(attached.handoff)) return navigate(attached.handoff.to, { replace: true });
@@ -180,9 +183,10 @@ export default function StartPage({ framed = false }) {
   }, [begin]);
 
   const goal = session?.goal_label || session?.resolution?.original_goal;
-  const saved = Boolean(session?.authenticated);
+  // Signed in already: nothing to confirm, the first step is done from the start (the owner's QA, 15 Oct).
+  const saved = Boolean(session?.authenticated) || signedIn;
   const steps = [
-    { key: "saved", n: 1, label: saved ? "Email confirmed" : "Confirming email", state: saved ? "done" : stage === "loading" ? "active" : "todo" },
+    { key: "saved", n: 1, label: signedIn ? "Signed in" : saved ? "Email confirmed" : "Confirming email", state: saved ? "done" : stage === "loading" ? "active" : "todo" },
     { key: "workspace", n: 2, label: workspace ? "Business ready" : "Getting your business ready",
       state: workspace ? "done" : saved && (stage === "name" || stage === "loading" || busy) ? "active" : "todo" },
     // Named for the work being done ("Checking your funding readiness…"), not the visitor's words.
@@ -247,7 +251,7 @@ export default function StartPage({ framed = false }) {
             <p className="text-base font-bold text-slate-900 dark:text-slate-100">{session.choose.label}</p>
             <div className="mt-3 space-y-2">
               {session.choose.options.map((o) => (
-                <button key={o.value} type="button" disabled={busy} onClick={async () => {
+                <button key={o.value} type="button" disabled={busy} data-choice={o.value} aria-pressed={String(o.value) === String(session.choose.default ?? "")} onClick={async () => {
                   setBusy(true);
                   try {
                     setSession(await apiRequest(`/task-sessions/${sessionId}/inputs`, "POST", { answers: { subject_choice: o.value } }));
@@ -258,7 +262,7 @@ export default function StartPage({ framed = false }) {
                   } finally {
                     setBusy(false);
                   }
-                }} className={`block w-full rounded-xl border px-3.5 py-2.5 text-left text-sm font-semibold transition disabled:opacity-60 ${o.value === "new"
+                }} className={`block w-full rounded-xl border px-3.5 py-2.5 text-left text-sm font-semibold transition disabled:opacity-60 ${(session.choose.default != null ? String(o.value) !== String(session.choose.default) : o.value === "new")
                   ? "border-slate-200 text-slate-700 hover:border-slate-300 dark:border-slate-700 dark:text-slate-300" : "border-brand-200 bg-brand-50 text-brand-800 hover:border-brand-400 dark:bg-brand-900/20 dark:text-brand-200"}`}>
                   {o.label}
                 </button>

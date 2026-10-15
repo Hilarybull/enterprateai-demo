@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { apiRequest } from "../api/client";
 import UkDateInput, { ukDate } from "./UkDateInput";
 import SaidLine from "./SaidLine";
-import { useAuthStore } from "../store/auth";
+import { useAuthStore, useSignedIn } from "../store/auth";
 import GoogleSignInButton from "./GoogleSignInButton";
 import { DURATION, prefersReducedMotion, useReducedMotion, useTypewriter } from "../lib/motion";
 import { DEMO_SECONDS } from "../config/agentDemo";
@@ -127,7 +127,7 @@ export function useGoalFlow() {
   const [failed, setFailed] = useState(null);      // P1.8: a message that didn't go through, kept in the thread with Try again
   const [pending, setPending] = useState("");
   const [resuming, setResuming] = useState(false);      // a saved task is being fetched: the card's shell shows, never an older thread      // what is being started: the card shell shows it at once, with the Agent typing
-  const authToken = useAuthStore((st) => st.token);
+  const authToken = useSignedIn();      // read reliably: the kept token counts while the first sign-in check runs
   const authEmail = useAuthStore((st) => st.email) || localStorage.getItem("ea_email");
   const [closed, setClosed] = useState(false);      // phone: the sheet was closed with × or Back; the task is kept and can be reopened
   const here = Boolean(authToken) && authEmail !== "demo";
@@ -159,7 +159,9 @@ export function useGoalFlow() {
           // Picked up only while there is something left to do here: questions to answer, a choice to make, or (signed
           // out) the email to save it with. A task already carried on after sign-in (its result shown, or handed to the
           // dashboard) is not shown again as an empty card: it is forgotten here, and kept where it went.
-          const open = ["questions", "clarify"].includes(res?.next) || (res?.next === "identity" && !res?.authenticated);
+          // A task stopped before its last step (ready to prepare, or a choice to make) resumes exactly there (QA, 15 Oct).
+          const open = ["questions", "clarify", "choose"].includes(res?.next) || (res?.next === "identity" && !res?.authenticated)
+            || (res?.next === "prepare" && res?.authenticated && here);      // only for the owner signed in here
           if (live.current?.id) return;      // a task was started meanwhile: it is the one on screen
           if (alive && res?.id && res.resolution && open && !["handed_off", "awaiting_review", "abandoned", "blocked"].includes(res.state)) setSession({ ...res, questions: res.questions || [] });
           else if (alive) { try { localStorage.removeItem(sessionKey); } catch { /* ignore */ } putTaskInAddress(""); }
@@ -213,7 +215,9 @@ export function useGoalFlow() {
     const mid = messageId || `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     try {
       // `said`: the reply as typed and the question it answers, read in full by the Agent (every slot it gives a value for).
-      keep(await retryOnce(() => apiRequest(`/task-sessions/${session.id}/inputs`, "POST", { answers, ...(confirm ? { confirm: true } : {}), ...(said || {}), client_message_id: mid })));
+      // A slow reply never holds the chat: 20 seconds a try, tried again once on a 5xx or a timeout, then "Try again".
+      keep(await retryOnce(() => apiRequest(`/task-sessions/${session.id}/inputs`, "POST", { answers, ...(confirm ? { confirm: true } : {}), ...(said || {}), client_message_id: mid },
+        { timeoutMs: 20000 })));
       setFailed(null);
       return true;
     } catch {
@@ -745,7 +749,8 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   const open = (k) => setEditing((s) => new Set(s).add(k));
 
   useEffect(() => {
-    if (here && step === "identity" && !newPassword && !flow.passwordHold?.current) carryOn();
+    // Signed in: straight on to the task (no email step), also for a task picked up ready to prepare.
+    if (here && (step === "identity" || (step === "prepare" && session?.authenticated)) && !newPassword && !flow.passwordHold?.current) carryOn();
   }, [here, step, carryOn, newPassword]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!session) return null;
@@ -878,6 +883,27 @@ export function GoalTaskCard({ flow, placement = "column" }) {
                   {o.label}
                 </button>
               ))}
+            </div>
+          )}
+
+          {step === "choose" && session.choose && (
+            // A plan is already on record: answered here as a quick reply (the owner's QA, 15 Oct), the likely answer
+            // marked ("Start a new launch plan" when the offering differs). Nothing is written until one is picked.
+            <div className="space-y-2" role="group" aria-label={session.choose.label} data-choose>
+              <p className="text-[14px] text-slate-800">{session.choose.label}</p>
+              <div className="flex flex-wrap gap-2">
+                {session.choose.options.map((o) => {
+                  const likely = String(o.value) === String(session.choose.default ?? "");
+                  return (
+                    <button key={o.value} type="button" disabled={busy} data-choice={o.value} aria-pressed={likely}
+                      onClick={() => answer({ subject_choice: o.value }, false, { picked: o.label, asked: "subject_choice" })}
+                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition disabled:opacity-60 ${likely
+                        ? "border-brand-600 bg-brand-600 text-white hover:bg-brand-700" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
+                      {o.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 

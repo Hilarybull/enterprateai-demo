@@ -190,9 +190,13 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _f("sell", "Briefly describe it.", "textarea", required=True, q=2, noun="description"),
         _choice("stage", "What stage is it at?", [("idea", "Idea"), ("prototype", "Prototype"), ("testing", "Testing"), ("ready", "Ready")], required=True, q=3, noun="stage"),
         _f("customer", "Who is it for?", "text", required=True, q=4, noun="customer"),
-        _f("where", "Where do you want to launch?", "text", required=True, unsure=_NOT_SURE, q=5, noun="launch market"),
-        _f("target_date", "When do you want to launch?", "text", required=True, q=5, noun="launch date", unsure="Not decided yet",
-           chips=[{"value": v, "label": v} for v in ("Within a month", "In 1 to 3 months", "In 3 to 6 months")]),
+        # PRD 8.1 question 5 is one question: "Where and when do you want to launch?" The answer is split into the place
+        # and the date ("Abuja, January 2027"); the date is its own field, never asked on its own.
+        _f("where", "Where and when do you want to launch?", "text", required=True, unsure=_NOT_SURE, q=5, noun="launch market"),
+        _f("target_date", "When do you want to launch?", "text", hidden=True, q=5, noun="launch date"),
+        # Said in passing ("I'll charge 15000 naira a month and it costs me 6000"): kept for Offer and pricing, never asked here.
+        _f("price", "Price", "number", hidden=True, noun="price"),
+        _f("cost", "Cost per sale", "number", hidden=True, noun="cost"),
         _f("evidence", "What customer testing or demand evidence do you already have?", "textarea", required=True, q=6, noun="demand evidence", unsure="None yet", unsure_value="None yet"),
     ]},
     "price_offer": {"value": "I'll show what your price means for your margin, from your own numbers.", "questions": [
@@ -376,7 +380,11 @@ def _extract(text: str, goal_key: str | None) -> dict[str, Any]:
         # The amount comes out with the word that led up to it ("for £1,500", "at 2k").
         rest = re.sub(r"(?:\s*,)?(?:\s+(?:for|at|of|costing|worth|totall?ing|priced at|@))?\s*" + re.escape(m.group(0)), " ", text, count=1, flags=re.I)
     if goal_key in ("launch", "more_customers", "price_offer"):
-        out.update({k: v for k, v in _launch_facts(text).items() if k in wanted})
+        out.update({k: v for k, v in _launch_facts(text).items() if k in wanted or (k.endswith("_per") and k[:-4] in wanted)})
+        if goal_key == "launch" and ("price" in out or "cost" in out):
+            from app.modules.agent.intake_turn import currency_of as _cur
+            if _cur(text):
+                out["currency"] = _cur(text)      # "15000 naira": NGN, kept on the session (never a question)
         return out
     if goal_key == "test_idea":
         # "Validate my idea: a mobile car wash in Abuja": the idea and where it will run, read from the goal itself.
@@ -462,6 +470,32 @@ def _launch_facts(text: str) -> dict[str, Any]:
     e = _EVIDENCE.search(text)
     if e:
         out["evidence"] = _tidy(e.group(0))
+    # QA, 15 Oct: everything the sentence plainly says, so only what is missing is asked.
+    if m:
+        who = re.match(r"\s*for\s+(.+?)(?=\s+(?:in|across|around|near|by|from|next|this|before)\b|[,.;!?]|$)", text[m.end(1):], re.I)
+        if who and not re.match(r"(?:the\s+)?(?:next|first|a|an)\s+(?:few\s+)?(?:weeks?|months?|years?)\b", who.group(1), re.I):
+            out["customer"] = _tidy(who.group(1))
+    st = re.search(r"\b(?:at\s+(?:the\s+)?|in\s+(?:the\s+)?)?(idea|prototype|testing|trial|pilot|ready)\s+stage\b|\bstill\s+(?:an?\s+)?(idea|prototype)\b|\b(?:it'?s|it\s+is)\s+(?:being\s+)?(tested|testing|ready)\b", text, re.I)
+    if st:
+        word = next(g for g in st.groups() if g).lower()
+        out["stage"] = {"trial": "testing", "pilot": "testing", "tested": "testing"}.get(word, word)
+    k = re.search(r"\b(?:it'?s|it\s+is|this\s+is)\s+(?:a|an)\s+(product|service)\b|\b(?:a|an)\s+(product|service)\s+(?:at|in)\b", text, re.I)
+    if k:
+        out["kind"] = (k.group(1) or k.group(2)).lower()
+    if "evidence" not in out:
+        e2 = re.search(r"\b(?:\d+|a\s+few|some|two|three|four|five|ten|several)\s+(?:people|customers|clients|users|businesses|families|offices)\s+"
+                       r"(?:have\s+)?(?:tried|tested|used|trialled|trialed|piloted)\b[^,.;!?]{0,30}", text, re.I)
+        if e2:
+            out["evidence"] = _tidy(e2.group(0))
+    from app.modules.agent import intake_turn as _it
+    for key, pattern in (("price", _it._PRICE), ("cost", _it._COST)):
+        mm = pattern.search(text)
+        n = _it._number(mm.group(1)) if mm else None
+        if n is not None and n > 0:
+            out[key] = n
+            per = re.search(r"\b(?:a|per|each|every)\s+(month|week|year|day|hour|customer|client|box|unit|visit|session)\b", mm.group(1), re.I)
+            if per:
+                out[f"{key}_per"] = per.group(1).lower()
     return out
 
 
@@ -698,7 +732,27 @@ async def track(store: SessionStore, name: str, session: dict | None = None, *, 
 def _questions(session: dict) -> list[dict]:
     if session["resolution"]["resolution_class"] in (NO_MATCH, "clarify"):
         return []
-    return list((_BY_KEY.get(session.get("goal_key") or "") or {}).get("questions") or [])
+    out = list((_BY_KEY.get(session.get("goal_key") or "") or {}).get("questions") or [])
+    if session.get("goal_key") == "launch":
+        out = launch_questions(out, {**(session.get("proposed") or {}), **(session.get("inputs") or {})})
+    return out
+
+
+WHEN_CHIPS = [{"value": v, "label": v} for v in ("Within a month", "In 1 to 3 months", "In 3 to 6 months")]
+
+
+def launch_questions(fields: list[dict], known: dict) -> list[dict]:
+    """PRD 8.1 question 5, "Where and when do you want to launch?", asked as one; when only one of the two is known
+    already ("in Leeds", "in March"), only the other is asked, in its own words."""
+    has_where, has_when = known.get("where") not in (None, ""), known.get("target_date") not in (None, "")
+    out = []
+    for f in fields:
+        if f["key"] == "where" and has_when and not has_where:
+            f = {**f, "label": "Where do you want to launch?"}
+        if f["key"] == "target_date" and has_where and not has_when:
+            f = {**f, "hidden": False, "label": "When do you want to launch?", "unsure": "Not decided yet", "chips": WHEN_CHIPS}
+        out.append(f)
+    return out
 
 
 def _missing(session: dict) -> list[str]:
@@ -783,7 +837,8 @@ def _conversation(session: dict) -> dict:
     from app.modules.agent import intake_turn
     every = _questions(session)      # a hidden slot ("where", for an idea) is said back too, never asked
     first = {f["key"]: (session.get("proposed") or {})[f["key"]] for f in every if f["key"] in (session.get("proposed") or {})}
-    said = intake_turn.acknowledgement(first, {f["key"]: f for f in every}, answers, session.get("currency")) if first else ""
+    said = (launch_ack(session.get("proposed") or {}, session.get("currency")) if session.get("goal_key") == "launch" else
+            intake_turn.acknowledgement(first, {f["key"]: f for f in every}, answers, session.get("currency"))) if first else ""
     goal = _BY_KEY.get(session.get("goal_key") or "") or {}
     return {"progress": {"answered": done, "total": len(fields)} if fields else None, "acknowledged": said,
             "value_line": goal.get("value") or "", "first_value": first_value.covered(session.get("goal_key")),
@@ -878,16 +933,24 @@ async def proposed_from(text: str, goal_key: str | None, owner_name: str | None 
     slots = (_BY_KEY.get(goal_key) or {}).get("questions") or questions_for(goal_key)
     # The first question must show within 1.5 seconds: the model has FIRST_READ_SECONDS for the first message.
     r = await intake_turn.turn(goal_key=goal_key, message=text, slots=slots, known={}, asked=None, owner_name=owner_name, seconds=FIRST_READ_SECONDS)
+    if r["by"] == "model" and goal_key == "launch":
+        # The launch reader's plain readings win (what is sold, its stage, price and cost); the model fills the rest.
+        return {**{k: v for k, v in r["values"].items() if v != intake_turn.UNKNOWN}, **extract(text, goal_key),
+                **({"currency": r["currency"]} if r.get("currency") else {})}
     if r["by"] == "model":
         return {**extract(text, goal_key), **{k: v for k, v in r["values"].items() if v != intake_turn.UNKNOWN},
                 **({"currency": r["currency"]} if r.get("currency") else {})}
     if r["fallback_used"] and r["fallback_used"] != "no_model":
         # Slow or failing just now: the rule readers only, so no second wait for a model before the first question.
+        if goal_key == "launch":      # the launch reader knows a launch sentence: its values win over the generic clause reader's
+            return {**{k: v for k, v in r["values"].items() if v != intake_turn.UNKNOWN}, **extract(text, goal_key)}
         return {**extract(text, goal_key), **{k: v for k, v in r["values"].items() if v != intake_turn.UNKNOWN}}
     if goal_key in _EXTRACTED_AS:
         read = await read_document_goal(text, goal_key)
         if read is not None:
             return read
+    if goal_key == "launch":
+        return {**(await understood_answers(text, goal_key)), **extract(text, goal_key)}
     return {**extract(text, goal_key), **(await understood_answers(text, goal_key))}
 
 
@@ -1016,7 +1079,10 @@ def first_value_of(session: dict, data: dict | None = None, clock=None) -> dict 
     goal = session.get("goal_key") or ""
     # Research adopted since (on this card or the check's page): the result as it left it, with its next step, never
     # the first answers again.
-    versions = [v for v in ((data or {}).get("assessment_datasets") or {}).get(goal) or [] if isinstance(v, dict) and v.get("full_result")]
+    # Only research adopted after this request began: an older run is the previous need's result, never this one's (QA, 15 Oct).
+    began = str(session.get("created_at") or "")
+    versions = [v for v in ((data or {}).get("assessment_datasets") or {}).get(goal) or []
+                if isinstance(v, dict) and v.get("full_result") and str(v.get("created_at") or "") >= began]
     if versions:
         latest = max(versions, key=lambda v: str(v.get("created_at") or ""))
         return first_value.after_review(goal, latest["full_result"], latest)
@@ -1283,6 +1349,8 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
         elif not q:
             t = session.get("agent_turn") or {}
             session["turns"][-1] = {**last, "content": " ".join(x for x in ((t.get("answer") or ""), (t.get("ack") or "")) if x) or "Thanks, that's everything I need.", "next": None}
+    if session.get("goal_key") == "launch":
+        _split_where_when(session)
     if session["inputs"]:
         _event(session, "TaskInputConfirmed", now, fields=len(session["inputs"]))
     if session["state"] not in (HANDED_OFF, AWAITING_REVIEW, PREPARING) and not picked:
@@ -1416,7 +1484,14 @@ async def resume(store: SessionStore, session: dict, orch, user_id: str, *, busi
             d.setdefault("workspace_profile", {})["company_name"] = name
         _keep_answers(d, session, now)
     await orch.rt.business.mutate(session["business_id"], _mark)
-    session["state"] = READY if not _missing(session) else COLLECTING_REQUIRED
+    if not session.get("said_currency") and not session.get("currency_confirmed"):
+        # No currency said: the workspace's own (Nigeria: NGN), never the visitor default (the owner's QA, 15 Oct).
+        biz = await orch.rt.business.load(session["business_id"]) or {}
+        code = bz.currency_of(biz)
+        if code in SIGNS:
+            session["currency"] = code
+    # A choice still to make is where it stopped: never skipped by picking the task up again.
+    session["state"] = COLLECTING_REQUIRED if session.get("choose") else READY if not _missing(session) else COLLECTING_REQUIRED
     if session["state"] == READY:
         _event(session, "TaskReadyToPrepare", now)
     session["updated_at"] = now.isoformat()
@@ -1451,12 +1526,80 @@ def end_of_month(said: Any, today: date | None = None) -> str | None:
         month = [x.lower() for x in calendar.month_name].index(m.group(1).lower())
         year = int(m.group(2))
     else:
-        n = re.search(r"\b(?:within|in)\s+(?:\d+\s+to\s+)?(\d+)\s+months?\b", text, re.I)
+        n = re.search(r"\b(?:within|in)\s+(?:\d+\s+to\s+)?(\d+|a|one)\s+months?\b", text, re.I)
         if not n:
             return None
-        ahead = today.month - 1 + int(n.group(1))
+        ahead = today.month - 1 + (1 if n.group(1).lower() in ("a", "one") else int(n.group(1)))
         year, month = today.year + ahead // 12, ahead % 12 + 1
     return f"{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
+
+
+def _num_or_none(v: Any) -> float | None:
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def launch_title(a: dict, today: date | None = None) -> str:
+    """"Car wash subscription, Abuja, January 2027": what, where and when, as said."""
+    import calendar
+    what = str(a.get("sell") or "My launch").strip()
+    what = what[:1].upper() + what[1:]
+    where = str(a.get("where") or "").strip()
+    where = "" if where.lower() in ("not sure", "not sure yet") else where
+    when = launch_date(a.get("target_date"), today)
+    month = f"{calendar.month_name[int(when[5:7])]} {when[:4]}" if when else ""
+    return ", ".join(x for x in (what, where, month) if x)[:120]
+
+
+def launch_ack(said: dict, currency: str | None) -> str:
+    """One clean line of what a launch sentence gave (the owner's QA, 15 Oct): "Got it: a car wash subscription (a service,
+    at testing stage) for office workers in Abuja, launching January 2027, at ₦15,000 a month, costing ₦6,000 per
+    customer, with 10 customers tried it." Only what was said."""
+    from app.modules.agent.intake_turn import _money, _with_article
+    what = str(said.get("sell") or "").strip()
+    about = [x for x in ((f"a {said['kind']}" if said.get("kind") in ("product", "service") else "both a product and a service" if said.get("kind") == "both" else ""),
+                         (f"at {said['stage']} stage" if said.get("stage") else "")) if x]
+    head = (_with_article(what) if what else "your launch") + (f" ({', '.join(about)})" if about else "")
+    parts = [head + (f" for {said['customer']}" if said.get("customer") else "") + (f" in {said['where']}" if said.get("where") else "")]
+    if said.get("target_date"):
+        when = re.sub(r"^(?:in|by)\s+", "", str(said["target_date"]).strip(), flags=re.I)
+        parts.append(f"launching {when}")
+    if isinstance(said.get("price"), (int, float)):
+        parts.append(f"at {_money(said['price'], currency)}" + (f" a {said['price_per']}" if said.get("price_per") else ""))
+    if isinstance(said.get("cost"), (int, float)):
+        parts.append(f"costing {_money(said['cost'], currency)}" + (f" per {said['cost_per']}" if said.get("cost_per") else ""))
+    if said.get("evidence") and str(said["evidence"]).lower() not in ("none yet", "not sure"):
+        return "Got it: " + ", ".join(parts) + f", and {said['evidence']}."
+    return "Got it: " + ", ".join(parts) + "."
+
+
+def _split_where_when(session: dict) -> None:
+    """"Where and when do you want to launch?" answered in one go ("Abuja, January 2027", "Leeds next month"): the place
+    and the date, each in its own field. A date already given stays."""
+    for bag in (session.get("inputs") or {}, session.get("proposed") or {}):
+        said = bag.get("where")
+        if not isinstance(said, str) or not said.strip():
+            continue
+        w = _WHEN.search(said)
+        if not w:
+            continue
+        if not bag.get("target_date") and not (session.get("inputs") or {}).get("target_date"):
+            bag["target_date"] = w.group(1).strip()
+        place = (said[:w.start()] + said[w.end():]).strip(" ,.;-")
+        place = re.sub(r"^(?:in|at|around|across)\s+|\s+(?:in|by|from|on)$", "", place, flags=re.I).strip(" ,.;")
+        bag["where"] = place or said
+
+
+def launch_date(said: Any, today: date | None = None) -> str | None:
+    """A launch date as the plan keeps it: a date given stays; "In 1 to 3 months" or "June 2027" is the end of that month;
+    anything else ("Not decided yet") is no date."""
+    text = str(said or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    return end_of_month(text, today)
 
 
 def case_fields(a: dict, *, currency: str | None, where: str | None = None, country: str | None = None, today: date | None = None) -> dict:
@@ -1675,8 +1818,21 @@ def _choice_field(existing: list[dict], noun: str, a: dict) -> dict:
         options.append({"value": row["id"], "label": f"Update {name}{change}"})
     options.append({"value": NEW, "label": "Start a new funding plan" if noun.endswith("case") else "Start a new launch plan"})
     several = len(existing) > 1
-    return _f("subject_choice", f"You already have {'funding plans' if noun.endswith('case') and several else 'launch plans' if several else 'a ' + plan}. "
-                                f"Update {'one' if several else 'it'} or start a new one?", "choice", required=True, options=options)
+    field = _f("subject_choice", f"You already have {'funding plans' if noun.endswith('case') and several else 'launch plans' if several else 'a ' + plan}. "
+                                 f"Update {'one' if several else 'it'} or start a new one?", "choice", required=True, options=options)
+    if not noun.endswith("case"):
+        # Several launches are allowed (the owner's QA, 15 Oct): a different offering from every plan there starts a new one
+        # by default ("car wash" is not "QA Launch UK SMB plan"); the same offering defaults to updating it.
+        said = _words(a.get("sell"))
+        same = next((row for row in existing if said and said & _words((row.get("data") or {}).get("name"))), None)
+        field["default"] = same["id"] if same else NEW
+    return field
+
+
+def _words(text: Any) -> set[str]:
+    """The words that name an offering, without the small ones ("car wash subscription": car, wash, subscription)."""
+    small = {"a", "an", "the", "my", "our", "for", "in", "of", "and", "to", "new", "plan", "launch", "service", "product", "round", "qa"}
+    return {w for w in re.findall(r"[a-z]{3,}", str(text or "").lower()) if w not in small}
 
 
 def _own_words(value: Any) -> str:
@@ -1756,7 +1912,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
             if not choice:
                 existing = await _open_subjects(svc, session["business_id"], kind)
                 if existing:
-                    session["choose"] = _choice_field(existing, noun, a if kind == rules.FUNDING else {})
+                    session["choose"] = _choice_field(existing, noun, a)
                     session["state"] = COLLECTING_REQUIRED
                     session["updated_at"] = now.isoformat()
                     await store.put(session)
@@ -1773,8 +1929,19 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                                                      "traction.customers", "traction.monthly_revenue", "market.location", "jurisdiction") if _get(wanted, p) not in (None, "")}
                     title, told = need_title(wanted), _told(a)
                 else:
-                    payload = {k: v for k, v in {"audience": a.get("customer"), "target_date": a.get("target_date"), "pinned": True}.items() if v not in (None, "")}
-                    title, told = str(a.get("sell") or "My launch")[:120], f'"{str(a.get("sell")).strip()}"' if a.get("sell") else ""
+                    # Every answer in its own field, a date chip as a real date ("In 1 to 3 months": the end of the third
+                    # month; "Not decided yet": no date), never the chip's words, which the plan refuses as a date.
+                    payload = {k: v for k, v in {"audience": a.get("customer"), "target_date": launch_date(a.get("target_date"), now.date()),
+                                                 "geography": a.get("where") if str(a.get("where") or "").strip().lower() not in ("", "not sure", "not sure yet") else None,
+                                                 "pinned": True}.items() if v not in (None, "")}
+                    # The price and cost said in the chat feed Offer and pricing (PRD 8.2), each in its own field.
+                    offer = {k: v for k, v in {"launch_scope": a.get("sell"), "price": _num_or_none(a.get("price"))}.items() if v not in (None, "")}
+                    econ = {k: v for k, v in {"price_per_unit": _num_or_none(a.get("price")), "variable_cost_per_unit": _num_or_none(a.get("cost"))}.items() if v is not None}
+                    if offer:
+                        payload["offer"] = offer
+                    if econ:
+                        payload["economics"] = econ
+                    title, told = launch_title(a), f'"{str(a.get("sell")).strip()}"' if a.get("sell") else ""
                 name_field = "title" if kind == rules.FUNDING else "name"
                 twin = None
                 if choice == NEW:

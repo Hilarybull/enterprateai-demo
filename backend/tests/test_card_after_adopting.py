@@ -33,3 +33,13 @@ def test_agent_centre_results_lists_the_latest_result_of_each_check(world):
     assert [i["goal_key"] for i in items] == ["need_funding", "price_offer"] and items[0]["adopted"] == 2
     assert items[1]["band"] == "Strong" and items[1]["result"]["key_numbers"][:2] == ["£30 price", "60% margin"]
     assert items[1]["result"]["gaps"]["unknown"] == ["comparable prices", "customer price sensitivity"]
+
+
+def test_a_new_request_never_shows_research_adopted_for_an_earlier_one():
+    """QA, 15 Oct: a new funding request showed the old run's result (research adopted on 13 Oct for the previous need)."""
+    data = {"assessment_datasets": {"need_funding": [{"version": 1, "created_at": "2026-10-13T10:00:00+00:00", "full_result": {"score": 40, "assessment_type": "funding_readiness_initial"}}]}}
+    fresh = goals.first_value_of({"goal_key": "need_funding", "created_at": "2026-10-15T12:00:00+00:00",
+                                  "inputs": {"amount": 250000, "use": "a new office", "timing": "Within 3 months"}}, data)
+    assert fresh["score"] != 40 and "Funding purpose defined" in fresh["strengths"]
+    later = goals.first_value_of({"goal_key": "need_funding", "created_at": "2026-10-12T12:00:00+00:00", "inputs": {"amount": 10000}}, data)
+    assert later["score"] == 40      # adopted for this request (after it began): the reviewed result stands

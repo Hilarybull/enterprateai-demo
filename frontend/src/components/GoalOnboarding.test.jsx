@@ -909,3 +909,34 @@ describe("P1.8 a reply that doesn't go through", () => {
     expect(card().querySelector("[data-turn-failed]")).toBeNull();
   });
 });
+
+describe("launch readiness from the landing page (QA, 15 Oct)", () => {
+  const choose = { key: "subject_choice", label: "You already have a launch plan. Update it or start a new one?", type: "choice", required: true, default: "new",
+    options: [{ value: "plan-1", label: "Update QA Launch UK SMB plan" }, { value: "new", label: "Start a new launch plan" }] };
+  const launch = (over = {}) => session({ goal_key: "launch", goal_label: "I want to launch a product/service", entry_mode: "business_goal", questions: [],
+    missing: [], authenticated: true, business_id: "biz-1", ...over });
+
+  it("a reload picks the task up at its choice, shown as a quick reply with the new plan marked, and carries on once picked", async () => {
+    useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
+    window.history.replaceState(null, "", "/?task=sess-1");
+    answer = (path, method) => (method === "GET" && /task-sessions\/sess-1$/.test(path) ? launch({ state: "collecting_required_data", next: "choose", choose })
+      : /\/inputs$/.test(path) ? launch({ state: "ready_to_prepare", next: "prepare" }) : undefined);
+    mountLauncher();
+    const group = await screen.findByRole("group", { name: choose.label });
+    const buttons = within(group).getAllByRole("button");
+    expect(buttons.map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([["Update QA Launch UK SMB plan", "false"], ["Start a new launch plan", "true"]]);
+    await click(within(group).getByRole("button", { name: "Start a new launch plan" }));
+    expect(withoutId(posts(/\/inputs$/)[0].body)).toEqual({ answers: { subject_choice: "new" }, picked: "Start a new launch plan", asked: "subject_choice" });
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/start/sess-1"));
+  });
+
+  it("a signed-in owner is never asked to confirm an email: the first step is done from the start", async () => {
+    useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
+    answer = (path) => (/attach-user$/.test(path) ? new Promise(() => {}) : undefined);      // still on its way
+    render(<MemoryRouter initialEntries={["/start/sess-1"]}><Routes><Route path="/start/:sessionId" element={<StartPage />} /></Routes></MemoryRouter>);
+    const step = await waitFor(() => { const el = document.querySelector("[data-progress] [data-step='saved']"); expect(el).toBeTruthy(); return el; });
+    expect(step.textContent).toContain("Signed in");
+    expect(step.getAttribute("data-state")).toBe("done");
+    expect(document.body.textContent).not.toContain("Confirming email");
+  });
+});
