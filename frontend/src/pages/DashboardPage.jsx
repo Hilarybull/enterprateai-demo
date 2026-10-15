@@ -17,7 +17,7 @@ import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
 import { hasPaidAccess, planRank } from "../lib/plans";
 import FirstResultPanel from "../components/FirstResultPanel";
-import PinnedCards from "../components/dashboard/PinnedCards";
+import PinnedCards, { usePinned } from "../components/dashboard/PinnedCards";
 import AgentPanel, { NeedsApprovalPanel, followInAgentBox, taskIn } from "../components/agent/AgentPanel";
 import { Icon } from "../components/agent/AgentBits";
 import { agentErrorMessage, getAgentSummary, submitAgentRequest } from "../lib/agent";
@@ -114,6 +114,10 @@ export default function DashboardPage() {
   const [agentSummary, setAgentSummary] = useState(() => (ADAPTIVE_DASHBOARD ? recallDashboard(workspaceId)?.agent || null : null));
   // The first result sits inside the Agent card (never a card of its own above it), until it is dismissed or saved for later.
   const firstResult = useFirstResult();
+  const pinned = usePinned(workspaceId);
+  const resultAssessment = firstResult?.result?.assessment || {};
+  const resultCase = resultAssessment.case_id || resultAssessment.initiative_id || null;      // the case the result card is about
+  const resultPinned = pinned.isPinned(resultCase);
   const [rangeKey, setRangeKey] = useState("3m");
   const [rangeOpen, setRangeOpen] = useState(false);
   const [showReports, setShowReports] = useState(false);
@@ -765,8 +769,9 @@ export default function DashboardPage() {
       </div>
 
       {/* The first result: its own card under the Agent row (the Agent card keeps the same height with or without it). */}
-      {firstResult?.result && <div data-first-result-card><FirstResultPanel firstResult={firstResult} /></div>}
-      <PinnedCards businessId={workspaceId} />
+      {firstResult?.result && <div data-first-result-card><FirstResultPanel firstResult={firstResult} pinned={resultPinned ? { onUnpin: () => pinned.unpin(pinned.items.find((x) => x.id === resultCase)) } : null} /></div>}
+      {/* Pinned, directly under the result card: never the same case twice (the result card carries the pin). */}
+      <PinnedCards pinned={pinned} excludeId={firstResult?.result ? resultCase : null} />
 
       {actionCards}
 

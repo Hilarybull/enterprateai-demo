@@ -711,7 +711,8 @@ async def pinned_cards(business_id: str, user=Depends(get_current_user)):
                         "score": summary.get("score"), "classification": cls, "verdict": verdict, "coverage": summary.get("evidence_coverage") or summary.get("coverage"),
                         "pack": summary.get("pack"), "blockers": summary.get("blockers") or [], "open": f"{base}?tab=results", "updated_at": item.get("updated_at")})
     out.sort(key=lambda x: str(x.get("updated_at") or ""), reverse=True)
-    return {"items": out[:3], "more": max(0, len(out) - 3)}
+    # All of them (up to 20): the dashboard leaves out the one already shown as the result card, then shows three.
+    return {"items": out[:20], "more": max(0, len(out) - 3)}
 
 
 @router.post("/businesses/{business_id}/pinned/{subject_id}/{action}")

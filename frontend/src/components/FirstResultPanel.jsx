@@ -117,7 +117,7 @@ export function keepingScroll(fn) {
   return out;
 }
 
-export default function FirstResultPanel({ firstResult }) {
+export default function FirstResultPanel({ firstResult, pinned = null }) {
   const { result, premium, dismiss: dismissNow, saveForLater: saveNow } = firstResult;
   const dismiss = () => keepingScroll(dismissNow);
   const saveForLater = () => keepingScroll(saveNow);
@@ -134,6 +134,9 @@ export default function FirstResultPanel({ firstResult }) {
   if (!result) return null;
   // The same snapshot as the drawer: the latest check when there is one (with the first result as "Earlier"), else the first result.
   const latest = latestOf(result);
+  // The case it is about, by name ("Funding readiness · Pay for new office · £250k loan"), never only the check's generic name.
+  const kindWord = latest.full?.kind === "funding" ? "Funding readiness" : latest.full?.kind === "launch" ? "Launch readiness" : "";
+  const heading = latest.full?.title ? `${kindWord || result.headline} · ${latest.full.title}` : result.headline;
   const coverage = Math.max(0, Math.min(100, Number(latest.coverage) || 0));
   const numbers = latest.full ? `Latest check: ${latest.score}${latest.full.as_of ? ` · ${latest.source.split(" · ").pop()}` : ""}` : (result.key_numbers || []).join(" · ");
   const gapText = latest.full ? `${latest.earlier}${typeof latest.full.blocker_count === "number" ? ` · ${latest.full.blocker_count} blocker${latest.full.blocker_count === 1 ? "" : "s"} in the full check` : ""}` : gapsLine(result.gaps);
@@ -201,13 +204,20 @@ export default function FirstResultPanel({ firstResult }) {
     <div className={`grid transition-[grid-template-rows,opacity,margin] duration-200 ease-out ${closing ? "mt-0 grid-rows-[0fr] opacity-0" : "mt-4 grid-rows-[1fr] opacity-100"}`} data-first-result-wrap>
       <div className="min-h-0 overflow-hidden">
         <div className="relative rounded-2xl border border-slate-200 bg-white p-5 text-slate-900 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100" data-first-result-panel data-band={latest.band}>
+          {pinned && (
+            // Pinned too: one card, the pin in its corner. Unpinning keeps this card.
+            <button type="button" aria-label="Unpin" title="Pinned to your dashboard. Unpin" onClick={pinned.onUnpin} data-result-pin
+              className="absolute right-10 top-2 flex h-8 w-8 items-center justify-center rounded-full text-brand-600 hover:bg-slate-100 hover:text-slate-700">
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" stroke="currentColor" strokeWidth={2}><path d="M12 17v5M9 3h6l-1 7 3 3H7l3-3z" /></svg>
+            </button>
+          )}
           <button type="button" aria-label="Dismiss" onClick={fold} data-result-dismiss
             className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500">
             <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
           {/* Row 1: the result, its band, and how much of the evidence is known (its own figure, never folded into the band). */}
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 pr-9 max-md:flex-col max-md:items-start">
-            <p className="min-w-0 truncate text-[15px] font-semibold" title={result.headline} data-result-title>{result.headline}</p>
+          <div className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 ${pinned ? "pr-[4.5rem]" : "pr-9"} max-md:flex-col max-md:items-start`}>
+            <p className="min-w-0 truncate text-[15px] font-semibold" title={heading} data-result-title>{heading}</p>
             {latest.band && <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${BAND_TONE[latest.band] || BAND_TONE["Insufficient evidence"]}`} data-result-band>{latest.band}</span>}
             <span className="flex shrink-0 items-center gap-2 text-[12px] text-slate-500 md:ml-auto" data-result-coverage title={`Evidence coverage ${coverage}%`}>
               <span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200"><span className="block h-full rounded-full bg-brand-500" style={{ width: `${coverage}%` }} /></span>
