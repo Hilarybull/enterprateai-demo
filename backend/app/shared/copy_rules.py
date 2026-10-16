@@ -12,3 +12,18 @@ def no_dashes(text):
     if not isinstance(text, str) or ("\u2013" not in text and "\u2014" not in text):
         return text
     return _DASH.sub(", ", _RANGE.sub(r"\1 to \2", text))
+
+
+_CREDIT_SIGN = re.compile(r"(?:[£$€₦]|NGN|GBP|USD|EUR)\s?(\d[\d,]*)(\s*credits?\b)", re.I)
+
+
+def credits_plain(text):
+    """Credits are never money: "₦60 credits" reads "60 credits" (the owner's rule, 16 Oct)."""
+    if not isinstance(text, str):
+        return text
+    return _CREDIT_SIGN.sub(r"\1\2", text)
+
+
+def owner_copy(text):
+    """Every rule for what the owner reads: no dashes, credits without a currency sign."""
+    return credits_plain(no_dashes(text))

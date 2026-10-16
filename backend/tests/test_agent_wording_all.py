@@ -119,7 +119,10 @@ def test_an_idea_is_scored_sized_and_planned_when_the_owner_asks_never_by_itself
         pytest.skip("this business is past the idea stage in the test fixture")
     assert not {"idea_validation", "market_size", "business_plan_draft"} & {r["workflow_key"] for r in run(autostart.sweep(env.orch, "A"))}      # §4
     assert not [c for c in env.meter.charges if c[1] in ("idea_validation", "business_plan_full")]      # no research or generation charged
-    done = {c: env.submit(capability=c, channel="ui_action")["run"] for c in ("idea_validation", "market_size", "business_plan_draft")}
+    # The economics a score rests on are given (PRD 5.2: without them no score is shown, never a low one).
+    econ = {"answers": {"price": 30, "cost": 12, "monthly_sales": 40}}
+    done = {c: env.submit(capability=c, channel="ui_action", params=econ if c == "idea_validation" else None)["run"]
+            for c in ("idea_validation", "market_size", "business_plan_draft")}
     assert done["idea_validation"]["summary"].startswith("Idea scored 68/100: 3 risks, 4 next steps.")
     assert done["market_size"]["summary"].startswith("Market sized (estimated): TAM £2.4bn; SAM £180m; SOM £1.2m. 1 source, 3 assumptions.")
     sizing = done["market_size"]["state"]["outcome"]["sizing"]      # §5: each level with its label, formula and inputs
@@ -152,7 +155,7 @@ def test_missing_information_is_one_question_on_the_tile_and_the_work_carries_on
     r = run(env.orch.provide_input(r["id"], OWNER, {"customer": "Independent cafés"}))
     assert r["pending_question"]["question"] == "What problem does your business solve? (1 to 2 sentences)"
     r = run(env.orch.provide_input(r["id"], OWNER, {"problem": "Owners lose evenings to paperwork"}))
-    assert r["status"] == "succeeded" and r["summary"].startswith("Idea scored 68/100")
+    assert r["status"] == "succeeded" and r["summary"].startswith("Not enough evidence to score this idea yet")      # no price, cost or sales given: no score (PRD 5.2)
     # Asked here about the owner's own business and answered by them: on the profile, with where it came from (PRD 6.1).
     kept = env.businesses["A"]["data"]["workspace_profile"]
     assert (kept["description"], kept["target_customer"], kept["problem"]) == ("Bookkeeping for independent cafés", "Independent cafés", "Owners lose evenings to paperwork")

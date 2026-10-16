@@ -42,3 +42,22 @@ def test_a_document_saved_without_a_currency_keeps_the_one_it_was_made_in_when_t
     assert d["settings"]["currency"] == "NGN"
     assert d["financials"]["invoices"][0]["currency"] == "GBP"      # made while the workspace was in GBP
     assert bz.doc_currency(d["financials"]["invoices"][0], "NGN") == "GBP"
+
+
+def test_every_converted_total_says_its_rate_date_and_an_old_rate_is_flagged():
+    from datetime import date
+    d = _data()
+    d["fx_rates"] = {"base": "NGN", "date": "2026-10-16", "rates": {"GBP": 2000.0, "USD": 1500.0}, "dates": {"GBP": "2026-10-16", "USD": "2026-10-16"}}
+    t = bz.total_of(d, d["financials"]["invoices"], bz.invoice_outstanding)
+    assert bz.fmt_total(t, "NGN").endswith(" at 16 Oct rate")
+    assert bz.rate_words("2026-10-12", date(2026, 10, 16)) == " at 12 Oct rate, which may be out of date"
+    assert bz.rate_words("2026-10-15", date(2026, 10, 16)) == " at 15 Oct rate"
+
+
+def test_the_rates_come_from_the_live_provider_with_its_date():
+    import asyncio
+    from app.shared import currency
+    currency._rate_cache["GBP"] = ({"NGN": 1760.57}, __import__("time").time())
+    currency._rate_dates["GBP"] = "2026-10-16"
+    got = asyncio.run(currency.get_rate_dated("GBP", "NGN"))
+    assert got == {"rate": 1760.57, "date": "2026-10-16", "source": "exchangerate-api.com"}

@@ -111,6 +111,7 @@ export default function DashboardPage() {
   const [comingSoonFeature, setComingSoonFeature] = useState(null);
   const [livePlanSummary, setLivePlanSummary] = useState(null);
   const [fxRates, setFxRates] = useState({});
+  const [fxDates, setFxDates] = useState({});      // the provider's date for each rate, said with the converted figures
   const [agentSummary, setAgentSummary] = useState(() => (ADAPTIVE_DASHBOARD ? recallDashboard(workspaceId)?.agent || null : null));
   // The first result sits inside the Agent card (never a card of its own above it), until it is dismissed or saved for later.
   const firstResult = useFirstResult();
@@ -320,13 +321,14 @@ export default function DashboardPage() {
           }).filter(iso => iso && iso !== wsIso && iso.length === 3))];
           if (foreign.length && alive) {
             const rates = {};
+            const days = {};
             await Promise.all(foreign.map(async from => {
               try {
                 const d = await apiRequest(`/integrations/currency-rate?from_currency=${from}&to_currency=${wsIso}`, "GET");
-                if (d?.rate != null) rates[from] = d.rate;
+                if (d?.rate != null) { rates[from] = d.rate; days[from] = d.date || null; }
               } catch {}
             }));
-            if (alive) setFxRates(rates);
+            if (alive) { setFxRates(rates); setFxDates(days); }
           }
         } catch {}
 
@@ -793,7 +795,12 @@ export default function DashboardPage() {
           {otherCurrencies.length > 0 && (
             // Documents keep their own currency; these totals include them converted at today's rate (the owner's QA, 16 Oct).
             <p className="w-full text-[12px] text-slate-500 sm:order-last" data-converted-note>
-              ≈ Includes {otherCurrencies.join(", ")} amounts converted to {wsCurrencyCode} at today's rate. Each document keeps its own currency.
+              ≈ Includes {otherCurrencies.map((c) => {
+                const day = fxDates[c] ? new Date(`${fxDates[c]}T00:00:00`) : null;
+                if (!day || Number.isNaN(day.getTime())) return fxRates[c] != null ? c : `${c} (no rate yet, not counted)`;
+                const old = (Date.now() - day.getTime()) / 86400000 > 3;
+                return `${c} at ${day.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} rate${old ? " (may be out of date)" : ""}`;
+              }).join(", ")} amounts converted to {wsCurrencyCode}. Each document keeps its own currency.
             </p>
           )}
           <div className={`relative ${hasTrendTiles ? "" : "hidden"}`}>

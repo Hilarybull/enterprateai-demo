@@ -29,13 +29,15 @@ async def ensure(orch, business_id: str, data: dict | None = None) -> dict | Non
         snap = data.get("fx_rates") or {}
         if not need or (snap.get("base") == base and snap.get("date") == today and need <= set(snap.get("rates") or {})):
             return snap or None
-        from app.shared.currency import get_rate
+        from app.shared.currency import get_rate_dated
         rates = dict(snap.get("rates") or {}) if snap.get("base") == base else {}
+        dates = dict(snap.get("dates") or {}) if snap.get("base") == base else {}
         for code in need:
-            r = await get_rate(code, base)
+            r = await get_rate_dated(code, base)
             if r:
-                rates[code] = r
-        new = {"base": base, "date": today, "rates": rates, "source": "exchangerate-api.com"}
+                rates[code], dates[code] = r["rate"], r["date"]
+        # "date": when they were checked; "dates": the provider's own date for each rate (said with every converted amount).
+        new = {"base": base, "date": today, "rates": rates, "dates": dates, "source": "exchangerate-api.com"}
 
         def _put(d: dict) -> None:
             d["fx_rates"] = new

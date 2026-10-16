@@ -184,6 +184,8 @@ class SupabaseBusiness(Business):
         except Exception as e:      # noqa: BLE001 - a simultaneous retry created it first
             if "23505" not in f"{getattr(e, 'code', '')} {e}":
                 raise
+        from app.modules.agent.autostart import off_for_new_workspace
+        await off_for_new_workspace(bid, user_id)      # no unasked credit spending in a new workspace
         return bid
 
     async def mutate(self, business_id, fn):
@@ -525,13 +527,25 @@ def total_of(data: dict, docs: list[dict], amount) -> dict:
             continue
         value += v
         converted = converted or cur != base
-    return {"value": money(value), "converted": converted, "missing": missing, "rate_date": (data.get("fx_rates") or {}).get("date") if converted else None}
+    snap = data.get("fx_rates") or {}
+    used = sorted({(snap.get("dates") or {}).get(doc_currency(d, base)) or snap.get("date") for d in docs if doc_currency(d, base) != base} - {None})
+    return {"value": money(value), "converted": converted, "missing": missing, "rate_date": (used[0] if used else snap.get("date")) if converted else None}
+
+
+def rate_words(day: str | None, today: date | None = None) -> str:
+    """" at 16 Oct rate", or " at 12 Oct rate, which may be out of date" when the rate is more than 2 days old."""
+    d = parse_day(day)
+    if not d:
+        return ""
+    today = today or datetime.now(timezone.utc).date()
+    label = f"{d.day} {d.strftime('%b')}"
+    return f" at {label} rate" + (", which may be out of date" if (today - d).days > 2 else "")
 
 
 def fmt_total(t: dict, currency: str) -> str:
     """"£3,045.00", or "≈ ₦6,420,000" when other currencies were converted into it, with what could not be converted."""
     from app.modules.agent.documents import fmt_money as _fmt
-    shown = ("≈ " if t.get("converted") else "") + _fmt(t["value"], currency)
+    shown = ("≈ " if t.get("converted") else "") + _fmt(t["value"], currency) + rate_words(t.get("rate_date") if t.get("converted") else None)
     left = [_fmt(v, c) for c, v in (t.get("missing") or {}).items()]
     return shown + (f" (plus {' and '.join(left)} not converted yet)" if left else "")
 

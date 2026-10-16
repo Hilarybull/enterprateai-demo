@@ -33,3 +33,11 @@ def test_task_summaries_shown_to_the_owner_carry_no_dashes():
                        "summary": "First step: Problem Discovery Interviews (15–20 interviews, 14 days) — then test.", "next_action": "Book 3–5 calls"})
     assert out["summary"] == "First step: Problem Discovery Interviews (15 to 20 interviews, 14 days), then test."
     assert out["next_action"] == "Book 3 to 5 calls"
+
+
+def test_credits_never_carry_a_currency_sign():
+    from app.shared.copy_rules import credits_plain
+    from app.modules.business_assistant.service import _clean_assistant_answer
+    assert credits_plain("Research used ₦60 credits; £25 credits left") == "Research used 60 credits; 25 credits left"
+    assert credits_plain("The invoice is ₦60,000.") == "The invoice is ₦60,000."      # money stays money
+    assert _clean_assistant_answer("That costs NGN 40 credits.") == "That costs 40 credits."

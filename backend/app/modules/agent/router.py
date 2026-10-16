@@ -163,9 +163,9 @@ def credits_of(run: dict) -> int:
 
 def _public_run(run: dict) -> dict:
     """User-facing view of a run. Internal working state is not exposed (s18.3)."""
-    from app.shared.copy_rules import no_dashes
-    out = _public_run_body(run, no_dashes)
-    out["next_action"] = no_dashes(out.get("next_action"))
+    from app.shared.copy_rules import owner_copy
+    out = _public_run_body(run, owner_copy)
+    out["next_action"] = owner_copy(out.get("next_action"))
     return out
 
 

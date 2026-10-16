@@ -1472,6 +1472,27 @@ async def _keep_separate_idea(ctx, idea: dict, result: dict, plan: dict | None =
     await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
 
 
+ECONOMICS = (("price", "price per sale"), ("cost", "cost per sale"), ("monthly_sales", "expected sales a month"))
+
+
+def economics_gaps(idea: dict, answers: dict | None = None) -> list[str]:
+    """The figures a viability score rests on (price, cost per sale, expected sales) that are not known yet."""
+    known = {**(idea.get("known") or {}), **{k: v for k, v in (answers or {}).items() if k in dict(ECONOMICS)}}
+    out = []
+    for key, words in ECONOMICS:
+        try:
+            ok = float(known.get(key)) > 0
+        except (TypeError, ValueError):
+            ok = False
+        if not ok:
+            out.append(words)
+    return out
+
+
+def _and_list(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
 async def idea_validation_step(ctx):
     data = await _business_and_launch(ctx)
     separate = await separate_idea(ctx, data)
@@ -1504,7 +1525,18 @@ async def idea_validation_step(ctx):
         await _draft_in_history(ctx, idea, r)
     from app.modules.agent.services import risk_sentence
     risks, steps = [risk_sentence(x) for x in r.get("risks") or []], [str(x) for x in r.get("next_steps") or []]
-    summary = (f"Idea scored {r['score']}/100: {len(risks)} risk{'s' if len(risks) != 1 else ''}, {len(steps)} next step{'s' if len(steps) != 1 else ''}."
+    # PRD 5.2 (the owner's QA, 16 Oct): with the economics it needs unknown, no score is given, never a low one: what is
+    # missing is said instead, and the risks and next steps still are.
+    gaps = economics_gaps(idea, ctx.answers)
+    if gaps:
+        r = {**r, "evidence": "insufficient", "gaps": gaps}
+        if not separate:      # a separate idea never writes to the business record
+            await _keep(ctx, "validation", {k: v for k, v in r.items() if k not in ("payload", "quick")})
+    head = ((f"Not enough evidence to score this idea yet. Still needed: {_and_list(gaps)}. "
+             f"{len(risks)} risk{'s' if len(risks) != 1 else ''} and {len(steps)} next step{'s' if len(steps) != 1 else ''} found so far.")
+            if gaps else
+            f"Idea scored {r['score']}/100: {len(risks)} risk{'s' if len(risks) != 1 else ''}, {len(steps)} next step{'s' if len(steps) != 1 else ''}.")
+    summary = (head
                + (f" Biggest risk: {risks[0].rstrip('.')}." if risks else "") + (f" First step: {steps[0].rstrip('.')}." if steps else "")
                + (" The full report, with its research, will be on Idea Validation in a few minutes." if r.get("full_report") == "pending" else ""))
     links = [{"label": "draft in Idea Validation", "to": f"/validation?history_id={idea['history_id']}&history_type=v4_validation"}

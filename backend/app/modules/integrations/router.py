@@ -309,8 +309,11 @@ async def currency_rate(
     user=Depends(get_current_user),
 ) -> dict:
     """Return the exchange rate from→to, or null if unavailable."""
-    rate = await get_rate(from_currency.strip().upper(), to_currency.strip().upper())
-    return {"from": from_currency.upper(), "to": to_currency.upper(), "rate": rate}
+    from app.shared.currency import get_rate_dated
+    got = await get_rate_dated(from_currency.strip().upper(), to_currency.strip().upper())
+    # The provider's date for the rate goes with it, so every converted amount can say which day's rate it uses.
+    return {"from": from_currency.upper(), "to": to_currency.upper(), "rate": (got or {}).get("rate"), "date": (got or {}).get("date"),
+            "source": (got or {}).get("source")}
 
 
 # ── Disconnect ────────────────────────────────────────────────────────────────

@@ -447,7 +447,7 @@ describe("money in the workspace currency (QA, 16 Oct)", () => {
     globalThis.fetch = vi.fn(async (url) => {
       const path = String(url);
       const rate = /from_currency=USD/.test(path) ? 1500 : /from_currency=GBP/.test(path) ? 2000 : 1;
-      const body = /\/validation\//.test(path) ? served : /currency-rate/.test(path) ? { rate } : {};
+      const body = /\/validation\//.test(path) ? served : /currency-rate/.test(path) ? { rate, date: new Date().toISOString().slice(0, 10) } : {};
       return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
     });
     useWorkspaceStore.setState({ workspaceId: "ws1", workspaceName: "Alchemy Test", currency: "NGN", wsDoc: ngn });
@@ -460,7 +460,9 @@ describe("money in the workspace currency (QA, 16 Oct)", () => {
     expect(cells.some((t) => t === "₦50,000.00")).toBe(true);      // already in the workspace currency: one amount
     expect(document.body.textContent).not.toMatch(/£237|\(\$315\.00\)/);
     expect(document.querySelector("[data-converted-note]").textContent).toContain("≈ Totals include");
-    expect(document.querySelector("[data-converted-note]").textContent).toContain("converted to NGN at today's rate");
+    const label = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    expect(document.querySelector("[data-converted-note]").textContent).toContain(`USD at ${label} rate`);      // the rate's date, said
+    expect(cells.some((t) => t.includes(`at ${label} rate`))).toBe(true);
     const tiles = [...document.querySelectorAll("p, span, div")].map((n) => n.textContent).filter((t) => /^≈ ₦/.test(t || ""));
     expect(tiles.length).toBeGreaterThan(0);      // KPI totals in ≈ ₦, never a £ base
   });

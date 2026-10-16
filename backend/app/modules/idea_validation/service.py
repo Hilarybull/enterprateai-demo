@@ -87,6 +87,8 @@ async def create_workspace(
         "updated_at": now.isoformat(),
     }
     await sb_insert("workspaces", doc)
+    from app.modules.agent.autostart import off_for_new_workspace
+    await off_for_new_workspace(workspace_id, user_id)      # automatic starting off until the owner switches it on
     return workspace_id
 
 

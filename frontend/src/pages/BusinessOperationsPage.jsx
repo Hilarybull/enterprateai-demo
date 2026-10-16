@@ -1821,6 +1821,7 @@ export default function BusinessOperationsPage() {
   const [shareItem, setShareItem] = useState(null); // { record, type }
   const [shareToast, setShareToast] = useState("");
   const [fxRates, setFxRates] = useState({}); // { "USD": 0.79, ... } — rate TO workspace currency
+  const [fxDates, setFxDates] = useState({}); // { "USD": "2026-10-16" }: the provider's date for each rate, said with the amount
   const [reportRange, setReportRange] = useState("6m");
   // The currencies the documents are in besides the workspace's (each document keeps its own): converted into the
   // workspace currency for totals at today's rate, or, with no rate yet, left out and named (the owner's QA, 16 Oct).
@@ -1988,13 +1989,15 @@ export default function BusinessOperationsPage() {
     Promise.all([...foreign].map(async from => {
       try {
         const data = await apiRequest(`/integrations/currency-rate?from_currency=${from}&to_currency=${wsIso}`, "GET");
-        return { from, rate: data?.rate ?? null };
-      } catch { return { from, rate: null }; }
+        return { from, rate: data?.rate ?? null, date: data?.date || null };
+      } catch { return { from, rate: null, date: null }; }
     })).then(results => {
       if (!alive) return;
       const next = {};
-      results.forEach(({ from, rate }) => { if (rate != null) next[from] = rate; });
+      const days = {};
+      results.forEach(({ from, rate, date }) => { if (rate != null) { next[from] = rate; days[from] = date; } });
       setFxRates(prev => ({ ...prev, ...next }));
+      setFxDates(prev => ({ ...prev, ...days }));
     });
     return () => { alive = false; };
   }, [invoices, quotes, expenses, wsCurrency]); // eslint-disable-line
@@ -2114,12 +2117,23 @@ export default function BusinessOperationsPage() {
       const wsIso = _wsIso();
       if (fromIso && fromIso !== wsIso && fxRates[fromIso] != null) {
         // Its own currency first; the conversion after it, marked approximate (the owner's QA, 16 Oct).
-        return `${formatCurrency(num, fromIso)} (≈ ${formatCurrency(Math.round(num * fxRates[fromIso] * 100) / 100, wsIso)})`;
+        return `${formatCurrency(num, fromIso)} (≈ ${formatCurrency(Math.round(num * fxRates[fromIso] * 100) / 100, wsIso)}${rateWords(fromIso)})`;
       }
       return formatCurrency(num, fromIso || wsCurrency || "GBP");
     }
     // A total in the workspace currency: "≈" when other currencies were converted into it.
     return `${fx.converted.length ? "≈ " : ""}${formatCurrency(num, wsCurrency || "GBP")}`;
+  }
+
+  /** " at 16 Oct rate", or " at 12 Oct rate, may be out of date" when the rate is more than 2 days old. */
+  function rateWords(iso) {
+    const day = fxDates[iso];
+    if (!day) return "";
+    const d = new Date(`${day}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return "";
+    const label = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const old = (Date.now() - d.getTime()) / 86400000 > 3;
+    return ` at ${label} rate${old ? ", may be out of date" : ""}`;
   }
 
   /** A list's amount cell: the document's own currency, and under it, small and grey, "≈ ₦…" in the workspace currency. */
@@ -2132,7 +2146,7 @@ export default function BusinessOperationsPage() {
       <span className="whitespace-nowrap" data-amount-cell>
         <span className="block font-medium text-slate-800">{formatCurrency(num, fromIso)}</span>
         {fromIso !== ws && (rate != null
-          ? <span className="block text-[11px] text-slate-400" data-amount-converted>≈ {formatCurrency(Math.round(num * rate * 100) / 100, ws)}</span>
+          ? <span className="block text-[11px] text-slate-400" data-amount-converted>≈ {formatCurrency(Math.round(num * rate * 100) / 100, ws)}{rateWords(fromIso)}</span>
           : <span className="block text-[11px] text-slate-400" data-amount-converted>No {ws} rate yet</span>)}
       </span>
     );
@@ -2740,7 +2754,7 @@ export default function BusinessOperationsPage() {
       <div className={`mt-4 space-y-4 ${loading ? "hidden" : ""}`}>
         {(fx.converted.length > 0 || fx.missing.length > 0) && (
           <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12.5px] text-slate-500 dark:border-slate-800 dark:bg-slate-900" data-converted-note>
-            {fx.converted.length > 0 && <>≈ Totals include {fx.converted.join(", ")} amounts converted to {fx.ws} at today's rate. </>}
+            {fx.converted.length > 0 && <>≈ Totals include {fx.converted.map((c) => `${c}${rateWords(c)}`).join(", ")} amounts converted to {fx.ws}. </>}
             {fx.missing.length > 0 && <>Not counted in totals yet: {fx.missing.join(", ")} amounts (no rate yet). </>}
             Each document keeps its own currency.
           </p>

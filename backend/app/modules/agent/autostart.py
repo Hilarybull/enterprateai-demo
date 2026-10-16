@@ -415,3 +415,20 @@ async def sweep_all(orch) -> int:
     return started
 
 
+
+
+async def off_for_new_workspace(business_id: str, user_id: str) -> None:
+    """A new workspace starts with automatic starting off (the owner's QA, 16 Oct): no task that spends credits is started
+    by the Agent until the owner switches it on (Agent Centre > Settings). Existing workspaces keep their own setting."""
+    try:
+        from app.core.supabase import sb_select, sb_upsert
+        from app.modules.agent.store import merge_policy
+        if await sb_select("agent_policies", filters=[("business_id", "eq", business_id)], columns="business_id", single=True):
+            return      # a setting already chosen is never changed
+        policy = merge_policy({"automation": {"auto_start": False}})
+        policy["version"] = 1
+        from datetime import datetime, timezone
+        await sb_upsert("agent_policies", payload={"business_id": business_id, "policy": policy, "version": 1, "updated_by": user_id,
+                                                   "updated_at": datetime.now(timezone.utc).isoformat()}, on_conflict="business_id")
+    except Exception:      # noqa: BLE001 - the workspace exists either way
+        logger.warning("automatic starting not switched off for new workspace %s", business_id, exc_info=True)

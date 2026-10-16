@@ -105,7 +105,8 @@ def _clean_assistant_answer(text: str) -> str:
     # No em or en dashes in what the owner reads (the owner's rule): a range becomes "to", a clause break a comma.
     cleaned = re.sub(r"(\d)\s*[\u2013\u2014]\s*(\d)", r"\1 to \2", cleaned)
     cleaned = re.sub(r"\s*[\u2013\u2014]\s*", ", ", cleaned)
-    return cleaned
+    from app.shared.copy_rules import credits_plain
+    return credits_plain(cleaned)      # credits are never money: "60 credits", never "₦60 credits"
 
 
 NOTHING = "[NOTHING]"      # the model's own mark for an answer that found nothing to answer with: such answers are free
