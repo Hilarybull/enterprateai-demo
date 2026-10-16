@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
-import FirstValueCard, { PremiumConfirm, actionsOf, latestOf, openOf, useFreeActions } from "./FirstValueCard";
+import FirstValueCard, { EditAnswers, PremiumConfirm, actionsOf, latestOf, openOf, useFreeActions } from "./FirstValueCard";
 import { trackGoal } from "./GoalLauncher";
 
 // The first result inside the Agent card (dark Agent styling, PRD 12.2), above the Agent's four action cards (which stay):
@@ -135,8 +135,9 @@ export default function FirstResultPanel({ firstResult, pinned = null }) {
   // The same snapshot as the drawer: the latest check when there is one (with the first result as "Earlier"), else the first result.
   const latest = latestOf(result);
   // The case it is about, by name ("Funding readiness · Pay for new office · £250k loan"), never only the check's generic name.
-  const kindWord = latest.full?.kind === "funding" ? "Funding readiness" : latest.full?.kind === "launch" ? "Launch readiness" : "";
-  const heading = latest.full?.title ? `${kindWord || result.headline} · ${latest.full.title}` : result.headline;
+  const named = latest.full || latest.unscoredCheck;      // the case it is about, scored or not yet
+  const kindWord = named?.kind === "funding" ? "Funding readiness" : named?.kind === "launch" ? "Launch readiness" : "";
+  const heading = named?.title ? `${kindWord || result.headline} · ${named.title}` : result.headline;
   const coverage = Math.max(0, Math.min(100, Number(latest.coverage) || 0));
   const numbers = latest.full ? `Latest check: ${latest.score}${latest.full.as_of ? ` · ${latest.source.split(" · ").pop()}` : ""}` : (result.key_numbers || []).join(" · ");
   const gapText = latest.full ? `${latest.earlier}${typeof latest.full.blocker_count === "number" ? ` · ${latest.full.blocker_count} blocker${latest.full.blocker_count === 1 ? "" : "s"} in the full check` : ""}` : gapsLine(result.gaps);
@@ -252,6 +253,8 @@ export default function FirstResultPanel({ firstResult, pinned = null }) {
             {refresh && <button type="button" onClick={startRefresh} className={outline} data-result-refresh>{refresh.label}</button>}
             {others.map((a) => <button key={a.label} type="button" onClick={() => act(a)} className={outline} title={a.label}>{SHORT[a.label] || a.label}</button>)}
             <button type="button" onClick={saveForLater} className={outline} data-result-save>Save for later</button>
+            {/* Edit and run again, right here (the owner's QA, 15 Oct). */}
+            <EditAnswers result={result} onUpdated={(r) => firstResult.setResult?.((had) => ({ ...r, premium_gate: had?.premium_gate }))} />
           </div>
           {done && <p role="status" className={`mt-2 text-[12px] ${done.error ? "text-rose-700" : "text-emerald-700"}`}>{done.error || done.text}</p>}
         </div>

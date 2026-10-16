@@ -183,6 +183,9 @@ def fill(data: dict, answers: dict, goal: str, *, currency: str | None = None, n
             filled.append(field)
         elif field in ("country", "city", "currency") and str(have).strip().lower() != str(value).strip().lower() and field not in asked:
             conflicts.append({"field": field, "profile": have, "said": value, "goal": goal, "source": source})
+    if "services" in filled or "key_offering_focus" in filled:
+        from app.shared.catalogue_sync import add_profile_services
+        add_profile_services(data, now)      # a service the Agent added to the profile is in the catalogue too
     if conflicts:
         data["profile_conflicts"] = list(data.get("profile_conflicts") or []) + conflicts
     if filled:

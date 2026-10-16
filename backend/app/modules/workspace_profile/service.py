@@ -61,6 +61,17 @@ def owner_marks(data: dict | None, before: dict | None, after: dict) -> dict:
     return prov
 
 
+async def _sync_catalogue(workspace_id: str) -> None:
+    """The profile's services in Catalogue > Products too (the owner's QA, 15 Oct), in one guarded save of the record."""
+    try:
+        from app.modules.agent.business import SupabaseBusiness
+        from app.shared.catalogue_sync import add_profile_services
+        await SupabaseBusiness().mutate(workspace_id, add_profile_services)
+    except Exception:      # noqa: BLE001 - the profile is saved either way; the next save adds them
+        import logging
+        logging.getLogger(__name__).info("catalogue not synced from the profile for %s", workspace_id, exc_info=True)
+
+
 async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: WorkspaceProfile, seen: dict | None = None):
     ws = await _load_workspace(user_id, workspace_id)
     now = datetime.now(timezone.utc).isoformat()
@@ -93,6 +104,7 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
                 "profile_provenance": owner_marks(ws.data if isinstance(ws.data, dict) else {}, existing, merged_profile.model_dump()),
             },
         )
+        await _sync_catalogue(str(ws.id))
         ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
         return {"workspace_id": str(ws.id), "profile": merged_profile, "updated_at": ws.updated_at}
 
@@ -102,6 +114,7 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
         "workspace_profile_updated_at": now,
     }
     ws_id = await create_workspace(user_id=user_id, name=profile.company_name, data=payload)
+    await _sync_catalogue(str(ws_id))
     ws = await get_workspace(user_id=user_id, workspace_id=ws_id)
     return {"workspace_id": str(ws.id), "profile": profile, "updated_at": ws.updated_at}
 
@@ -130,6 +143,7 @@ async def patch_profile(*, user_id: str, workspace_id: str | None, profile_patch
             "profile_provenance": owner_marks(ws.data if isinstance(ws.data, dict) else {}, existing, validated.model_dump()),
         },
     )
+    await _sync_catalogue(str(ws.id))
     ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
     return {"workspace_id": str(ws.id), "profile": validated, "updated_at": ws.updated_at}
 
@@ -265,6 +279,7 @@ async def complete_onboarding(*, user_id: str, email: str, answers: dict[str, An
     }
     rename = cleaned.get("company_name") if cleaned.get("company_name") and (not ws.name or ws.name in (DEFAULT_WORKSPACE_NAME, "Unnamed")) else None
     await update_workspace(user_id=user_id, workspace_id=str(ws.id), data_patch=patch, name=rename)
+    await _sync_catalogue(str(ws.id))
     ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
     profile = (ws.data or {}).get("workspace_profile") or {}
     return {

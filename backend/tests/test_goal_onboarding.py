@@ -946,3 +946,41 @@ def test_a_launch_chat_sets_up_its_plan_with_a_real_date_whichever_chip_was_pick
     # A second launch chat asks whether to update the plan or start another, before anything is written.
     _sid, again = _launch(client, sell="Van washing")
     assert [o["label"] for o in again["choose"]["options"]] == [f"Update {name}", "Start a new launch plan"]
+
+
+def test_the_result_card_edits_the_answers_updates_the_case_and_runs_again(world):
+    """QA, 15 Oct: "I should be able to edit, update and rerun from there": the card's answers are changed in place, the
+    funding case gets only what changed, the check runs again, and the new result comes from the new answers."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    sid, made = _funding(client)
+    case_id = made["handoff"]["subject_id"]
+    first = client.get(f"/task-sessions/{sid}/first-value").json()
+    assert {q["key"] for q in first["edit"]["questions"]} >= {"amount", "use", "stage", "route", "timing", "traction"}
+    assert first["edit"]["answers"]["amount"] == 50000
+    again = client.post(f"/task-sessions/{sid}/answers", json={"answers": {"amount": "120000", "use": "a new van", "traction": "No traction yet"}}).json()
+    data = run(service_for(env.orch).store.get("subjects", case_id))["data"]
+    assert (data["target_amount"], data["purpose"]) == (120000, "a new van")
+    assert again["edit"]["answers"]["amount"] == 120000 and again["result"]["assessment_type"] == "funding_readiness_initial"
+    assert any("No traction yet" == b["label"] for b in again["result"]["blockers"])
+    assert env.meter.charges == []      # free: no model, no research
+    # Someone else can't edit it.
+    who["user"] = "someone.else@example.test"
+    assert client.post(f"/task-sessions/{sid}/answers", json={"answers": {"amount": 1}}).status_code == 404
+
+
+def test_after_two_replaces_the_first_needs_items_can_still_be_kept(world):
+    """QA, 15 Oct: replacing twice hid the first need's items; Keep works on any earlier need."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    svc = service_for(env.orch)
+    _first, made = _funding(client)
+    case_id = made["handoff"]["subject_id"]
+    for amount, use in ((120000, "a new van"), (250000, "a new office")):
+        sid, asked = _funding(client, amount=amount, use=use)
+        client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"replace:{case_id}"}})
+        client.post(f"/task-sessions/{sid}/prepare")
+    needs = run(svc.store.get("subjects", case_id))["data"]["previous_needs"]
+    assert len(needs) == 2 and "traction" in needs[1]["set_aside"]
+    out = run(svc.keep_previous(OWNER, "A", case_id, "traction", True, OWNER, need=1))
+    assert out["data"]["previous_needs"][1]["review"] == {"traction": "kept"} and out["data"]["previous_needs"][0]["review"] == {}

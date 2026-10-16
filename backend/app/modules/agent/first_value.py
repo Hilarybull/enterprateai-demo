@@ -198,7 +198,10 @@ def funding(a: dict, data: dict | None = None, now: datetime | None = None, sign
     co = _company(data)
     amount, use, timing, traction, stage = _num(a.get("amount")), a.get("use"), a.get("timing"), a.get("traction"), a.get("stage")
     no_traction = _known(traction) and str(traction).strip().lower() in ("none", "no", "no traction yet", "nothing yet", "not yet")
-    evidence = bool(co["invoices"] or co["customers"])
+    # What the owner says about this need wins over older records (the owner's QA, 15 Oct): "Not trading yet" or "No traction
+    # yet" means invoices already on the workspace are not shown as this need's traction.
+    said_none = no_traction or str(stage or "").strip().lower() in ("pre_revenue", "idea")
+    evidence = bool(co["invoices"] or co["customers"]) and not said_none
     crit = [
         {"key": "purpose", "label": "Funding purpose", "weight": 10,
          "state": MET if amount and _known(use) and _known(timing) else PARTIAL if _known(use) or amount else UNKNOWN,
@@ -213,11 +216,12 @@ def funding(a: dict, data: dict | None = None, now: datetime | None = None, sign
          # What the records show and what the owner said are named as such, so one never contradicts the other.
          "strength": f"{demand_level(traction)[1]}: {_quoted(traction)}" if demand_level(traction) and not no_traction
          else "Customers and invoices on record" if evidence else None,
-         "gap": ("Traction not described yet, though your records show customers" if evidence else "No traction yet") if no_traction else "Traction evidence incomplete"},
+         "gap": "No traction yet" if no_traction else "Traction evidence incomplete"},
+        # Records of prices and the target market count only as what the workspace has on record, said so ("From your records").
         {"key": "economics", "label": "Business economics", "weight": 10, "state": MET if co["priced"] and co["costed"] else PARTIAL if co["priced"] else UNKNOWN,
-         "strength": "Prices are on record", "gap": "Prices and costs not on record" if not co["priced"] else "Costs not on record"},
+         "strength": "From your records: prices are in your catalogue", "gap": "Prices and costs not on record" if not co["priced"] else "Costs not on record"},
         {"key": "market", "label": "Market and growth plan", "weight": 10, "state": PARTIAL if co["target"] or co["about"] else UNKNOWN,
-         "strength": "Target market described", "gap": "Target customers and how you will reach them not set out"},
+         "strength": "From your records: target customers described", "gap": "Target customers and how you will reach them not set out"},
         {"key": "team", "label": "Team and delivery", "weight": 10, "state": UNKNOWN, "strength": None, "gap": "Who will deliver the plan is not recorded"},
         {"key": "materials", "label": "Materials and risks", "weight": 10, "state": PARTIAL if co["plan"] else UNKNOWN,
          "strength": "A business plan is started", "gap": "Investor materials incomplete" if co["plan"] else "No business plan or funding materials yet"},
@@ -542,7 +546,7 @@ def offering_on_record(answers: dict | None, data: dict | None, priced_only: boo
         return False
     profile = (data or {}).get("workspace_profile") or {}
     # With a price said, only a catalogue product counts: a service named on the profile has no price to sell from.
-    names = [p["name"] for p in _company(data)["products"]] + ([] if priced_only else [
+    names = [p["name"] for p in _company(data)["products"] if not priced_only or (isinstance(p.get("base_price"), (int, float)) and p["base_price"] > 0)] + ([] if priced_only else [
         (s.get("service_name") or s.get("name")) if isinstance(s, dict) else s for s in profile.get("services") or []])
     for name in names:
         n = _norm(name)

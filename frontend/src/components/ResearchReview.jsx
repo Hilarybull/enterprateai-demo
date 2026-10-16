@@ -202,6 +202,11 @@ export function RecordSync({ businessId, runId, sync }) {
 }
 
 /** The review, with Retry when the research couldn't run: a retry replaces the run shown here. */
+/** Can the owner put their own value on this item? A figure on record or an estimate, yes; a researched finding (its
+ *  source's words) or a calculated figure (worked out again from the inputs), no. */
+export const ownAnswer = (i) => i.kind === "reused" && /^your answer$/i.test(String(i.source_note || "").trim());
+export const editableItem = (i) => !(i.derive || i.basis === "calculated") && i.kind !== "researched";
+
 export default function ResearchReview({ retry = null, ...props }) {
   const [run, setRun] = useState(props.run);
   const [retrying, setRetrying] = useState(false);
@@ -213,8 +218,11 @@ export default function ResearchReview({ retry = null, ...props }) {
 }
 
 function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retrying = false }) {
-  const items = (run.items || []).map((i) => ({ ...i, kind: i.kind || i.state }));
-  const [decisions, setDecisions] = useState({});
+  const every = (run.items || []).map((i) => ({ ...i, kind: i.kind || i.state }));
+  // The owner's own answers are used as given and changed in "Your answers" above, never reviewed again here (QA, 15 Oct).
+  const yours = every.filter(ownAnswer);
+  const items = every.filter((i) => !ownAnswer(i));
+  const [decisions, setDecisions] = useState(() => Object.fromEntries(yours.map((i) => [i.id, { decision: "accept" }])));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(run.status === "adopted" ? run : null);
@@ -346,6 +354,7 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
       {reviewing && <>
       {draftOf(run) && <div className="mt-3">{toggle("Check or review inputs")}</div>}
       <p className="mt-1 text-[13px] font-semibold text-slate-900">An answer for every gap. Nothing counts until you adopt it.</p>
+      {yours.length > 0 && <p className="mt-0.5 text-[12px] text-slate-500" data-your-answers-note>Your own answers ({yours.map((i) => i.label).join(", ")}) are used as you gave them. To change one, edit it in Your answers above.</p>}
       {undecided.length > 0 && <button type="button" onClick={adoptAll} data-adopt-all className="mt-2 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-[12px] font-semibold text-brand-800 hover:bg-brand-100">Adopt all ({undecided.length})</button>}
       <ul className="mt-2 space-y-3">
         {items.map((i) => {
@@ -382,11 +391,17 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
                   {i.retrieved_at && <p className="mt-0.5 text-[11px] text-slate-500" data-research-freshness>Found {String(i.retrieved_at).slice(0, 10)}. {FRESH_NOTE(i)}</p>}
                   {i.used_for && <p className="mt-1 text-[11px] text-slate-500" data-used-for>Used for: {i.used_for}</p>}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5" role="group" aria-label={`Your decision: ${i.label}`}>
-                    {[["accept", "Accept"], ["edit", "Edit"], ["reject", "Reject"]].map(([k, label]) => (
+                    {/* A calculated figure is worked out again from the inputs above when you check again: it has no Edit of its
+                        own (an edit there was thrown away). Change the inputs it uses instead (the owner's QA, 15 Oct). */}
+                    {/* A researched finding is what its checked source says: accepted or rejected, never rewritten (an edit would
+                        put words in the source's mouth). Edit is for figures that are yours to set: on record, or estimated. */}
+                    {(!editableItem(i) ? [["accept", "Accept"], ["reject", "Reject"]] : [["accept", "Accept"], ["edit", "Edit"], ["reject", "Reject"]]).map(([k, label]) => (
                       <button key={k} type="button" aria-pressed={d.decision === k} onClick={() => set(i.id, { decision: k, value: k === "edit" ? d.value ?? String(i.number ?? i.value) : d.value })} className={pill(d.decision === k)}>{label}</button>
                     ))}
                   </div>
-                  {d.decision === "edit" && (() => {
+                  {(i.derive || i.basis === "calculated") && <p className="mt-1 text-[11.5px] text-slate-500" data-calculated-note>Worked out from the figures above. To change it, edit those and check again.</p>}
+                  {i.kind === "researched" && !(i.derive || i.basis === "calculated") && <p className="mt-1 text-[11.5px] text-slate-500" data-researched-note>From a checked source: accept it or reject it.</p>}
+                  {d.decision === "edit" && editableItem(i) && (() => {
                     const u = unitsOf(i.field, currency);
                     return (
                       <div className="mt-2 flex items-center gap-2" data-edit-units>

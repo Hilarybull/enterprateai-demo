@@ -67,11 +67,12 @@ describe("PF3 the premium research, walked through in the browser", () => {
     expect(items[0].querySelector("[data-research-sources]").textContent).toBe("How cleaners find clients · Mar 2026");
     expect(items[0].querySelector("a").getAttribute("rel")).toContain("noopener");
     expect(items[1].querySelector("[data-research-sources]")).toBeNull();      // an estimate with no source shows none
-    await click(within(items[0]).getByRole("button", { name: "Edit" }));
-    fireEvent.change(within(items[0]).getByLabelText("Your version: Launch channels used by similar businesses"), { target: { value: "Nextdoor and leaflets" } });
+    // A researched finding is its source's words: accepted or rejected, never rewritten (QA, 15 Oct).
+    expect(within(items[0]).queryByRole("button", { name: "Edit" })).toBeNull();
+    await click(within(items[0]).getByRole("button", { name: "Accept" }));
     await click(within(items[1]).getByRole("button", { name: "Reject" }));
     await click(within(review).getByRole("button", { name: "Use what I adopted and check again" }));
-    expect(calls.find((c) => /\/review$/.test(c.path)).body).toEqual({ decisions: { i1: { decision: "edit", value: "Nextdoor and leaflets" }, i2: { decision: "reject" } } });
+    expect(calls.find((c) => /\/review$/.test(c.path)).body).toEqual({ decisions: { i1: { decision: "accept" }, i2: { decision: "reject" } } });
     const done = document.querySelector("[data-research-adopted]");
     expect(done.querySelector("[data-score-change]").textContent).toBe("38 → 43 out of 100");
     expect(done.querySelector("[data-coverage-change]").textContent).toBe("45% → 55%");

@@ -173,34 +173,59 @@ function OpenCase({ to }) {
 /** The row's actions in one ··· menu (the owner's QA, 15 Oct): View details, Keep, Remove. */
 function RowMenu({ label, disabled, viewing, onView, onKeep, onRemove }) {
   const [open, setOpen] = useState(false);
+  const [at, setAt] = useState(null);      // where the menu opens, on the page itself: never clipped by a popup's scroll area
+  const button = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
     const close = (e) => { if (e.type === "keydown" ? e.key === "Escape" : !e.target.closest?.("[data-row-menu]")) setOpen(false); };
+    const away = () => setOpen(false);      // scrolled or resized: closed rather than left floating in the wrong place
     window.addEventListener("keydown", close);
     window.addEventListener("mousedown", close);
-    return () => { window.removeEventListener("keydown", close); window.removeEventListener("mousedown", close); };
+    window.addEventListener("resize", away);
+    window.addEventListener("scroll", away, true);
+    return () => { window.removeEventListener("keydown", close); window.removeEventListener("mousedown", close); window.removeEventListener("resize", away); window.removeEventListener("scroll", away, true); };
   }, [open]);
+  const toggle = () => {
+    const r = button.current?.getBoundingClientRect();
+    if (r) {
+      const below = window.innerHeight - r.bottom > 140;
+      setAt({ right: Math.max(8, window.innerWidth - r.right), ...(below ? { top: r.bottom + 4 } : { bottom: window.innerHeight - r.top + 4 }) });
+    }
+    setOpen((o) => !o);
+  };
   const pick = (fn) => () => { setOpen(false); fn(); };
   const item = "block w-full px-3 py-2 text-left text-[13px] text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800";
   return (
     <div className="relative" data-row-menu>
-      <button type="button" aria-label={`Actions for ${label}`} aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={() => setOpen((o) => !o)}
+      <button ref={button} type="button" aria-label={`Actions for ${label}`} aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={toggle}
         className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300">
         <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
       </button>
-      {open && (
-        <div role="menu" className="absolute right-0 z-30 mt-1 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+      {open && createPortal(
+        <div role="menu" data-row-menu style={{ position: "fixed", ...(at || {}) }}
+          className="z-[95] w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
           <button type="button" role="menuitem" className={item} onClick={pick(onView)}>{viewing ? "Hide details" : "View details"}</button>
           <button type="button" role="menuitem" className={item} onClick={pick(onKeep)}>Keep</button>
           <button type="button" role="menuitem" className={`${item} text-rose-700 dark:text-rose-300`} onClick={pick(onRemove)}>Remove</button>
-        </div>
-      )}
+        </div>, document.body)}
     </div>
   );
 }
 
 const PREVIEW_LABEL = { title: "Title", says: "What it says", kind: "Type", dated: "Dated", checked: "Checked", figures: "Figures", reviewed_on: "Reviewed on",
   notes: "Notes", prepared: "Prepared" };
+/** Is there anything in it to decide on: its text, figures, notes or values, not only a title, a type and a date? */
+const NOTHING_SAID = /^(?:no(?:ne)?|nothing|n\/a|unknown|not sure(?: yet)?|not known(?: yet)?|no traction(?: yet)?|none yet|not yet|nothing yet|0)\.?$/i;
+
+export function hasContent(v) {
+  if (v == null || v === "") return false;
+  // A value that only says there is nothing ("No traction yet", "None", "Not sure") is nothing to decide on.
+  if (typeof v !== "object") return String(v).trim().length > 0 && !NOTHING_SAID.test(String(v).trim());
+  if (Array.isArray(v)) return v.some(hasContent);
+  const meta = new Set(["title", "kind", "dated", "checked", "reviewed_on", "prepared"]);
+  return Object.entries(v).some(([k, x]) => !SKIP_KEYS.has(k) && !meta.has(k) && hasContent(x));
+}
+
 const SKIP_KEYS = new Set(["id", "status", "version", "created_at", "updated_at", "generated_at", "source", "provenance", "reviewed", "reviewed_by",
   "reviewed_at", "evidence_id", "facts_fingerprint", "fingerprint", "run_id", "agent_run_id", "links", "held_links", "key", "preview"]);
 const wordsOf = (k) => PREVIEW_LABEL[k] || k.replace(/_id$/, "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -242,26 +267,45 @@ export function PreviousNeed({ businessId, subject, onChanged }) {
     return () => window.removeEventListener("keydown", key);
   }, [listing, viewing]);
   if (!prev) return null;
-  const review = prev.review || {};
   const words = { market: "Market details", traction: "Traction", use_of_funds: "Use of funds", milestones: "Milestones" };
-  const items = [
-    ...(prev.evidence || []).map((e) => ({ id: `evidence:${e.id}`, label: e.title, note: e.date ? `dated ${String(e.date).slice(0, 10)}` : "", detail: e.preview || e.detail || "", evidence: e.id })),
-    ...Object.keys(prev.documents || {}).map((k) => ({ id: `document:${k}`, label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), note: "", detail: prev.documents[k]?.preview || {} })),
-    ...Object.keys(prev.set_aside || {}).filter((k) => words[k]).map((k) => ({ id: k, label: words[k], note: "", detail: prev.set_aside[k] })),
-  ].filter((i) => !review[i.id]);
+  // Every earlier need's items still to keep or remove (the owner's QA, 15 Oct: replacing twice hid the first need's
+  // eleven), each with the need it came from.
+  const needs = subject.data?.previous_needs || [];
+  const items = needs.flatMap((p, need) => {
+    const review = p.review || {};
+    return [
+      ...(p.evidence || []).map((e) => ({ id: `evidence:${e.id}`, label: e.title, note: e.date ? `dated ${String(e.date).slice(0, 10)}` : "", detail: e.preview || e.detail || "", evidence: e.id })),
+      ...Object.keys(p.documents || {}).map((k) => ({ id: `document:${k}`, label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), note: "", detail: p.documents[k]?.preview || {} })),
+      ...Object.keys(p.set_aside || {}).filter((k) => words[k]).map((k) => ({ id: k, label: words[k], note: "", detail: p.set_aside[k] })),
+    ].filter((i) => !review[i.id]).map((i) => ({ ...i, need, key: `${need}:${i.id}`, from: `Replaced on ${dateLabel(p.replaced_at)}${p.summary ? `: ${p.summary}` : ""}` }));
+  });
   if (!items.length) return null;
-  const decide = async (item, keep) => {
-    setBusy(item);
-    try { onChanged(await keepPrevious(businessId, subject.id, item, keep)); setViewing(null); } finally { setBusy(""); }
+  // Only a title and a date saved (set aside before details were kept): nothing to decide on, so not asked one by one.
+  const full = items.filter((i) => hasContent(i.detail));
+  const empty = items.filter((i) => !hasContent(i.detail));
+  const clearEmpty = async () => {
+    setBusy("empty");
+    try {
+      let last = null;
+      for (const i of empty) last = await keepPrevious(businessId, subject.id, i.id, false, i.need);
+      if (last) onChanged(last);
+    } finally { setBusy(""); }
   };
+  const decide = async (it, keep) => {
+    setBusy(it.key);
+    try { onChanged(await keepPrevious(businessId, subject.id, it.id, keep, it.need)); setViewing(null); } finally { setBusy(""); }
+  };
+  const groups = [...new Set(full.map((i) => i.need))].map((n) => ({ need: n, from: full.find((i) => i.need === n).from, list: full.filter((i) => i.need === n) }));
   const close = () => { setViewing(null); setListing(false); };
-  const shown = viewing && items.find((i) => i.id === viewing.id);
+  const shown = viewing && items.find((i) => i.key === viewing.key);
   return (
     <>
       {/* One line on every tab; the list itself opens as a popup (the owner's QA, 15 Oct). */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-[13px] text-amber-900" data-previous-need-line>
-        <span>{items.length} thing{items.length === 1 ? "" : "s"} from your previous funding need to keep or remove. They don't count in your score until you keep them.</span>
-        <Btn onClick={() => setListing(true)}>Review</Btn>
+        <span>{full.length
+          ? `${full.length} thing${full.length === 1 ? "" : "s"} from your previous funding need to keep or remove. They don't count in your score until you keep them.`
+          : `${empty.length} thing${empty.length === 1 ? "" : "s"} from your previous funding need had only a title saved: nothing to review.`}</span>
+        {full.length ? <Btn onClick={() => setListing(true)}>Review</Btn> : <Btn disabled={busy === "empty"} onClick={clearEmpty} data-clear-empty>{busy === "empty" ? "Clearing…" : "Clear them"}</Btn>}
       </div>
       {listing && createPortal(
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
@@ -271,7 +315,8 @@ export function PreviousNeed({ businessId, subject, onChanged }) {
               <div className="min-w-0">
                 {shown && <button type="button" onClick={() => setViewing(null)} className="mb-1 text-[12.5px] font-semibold text-brand-700 hover:underline">Back to the list</button>}
                 <p className="text-base font-bold text-slate-900 dark:text-slate-100">{shown ? shown.label : "From your previous funding need. Still relevant?"}</p>
-                {!shown && <p className="mt-0.5 text-[13px] text-slate-500">Replaced on {dateLabel(prev.replaced_at)}{prev.summary ? `: ${prev.summary}` : ""}.</p>}
+                {!shown && <p className="mt-0.5 text-[13px] text-slate-500">{groups.length > 1 ? `From ${groups.length} earlier funding needs.` : `${groups[0].from}.`}</p>}
+                {shown && groups.length > 1 && <p className="mt-0.5 text-[12.5px] text-slate-500">{shown.from}</p>}
                 {shown?.note && <p className="mt-0.5 text-[13px] text-slate-500">{shown.note}</p>}
               </div>
               <button type="button" onClick={close} aria-label="Close" className="text-[13px] font-semibold text-slate-500 hover:text-slate-800">Close</button>
@@ -283,23 +328,36 @@ export function PreviousNeed({ businessId, subject, onChanged }) {
                   {shown.evidence && <a href="?tab=evidence" className="mt-2 inline-block text-[12.5px] font-semibold text-brand-700 hover:underline">See it in the Evidence tab</a>}
                 </div>
               ) : (
-                <ul className="space-y-2">
-                  {items.map((i) => (
-                    <li key={i.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 dark:border-slate-800" data-previous-item={i.id}>
-                      <button type="button" onClick={() => setViewing(i)} className="min-w-0 text-left text-[13px] text-slate-800 hover:text-brand-700 dark:text-slate-200">
-                        {i.label}{i.note && <span className="text-slate-500"> · {i.note}</span>}
-                      </button>
-                      <RowMenu label={i.label} disabled={busy === i.id} viewing={false}
-                        onView={() => setViewing(i)} onKeep={() => decide(i.id, true)} onRemove={() => decide(i.id, false)} />
-                    </li>
+                <div className="space-y-4">
+                  {groups.map((g) => (
+                    <div key={g.need} data-previous-group={g.need}>
+                      {groups.length > 1 && <p className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-slate-500">{g.from}</p>}
+                      <ul className="space-y-2">
+                        {g.list.map((i) => (
+                          <li key={i.key} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 dark:border-slate-800" data-previous-item={i.id}>
+                            <button type="button" onClick={() => setViewing(i)} className="min-w-0 text-left text-[13px] text-slate-800 hover:text-brand-700 dark:text-slate-200">
+                              {i.label}{i.note && <span className="text-slate-500"> · {i.note}</span>}
+                            </button>
+                            <RowMenu label={i.label} disabled={busy === i.key} viewing={false}
+                              onView={() => setViewing(i)} onKeep={() => decide(i, true)} onRemove={() => decide(i, false)} />
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   ))}
-                </ul>
+                  {empty.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-slate-200 px-3 py-2 text-[12.5px] text-slate-500 dark:border-slate-700" data-empty-previous>
+                      <span>{empty.length} more had only a title saved ({empty.map((i) => i.label).join(", ")}): nothing to review.</span>
+                      <Btn disabled={busy === "empty"} onClick={clearEmpty} data-clear-empty>{busy === "empty" ? "Clearing…" : "Clear them"}</Btn>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             {shown && (
               <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
-                <Btn disabled={busy === shown.id} onClick={() => decide(shown.id, false)}>Remove</Btn>
-                <Btn kind="primary" disabled={busy === shown.id} onClick={() => decide(shown.id, true)}>Keep</Btn>
+                <Btn disabled={busy === shown.key} onClick={() => decide(shown, false)}>Remove</Btn>
+                <Btn kind="primary" disabled={busy === shown.key} onClick={() => decide(shown, true)}>Keep</Btn>
               </div>
             )}
           </div>
@@ -658,7 +716,8 @@ function SubjectDetail({ businessId, feature, subjectId }) {
       </div>
 
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-        {feature === "funding" && <PreviousNeed businessId={businessId} subject={subject} onChanged={(d) => accept(d)} />}
+        {/* No "previous need" review (the owner's QA, 15 Oct): Replace replaced it, Update changed only what differed. The
+            earlier need stays in History. */}
         {tab === "setup" && (
           <Setup businessId={businessId} feature={feature} subject={subject} data={data} errors={errors} onField={onField} onChanged={onChanged}
             openSection={openSection || subject.profile_definition.sections[0].key} setOpenSection={setOpenSectionState} disabled={!editable} />

@@ -201,7 +201,7 @@ export default function StartPage({ framed = false }) {
       <div className={stage === "result" && result ? "w-full"
         : "mx-auto w-full max-w-[560px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900"} role="region" aria-label="Your task">
         {stage === "result" && result && (
-          <FirstValueCard result={result} onContinue={() => navigate("/dashboard", { replace: true })}
+          <FirstValueCard result={result} onUpdated={setResult} onContinue={() => navigate("/dashboard", { replace: true })}
             onPremium={premiumFlow({ base: `/task-sessions/${sessionId}/premium` })} />
         )}
         {stage !== "gone" && stage !== "result" && (

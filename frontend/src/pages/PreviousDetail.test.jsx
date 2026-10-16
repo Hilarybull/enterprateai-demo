@@ -35,7 +35,7 @@ describe("the previous need's details", () => {
 
 describe("the previous need review", () => {
   const subject = { id: "f1", data: { previous_needs: [{ replaced_at: "2026-10-15", summary: "£1.2m equity",
-    documents: { executive_summary: { preview: { title: "Executive summary v1", dated: "2026-10-01" } } }, evidence: [], set_aside: {}, review: {} }] } };
+    documents: { executive_summary: { preview: { title: "Executive summary v1", dated: "2026-10-01", text: "We wash cars." } } }, evidence: [], set_aside: {}, review: {} }] } };
   it("is one line on the page and opens as a popup, with each item's details and Keep or Remove there", async () => {
     const call = vi.spyOn(client, "apiRequest").mockResolvedValue({ id: "f1" });
     const onChanged = vi.fn();
@@ -48,7 +48,47 @@ describe("the previous need review", () => {
     expect(screen.getByRole("dialog").textContent).toContain("Title: Executive summary v1");
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Keep" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
-    expect(call).toHaveBeenCalledWith("/businesses/b1/funding-cases/f1/previous-need", "POST", { item: "document:executive_summary", keep: true });
+    expect(call).toHaveBeenCalledWith("/businesses/b1/funding-cases/f1/previous-need", "POST", { item: "document:executive_summary", keep: true, need: 0 });
+    vi.restoreAllMocks();
+  });
+});
+
+describe("replaced more than once", () => {
+  it("lists what is still to review from every earlier need, grouped, and keeps the right one", async () => {
+    const call = vi.spyOn(client, "apiRequest").mockResolvedValue({ id: "f1" });
+    const subject = { id: "f1", data: { previous_needs: [
+      { replaced_at: "2026-10-15", summary: "£250k loan", set_aside: { traction: { summary: "40 paying customers" } }, documents: {}, evidence: [], review: {} },
+      { replaced_at: "2026-10-15", summary: "£1.2m equity", set_aside: { market: { location: "UK" } }, evidence: [],
+        documents: { forecast: { preview: { title: "Forecast v1", text: "12 months of figures." } }, team_summary: {}, pitch: { preview: { title: "Pitch v1" } } }, review: { "document:team_summary": "removed" } }] } };
+    render(<MemoryRouter><PreviousNeed businessId="b1" subject={subject} onChanged={vi.fn()} /></MemoryRouter>);
+    expect(document.querySelector("[data-previous-need-line]").textContent).toContain("3 things from your previous funding need");
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    const groups = [...document.querySelectorAll("[data-previous-group]")].map((g) => g.textContent);
+    expect(groups[0]).toContain("£250k loan") && expect(groups[0]).toContain("Traction");
+    expect(groups[1]).toContain("£1.2m equity") && expect(groups[1]).toContain("Forecast") && expect(groups[1]).toContain("Market details");
+    expect(groups[1]).not.toContain("Team summary");      // already removed
+    expect(document.querySelector("[data-empty-previous]").textContent).toContain("1 more had only a title saved (Pitch): nothing to review.");
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Forecast" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Keep" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("/businesses/b1/funding-cases/f1/previous-need", "POST", { item: "document:forecast", keep: true, need: 1 }));
+    vi.restoreAllMocks();
+  });
+});
+
+describe("items with only a title saved", () => {
+  it("are not asked about one by one: one line says so, and one press clears them", async () => {
+    const call = vi.spyOn(client, "apiRequest").mockResolvedValue({ id: "f1" });
+    const subject = { id: "f1", data: { previous_needs: [{ replaced_at: "2026-10-15", summary: "£1.2m equity", set_aside: {}, evidence: [], review: {},
+      documents: { forecast: { preview: { title: "Forecast v1", dated: "2026-10-01" } }, team_summary: { preview: { reviewed_on: "2026-10-04" } } } },
+      { replaced_at: "2026-10-15", summary: "£250k loan", set_aside: { traction: { summary: "No traction yet" } }, documents: {}, evidence: [], review: {} }].reverse() } };
+    const onChanged = vi.fn();
+    render(<MemoryRouter><PreviousNeed businessId="b1" subject={subject} onChanged={onChanged} /></MemoryRouter>);
+    expect(document.querySelector("[data-previous-need-line]").textContent).toContain("3 things from your previous funding need had only a title saved: nothing to review.");
+    expect(screen.queryByRole("button", { name: "Review" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Clear them" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    expect(call.mock.calls.map((c) => c[2])).toEqual([{ item: "traction", keep: false, need: 0 }, { item: "document:forecast", keep: false, need: 1 },
+      { item: "document:team_summary", keep: false, need: 1 }]);      // "No traction yet" says nothing to keep
     vi.restoreAllMocks();
   });
 });

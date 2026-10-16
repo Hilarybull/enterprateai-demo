@@ -16,15 +16,12 @@ describe("the first-value card's score", () => {
     expect(document.querySelector("[data-fv-coverage]").textContent).toContain("40%");
   });
 
-  it("shows the full assessment's own summary once it exists, and no score when data is missing", () => {
-    const assessment = { assessment_id: "a1", classification: "insufficient_evidence", score: null, evidence_coverage: 80 };
+  it("a full check that can't score yet never hides the score from this request's answers (QA, 15 Oct)", () => {
+    const assessment = { assessment_id: "a1", kind: "funding", case_id: "fc1", title: "Market · £250k", classification: "insufficient_evidence", score: null, evidence_coverage: 40 };
     render(<MemoryRouter><FirstValueCard result={{ ...base, provisional: true, assessment }} /></MemoryRouter>);
-    const shown = document.querySelector("[data-fv-assessment]").textContent;
-    expect(shown).toContain("No score yet") && expect(shown).toContain("Insufficient evidence");
-    expect(document.querySelector("[data-fv-provisional]")).toBeNull();
-    expect(document.querySelector("[data-fv-coverage]").textContent).toContain("80%");
-    // F-1: the full check leads; the first result is kept, said as earlier, never as the headline score.
-    expect(document.querySelector("[data-fv-earlier]").textContent).toContain("Earlier: 62/100 (first result)");
-    expect(document.querySelector("[data-fv-score]").textContent.startsWith("No score yet")).toBe(true);
+    expect(document.querySelector("[data-fv-score]").textContent.startsWith("62")).toBe(true);
+    expect(document.querySelector("[data-fv-score]").textContent).not.toContain("No score yet");
+    expect(document.querySelector("[data-fv-earlier]").textContent).toContain("Full check: not enough evidence to score yet (40% evidence)");
+    expect(document.querySelector("[data-fv-source]").textContent).toBe("Market · £250k · From your answers");
   });
 });

@@ -294,6 +294,10 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
         "recording, changing anything). If the message asks for something to be done, reply with only [ACTION:<task>] using one "
         f"of these tasks: {', '.join(_TASK_NAMES())}; or [ACTION:none] if none of them does it. "
         "Do not claim knowledge about EnterprateAI beyond the supplied workspace data. "
+        "When your answer finds a gap the owner can close with one of the tasks (an offering on the profile but not in the "
+        "catalogue, a customer with no email, an invoice not sent, a plan with no price), end with one short question that "
+        "proposes that next step in plain words, for example \"Do you want me to add AI Automation Service to your catalogue, "
+        "or create a new service?\". Ask it; never say it has been done. "
         + memory.RULES + " "
         "Return plain text only. Do not use markdown, bold markers, bullet lists, numbered lists, or hyphen-led list formatting."
     )

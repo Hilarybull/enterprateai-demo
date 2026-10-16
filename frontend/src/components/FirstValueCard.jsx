@@ -25,7 +25,68 @@ const forget = () => { try { localStorage.removeItem(KEY); } catch { /* nothing 
 export const forgetFirstValue = forget;
 const remembered = () => { try { return localStorage.getItem(KEY); } catch { return null; } };
 
-export const fetchFirstValue = (sessionId) => apiRequest(`/task-sessions/${sessionId}/first-value`, "GET");
+// The result carries what its "Edit answers" needs (the questions asked and the answers given), and the task it is from.
+const withEdit = (res) => (res?.result ? { ...res, result: { ...res.result, _edit: res.edit || null, _session: res.session_id } } : res);
+export const fetchFirstValue = (sessionId) => apiRequest(`/task-sessions/${sessionId}/first-value`, "GET").then(withEdit);
+
+/** Edit and run again, on the result itself (the owner's QA, 15 Oct): the answers this request was given, changed in
+ *  place; Save and check again updates the case or plan it set up and shows the new result. Free. */
+export function EditAnswers({ result, onUpdated, className = "" }) {
+  const edit = result?._edit;
+  const [open, setOpen] = useState(false);
+  const [values, setValues] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  if (!edit?.questions?.length || !result?._session) return null;
+  const start = () => { setValues({ ...(edit.answers || {}) }); setProblem(""); setOpen(true); };
+  const put = (k, v) => setValues((had) => ({ ...had, [k]: v }));
+  const changed = Object.fromEntries(Object.entries(values).filter(([k, v]) => String(v ?? "") !== String((edit.answers || {})[k] ?? "")));
+  const save = async () => {
+    setBusy(true);
+    setProblem("");
+    try {
+      const res = withEdit(await apiRequest(`/task-sessions/${result._session}/answers`, "POST", { answers: changed }, { timeoutMs: 30000 }));
+      onUpdated?.(res.result);
+      setOpen(false);
+    } catch {
+      setProblem("That didn't go through. Nothing was changed. Try again.");
+    } finally { setBusy(false); }
+  };
+  const field = "mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100";
+  if (!open) {
+    return <button type="button" onClick={start} data-edit-answers className={`rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 ${className}`}>Edit answers</button>;
+  }
+  return (
+    <div className="w-full rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/60" data-edit-form>
+      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Your answers</p>
+      <p className="mt-0.5 text-[12.5px] text-slate-500">Change any of them, then check again. The {result.assessment_type === "launch_readiness_initial" ? "launch plan" : "funding case"} is updated with what you change.</p>
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+        {edit.questions.map((q) => (
+          <label key={q.key} className="block text-[13px] font-medium text-slate-700 dark:text-slate-200">
+            {q.label}
+            {q.options?.length ? (
+              <select value={values[q.key] ?? ""} onChange={(e) => put(q.key, e.target.value)} className={field} aria-label={q.label}>
+                <option value="">Not answered</option>
+                {q.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {q.unsure && !q.options.some((o) => o.value === "unknown") && <option value="unknown">{q.unsure}</option>}
+              </select>
+            ) : (
+              <input value={values[q.key] ?? ""} onChange={(e) => put(q.key, e.target.value)} className={field} aria-label={q.label}
+                inputMode={q.type === "number" ? "decimal" : undefined} list={q.chips?.length ? `chips-${q.key}` : undefined} />
+            )}
+            {q.chips?.length > 0 && <datalist id={`chips-${q.key}`}>{q.chips.map((c) => <option key={c.value} value={c.value} />)}</datalist>}
+          </label>
+        ))}
+      </div>
+      {problem && <p role="alert" className="mt-2 text-[12.5px] text-rose-700">{problem}</p>}
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
+        <button type="button" onClick={() => setOpen(false)} disabled={busy} className="rounded-lg px-3 py-1.5 text-[13px] font-semibold text-slate-600 hover:text-slate-900">Cancel</button>
+        <button type="button" onClick={save} disabled={busy || !Object.keys(changed).length} data-edit-save
+          className="rounded-lg bg-brand-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60">{busy ? "Checking again…" : "Save and check again"}</button>
+      </div>
+    </div>
+  );
+}
 
 const CLASS_LABEL = { ready: "Ready", conditionally_ready: "Conditionally ready", not_ready: "Not ready", insufficient_evidence: "Insufficient evidence" };
 const shortDay = (at) => { try { return new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }); } catch { return ""; } };
@@ -38,6 +99,14 @@ export function latestOf(result) {
   const full = result?.assessment?.assessment_id ? result.assessment : null;
   const first = typeof result?.score === "number" ? outOf(result.score) : String(result?.score ?? "");
   if (!full) return { full: null, score: first, band: result?.band, coverage: result?.evidence_coverage ?? 0, source: "First result", earlier: null };
+  // The full check can't score yet (too little evidence): the score worked out from this request's answers is the one shown,
+  // never "No score yet" over a request just answered (the owner's QA, 15 Oct). The full check is said beside it.
+  if (typeof full.score !== "number" && typeof result?.score === "number") {
+    const where = full.kind === "funding" ? `/funding/${full.case_id}` : full.kind === "launch" ? `/launch/${full.initiative_id}` : null;
+    return { full: null, score: first, band: result?.band, coverage: result?.evidence_coverage ?? 0, source: "From your answers", to: where,
+      open: full.kind === "funding" ? "Open funding case" : full.kind === "launch" ? "Open launch plan" : null,
+      earlier: `Full check: not enough evidence to score yet (${full.evidence_coverage ?? 0}% evidence)`, unscoredCheck: full };
+  }
   const where = full.kind === "funding" ? `/funding/${full.case_id}` : full.kind === "launch" ? `/launch/${full.initiative_id}` : null;
   return { full, score: outOf(full.score), band: CLASS_LABEL[full.classification] || "Not checked yet", coverage: full.evidence_coverage ?? 0,
     source: `${full.title ? `${full.title} · ` : ""}Full check${full.as_of ? ` · ${shortDay(full.as_of)}` : ""}`, to: where,
@@ -242,9 +311,12 @@ export function useFirstResult() {
     dismiss, saveForLater: hide, onAdopted: adopted, dismissed, undo, forgetDismissed: () => setDismissed(null) };
 }
 
-export default function FirstValueCard({ result, onDismiss = null, onContinue = null, continueLabel = "Open my dashboard", className = "", onPremium = null, extra = null,
-  initialServed = null }) {
+export default function FirstValueCard({ result: given, onDismiss = null, onContinue = null, continueLabel = "Open my dashboard", className = "", onPremium = null, extra = null,
+  initialServed = null, onUpdated = null }) {
   const navigate = useNavigate();
+  const [edited, setEdited] = useState(null);      // the result after "Save and check again"
+  useEffect(() => { setEdited(null); }, [given?._session]);
+  const result = edited || given;
   const [gate, setGate] = useState(false);      // the premium step was chosen: its gate, shown after the value and never before it
   const [saved, setSaved] = useState(false);
   const [served, setServed] = useState(initialServed);   // the server's answer to the premium step: a gate, a cost to confirm, or the research it did
@@ -256,8 +328,8 @@ export default function FirstValueCard({ result, onDismiss = null, onContinue = 
   const numeric = typeof result.score === "number";
   // §2/§3: where the full assessment exists, its summary is the one shown (never a second score); until then the quick
   // check's own score, labelled Provisional, with its coverage beside it.
-  const full = result.assessment?.assessment_id ? result.assessment : null;
   const latest = latestOf(result);
+  const full = latest.full;      // null when the full check can't score yet: the answers' score leads
   const g = served?.gate || result.premium_gate;
   const { act, done, setDone, priceModal } = useFreeActions(result, { onSaved: () => setSaved(true), setServed });
   const button = "rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
@@ -267,7 +339,7 @@ export default function FirstValueCard({ result, onDismiss = null, onContinue = 
       className={`rounded-2xl border border-brand-200 bg-white p-5 text-left shadow-sm sm:p-6 dark:border-brand-900 dark:bg-slate-900 ${className}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[11px] font-bold uppercase tracking-widest text-brand-600" data-fv-source>{latest.full ? latest.source : "Your first result"}</p>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-brand-600" data-fv-source>{latest.full ? latest.source : latest.unscoredCheck?.title ? `${latest.unscoredCheck.title} · From your answers` : "Your first result"}</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900 dark:text-slate-100">{result.headline}{result.classification && numeric ? `: ${result.classification}` : ""}</h2>
           {result.adopted && <p data-fv-adopted className="mt-0.5 text-[12px] text-emerald-700">Updated with the research you adopted{result.adopted.version ? ` (version ${result.adopted.version})` : ""}.</p>}
         </div>
@@ -286,6 +358,10 @@ export default function FirstValueCard({ result, onDismiss = null, onContinue = 
           <p data-fv-score className="text-3xl font-extrabold tabular-nums text-slate-950 dark:text-slate-100">
             {result.score}{result.score_label && <span className="ml-1.5 text-sm font-semibold text-slate-500">{result.score_label}</span>}
             {numeric && <span data-fv-provisional className="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 align-middle text-[11px] font-semibold text-amber-800">Provisional</span>}
+            {latest.unscoredCheck && (
+              <span className="mt-1 block text-[13px] font-medium text-slate-500" data-fv-earlier>{latest.earlier}
+                {latest.to && <> · <a href={latest.to} onClick={(e) => { e.preventDefault(); navigate(latest.to); }} className="font-semibold text-brand-700 underline-offset-2 hover:underline">{latest.open}</a></>}</span>
+            )}
           </p>
         )}
         {/* Evidence coverage: how much is known. Shown beside the result, never as part of it. */}
@@ -352,6 +428,7 @@ export default function FirstValueCard({ result, onDismiss = null, onContinue = 
             {working && <span aria-hidden="true" className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
             {working ? "Working on it…" : result.premium_next_action.label}</button>}
           {actionsOf(result).map((a) => <button key={a.label} type="button" onClick={() => act(a)} className={button}>{a.label}</button>)}
+          <EditAnswers result={result} onUpdated={(r) => { setEdited(r); setServed(null); onUpdated?.(r); }} />
         </div>
       )}
       {served?.started && (

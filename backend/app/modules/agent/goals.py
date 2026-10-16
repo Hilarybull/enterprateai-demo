@@ -1080,7 +1080,7 @@ def first_value_of(session: dict, data: dict | None = None, clock=None) -> dict 
     # Research adopted since (on this card or the check's page): the result as it left it, with its next step, never
     # the first answers again.
     # Only research adopted after this request began: an older run is the previous need's result, never this one's (QA, 15 Oct).
-    began = str(session.get("created_at") or "")
+    began = str(session.get("edited_at") or session.get("created_at") or "")
     versions = [v for v in ((data or {}).get("assessment_datasets") or {}).get(goal) or []
                 if isinstance(v, dict) and v.get("full_result") and str(v.get("created_at") or "") >= began]
     if versions:
@@ -1542,6 +1542,87 @@ def _num_or_none(v: Any) -> float | None:
     return n if n > 0 else None
 
 
+def launch_fields(a: dict, today: date | None = None) -> dict:
+    """The launch chat's answers, each in its own plan field: who it is for, where, a real date, and the price and cost
+    said (Offer and pricing, PRD 8.2)."""
+    out = {k: v for k, v in {"audience": a.get("customer"), "target_date": launch_date(a.get("target_date"), today),
+                             "geography": a.get("where") if str(a.get("where") or "").strip().lower() not in ("", "not sure", "not sure yet") else None}.items()
+           if v not in (None, "")}
+    offer = {k: v for k, v in {"launch_scope": a.get("sell"), "price": _num_or_none(a.get("price"))}.items() if v not in (None, "")}
+    econ = {k: v for k, v in {"price_per_unit": _num_or_none(a.get("price")), "variable_cost_per_unit": _num_or_none(a.get("cost"))}.items() if v is not None}
+    if offer:
+        out["offer"] = offer
+    if econ:
+        out["economics"] = econ
+    return out
+
+
+def editable_questions(session: dict) -> list[dict]:
+    """The questions the result card lets the owner change and run again: the ones asked in the chat, with their options."""
+    keep = ("key", "label", "type", "options", "chips", "prefix", "unsure", "required")
+    return [{k: f[k] for k in keep if k in f} for f in _questions(session) if not f.get("hidden") or f["key"] in ("target_date",)]
+
+
+async def edit_answers(store: SessionStore, session: dict, orch, user_id: str, changes: dict, email: str | None = None, clock=None) -> dict:
+    """Edit and run again, from the result card (the owner's QA, 15 Oct): the changed answers are kept on this request,
+    written to the case or plan it set up (only what changed), and the check is run again on them. Nothing else changes."""
+    from app.modules.readiness import rules
+    from app.modules.readiness.service import service_for
+    now = _now(clock)
+    if session.get("user_id") != user_id or not session.get("business_id"):
+        raise PermissionError("This task belongs to another account.")
+    allowed = {f["key"]: f for f in _questions(session)}
+    inputs = dict(session.get("inputs") or {})
+    for k, v in (changes or {}).items():
+        if k not in allowed:
+            continue
+        if allowed[k].get("type") == "number":
+            n = _num_or_none(v)
+            if n is None and str(v).strip().lower() not in ("unknown", "not sure"):
+                continue
+            inputs[k] = n if n is not None else UNSURE
+        else:
+            inputs[k] = str(v).strip()[:2000]
+    session["inputs"], session["proposed"] = inputs, {}
+    if session.get("goal_key") == "launch":
+        _split_where_when(session)
+    a = session["inputs"]
+    sid = (session.get("handoff") or {}).get("subject_id")
+    capability = (session.get("handoff") or {}).get("capability")
+    if sid and capability in _MODULES:
+        svc = service_for(orch)
+        kind = rules.FUNDING if capability == "funding_readiness" else rules.LAUNCH
+        row = await svc.store.get("subjects", sid)
+        if not row or row.get("business_id") != session["business_id"]:
+            raise PermissionError("That is not one of this workspace's records.")
+        before = row.get("data") or {}
+        if kind == rules.FUNDING:
+            biz = await orch.rt.business.load(session["business_id"]) or {}
+            money = session.get("currency") or said_currency(session) or bz.currency_of(biz)
+            wanted = case_fields(a, currency=money if money in rules.SUPPORTED_CURRENCIES else None, where=a.get("where"), today=now.date())
+            changed = {d["path"].split(".")[0] for d in case_diff(before, wanted)}
+            only = {k: v for k, v in {**wanted, "title": need_title(wanted)}.items() if k in changed or (k == "title" and changed & {"target_amount", "purpose", "route_preference"})}
+            stamp = f"Edited on your result, {now.day} {now.strftime('%b')}"
+            prov = {p: stamp for p in only}
+        else:
+            wanted = {**launch_fields(a, now.date()), "name": launch_title(a, now.date())}
+            only = {k: v for k, v in wanted.items() if before.get(k) != v}
+            prov = None
+        if only:
+            await svc.update_subject(user_id, session["business_id"], kind, sid, row["revision"], only, email, provenance=prov)
+        try:
+            checked = await svc.request_assessment(user_id, session["business_id"], kind, sid, idempotency_key=f"edit:{session['id']}:{now.isoformat()}"[:120], email=email)
+            session["handoff"] = {**session["handoff"], "assessment_id": checked.get("id"), "score": (checked.get("result") or {}).get("score_display"),
+                                  "classification": (checked.get("result") or {}).get("classification")}
+        except Exception:      # noqa: BLE001 - the answers are saved; the check can be run from its page
+            logger.warning("edit: the check did not run again for session %s", session["id"][:8], exc_info=True)
+    # The quick result is worked out again from the new answers (never an older run's).
+    session["edited_at"] = now.isoformat()
+    session["updated_at"] = now.isoformat()
+    await store.put(session)
+    return session
+
+
 def launch_title(a: dict, today: date | None = None) -> str:
     """"Car wash subscription, Abuja, January 2027": what, where and when, as said."""
     import calendar
@@ -1931,16 +2012,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                 else:
                     # Every answer in its own field, a date chip as a real date ("In 1 to 3 months": the end of the third
                     # month; "Not decided yet": no date), never the chip's words, which the plan refuses as a date.
-                    payload = {k: v for k, v in {"audience": a.get("customer"), "target_date": launch_date(a.get("target_date"), now.date()),
-                                                 "geography": a.get("where") if str(a.get("where") or "").strip().lower() not in ("", "not sure", "not sure yet") else None,
-                                                 "pinned": True}.items() if v not in (None, "")}
-                    # The price and cost said in the chat feed Offer and pricing (PRD 8.2), each in its own field.
-                    offer = {k: v for k, v in {"launch_scope": a.get("sell"), "price": _num_or_none(a.get("price"))}.items() if v not in (None, "")}
-                    econ = {k: v for k, v in {"price_per_unit": _num_or_none(a.get("price")), "variable_cost_per_unit": _num_or_none(a.get("cost"))}.items() if v is not None}
-                    if offer:
-                        payload["offer"] = offer
-                    if econ:
-                        payload["economics"] = econ
+                    payload = {**launch_fields(a, now.date()), "pinned": True}
                     title, told = launch_title(a), f'"{str(a.get("sell")).strip()}"' if a.get("sell") else ""
                 name_field = "title" if kind == rules.FUNDING else "name"
                 twin = None

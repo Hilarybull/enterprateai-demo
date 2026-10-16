@@ -389,7 +389,49 @@ async def _converse(user: dict, body: AgentRequestIn) -> dict:
     used = int(getattr(out, "credits_used", 0) or 0)
     if used:
         await _note_answer_charge(body.business_id, body.text, used)
-    return {"kind": "answer", "message": out.answer, "conversational": True}
+    reply = {"kind": "answer", "message": out.answer, "conversational": True}
+    try:      # the next step, proposed with its buttons when the answer found a gap (the owner's QA, 15 Oct)
+        data = await get_orchestrator().rt.business.load(body.business_id) or {}
+        nxt = next_step(body.text, out.answer, data, body.business_id)
+        if nxt:
+            reply["message"] = (out.answer.rstrip() + " " + nxt["ask"]) if nxt["ask"].lower() not in out.answer.lower() else out.answer
+            reply["offers"] = nxt["offers"]
+    except Exception:      # noqa: BLE001 - the answer stands without a proposal
+        logger.info("no next step for the answer", exc_info=True)
+    return reply
+
+
+_ABOUT_OFFERINGS = re.compile(r"\b(services?|products?|offerings?|catalogue|catalog|what (?:do|can) i (?:sell|offer))\b", re.I)
+
+
+def catalogue_gaps(data: dict) -> list[str]:
+    """What the business profile says it offers that is not in Catalogue > Products yet ("AI Automation Service")."""
+    from app.modules.agent import answer_memory
+    p = data.get("workspace_profile") or {}
+    listed = {answer_memory.norm(x.get("name")) for x in (data.get("catalogue") or {}).get("products") or [] if isinstance(x, dict) and not x.get("archived")}
+    named = [p.get("key_offering_focus")] + [(x.get("service_name") or x.get("name")) if isinstance(x, dict) else x for x in p.get("services") or []]
+    out = []
+    for name in named:
+        name = " ".join(str(name or "").split())
+        if len(name) >= 3 and answer_memory.norm(name) not in listed and name.lower() not in (o.lower() for o in out):
+            out.append(name)
+    return out[:2]
+
+
+def next_step(asked: str, answer: str, data: dict, business_id: str) -> dict | None:
+    """The one next step an answer leads to, as a question with its buttons. A question about what the business sells,
+    with an offering on the profile that is not in the catalogue: add it, or create a new one."""
+    if not (_ABOUT_OFFERINGS.search(asked or "") or re.search(r"\bcatalogue\b", answer or "", re.I)):
+        return None
+    gaps = catalogue_gaps(data)
+    if not gaps:
+        return None
+    name = gaps[0]
+    offers = [{"label": f"Add {name} to my catalogue", "post": {"url": f"/businesses/{business_id}/catalogue/from-check", "body": {"name": name}}},
+              {"label": "Create a new service", "capability": "add_catalogue_item"}]
+    if len(gaps) > 1:
+        offers.insert(1, {"label": f"Add {gaps[1]} to my catalogue", "post": {"url": f"/businesses/{business_id}/catalogue/from-check", "body": {"name": gaps[1]}}})
+    return {"ask": f"Do you want me to add {name} to your catalogue, or create a new service?", "offers": offers}
 
 
 ANSWER_CHARGES_KEPT = 2000

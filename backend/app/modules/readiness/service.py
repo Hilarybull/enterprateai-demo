@@ -559,19 +559,20 @@ class ReadinessService:
         needs = (out.get("data") or {}).get("previous_needs") or []
         if not needs:
             return
-        prev = copy.deepcopy(needs[0])      # a copy: the stored case is never changed by reading it
-        out["data"] = {**out["data"], "previous_needs": [prev, *needs[1:]]}
+        needs = copy.deepcopy(needs)      # a copy: the stored case is never changed by reading it
+        out["data"] = {**out["data"], "previous_needs": needs}
         try:
             by_id = {e["id"]: e.get("data") or {} for e in await self.store.list("evidence", business_id, limit=500)}
         except Exception:      # noqa: BLE001 - the list still shows, without previews
             return
 
-        for k, doc in (prev.get("documents") or {}).items():
-            ev = by_id.get(str(doc.get("evidence_id") or ""))
-            doc["preview"] = doc.get("saved") or (evidence_words(ev, doc.get("reviewed_at")) if ev else
-                                                  {k2: v for k2, v in {"reviewed_on": str(doc.get("reviewed_at") or "")[:10] or None}.items() if v})
-        for e in prev.get("evidence") or []:
-            e["preview"] = e.get("saved") or (evidence_words(by_id[e["id"]]) if by_id.get(e.get("id")) else None)
+        for prev in needs:      # every earlier need, each item in plain words
+            for k, doc in (prev.get("documents") or {}).items():
+                ev = by_id.get(str(doc.get("evidence_id") or ""))
+                doc["preview"] = doc.get("saved") or (evidence_words(ev, doc.get("reviewed_at")) if ev else
+                                                      {k2: v for k2, v in {"reviewed_on": str(doc.get("reviewed_at") or "")[:10] or None}.items() if v})
+            for e in prev.get("evidence") or []:
+                e["preview"] = e.get("saved") or (evidence_words(by_id[e["id"]]) if by_id.get(e.get("id")) else None)
 
     async def _detail(self, row: dict, ctx: dict, extra: dict | None = None) -> dict:
         data = row["data"] or {}
@@ -712,7 +713,7 @@ class ReadinessService:
                            provenance: dict | None = None, summary: str = "") -> dict:
         """One funding case per business, always the current need (the owner's QA, 15 Oct). The old need is snapshotted in
         History ("Replaced on 15 Oct: £100,000 equity, UK SMEs"); its documents, market, traction and allocations are set
-        aside as "From your previous funding need. Still relevant?" and its evidence no longer counts until kept; the new
+        aside with the old need in History (never asked about again: Replace replaces it) and its evidence no longer counts; the new
         need's answers are written to their fields."""
         ctx = await self._ctx(user_id, business_id, email)
         self._need(ctx, rules.FUNDING, "edit")
@@ -773,16 +774,17 @@ class ReadinessService:
         saved = await self._patch_data(row, ctx, apply, "Replaced with a new funding need.")
         return await self._detail(saved, ctx)
 
-    async def keep_previous(self, user_id: str, business_id: str, subject_id: str, item: str, keep: bool, email: str | None = None) -> dict:
+    async def keep_previous(self, user_id: str, business_id: str, subject_id: str, item: str, keep: bool, email: str | None = None, need: int = 0) -> dict:
         """[Keep] or [Remove] for one thing from the previous funding need: "evidence:<id>", "document:<key>" or a field
         ("market", "traction", "use_of_funds"…). Kept, it counts again; removed, it is gone from the case (evidence itself
         stays in the business's evidence library)."""
         ctx = await self._ctx(user_id, business_id, email)
         self._need(ctx, rules.FUNDING, "edit")
         row = await self._row("subjects", business_id, subject_id, rules.FUNDING)
-        prev = ((row.get("data") or {}).get("previous_needs") or [None])[0]
-        if not prev:
+        needs = (row.get("data") or {}).get("previous_needs") or []
+        if not 0 <= need < len(needs):      # any earlier need, not only the latest replaced (QA, 15 Oct)
             raise NotFound()
+        prev = needs[need]
         kind, _, key = item.partition(":")
         if kind == "evidence":
             e = await self._row("evidence", business_id, key)
@@ -793,7 +795,7 @@ class ReadinessService:
             await self.store.update("evidence", e["id"], {"data": {**d, "links": links, "held_links": rest}, "updated_at": ctx["now"]}, bump=False)
 
         def apply(data: dict) -> None:
-            p = data["previous_needs"][0]
+            p = data["previous_needs"][need]
             p.setdefault("review", {})[item] = "kept" if keep else "removed"
             if keep and kind == "document" and key in (p.get("documents") or {}):
                 data.setdefault("documents", {})[key] = p["documents"][key]

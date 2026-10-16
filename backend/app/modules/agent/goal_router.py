@@ -330,6 +330,28 @@ async def session_first_value(session_id: str, user=Depends(get_current_user)):
     session = await _session(session_id)
     if session.get("user_id") and session["user_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Not found.")
+    return await _first_value_reply(session, user)
+
+
+class EditAnswersIn(BaseModel):
+    answers: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/task-sessions/{session_id}/answers")
+async def edit_session_answers(session_id: str, body: EditAnswersIn, user=Depends(get_current_user)):
+    """Edit and run again, from the result card (the owner's QA, 15 Oct): the changed answers update the case or plan
+    this request set up, the check runs again, and the new result comes back. Free: no model and no research."""
+    session = await _session(session_id)
+    if session.get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Not found.")
+    try:
+        session = await goals.edit_answers(get_store(), session, get_orchestrator(), user["id"], body.answers, user.get("email"))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    return await _first_value_reply(session, user)
+
+
+async def _first_value_reply(session: dict, user: dict) -> dict:
     data = None
     if session.get("business_id"):
         try:
@@ -358,7 +380,11 @@ async def session_first_value(session_id: str, user=Depends(get_current_user)):
                                                                 assessment_summary.KIND_OF_GOAL[session["goal_key"]], user.get("email"),
                                                                 subject_id=(session.get("handoff") or {}).get("subject_id"))
     await goals.track(get_store(), "first_value_shown", session)
-    return {"session_id": session["id"], "goal_key": session.get("goal_key"), "business_id": session.get("business_id"), "result": result}
+    # What the card's "Edit answers" shows: the questions asked, with the answers given (changed there, then run again).
+    editable = bool(session.get("user_id") == user["id"] and session.get("business_id"))
+    return {"session_id": session["id"], "goal_key": session.get("goal_key"), "business_id": session.get("business_id"), "result": result,
+            "edit": {"questions": goals.editable_questions(session), "answers": {**(session.get("proposed") or {}), **(session.get("inputs") or {})},
+                     "currency": session.get("currency")} if editable else None}
 
 
 @router.get("/businesses/{business_id}/first-results")
@@ -1143,7 +1169,11 @@ async def catalogue_from_check(business_id: str, body: CatalogueItemIn, user=Dep
         item["updated_at"] = now
         saved["product"] = dict(item)
     await orch.rt.business.mutate(business_id, _put)
-    return {"saved": True, "created": bool(saved.get("created")), "product": saved.get("product")}
+    p = saved.get("product") or {}
+    return {"saved": True, "created": bool(saved.get("created")), "product": p,
+            "message": f"{'Added' if saved.get('created') else 'Updated'} in your catalogue: {p.get('name') or name}."
+                       + ("" if p.get("base_price") else " Add its price in Catalogue so it can go on quotes and invoices."),
+            "actions": [{"label": "Open catalogue", "to": "/catalogue"}]}
 
 
 @router.post("/task-sessions/{session_id}/attach-user")
