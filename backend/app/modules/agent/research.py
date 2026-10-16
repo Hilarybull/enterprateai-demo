@@ -802,6 +802,10 @@ def blockers_of(result: dict) -> list[str]:
     return [c["key"] for c in result.get("criteria") or [] if c["state"] != first_value.MET]
 
 
+ROUTE_OF_ANSWER = {"equity": "route_equity", "investment": "route_equity", "investors": "route_equity", "loan": "route_loan", "debt": "route_loan",
+                   "grant": "route_grant", "grants": "route_grant"}
+
+
 def plan_run(goal: str, result: dict, i: dict, ctx: dict | None = None) -> tuple[list[dict], list[dict], list[str]]:
     """(topics to look up, items worked out or asked now, derivations waiting on inputs). Every gap gets one."""
     ctx = ctx or {}
@@ -811,7 +815,13 @@ def plan_run(goal: str, result: dict, i: dict, ctx: dict | None = None) -> tuple
     waiting: list[tuple[str, str]] = []
     asked: set[str] = set()
 
+    # The funding route chosen is the one researched (the owner's QA, 16 Oct: "I selected grant, why is the research about
+    # loans?"); all three are compared only when the route is not decided.
+    chosen = ROUTE_OF_ANSWER.get(str(i.get("route") or "").strip().lower()) if goal == "need_funding" else None
+
     def research(crit, key):
+        if chosen and key.startswith("route_") and key != chosen:
+            return
         if not any(t["topic"] == key for t in topics):
             topics.append({"topic": key, "criterion": crit, "label": label_of(key, ctx), "query": query_of(key, ctx),
                            "used_for": labels.get(crit, crit)})
@@ -927,7 +937,10 @@ def funding_deliverables(i: dict, items: list[dict], result: dict, currency: str
     by_derive = {x.get("derive"): x for x in items if x.get("derive") and x.get("kind") == ESTIMATED}
     by_topic = {x.get("topic"): x for x in items if x.get("topic")}
     routes = []
+    chosen = ROUTE_OF_ANSWER.get(str(i.get("route") or "").strip().lower())
     for key, name, topic, what in ROUTES:
+        if chosen and topic != chosen:
+            continue      # the route the owner chose, not a comparison they didn't ask for
         found = by_topic.get(topic)
         routes.append({"route": key, "name": name, "what_it_is": what, "local": (found or {}).get("value"), "sources": (found or {}).get("sources") or [],
                        "state": (found or {}).get("state"), "preferred": str(i.get("route") or "").lower() == key})
