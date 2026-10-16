@@ -44,6 +44,11 @@ _FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
 _LIFETIME_VALIDATION_LIMIT = 1
 
 
+def _unnamed(name) -> bool:
+    """A workspace with no real name yet: none, or the placeholder."""
+    return not str(name or "").strip() or str(name).strip() in ("My workspace", "Unnamed")
+
+
 async def create_workspace(
     *,
     user_id: str,
@@ -68,7 +73,7 @@ async def create_workspace(
             else:
                 merged[k] = v
         update = {"data": merged, "updated_at": now.isoformat()}
-        if name and name.strip():
+        if name and name.strip() and _unnamed(existing.get("name")):      # never renames a workspace that has a name
             update["name"] = name.strip()
         await sb_update(
             "workspaces",
@@ -1283,7 +1288,9 @@ async def update_workspace(
         logger.exception("snapshot scheduling failed for workspace %s: %s", workspace_id, e)
 
     update = {"data": merged, "updated_at": now.isoformat()}
-    if name and str(name).strip():
+    # The workspace name is master data (the owner's QA, 16 Oct): a form save never renames a workspace. A name sent with a
+    # save only names one that has none yet (or still the placeholder); renaming is the workspace's own setting.
+    if name and str(name).strip() and _unnamed(ws.name):
         update["name"] = str(name).strip()
 
     try:
