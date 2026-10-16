@@ -396,7 +396,7 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
   const party = record?.customer_name || record?.recipient || record?.vendor_name || record?.party_name || "";
   const amt = Number(record?.total_amount || record?.amount || record?.price || 0);
   const cur = record?.currency || "GBP";
-  const fmtAmt = new Intl.NumberFormat(undefined, { style: "currency", currency: cur }).format(amt);
+  const fmtAmt = new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: cur }).format(amt);
 
   const customerEmail = (customers || []).find(c =>
     (c.name || c.company_name || "").toLowerCase() === (party || "").toLowerCase()
@@ -947,7 +947,7 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
     const party = form.customer_name || form.vendor_name || form.party_name || "—";
     const amt = Number(form.amount || 0);
     const cur = form.currency || "GBP";
-    const fmt = n => new Intl.NumberFormat(undefined, { style: "currency", currency: cur }).format(n);
+    const fmt = n => new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: cur }).format(n);
     const totalPaidAmt = (form.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
     const balanceDue = Math.max(0, amt - totalPaidAmt);
     const issueDate = form.issued_at ? new Date(form.issued_at).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "—";
@@ -1835,7 +1835,7 @@ export default function BusinessOperationsPage() {
   const fmtMoney = (n) => {
     const v = Number(n || 0);
     let shown;
-    try { shown = new Intl.NumberFormat(undefined, { style: "currency", currency: fx.ws, currencyDisplay: "narrowSymbol", maximumFractionDigits: 0 }).format(v); }
+    try { shown = new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: fx.ws, currencyDisplay: "narrowSymbol", maximumFractionDigits: 0 }).format(v); }
     catch { shown = formatCurrency(v, fx.ws); }
     return `${fx.converted.length ? "≈ " : ""}${shown}`;
   };
@@ -2314,7 +2314,7 @@ export default function BusinessOperationsPage() {
     const { rows, rangeName, rangeLabel } = _reportData();
     const fmtAmt = (n, cur) => {
       const iso = (String(cur||"").match(/\(([A-Z]{3})\)/)?.[1] || String(cur||"")).toUpperCase().slice(0,3) || "GBP";
-      try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: iso, maximumFractionDigits: 2 }).format(n); }
+      try { return new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: iso, maximumFractionDigits: 2 }).format(n); }
       catch { return `${iso} ${Number(n).toFixed(2)}`; }
     };
     const wsIso = (String(wsCurrency||"GBP").match(/\(([A-Z]{3})\)/)?.[1] || String(wsCurrency||"GBP")).toUpperCase().slice(0,3);

@@ -55,8 +55,8 @@ export const saveForecast = (businessId, feature, id, forecast, revision) => api
 export const linkForecast = (businessId, feature, id, forecastId) => apiRequest(`${root(businessId, feature)}/${id}/forecast/link`, "POST", { forecast_id: forecastId });
 export const listForecasts = (businessId) => apiRequest(`/businesses/${businessId}/forecasts`, "GET");
 export const attest = (businessId, feature, id, body) => apiRequest(`${root(businessId, feature)}/${id}/attestations`, "POST", body);
-export const runAssessment = (businessId, feature, id, revision, key) =>
-  apiRequest(`${root(businessId, feature)}/${id}/assessments`, "POST", { revision, idempotency_key: key }, { timeoutMs: 60000 });
+export const runAssessment = (businessId, feature, id, revision, key, withDetail = false) =>
+  apiRequest(`${root(businessId, feature)}/${id}/assessments`, "POST", { revision, idempotency_key: key, ...(withDetail ? { with_detail: true } : {}) }, { timeoutMs: 60000 });
 export const getHistory = (businessId, feature, id) => apiRequest(`${root(businessId, feature)}/${id}/assessments`, "GET");
 export const getAssessment = (businessId, feature, id, assessmentId) => apiRequest(`${root(businessId, feature)}/${id}/assessments/${assessmentId}`, "GET");
 export const updateAction = (businessId, feature, id, actionId, changes) => apiRequest(`${root(businessId, feature)}/${id}/actions/${actionId}`, "PATCH", changes);
@@ -141,6 +141,6 @@ export function moneyLabel(value, currency) {
   if (value === null || value === undefined || value === "") return "";
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
-  try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: currency || "GBP", maximumFractionDigits: 2 }).format(n); } catch { return `${currency || ""} ${n.toFixed(2)}`.trim(); }
+  try { return new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: currency || "GBP", maximumFractionDigits: 2 }).format(n); } catch { return `${currency || ""} ${n.toFixed(2)}`.trim(); }
 }
 export const newKey = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(16).slice(2)}`);

@@ -62,11 +62,16 @@ def owner_marks(data: dict | None, before: dict | None, after: dict) -> dict:
 
 
 async def _sync_catalogue(workspace_id: str) -> None:
-    """The profile's services in Catalogue > Products too (the owner's QA, 15 Oct), in one guarded save of the record."""
+    """The profile's services in Catalogue > Products too (the owner's QA, 15 Oct), and its country's currency saved when
+    none is (16 Oct), in one guarded save of the record."""
     try:
-        from app.modules.agent.business import SupabaseBusiness
+        from app.modules.agent.business import SupabaseBusiness, save_country_currency
         from app.shared.catalogue_sync import add_profile_services
-        await SupabaseBusiness().mutate(workspace_id, add_profile_services)
+
+        def _both(d: dict):
+            save_country_currency(d)
+            return add_profile_services(d)
+        await SupabaseBusiness().mutate(workspace_id, _both)
     except Exception:      # noqa: BLE001 - the profile is saved either way; the next save adds them
         import logging
         logging.getLogger(__name__).info("catalogue not synced from the profile for %s", workspace_id, exc_info=True)

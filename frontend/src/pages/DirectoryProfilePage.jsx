@@ -339,7 +339,7 @@ export default function DirectoryProfilePage() {
                   <li key={o.id} className="flex flex-col rounded-xl border border-slate-200 p-3 dark:border-slate-700">
                     <p className="break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{o.name}</p>
                     {o.description && <p className="mt-0.5 line-clamp-3 break-words text-[13px] text-slate-600 dark:text-slate-300">{o.description}</p>}
-                    <p className="mt-2 text-[13px] font-semibold text-slate-800 dark:text-slate-200">{o.price ? `From ${new Intl.NumberFormat("en-GB", { style: "currency", currency: o.currency || "GBP", maximumFractionDigits: 0 }).format(o.price)}` : "Price on request"}</p>
+                    <p className="mt-2 text-[13px] font-semibold text-slate-800 dark:text-slate-200">{o.price ? `From ${new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: o.currency || "GBP", maximumFractionDigits: 0 }).format(o.price)}` : "Price on request"}</p>
                     {(open.rfqs || open.enquiries) && (
                       <Btn className="mt-3 w-full !py-2" aria-label={`${open.rfqs ? "Request a quote" : "Ask about this"}: ${o.name}`}
                         onClick={() => navigate(open.rfqs ? quoteLink(o.name) : toListing)}>{open.rfqs ? "Request a quote" : "Ask about this"}</Btn>

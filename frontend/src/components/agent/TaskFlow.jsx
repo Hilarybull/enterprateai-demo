@@ -599,7 +599,7 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
     const confirm = fields.some((f) => f.confirm);
     const step = open.run.step;
     element = (
-      <Modal compact title={confirm ? "Is this right?" : "A few details"} onClose={close}>
+      <Modal compact title={confirm ? "Is this right?" : "A few details"} onClose={close} fullPage={`/agent/runs/${open.run.id}`}>
         <ChatQuestionThread key={open.run.id + ":" + open.n} title={q.question || "A few details"} question={q.question} fields={fields} said={q.said} step={step}
           askedBefore={answeredIn.current[open.run.id] || 0} planned={plannedIn.current[open.run.id] ?? null}
           onTotal={(n) => { const was = plannedIn.current[open.run.id]; if (was == null || n < was) plannedIn.current[open.run.id] = n; }}
@@ -619,7 +619,8 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
     const run = open.run;
     const need = run.email_needed;
     element = (
-      <Modal compact title={need ? `${need.customer} has no email on record${need.reference ? ` for ${need.reference}` : ""}` : "This needs you"} onClose={close}>
+      <Modal compact title={need ? `${need.customer} has no email on record${need.reference ? ` for ${need.reference}` : ""}` : "This needs you"} onClose={close}
+        fullPage={`/agent/runs/${run.id}`}>
         <p className="text-sm text-slate-700 dark:text-slate-200">{run.error || run.summary || run.next_action || "This task stopped and needs a look."}</p>
         {need ? (
           <form onSubmit={saveEmail} className="mt-4 space-y-3">

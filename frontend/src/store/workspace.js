@@ -178,7 +178,12 @@ export function workspaceStatusOf(state) {
 
 /** The workspace currency as the server reads it (settings.currency first), so every page totals in the same one
  *  (the owner's QA, 16 Oct: Business Operations kept a GBP base after the workspace moved to NGN). */
+const COUNTRY_CURRENCY = { nigeria: "NGN", "united kingdom": "GBP", uk: "GBP", england: "GBP", scotland: "GBP", wales: "GBP", "united states": "USD",
+  usa: "USD", ghana: "GHS", kenya: "KES", "south africa": "ZAR", canada: "CAD", australia: "AUD", india: "INR", ireland: "EUR", germany: "EUR", france: "EUR" };
+
 export function workspaceCurrencyOf(data) {
   const d = data || {};
-  return d.settings?.currency || d.idea_validation?.context?.currency || d.business_profile?.currency || d.business_context?.currency || d.currency || null;
+  // The saved one first; with none saved, the profile's country's (a business in Nigeria is never shown in GBP).
+  return d.settings?.currency || COUNTRY_CURRENCY[String(d.workspace_profile?.country || "").trim().toLowerCase()]
+    || d.idea_validation?.context?.currency || d.business_profile?.currency || d.business_context?.currency || d.currency || null;
 }

@@ -97,6 +97,7 @@ class AttestIn(BaseModel):
 class AssessIn(BaseModel):
     revision: int | None = None
     idempotency_key: str | None = Field(default=None, max_length=120)
+    with_detail: bool = False      # return the case as it is after the check, so the page needs no second request
 
 
 class ActionPatch(BaseModel):
@@ -266,7 +267,8 @@ def _subject_routes(segment: str) -> APIRouter:
         calculated, so its status can be read back with the id at any time."""
         body = body or AssessIn()
         return await _run(get_service().request_assessment(user["id"], business_id, _type(segment), subject_id, revision=body.revision,
-                                                           idempotency_key=body.idempotency_key, email=user.get("email")))
+                                                           idempotency_key=body.idempotency_key, email=user.get("email"),
+                                                           with_detail=body.with_detail))
 
 
     @r.get("/{subject_id}/assessments")

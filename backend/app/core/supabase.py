@@ -244,7 +244,9 @@ def _run_with_retry(fn, *, max_attempts: int = 3, base_delay: float = 1.0):
 # through these helpers to a table forgets that table's reads, and nothing is kept for longer
 # than a few seconds, so work that runs on for a while still sees what others have changed.
 _reads: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar("sb_reads", default=None)
-_READ_TTL = 3.0
+# Kept for one request at most (the cache lives only inside read_cache), and any write forgets its table's reads. 10 seconds
+# covers a whole check and the case built after it ("Run the check again" in one round trip); 3 expired mid-request.
+_READ_TTL = 10.0
 
 
 @contextlib.contextmanager

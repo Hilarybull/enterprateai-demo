@@ -12,9 +12,9 @@ export function formatCurrency(n, currency = "GBP", locale = undefined) {
   const cur = _isoCode(currency);
   try {
     // The currency's own sign ("₦50,000.00", "$315.00"), never "NGN 50,000.00" or "US$315.00" (the owner's QA, 16 Oct).
-    return new Intl.NumberFormat(locale, { style: "currency", currency: cur, currencyDisplay: "narrowSymbol" }).format(n);
+    return new Intl.NumberFormat(locale, { style: "currency", currencyDisplay: "narrowSymbol", currency: cur, currencyDisplay: "narrowSymbol" }).format(n);
   } catch {
-    return new Intl.NumberFormat(locale, { style: "currency", currency: "GBP" }).format(n);
+    return new Intl.NumberFormat(locale, { style: "currency", currencyDisplay: "narrowSymbol", currency: "GBP" }).format(n);
   }
 }
 

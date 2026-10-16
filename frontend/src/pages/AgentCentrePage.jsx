@@ -28,7 +28,7 @@ const DOC_TONE = { awaiting_approval: "amber", draft: "slate", sent: "indigo", v
   signed: "emerald", overdue: "rose", declined: "rose", lost: "rose", disputed: "rose", credited: "slate", void: "slate", voided: "slate", cancelled: "slate", expired: "slate" };
 const docMoney = (d) => {
   if (d.total == null) return "";      // B9: a prepared document (a funding pack, a plan) has no amount
-  try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: d.currency || "GBP" }).format(Number(d.total || 0)); } catch { return String(d.total ?? ""); }
+  try { return new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: d.currency || "GBP" }).format(Number(d.total || 0)); } catch { return String(d.total ?? ""); }
 };
 
 /** Every document on record: what it is, who it is for, its amount and status, and Edit draft while it waits for approval. */

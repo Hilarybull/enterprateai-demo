@@ -4952,7 +4952,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     }}
                   />
                   <span className="text-right text-sm text-slate-600 dark:text-slate-300">
-                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(item.unit_price * item.quantity)}
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: String(currency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || currency || "GBP" }).format(item.unit_price * item.quantity)}
                   </span>
                 </div>
               ))}
@@ -4960,7 +4960,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
                 <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Grand total</span>
                 <span className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                  {new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: String(currency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || currency || "GBP" }).format(
                     rfqApproveModal.items.reduce((sum, it) => sum + it.unit_price * it.quantity, 0)
                   )}
                 </span>

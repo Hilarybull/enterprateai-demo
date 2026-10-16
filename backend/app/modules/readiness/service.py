@@ -1257,7 +1257,7 @@ class ReadinessService:
         return None
 
     async def request_assessment(self, user_id: str, business_id: str, subject_type: str, subject_id: str, *, revision: int | None = None,
-                                 idempotency_key: str | None = None, email: str | None = None) -> dict:
+                                 idempotency_key: str | None = None, email: str | None = None, with_detail: bool = False) -> dict:
         """The check, with each record read once for the whole run (a write forgets its table's reads): a check again read
         the workspace four times and every other table twice."""
         from app.core.supabase import read_cache
@@ -1273,9 +1273,16 @@ class ReadinessService:
                 self.store.list("evidence", business_id, limit=500),
                 self.store.list("artifacts", business_id, subject_id=subject_id),
                 self.store.list("forecasts", business_id, limit=100),
+                # the repeat check for this request's key, in the same batch (it was a read on its own, half a second)
+                self.store.find_key("assessments", business_id, str(subject_id), (idempotency_key or "").strip()[:120]) if (idempotency_key or "").strip() else nothing(),
                 return_exceptions=True)
-            return await self._request_assessment(user_id, business_id, subject_type, subject_id, revision=revision,
-                                                  idempotency_key=idempotency_key, email=email)
+            out = await self._request_assessment(user_id, business_id, subject_type, subject_id, revision=revision,
+                                                 idempotency_key=idempotency_key, email=email)
+            if with_detail:
+                # The case as it is now, in the same request (one round trip for "Run the check again"): built from the
+                # reads already made, only what the check wrote is read again.
+                out = {**out, "subject": await self.get_subject(user_id, business_id, subject_type, subject_id, email)}
+            return out
 
     async def _request_assessment(self, user_id: str, business_id: str, subject_type: str, subject_id: str, *, revision: int | None = None,
                                   idempotency_key: str | None = None, email: str | None = None) -> dict:
@@ -1325,10 +1332,12 @@ class ReadinessService:
             # Access is checked again before anything is written back from the run.
             ctx = await self._ctx(user_id, business_id, email)
             self._need(ctx, subject_type, "assess")
-            await self._sync_actions(row, run, ctx)
+            # The actions and the event saved side by side (they do not depend on each other).
+            await asyncio.gather(
+                self._sync_actions(row, run, ctx),
+                self.emit(ctx, "AssessmentCompleted", row, {"assessment_id": run["id"], "classification": result["classification"], "profile": run["data"]["profile"]}, correlation))
             if row.get("status") == "draft":
                 row = await self.store.update("subjects", row["id"], {"status": "active" if subject_type == rules.FUNDING else "preparing", "updated_at": ctx["now"]}, bump=False) or row
-            await self.emit(ctx, "AssessmentCompleted", row, {"assessment_id": run["id"], "classification": result["classification"], "profile": run["data"]["profile"]}, correlation)
         row = await self._row("subjects", business_id, subject_id, subject_type)
         return await self._public_assessment(run, row, ctx)
 
@@ -1481,9 +1490,9 @@ class ReadinessService:
                 patch["status"] = "open"
                 data["reopened_at"] = ctx["today"].isoformat()
                 data["resolved_by_assessment_id"] = None
-            saves.append(self.store.update("actions", current["id"], patch, bump=False))
+            saves.append({**current, **patch})      # the whole row, with what changed
         if saves:
-            await asyncio.gather(*saves)
+            await self.store.update_many("actions", saves)
         covered = {c: g["code"] for g in gaps.values() for c in g.get("also") or []}
         for code, current in existing.items():
             if code not in gaps and current.get("status") in rules.UNRESOLVED_ACTION_STATES and (current["data"] or {}).get("kind") == "gap":

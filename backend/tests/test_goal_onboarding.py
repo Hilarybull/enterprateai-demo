@@ -984,3 +984,16 @@ def test_after_two_replaces_the_first_needs_items_can_still_be_kept(world):
     assert len(needs) == 2 and "traction" in needs[1]["set_aside"]
     out = run(svc.keep_previous(OWNER, "A", case_id, "traction", True, OWNER, need=1))
     assert out["data"]["previous_needs"][1]["review"] == {"traction": "kept"} and out["data"]["previous_needs"][0]["review"] == {}
+
+
+def test_run_the_check_again_returns_the_case_in_the_same_request(world):
+    """QA: "Run the check again" in one round trip: the check returns the case as it is after the check."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    _sid, made = _funding(client)
+    case_id = made["handoff"]["subject_id"]
+    case = client.get(f"/businesses/A/funding-cases/{case_id}").json()
+    out = client.post(f"/businesses/A/funding-cases/{case_id}/assessments", json={"revision": case["revision"], "idempotency_key": "again-1", "with_detail": True}).json()
+    assert out["subject"]["id"] == case_id and out["subject"]["latest_assessment"]["id"] == out["id"] if "latest_assessment" in out["subject"] else out["subject"]["id"] == case_id
+    plain = client.post(f"/businesses/A/funding-cases/{case_id}/assessments", json={"revision": out["subject"]["revision"], "idempotency_key": "again-2"}).json()
+    assert "subject" not in plain      # only when asked for

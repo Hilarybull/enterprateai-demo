@@ -478,7 +478,7 @@ function ItemsEditor({ approval, options, kind, saving = false, problem = "", on
 export const editableApproval = (item) => Boolean(KIND[item?.tool_id]);
 
 const offerMoney = (n, currency) => {
-  try { return new Intl.NumberFormat(undefined, { style: "currency", currency: currency || "GBP", maximumFractionDigits: Number(n) % 1 ? 2 : 0 }).format(Number(n) || 0); }
+  try { return new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: currency || "GBP", maximumFractionDigits: Number(n) % 1 ? 2 : 0 }).format(Number(n) || 0); }
   catch { return String(n); }
 };
 

@@ -144,6 +144,8 @@ def fill(data: dict, answers: dict, goal: str, *, currency: str | None = None, n
     """Fill the empty profile fields from a flow's answers. Returns {"filled": [fields], "conflicts": [{field, profile, said}]}.
     Each filled field's source is kept in data["profile_provenance"] (with the value before, for Undo)."""
     now = now or datetime.now(timezone.utc)
+    from app.modules.agent import business as _bz
+    shown_in = _bz.currency_of(data)      # what documents showed in before this fill (they keep it)
     p = data.setdefault("workspace_profile", {})
     prov = data.setdefault("profile_provenance", {})
     settings = data.setdefault("settings", {})
@@ -176,8 +178,7 @@ def fill(data: dict, answers: dict, goal: str, *, currency: str | None = None, n
             continue      # set (or cleared, or undone) by the owner by hand: theirs, never filled again
         if _blank(have):
             if field == "currency":
-                from app.modules.agent import business as _bz
-                _bz.stamp_document_currencies(data, _bz.currency_of(data))      # documents keep the currency they were made in
+                _bz.stamp_document_currencies(data, shown_in)      # documents keep the currency they were made in
                 settings["currency"] = value
             else:
                 p[field] = value

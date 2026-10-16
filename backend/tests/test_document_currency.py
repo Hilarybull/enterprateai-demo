@@ -61,3 +61,12 @@ def test_the_rates_come_from_the_live_provider_with_its_date():
     currency._rate_dates["GBP"] = "2026-10-16"
     got = asyncio.run(currency.get_rate_dated("GBP", "NGN"))
     assert got == {"rate": 1760.57, "date": "2026-10-16", "source": "exchangerate-api.com"}
+
+
+def test_a_workspace_with_a_country_and_no_saved_currency_uses_and_saves_its_countrys():
+    d = {"settings": {}, "workspace_profile": {"country": "Nigeria"}, "financials": {"invoices": [{"id": "old", "total_amount": 10}]}}
+    assert bz.currency_of(d) == "NGN"      # never GBP for a business in Nigeria
+    assert bz.save_country_currency(d) == "NGN" and d["settings"]["currency"] == "NGN"
+    assert d["financials"]["invoices"][0]["currency"] == "GBP"      # made while it showed in GBP: kept
+    assert bz.save_country_currency(d) is None      # a saved currency is never changed
+    assert bz.currency_of({"settings": {}, "workspace_profile": {}}) == "GBP"      # nothing known: the default

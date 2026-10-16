@@ -607,8 +607,9 @@ function SubjectDetail({ businessId, feature, subjectId }) {
     try {
       if (!(await flush())) { setCheckProblem("Save your changes first: some answers need correcting."); return; }
       const again = Boolean(latest.current.subject?.latest_assessment || a);
-      const ran = await runAssessment(businessId, feature, subjectId, latest.current.subject.revision, newKey());
-      await load();
+      // One round trip (the owner's QA: a check again in under 3 seconds): the case comes back with the check.
+      const ran = await runAssessment(businessId, feature, subjectId, latest.current.subject.revision, newKey(), true);
+      if (ran?.subject?.id) { accept(ran.subject, true); setProblem(null); } else await load();
       if (!opts?.quiet) setTab("results");
       // Said when it is done (the owner's QA, 15 Oct): where the case stands now, in one line.
       const r = ran?.result || ran || {};

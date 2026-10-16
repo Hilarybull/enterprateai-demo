@@ -46,6 +46,22 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("dashboard before its composition arrives", () => {
+  it("shows the Agent row as soon as its own summary arrives, before the figures (QA, 16 Oct)", async () => {
+    globalThis.fetch = vi.fn((url) => {
+      const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (/\/businesses\/ws1\/dashboard(\?|$)/.test(String(url))) return new Promise((resolve) => { release = () => resolve(json(preLaunch)); });
+      if (/\/agent\/summary/.test(String(url))) return Promise.resolve(json({ suggestions: [], needs_approval: [], needs_approval_count: 0, insights: [] }));
+      return Promise.resolve(json({}));
+    });
+    mount();
+    await waitFor(() => expect(document.querySelector("[data-agent-row-early]")).toBeTruthy());
+    expect(screen.getByRole("status", { name: "Loading your dashboard" })).toBeTruthy();      // the figures still loading below it
+    await act(async () => { release(); });
+    await screen.findByText("Pre-launch stage");
+    expect(document.querySelector("[data-agent-row-early]")).toBeNull();      // the full page, with one Agent row
+  });
+
+
   it("shows a skeleton with nothing clickable and no stage's defaults, then the real stage", async () => {
     mockApi();
     mount();

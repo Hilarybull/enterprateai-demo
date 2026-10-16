@@ -474,10 +474,39 @@ def overdue_invoices(data: dict, today: date) -> list[dict]:
 
 
 def currency_of(data: dict) -> str:
-    cur = str((data.get("settings") or {}).get("currency") or "GBP")
+    """The workspace currency: the saved one; with none saved, its country's ("Nigeria": NGN, the owner's QA, 16 Oct),
+    never GBP for a business that says it is elsewhere; GBP only when nothing is known."""
     import re
-    m = re.search(r"\(([A-Z]{3})\)", cur) or re.match(r"^([A-Z]{3})$", cur.strip().upper())
-    return m.group(1) if m else "GBP"
+    saved = str((data.get("settings") or {}).get("currency") or "")
+    m = re.search(r"\(([A-Z]{3})\)", saved) or re.match(r"^([A-Z]{3})$", saved.strip().upper())
+    if m:
+        return m.group(1)
+    return country_currency(data) or "GBP"
+
+
+def country_currency(data: dict) -> str | None:
+    """The currency of the country on the workspace profile, or None."""
+    country = ((data or {}).get("workspace_profile") or {}).get("country")
+    if not country:
+        return None
+    try:
+        from app.modules.agent.credibility import currency_of_country
+        return currency_of_country(country)
+    except Exception:      # noqa: BLE001
+        return None
+
+
+def save_country_currency(data: dict) -> str | None:
+    """With no currency saved and a country on the profile: that country's currency, saved (documents already made keep
+    the one they were made in). Returns the code saved, or None."""
+    if str((data.get("settings") or {}).get("currency") or "").strip():
+        return None
+    code = country_currency(data)
+    if not code:
+        return None
+    stamp_document_currencies(data, "GBP")      # made before any currency was saved: GBP, the default they showed in
+    data.setdefault("settings", {})["currency"] = code
+    return code
 
 
 DOCUMENT_LISTS = ("invoices", "quotes", "quotations", "receipts", "contracts", "credit_notes", "purchase_orders", "proposals")

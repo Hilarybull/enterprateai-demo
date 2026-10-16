@@ -145,6 +145,7 @@ export default function DashboardPage() {
   const reportRef = useRef(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  const dashArrived = useRef(false);
   const loadAgentSummary = useCallback(() => {
     if (!workspaceId) return;
     const legacy = () => getAgentSummary(workspaceId).then(setAgentSummary).catch(() => {
@@ -152,7 +153,12 @@ export default function DashboardPage() {
       setAgentSummary((prev) => prev || { suggestions: [], needs_approval: [], needs_approval_count: 0, insights: [], risks: null, unavailable: true });
     });
     if (!ADAPTIVE_DASHBOARD) return legacy();
+    // The Agent row first (the owner's QA, 16 Oct: 12 seconds of skeleton): its own, quicker summary is asked for beside
+    // the full dashboard and shown as soon as it comes; the dashboard's copy replaces it when that arrives.
+    dashArrived.current = false;
+    getAgentSummary(workspaceId).then((s) => { if (!dashArrived.current && Array.isArray(s?.suggestions)) setAgentSummary(s); }).catch(() => {});
     return getDashboard(workspaceId, { stage: previewStage, pathway: previewPathway }).then((d) => {
+      dashArrived.current = true;
       if (!d?.enabled) { setAdaptiveOff(true); setDashboard(null); return legacy(); }
       setAdaptiveOff(false);
       setDashFailed(false);
@@ -745,6 +751,13 @@ export default function DashboardPage() {
     return (
       <div className="space-y-6">
         {launchpadHero}
+        {/* The Agent row as soon as its summary is here; the figures and insights below load after it. */}
+        {agentSummary && !dashFailed && (
+          <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]" data-agent-row-early>
+            <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} firstResult={firstResult} />
+            <NeedsApprovalPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
+          </div>
+        )}
         {dashFailed ? (
           <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-800">
             <p className="font-semibold">Your dashboard couldn't be loaded.</p>

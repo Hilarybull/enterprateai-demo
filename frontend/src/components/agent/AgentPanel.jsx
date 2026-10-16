@@ -542,7 +542,7 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
     const value = p?.total ?? p?.amount ?? p?.total_amount ?? p?.outstanding;
     if (typeof value !== "number") return "";
     try {
-      return new Intl.NumberFormat("en-GB", { style: "currency", currency: p.currency || "GBP" }).format(value);
+      return new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: p.currency || "GBP" }).format(value);
     } catch {
       return String(value);
     }

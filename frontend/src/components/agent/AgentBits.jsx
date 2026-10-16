@@ -404,7 +404,7 @@ export function QuestionForm({ question, fields, onSubmit, submitting, submitLab
   );
 }
 
-export function Modal({ title, onClose, children, compact = false }) {
+export function Modal({ title, onClose, children, compact = false, fullPage = null }) {
   const [leaving, close] = useExit(onClose);      // closing by the cross or the backdrop plays the way in, backwards
   const sheet = (
     // A bottom sheet on a phone (full width, rising from the bottom edge); a centred dialog from 640px.
@@ -412,7 +412,11 @@ export function Modal({ title, onClose, children, compact = false }) {
       <div role="dialog" aria-modal="true" aria-label={title} data-sheet className={`${compact ? "max-h-[85vh] sm:max-h-[80vh]" : "max-h-[90vh]"} w-full max-w-lg overflow-y-auto rounded-t-2xl border border-slate-200 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl motion-safe:max-sm:animate-[ea-sheet-up_.22s_ease-out] motion-safe:sm:animate-[m-scale-in_.25s_cubic-bezier(.2,.8,.2,1)] sm:rounded-2xl sm:p-6 dark:border-slate-800 dark:bg-slate-900`}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</h2>
-          <button type="button" onClick={close} aria-label="Close" className="text-slate-400 hover:text-slate-600"><Icon name="x" className="h-4 w-4" /></button>
+          <span className="flex shrink-0 items-center gap-3">
+            {/* P1.11: a sheet about a task opens the task's own page too. */}
+            {fullPage && <a href={fullPage} data-open-full-page className="text-[13px] font-semibold text-brand-700 hover:underline">Open full page</a>}
+            <button type="button" onClick={close} aria-label="Close" className="text-slate-400 hover:text-slate-600"><Icon name="x" className="h-4 w-4" /></button>
+          </span>
         </div>
         {children}
       </div>
